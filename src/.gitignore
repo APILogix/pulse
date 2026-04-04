@@ -1,0 +1,9 @@
+.env
+.env-local
+.env.development
+.env.production
+.env.test
+.env.example
+node_modules
+dist
+dist/
