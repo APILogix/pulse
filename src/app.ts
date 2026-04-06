@@ -13,9 +13,9 @@ import {
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
-import { register } from "node:module";
 import { registerPlugins } from "./config/plugins.js";
-
+import { registerAuthModule } from "./modules/auth/auth.module.js";
+import fastifyRawBody from "fastify-raw-body";
 //  Extend FastifyRequest (fix startTime issue)
 declare module "fastify" {
   interface FastifyRequest {
@@ -76,6 +76,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(compress);
 
+  await app.register(fastifyRawBody, {
+    field: "rawBody", // where raw body will be stored
+    global: false, // only enable per-route
+    encoding: "utf8",
+    runFirst: true,
+  });
   await app.register(rateLimit, {
     max: 100,
     timeWindow: "1 minute",
@@ -86,8 +92,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(sensible);
   // all route plugins (including docs and health checks)
-  app.register(registerPlugins);
-
+  await app.register(registerPlugins);
+  await app.register(registerAuthModule);
   // Hooks
   //   app.addHook('onRequest', async (request) => {
   //     request.startTime = Date.now()

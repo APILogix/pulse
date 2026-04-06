@@ -1,6 +1,8 @@
+import { connect } from 'node:http2';
 import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { closeDatabase, connectDB } from './config/database.js';
 
 async function bootstrap() {
   try {
@@ -11,12 +13,10 @@ async function bootstrap() {
       logger.info('Shutting down server...');
       
       app.server.closeIdleConnections(); // Close keep-alive connections
-      
+     await  closeDatabase(); // Close DB pool immediately to prevent new queries
       await app.close();
       
-      // Close DB connections
-    //   await (await import('./config/database')).closeDatabase();
-    //   await (await import('./config/redis')).closeRedis();
+    
       
       logger.info('Server shut down complete');
       process.exit(0);
@@ -34,6 +34,8 @@ async function bootstrap() {
         return `Server listening at ${address}`;
       },
     });
+
+    await connectDB(); // Ensure DB connection is established before accepting requests
 
     // Log startup metrics
     logger.info({
