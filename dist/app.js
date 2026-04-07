@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import compress from "@fastify/compress";
+import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import underPressure from "@fastify/under-pressure";
@@ -55,6 +56,9 @@ export async function buildApp() {
         credentials: true,
     });
     await app.register(compress);
+    await app.register(cookie, {
+        secret: env.JWT_SECRET, // used for signing cookies
+    });
     await app.register(fastifyRawBody, {
         field: "rawBody", // where raw body will be stored
         global: false, // only enable per-route

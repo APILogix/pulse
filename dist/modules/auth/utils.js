@@ -23,13 +23,23 @@ export function generateAccessToken(userId, sessionId, mfaVerified) {
         algorithm: 'HS256',
     });
 }
+export function generateRefreshToken(userId, sessionId) {
+    return jwt.sign({
+        sub: userId,
+        jti: sessionId,
+        type: 'refresh',
+    }, env.JWT_REFRESH_SECRET, {
+        expiresIn: REFRESH_TOKEN_TTL_SECONDS,
+        algorithm: 'HS256',
+    });
+}
 export function getRefreshCookieOptions() {
     return {
         httpOnly: true,
         secure: env.NODE_ENV === 'production',
         sameSite: 'strict',
         maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
-        path: '/auth/sessions/refresh',
+        path: '/auth',
     };
 }
 export function normalizeEmail(email) {

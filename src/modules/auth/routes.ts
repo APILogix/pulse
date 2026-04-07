@@ -26,6 +26,7 @@ import {
 import { authenticate, requireAdmin, requireMFA } from '../../shared/middleware/auth.js';
 import { rateLimit } from '../../shared/middleware/rate-limit.js';
 import { getClientInfo } from '../../shared/utils/request.js';
+import { getRefreshCookieOptions } from './utils.js';
 
 // ============================================
 // REQUEST TYPES
@@ -77,10 +78,13 @@ function sendAuthSession(
     user_id?: string;
   },
 ) {
+  // Set refresh token as httpOnly secure cookie
+  reply.setCookie('refresh_token', payload.refresh_token, getRefreshCookieOptions());
+
+  // Send only access token in response body (never expose refresh token)
   return reply.send({
     data: {
       access_token: payload.access_token,
-      refresh_token: payload.refresh_token,
       expires_at: payload.expires_at,
       token_type: payload.token_type,
       session_id: payload.session_id,
@@ -205,7 +209,7 @@ async function credentialRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/password/change',
     {
-      preHandler: [authenticate, rateLimit({ max: 5, window: 900 })],
+      preHandler: [authenticate],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -218,6 +222,7 @@ async function credentialRoutes(fastify: FastifyInstance) {
           clientInfo.ip,
           request.id,
         );
+        console.log("password complte")
 
         return reply.send({ message: 'Password changed successfully' });
       } catch (error) {
@@ -431,7 +436,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/setup',
     {
-      preHandler: [authenticate, rateLimit({ max: 3, window: 3600 })],
+      preHandler: [authenticate],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -548,7 +553,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/mfa/devices/:id',
     {
-      preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
+      preHandler: [authenticate rateLimit({ max: 5, window: 300 })],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -590,7 +595,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/backup-codes',
     {
-      preHandler: [authenticate, rateLimit({ max: 3, window: 86400 })], // Once per day
+      preHandler: [authenticate rateLimit({ max: 3, window: 86400 })], // Once per day
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -636,7 +641,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/disable',
     {
-      preHandler: [authenticate, rateLimit({ max: 3, window: 3600 })],
+      preHandler: [authenticate],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -714,13 +719,23 @@ async function sessionRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { ip, userAgent } = getClientInfo(request);
-        const body = request.body as { refresh_token: string };
-        const result = await service.refreshAccessToken(body.refresh_token, ip, userAgent);
+
+        // Read refresh token from httpOnly cookie
+        const refreshToken = (request.cookies as Record<string, string | undefined>)?.refresh_token;
+        if (!refreshToken) {
+          return reply.status(401).send({
+            error: { code: 'MISSING_REFRESH_TOKEN', message: 'Refresh token cookie not found' },
+          });
+        }
+
+        const result = await service.refreshAccessToken(refreshToken, ip, userAgent);
+
+        // Set new refresh token cookie (token rotation)
+        reply.setCookie('refresh_token', result.refreshToken, getRefreshCookieOptions());
 
         return reply.send({
           data: {
             access_token: result.accessToken,
-            refresh_token: result.refreshToken,
             expires_at: result.expiresAt,
             token_type: 'Bearer',
           },
@@ -740,6 +755,10 @@ async function sessionRoutes(fastify: FastifyInstance) {
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
         await service.logout(request.user.sessionId);
+
+        // Clear refresh token cookie
+        reply.clearCookie('refresh_token', getRefreshCookieOptions());
+
         return reply.status(204).send();
       } catch (error) {
         return handleAuthError(error, reply);

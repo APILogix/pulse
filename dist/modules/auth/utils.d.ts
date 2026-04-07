@@ -6,6 +6,7 @@ export declare const PASSWORD_RESET_TTL_SECONDS: number;
 export declare function hashToken(token: string): string;
 export declare function generateSecureToken(byteLength?: number): string;
 export declare function generateAccessToken(userId: string, sessionId: string, mfaVerified: boolean): string;
+export declare function generateRefreshToken(userId: string, sessionId: string): string;
 export declare function getRefreshCookieOptions(): {
     httpOnly: boolean;
     secure: boolean;

@@ -14,7 +14,7 @@ import { generateId, generateUUID } from "../../shared/utils/id.js";
 import { env as config } from "../../config/env.js";
 import { redis } from "../../config/redis.js";
 import { logAudit } from "../../shared/middleware/audit-logger.js";
-import { ACCESS_TOKEN_TTL_SECONDS, MFA_LOGIN_CHALLENGE_TTL_SECONDS, PASSWORD_RESET_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS, buildPasswordHistory, generateAccessToken, generateSecureToken, hashToken as hashAuthToken, normalizeEmail, } from "./utils.js";
+import { ACCESS_TOKEN_TTL_SECONDS, MFA_LOGIN_CHALLENGE_TTL_SECONDS, PASSWORD_RESET_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS, buildPasswordHistory, generateAccessToken, generateRefreshToken, generateSecureToken, hashToken as hashAuthToken, normalizeEmail, } from "./utils.js";
 // ============================================
 // CONSTANTS & CONFIG
 // ============================================
@@ -143,21 +143,23 @@ async function blacklistAccessToken(sessionId) {
 }
 async function revokeUserSessions(userId, reason) {
     const sessions = await repository.listActiveSessionsByUser(userId);
+    console.log("sessions", sessions);
     for (const session of sessions) {
         await repository.revokeSession(session.id, reason);
-        await blacklistAccessToken(session.id);
+        // await blacklistAccessToken(session.id);
     }
     return sessions.length;
 }
 async function issueSessionForUser(options) {
-    const refreshToken = generateSecureToken();
-    const refreshTokenHash = hashAuthToken(refreshToken);
     const now = Date.now();
     const expiresAt = new Date(now + REFRESH_TOKEN_TTL_SECONDS * 1000);
     const absoluteExpiresAt = new Date(now + SESSION_CONFIG.ABSOLUTE_SESSION_TTL * 1000);
+    // Create session first to get the session ID
+    // Use a temporary hash, we'll update after generating the signed JWT
+    const tempHash = hashAuthToken(generateSecureToken());
     const session = await repository.createSession({
         user_id: options.user.id,
-        refresh_token_hash: refreshTokenHash,
+        refresh_token_hash: tempHash,
         access_token_jti: null,
         device_fingerprint: getDeviceFingerprint(options.ipAddress, options.userAgent),
         device_name: options.deviceName || options.userAgent.slice(0, 255),
@@ -170,6 +172,13 @@ async function issueSessionForUser(options) {
         mfa_expires_at: options.mfaVerified
             ? new Date(now + ACCESS_TOKEN_TTL_SECONDS * 1000)
             : null,
+    });
+    // Generate signed JWT refresh token with session ID
+    const refreshToken = generateRefreshToken(options.user.id, session.id);
+    const refreshTokenHash = hashAuthToken(refreshToken);
+    // Update session with the actual refresh token hash
+    await repository.withTransaction(async (client) => {
+        await client.query(`UPDATE user_sessions SET refresh_token_hash = $2 WHERE id = $1`, [session.id, refreshTokenHash]);
     });
     await repository.updateSessionActivity(session.id, session.id);
     return {
@@ -385,7 +394,7 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
         deviceType: clientDeviceType,
         mfaVerified: !user.mfa_enabled,
     });
-    console.log(session);
+    console.log(session, "session ");
     await repository.recordLogin(user.id, ipAddress, userAgent);
     // await logAudit({
     //   user_id: user.id,
@@ -556,6 +565,7 @@ export async function changePassword(userId, input, mfaVerified, ipAddress, requ
     if (!user) {
         throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
     }
+    console.log("user fetched", user);
     if (user.mfa_enabled && !mfaVerified) {
         throw new AuthError("MFA verification required", AuthErrorCodes.MFA_REQUIRED, 403);
     }
@@ -566,24 +576,29 @@ export async function changePassword(userId, input, mfaVerified, ipAddress, requ
     if (!currentPasswordValid) {
         throw new AuthError("Current password is incorrect", AuthErrorCodes.PASSWORD_INCORRECT, 401);
     }
+    console.log("password check pass ");
     await ensurePasswordNotReused(user, input.new_password);
     const passwordHash = await hashPassword(input.new_password);
     const passwordHistory = buildPasswordHistory(user.password_history, user.password_hash);
+    console.log("password history pass");
     const updated = await repository.updateUserPassword(user.id, passwordHash, passwordHistory);
+    console.log("before password update", updated);
     if (!updated) {
         throw new AuthError("Password update failed", AuthErrorCodes.USER_NOT_FOUND, 500);
     }
+    console.log("after password update");
     await revokeUserSessions(user.id, "Password changed");
-    await logAudit({
-        user_id: user.id,
-        org_id: null,
-        action: "user.password_changed",
-        resource_type: "user",
-        resource_id: user.id,
-        ip_address: ipAddress,
-        request_id: requestId,
-        metadata: { action: "change_password" },
-    });
+    console.log("session revoked succeesfully ");
+    // await logAudit({
+    //   user_id: user.id,
+    //   org_id: null,
+    //   action: "user.password_changed",
+    //   resource_type: "user",
+    //   resource_id: user.id,
+    //   ip_address: ipAddress,
+    //   request_id: requestId,
+    //   metadata: { action: "change_password" },
+    // });
 }
 export async function verifyBackupCode(userId, input) {
     const user = await repository.findUserById(userId);
@@ -662,11 +677,19 @@ export async function suspendUser(targetUserId, reason, adminId, isAdmin, ipAddr
 // ============================================
 export async function setupMFA(userId, input, ipAddress) {
     // Rate limit
-    const rateKey = `mfa_setup:${userId}`;
-    const allowed = await checkRateLimit(rateKey, RATE_LIMITS.MFA_SETUP.points, RATE_LIMITS.MFA_SETUP.duration);
-    if (!allowed) {
-        throw new AuthError("Too many MFA setup attempts", AuthErrorCodes.RATE_LIMITED, 429);
-    }
+    // const rateKey = `mfa_setup:${userId}`;
+    // const allowed = await checkRateLimit(
+    //   rateKey,
+    //   RATE_LIMITS.MFA_SETUP.points,
+    //   RATE_LIMITS.MFA_SETUP.duration,
+    // );
+    // if (!allowed) {
+    //   throw new AuthError(
+    //     "Too many MFA setup attempts",
+    //     AuthErrorCodes.RATE_LIMITED,
+    //     429,
+    //   );
+    // }
     const user = await repository.findUserById(userId);
     if (!user) {
         throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
@@ -976,10 +999,29 @@ export async function revokeAllOtherSessions(userId, currentSessionId) {
     return repository.revokeAllOtherSessions(userId, currentSessionId);
 }
 export async function refreshAccessToken(refreshToken, ipAddress, userAgent) {
+    // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
+    let decoded;
+    try {
+        const jwt = (await import("jsonwebtoken")).default;
+        decoded = jwt.verify(refreshToken, config.JWT_REFRESH_SECRET, {
+            algorithms: ["HS256"],
+        });
+    }
+    catch {
+        throw new AuthError("Invalid refresh token", AuthErrorCodes.SESSION_INVALID, 401);
+    }
+    if (decoded.type !== "refresh") {
+        throw new AuthError("Invalid token type", AuthErrorCodes.SESSION_INVALID, 401);
+    }
+    // 2. Look up session by refresh token hash
     const tokenHash = hashAuthToken(refreshToken);
     const session = await repository.findSessionByRefreshToken(tokenHash);
     if (!session) {
         throw new AuthError("Invalid session", AuthErrorCodes.SESSION_INVALID, 401);
+    }
+    // Ensure the JWT claims match the session
+    if (session.user_id !== decoded.sub || session.id !== decoded.jti) {
+        throw new AuthError("Token-session mismatch", AuthErrorCodes.SESSION_INVALID, 401);
     }
     // Check expiration
     if (new Date() > new Date(session.absolute_expires_at)) {
@@ -987,7 +1029,6 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent) {
         throw new AuthError("Session expired", AuthErrorCodes.SESSION_EXPIRED, 401);
     }
     if (new Date() > new Date(session.expires_at)) {
-        // Sliding refresh window expired, but absolute hasn't - allow one refresh
         if (new Date() > new Date(session.absolute_expires_at)) {
             throw new AuthError("Session expired", AuthErrorCodes.SESSION_EXPIRED, 401);
         }
@@ -997,8 +1038,8 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent) {
         await repository.revokeSession(session.id, "User inactive");
         throw new AuthError("User inactive", AuthErrorCodes.USER_SUSPENDED, 401);
     }
-    // Generate new tokens
-    const newRefreshToken = (await randomBytesAsync(32)).toString("hex");
+    // Generate new signed JWT refresh token (token rotation)
+    const newRefreshToken = generateRefreshToken(session.user_id, session.id);
     const newRefreshHash = hashAuthToken(newRefreshToken);
     const accessTokenJti = session.id;
     // Calculate new expiry (extend sliding window, respect absolute)
@@ -1006,7 +1047,7 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent) {
     const finalExpiresAt = newExpiresAt > new Date(session.absolute_expires_at)
         ? new Date(session.absolute_expires_at)
         : newExpiresAt;
-    // Update session
+    // Update session with new refresh token hash
     await repository.withTransaction(async (client) => {
         await client.query(`UPDATE user_sessions 
        SET refresh_token_hash = $2, access_token_jti = $3, expires_at = $4, last_active_at = NOW()
