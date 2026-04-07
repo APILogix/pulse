@@ -1,6 +1,6 @@
-import  type { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { env as config } from '../../config/env.js';
+import { env as config, env } from '../../config/env.js';
 import { redis } from '../../config/redis.js';
 
 interface JWTPayload {
@@ -23,66 +23,97 @@ declare module 'fastify' {
     };
   }
 }
-
-export async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+export async function authenticate(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   try {
+    // =========================
+    // 1. GET TOKEN (Bearer)
+    // =========================
     const authHeader = request.headers.authorization;
+
     if (!authHeader?.startsWith('Bearer ')) {
-      return reply.status(401).send({ error: { code: 'UNAUTHORIZED', message: 'Missing or invalid token' } });
-    }
-
-    const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, config.JWT_SECRET) as JWTPayload;
-    
-    if (decoded.type !== 'access') {
-      return reply.status(401).send({ error: { code: 'INVALID_TOKEN_TYPE', message: 'Invalid token type' } });
-    }
-
-    // Check if token is revoked (in Redis blacklist)
-    const isRevoked = await redis.get(`token_revoke:${decoded.jti}`);
-    if (isRevoked) {
-      return reply.status(401).send({ error: { code: 'TOKEN_REVOKED', message: 'Token has been revoked' } });
-    }
-
-    // Get user from cache or DB
-    const userKey = `user:${decoded.sub}`;
-    let userData = await redis.get(userKey);
-    
-    if (!userData) {
-      // Fetch from DB and cache
-      const { findUserById } = await import('../../modules/auth/repository.js');
-      const user = await findUserById(decoded.sub);
-      if (!user || user.deleted_at) {
-        return reply.status(401).send({ error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
-      }
-      userData = JSON.stringify({
-        id: user.id,
-        email: user.email,
-        status: user.status,
-        isAdmin: false, // Determine from roles/permissions
+      return reply.status(401).send({
+        error: { code: 'UNAUTHORIZED', message: 'Missing token' },
       });
-      await redis.setex(userKey, 300, userData); // Cache 5 min
     }
 
-    const user = JSON.parse(userData);
-    
+    const refreshToken = authHeader.substring(7);
+
+    // =========================
+    // 2. VERIFY REFRESH TOKEN
+    // =========================
+    let decoded: JWTPayload;
+
+    try {
+      decoded = jwt.verify(
+        refreshToken,
+        env.JWT_REFRESH_SECRET
+      ) as JWTPayload;
+    } catch {
+      return reply.status(401).send({
+        error: { code: 'INVALID_TOKEN', message: 'Invalid refresh token' },
+      });
+    }
+
+    if (decoded.type !== 'refresh') {
+      return reply.status(401).send({
+        error: { code: 'INVALID_TOKEN_TYPE', message: 'Expected refresh token' },
+      });
+    }
+
+    // =========================
+    // 3. VALIDATE SESSION (DB)
+    // =========================
+    const { findSessionById, findUserById } = await import(
+      '../../modules/auth/repository.js'
+    );
+
+    const session = await findSessionById(decoded.jti);
+
+    if (!session || session.status !== 'active') {
+      return reply.status(401).send({
+        error: { code: 'SESSION_INVALID', message: 'Session not found or inactive' },
+      });
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      return reply.status(401).send({
+        error: { code: 'SESSION_EXPIRED', message: 'Session expired' },
+      });
+    }
+
+    // =========================
+    // 4. FETCH USER
+    // =========================
+    const user = await findUserById(decoded.sub);
+
+    if (!user || user.deleted_at) {
+      return reply.status(401).send({
+        error: { code: 'USER_NOT_FOUND', message: 'User not found' },
+      });
+    }
+
     if (user.status === 'suspended') {
-      return reply.status(403).send({ error: { code: 'ACCOUNT_SUSPENDED', message: 'Account suspended' } });
+      return reply.status(403).send({
+        error: { code: 'ACCOUNT_SUSPENDED', message: 'Account suspended' },
+      });
     }
 
-    // Attach user to request
+    // =========================
+    // 5. ATTACH USER TO REQUEST
+    // =========================
     request.user = {
-      id: decoded.sub,
+      id: user.id,
       email: user.email,
-      isAdmin: user.isAdmin,
       sessionId: decoded.jti,
-      mfaVerified: decoded.mfa_verified,
     };
+
   } catch (error) {
-    if (error instanceof jwt.TokenExpiredError) {
-      return reply.status(401).send({ error: { code: 'TOKEN_EXPIRED', message: 'Token expired' } });
-    }
-    return reply.status(401).send({ error: { code: 'UNAUTHORIZED', message: 'Invalid token' } });
+    return reply.status(401).send({
+      error: { code: 'UNAUTHORIZED', message: 'Authentication failed' },
+    });
   }
 }
 
@@ -94,12 +125,12 @@ export async function requireAdmin(request: FastifyRequest, reply: FastifyReply)
 
 export async function requireMFA(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (!request.user.mfaVerified) {
-    return reply.status(403).send({ 
-      error: { 
-        code: 'MFA_REQUIRED', 
+    return reply.status(403).send({
+      error: {
+        code: 'MFA_REQUIRED',
         message: 'MFA verification required',
         challenge_required: true,
-      } 
+      }
     });
   }
 }

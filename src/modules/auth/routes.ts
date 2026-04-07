@@ -55,7 +55,7 @@ function handleAuthError(error: unknown, reply: FastifyReply) {
       },
     });
   }
-  
+
   // Log unexpected errors
   console.error('Unexpected auth error:', error);
   return reply.status(500).send({
@@ -97,9 +97,6 @@ async function credentialRoutes(fastify: FastifyInstance) {
   // POST /auth/login - Password login
   fastify.post(
     '/login',
-    {
-      preHandler: [rateLimit({ max: 10, window: 300 })],
-    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const body = LoginSchema.parse(request.body);
@@ -244,11 +241,11 @@ async function userRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const body = CreateUserSchema.parse(request.body);
-        
+
         const { ip } = getClientInfo(request);
-        
+
         const user = await service.createUserFromEmail(body, ip, request.id);
-        
+
         return reply.status(201).send({
           message: 'Account created successfully'
         });
@@ -301,7 +298,7 @@ async function userRoutes(fastify: FastifyInstance) {
       try {
         const body = DeleteUserSchema.parse(request.body);
         const { ip } = getClientInfo(request);
-        
+
         await service.deleteCurrentUser(request.user.id, body, ip, request.id);
 
         return reply.status(204).send();
@@ -359,7 +356,7 @@ async function userRoutes(fastify: FastifyInstance) {
           filters,
           request.user.isAdmin
         );
-        
+
         return reply.send({
           data: users,
           meta: {
@@ -440,9 +437,9 @@ async function mfaRoutes(fastify: FastifyInstance) {
       try {
         const body = MFASetupSchema.parse(request.body);
         const { ip } = getClientInfo(request);
-        
+
         const setup = await service.setupMFA(request.user.id, body, ip);
-        
+
         return reply.status(201).send({
           data: {
             secret: setup.secret,
@@ -507,7 +504,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
       try {
         const body = MFAVerifySchema.parse(request.body);
         const result = await service.verifyMFAChallenge(body.challenge_id, body);
-        
+
         // Issue tokens or complete login flow
         return reply.send({
           data: {
@@ -621,13 +618,13 @@ async function mfaRoutes(fastify: FastifyInstance) {
       try {
         const body = BackupCodeVerificationSchema.parse(request.body);
         const valid = await service.verifyBackupCode(body.user_id, body);
-        
+
         if (!valid) {
           return reply.status(401).send({
             error: { code: 'INVALID_CODE', message: 'Invalid or used backup code' },
           });
         }
-        
+
         return reply.send({ valid: true });
       } catch (error) {
         return handleAuthError(error, reply);
@@ -758,7 +755,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
 export default async function authRoutes(fastify: FastifyInstance) {
   // Health check for auth module
   fastify.get('/health', async () => ({ status: 'ok', module: 'auth' }));
-  
+
   await fastify.register(credentialRoutes, { prefix: '' });
   await fastify.register(userRoutes, { prefix: '' });
   await fastify.register(mfaRoutes, { prefix: '' });

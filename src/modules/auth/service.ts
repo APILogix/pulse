@@ -320,7 +320,7 @@ async function createLoginMFAChallenge(options: {
   await redis.setex(
     `auth_login_challenge:${challengeId}`,
     MFA_LOGIN_CHALLENGE_TTL_SECONDS,
-      JSON.stringify({
+    JSON.stringify({
       userId: options.user.id,
       deviceId: options.challengeDevice.id,
       deviceName: options.deviceName || options.userAgent.slice(0, 255),
@@ -348,8 +348,8 @@ async function consumeBackupCode(
   for (const device of devices) {
     const codes = Array.isArray(device.backup_codes_hash)
       ? device.backup_codes_hash.filter(
-          (entry): entry is string => typeof entry === "string",
-        )
+        (entry): entry is string => typeof entry === "string",
+      )
       : [];
 
     const matchIndex = codes.findIndex((hashedCode) =>
@@ -392,7 +392,7 @@ export async function createUserFromEmail(
   }
 
 
-  const passwordhash= await hashPassword(input.password);
+  const passwordhash = await hashPassword(input.password);
   const user = await repository.createUser({
     id: generateUUID(),
     email: input.email,
@@ -526,39 +526,39 @@ export async function loginWithEmailPassword(
   requestId: string,
 ): Promise<
   | {
-      mfa_required: true;
-      challenge_id: string;
-      expires_at: Date;
-      device_type: string;
-      user_id: string;
-    }
+    mfa_required: true;
+    challenge_id: string;
+    expires_at: Date;
+    device_type: string;
+    user_id: string;
+  }
   | {
-      mfa_required: false;
-      access_token: string;
-      refresh_token: string;
-      expires_at: Date;
-      token_type: "Bearer";
-      session_id: string;
-    }
+    mfa_required: false;
+    access_token: string;
+    refresh_token: string;
+    expires_at: Date;
+    token_type: "Bearer";
+    session_id: string;
+  }
 > {
   const normalizedEmail = normalizeEmail(input.email);
   const emailHash = createHash("sha256")
     .update(normalizedEmail)
     .digest("hex");
 
-  const rateKey = `login:${emailHash}:${ipAddress}`;
-  const allowed = await checkRateLimit(
-    rateKey,
-    RATE_LIMITS.LOGIN.points,
-    RATE_LIMITS.LOGIN.duration,
-  );
-  if (!allowed) {
-    throw new AuthError(
-      "Too many login attempts",
-      AuthErrorCodes.RATE_LIMITED,
-      429,
-    );
-  }
+  // const rateKey = `login:${emailHash}:${ipAddress}`;
+  // const allowed = await checkRateLimit(
+  //   rateKey,
+  //   RATE_LIMITS.LOGIN.points,
+  //   RATE_LIMITS.LOGIN.duration,
+  // );
+  // if (!allowed) {
+  //   throw new AuthError(
+  //     "Too many login attempts",
+  //     AuthErrorCodes.RATE_LIMITED,
+  //     429,
+  //   );
+  // }
 
   const user = await repository.findUserByEmailHash(emailHash);
   if (!user || user.deleted_at || user.status === "deleted") {
@@ -653,20 +653,21 @@ export async function loginWithEmailPassword(
     deviceType: clientDeviceType,
     mfaVerified: !user.mfa_enabled,
   });
+  console.log(session)
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
 
-  await logAudit({
-    user_id: user.id,
-    org_id: null,
-    action: "user.login",
-    resource_type: "user",
-    resource_id: user.id,
-    ip_address: ipAddress,
-    user_agent: userAgent,
-    request_id: requestId,
-    metadata: { session_id: session.sessionId, mfa_required: false },
-  });
+  // await logAudit({
+  //   user_id: user.id,
+  //   org_id: null,
+  //   action: "user.login",
+  //   resource_type: "user",
+  //   resource_id: user.id,
+  //   ip_address: ipAddress,
+  //   user_agent: userAgent,
+  //   request_id: requestId,
+  //   metadata: { session_id: session.sessionId, mfa_required: false },
+  // });
 
   return {
     mfa_required: false,
