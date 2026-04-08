@@ -554,7 +554,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/mfa/devices/:id',
     {
-      preHandler: [authenticate rateLimit({ max: 5, window: 300 })],
+      preHandler: [authenticate , rateLimit({ max: 5, window: 300 })],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -596,7 +596,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/backup-codes',
     {
-      preHandler: [authenticate rateLimit({ max: 3, window: 86400 })], // Once per day
+      preHandler: [authenticate , rateLimit({ max: 3, window: 86400 })], // Once per day
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
