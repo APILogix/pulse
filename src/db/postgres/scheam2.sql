@@ -222,3 +222,78 @@ CREATE TABLE organization_invoices (
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TYPE quota_request_status AS ENUM ('pending', 'approved', 'rejected');
+
+CREATE TABLE organization_usage (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    metric_type VARCHAR(50) NOT NULL,
+    metric_name VARCHAR(255) NOT NULL,
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    granularity VARCHAR(20) NOT NULL DEFAULT 'daily',
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    usage_limit INTEGER,
+    overage_count INTEGER NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(10,4),
+    total_cost DECIMAL(12,4) NOT NULL DEFAULT 0,
+    details JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (org_id, metric_type, period_start, granularity)
+);
+
+CREATE INDEX idx_usage_org_period ON organization_usage(org_id, period_start DESC);
+CREATE INDEX idx_usage_metric ON organization_usage(metric_type, period_start DESC);
+
+CREATE TABLE organization_usage_counters (
+    org_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    current_period_start TIMESTAMPTZ NOT NULL,
+    api_requests_this_period INTEGER NOT NULL DEFAULT 0,
+    metrics_ingested_this_period INTEGER NOT NULL DEFAULT 0,
+    storage_gb_this_period DECIMAL(12,4) NOT NULL DEFAULT 0,
+    notifications_sent_this_period INTEGER NOT NULL DEFAULT 0,
+    total_api_requests_all_time INTEGER NOT NULL DEFAULT 0,
+    total_metrics_ingested_all_time INTEGER NOT NULL DEFAULT 0,
+    last_updated_at TIMESTAMPTZ DEFAULT NOW(),
+    limit_warning_80_sent_at TIMESTAMPTZ,
+    limit_warning_100_sent_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE coupons (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code VARCHAR(50) NOT NULL UNIQUE,
+    description TEXT,
+    discount_type VARCHAR(20) NOT NULL CHECK (discount_type IN ('percentage', 'fixed_amount')),
+    discount_value DECIMAL(12,2) NOT NULL,
+    currency VARCHAR(3),
+    duration VARCHAR(20) NOT NULL CHECK (duration IN ('once', 'repeating', 'forever')),
+    duration_in_months INTEGER,
+    max_redemptions INTEGER,
+    redeem_by TIMESTAMPTZ,
+    times_redeemed INTEGER NOT NULL DEFAULT 0,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE quota_requests (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    quota_type VARCHAR(50) NOT NULL,
+    requested_limit INTEGER NOT NULL,
+    current_limit INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    status quota_request_status NOT NULL DEFAULT 'pending',
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_quota_requests_org ON quota_requests(org_id, created_at DESC);
+CREATE INDEX idx_coupons_active ON coupons(code) WHERE is_active = TRUE;

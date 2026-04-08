@@ -16,6 +16,7 @@ import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { registerPlugins } from "./config/plugins.js";
 import { registerAuthModule } from "./modules/auth/auth.module.js";
+import { registerBillingModule } from "./modules/billing/billing.module.js";
 import fastifyRawBody from "fastify-raw-body";
 
 declare module "fastify" {
@@ -106,6 +107,14 @@ export async function buildApp(): Promise<FastifyInstance> {
       logger.info("Auth module registered successfully");
     } catch (err) {
       logger.error({ err }, "Failed to register auth module");
+      throw err;
+    }
+
+    try {
+      await app.register(registerBillingModule);
+      logger.info("Billing module registered successfully");
+    } catch (err) {
+      logger.error({ err }, "Failed to register billing module");
       throw err;
     }
 
