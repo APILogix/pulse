@@ -183,6 +183,7 @@ export const CreateUserSchema = z.object({
   
 });
 
+
 export type CreateUserInput = z.infer<typeof CreateUserSchema>;
 
 // Login
@@ -287,6 +288,7 @@ export type BackupCodeVerificationInput = z.infer<typeof BackupCodeVerificationS
 // WEBHOOK TYPES
 // ============================================
 
+export const EmptyBodySchema = z.undefined();
 export const ClerkWebhookSchema = z.object({
   type: z.enum(['user.created', 'user.updated', 'user.deleted', 'session.created', 'session.ended']),
   data: z.object({
@@ -344,3 +346,4 @@ export const AuthErrorCodes = {
   INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
   EMAIL_VERIFICATION_INVALID: 'EMAIL_VERIFICATION_INVALID',
 } as const;
+

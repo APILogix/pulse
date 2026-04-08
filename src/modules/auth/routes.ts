@@ -21,6 +21,7 @@ import {
   BackupCodeVerificationSchema,
   AuthError,
   AuthErrorCodes,
+  EmptyBodySchema,
 } from './types.js';
 
 import { authenticate, requireAdmin, requireMFA } from '../../shared/middleware/auth.js';
@@ -710,24 +711,24 @@ async function sessionRoutes(fastify: FastifyInstance) {
     }
   );
 
+
   // POST /auth/sessions/refresh - Refresh access token
   fastify.post(
     '/sessions/refresh',
-    {
-      preHandler: [rateLimit({ max: 10, window: 60 })],
-    },
+   
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { ip, userAgent } = getClientInfo(request);
-
+        console.log("refresh session hit")
         // Read refresh token from httpOnly cookie
         const refreshToken = (request.cookies as Record<string, string | undefined>)?.refresh_token;
         if (!refreshToken) {
+          console.log("refresh token not found")
           return reply.status(401).send({
             error: { code: 'MISSING_REFRESH_TOKEN', message: 'Refresh token cookie not found' },
           });
         }
-
+        console.log("refresh token found")
         const result = await service.refreshAccessToken(refreshToken, ip, userAgent);
 
         // Set new refresh token cookie (token rotation)

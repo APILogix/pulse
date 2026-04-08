@@ -20,6 +20,9 @@ export async function registerPlugins(app: FastifyInstance): Promise<void> {
     // Quick DB ping checks here
     return { status: 'ready' };
   });
+  app.get("/sessions",async () => {
+    return { sessions: [] }; // Placeholder for actual session data
+  });
 
   // Liveness probe (always returns 200 if process running)
   app.get('/live', async () => ({ status: 'alive' }));

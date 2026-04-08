@@ -4,7 +4,7 @@ import helmet from "@fastify/helmet";
 import cors from "@fastify/cors";
 import compress from "@fastify/compress";
 import cookie from "@fastify/cookie";
-import rateLimit from "@fastify/rate-limit";
+import fastifyRateLimit from "@fastify/rate-limit";  // ✅ RENAMED
 import sensible from "@fastify/sensible";
 import underPressure from "@fastify/under-pressure";
 import {
@@ -17,7 +17,7 @@ import { logger } from "./config/logger.js";
 import { registerPlugins } from "./config/plugins.js";
 import { registerAuthModule } from "./modules/auth/auth.module.js";
 import fastifyRawBody from "fastify-raw-body";
-//  Extend FastifyRequest (fix startTime issue)
+
 declare module "fastify" {
   interface FastifyRequest {
     startTime: number;
@@ -26,7 +26,7 @@ declare module "fastify" {
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: false,
+    logger: false,  // ✅ Use your logger instance
     trustProxy: true,
     genReqId: () => `req-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     connectionTimeout: 30000,
@@ -37,7 +37,6 @@ export async function buildApp(): Promise<FastifyInstance> {
       caseSensitive: false,
       ignoreTrailingSlash: true,
     },
-
     disableRequestLogging: false,
   });
 
@@ -46,85 +45,101 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.setSerializerCompiler(serializerCompiler);
   app.withTypeProvider<ZodTypeProvider>();
 
-  //  Redis instance (FIXED import issue)
-  //   const redis = new Redis(env.REDIS_URL)
+  try {
+    // Plugins - with individual error handling
+    await app.register(underPressure, {
+      maxEventLoopDelay: 1000,
+      maxHeapUsedBytes: 512 * 1024 * 1024,
+      maxRssBytes: 1 * 1024 * 1024 * 1024,
+      maxEventLoopUtilization: 0.98,
+      pressureHandler: (req, rep, type) => {
+        logger.warn({ type }, "Server under pressure");
+        rep.status(503).send({ error: "Server busy", retryAfter: 10 });
+      },
+    });
 
-  // Plugins
-  await app.register(underPressure, {
-    maxEventLoopDelay: 1000,
-    maxHeapUsedBytes: 512 * 1024 * 1024,
-    maxRssBytes: 1 * 1024 * 1024 * 1024,
-    maxEventLoopUtilization: 0.98,
-    pressureHandler: (req, rep, type) => {
-      logger.warn({ type }, "Server under pressure");
-      rep.status(503).send({ error: "Server busy", retryAfter: 10 });
-    },
-  });
+    await app.register(helmet, {
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+      hsts: env.NODE_ENV === "production" ? { maxAge: 31536000 } : false,
+    });
 
-  await app.register(helmet, {
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-    hsts: env.NODE_ENV === "production" ? { maxAge: 31536000 } : false,
-  });
-
-  await app.register(cors, {
-    origin:
-      env.NODE_ENV === "development"
+    await app.register(cors, {
+      origin: env.NODE_ENV === "development"
         ? ["http://localhost:3000", "http://localhost:5173"]
         : ["https://yourdomain.com"],
-    credentials: true,
-  });
+      credentials: true,
+    });
 
-  await app.register(compress);
+    await app.register(compress);
+    await app.register(cookie, { secret: env.JWT_SECRET });
 
-  await app.register(cookie, {
-    secret: env.JWT_SECRET, // used for signing cookies
-  });
+    await app.register(fastifyRawBody, {
+      field: "rawBody",
+      global: false,
+      encoding: "utf8",
+      runFirst: true,
+    });
 
-  await app.register(fastifyRawBody, {
-    field: "rawBody", // where raw body will be stored
-    global: false, // only enable per-route
-    encoding: "utf8",
-    runFirst: true,
-  });
-  await app.register(rateLimit, {
-    max: 100,
-    timeWindow: "1 minute",
-    // redis,
-    keyGenerator: (req) => req.ip || "unknown",
-    skipOnError: true,
-  });
+    // ✅ RENAMED to avoid conflict with your custom rateLimit middleware
+    await app.register(fastifyRateLimit, {
+      max: 100,
+      timeWindow: "1 minute",
+      keyGenerator: (req: FastifyRequest) => req.ip || "unknown",
+      skipOnError: true,
+      // Don't use Redis for now until it's fixed
+    });
 
-  await app.register(sensible);
-  // all route plugins (including docs and health checks)
-  await app.register(registerPlugins);
-  await app.register(registerAuthModule);
-  // Hooks
-  //   app.addHook('onRequest', async (request) => {
-  //     request.startTime = Date.now()
-  //   })
+    await app.register(sensible);
 
-  //   app.addHook('onResponse', async (request, reply) => {
-  //     const duration = Date.now() - request.startTime
+    // ✅ Add error handling for these
+    try {
+      await app.register(registerPlugins);
+      logger.info("Plugins registered successfully");
+    } catch (err) {
+      logger.error({ err }, "Failed to register plugins");
+      throw err;
+    }
 
-  //     request.log.info({
-  //       statusCode: reply.statusCode,
-  //       duration,
-  //     })
+    try {
+      await app.register(registerAuthModule);
+      logger.info("Auth module registered successfully");
+    } catch (err) {
+      logger.error({ err }, "Failed to register auth module");
+      throw err;
+    }
 
-  //     if (duration > 1000) {
-  //       request.log.warn({ duration }, 'Slow request')
-  //     }
-  //   })
+  } catch (pluginError) {
+    logger.fatal({ pluginError }, "Failed to initialize plugins");
+    throw pluginError;
+  }
 
-  //  Proper error typing
+  // Error handler
   app.setErrorHandler((error: any, request, reply) => {
     const isDev = env.NODE_ENV === "development";
+
+    // Log full error in dev
+    if (isDev) {
+      logger.error({
+        err: error,
+        validation: error.validation,
+        stack: error.stack
+      }, "Request error");
+    }
 
     if (error.validation) {
       return reply.status(400).send({
         statusCode: 400,
         message: isDev ? error.message : "Validation failed",
+        errors: error.validation,  // Add validation details
+      });
+    }
+
+    // Handle specific Fastify errors
+    if (error.code === 'FST_ERR_VALIDATION') {
+      return reply.status(400).send({
+        statusCode: 400,
+        message: isDev ? error.message : "Invalid request",
       });
     }
 
@@ -132,6 +147,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       statusCode: error.statusCode || 500,
       message: isDev ? error.message : "Internal Server Error",
       requestId: request.id,
+      ...(isDev && { stack: error.stack }),  // Include stack in dev
     });
   });
 

@@ -54,7 +54,7 @@ import {
   hashToken as hashAuthToken,
   normalizeEmail,
 } from "./utils.js";
-
+import { env } from "../../config/env.js";
 // ============================================
 // CONSTANTS & CONFIG
 // ============================================
@@ -1684,10 +1684,11 @@ export async function refreshAccessToken(
   userAgent: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
   // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
+  console.log("refresh token found phase 3")
   let decoded: { sub: string; jti: string; type: string };
   try {
     const jwt = (await import("jsonwebtoken")).default;
-    decoded = jwt.verify(refreshToken, config.JWT_REFRESH_SECRET, {
+    decoded = jwt.verify(refreshToken, env.JWT_REFRESH_SECRET, {
       algorithms: ["HS256"],
     }) as { sub: string; jti: string; type: string };
   } catch {
