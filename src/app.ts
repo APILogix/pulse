@@ -82,7 +82,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       runFirst: true,
     });
 
-    // ✅ RENAMED to avoid conflict with your custom rateLimit middleware
+    //  RENAMED to avoid conflict with your custom rateLimit middleware
     await app.register(fastifyRateLimit, {
       max: 100,
       timeWindow: "1 minute",
@@ -93,7 +93,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     await app.register(sensible);
 
-    // ✅ Add error handling for these
+    // Add error handling for these
     try {
       await app.register(registerPlugins);
       logger.info("Plugins registered successfully");

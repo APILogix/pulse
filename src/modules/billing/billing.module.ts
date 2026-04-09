@@ -3,7 +3,7 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { BillingRepository } from './repository.js';
-import  type { BillingService } from './billing.service.js';
+import { BillingService } from './billing.service.js';
 import { QuotaService } from './quota-service.js';
 import { billingRoutes } from './routes.js';
 import { createBillingLogger } from './utils.js';
@@ -22,7 +22,7 @@ const logger = createBillingLogger('Module');
 
 async function billingModule(
   fastify: FastifyInstance,
-  options: FastifyPluginOptions
+  _options: FastifyPluginOptions
 ): Promise<void> {
   const repository = new BillingRepository();
   const service = new BillingService(repository);
@@ -48,4 +48,5 @@ async function billingModule(
   });
 }
 
-export default fp(billingModule, { name: 'billing-module' });
+export const registerBillingModule = fp(billingModule, { name: 'billing-module' });
+export default registerBillingModule;

@@ -1,9 +1,13 @@
 // billing.service.ts - Billing Business Logic Service
 
-import type { string, number } from 'zod';
-import type { id } from 'zod/v4/locales';
 import { BillingRepository } from './repository.js';
 import {
+  BillingInterval,
+  SubscriptionStatus,
+  InvoiceStatus,
+  UsageMetricType
+} from './types.js';
+import type {
   BillingPlan,
   OrganizationBilling,
   PaymentMethod,
@@ -17,25 +21,16 @@ import {
   CancelSubscriptionBody,
   AddPaymentMethodBody,
   UpdateBillingSettingsBody,
-  ApplyCouponBody,
-  QuotaIncreaseBody,
-  BillingInterval,
-  SubscriptionStatus,
-  InvoiceStatus,
-  PaymentMethodType,
-  UsageMetricType
+  QuotaIncreaseBody
 } from './types.js';
 import {
   calculateProration,
-  calculateTaxAmount,
   calculateDiscount,
   calculateMrr,
   addDays,
   addMonths,
   daysBetween,
   checkLimitExceeded,
-  generateLineItems,
-  calculateInvoiceTotals,
   projectUsage,
   BillingError,
   BillingErrorCodes,
@@ -330,18 +325,12 @@ export class BillingService {
     orgId: string,
     body: AddPaymentMethodBody
   ): Promise<ServiceResponse<PaymentMethod>> {
-    const paymentMethod = await this.repository.create// billing.service.ts - Billing Business Logic Service (Continued)
-
-  async addPaymentMethod(
-    orgId: string,
-    body: AddPaymentMethodBody
-  ): Promise<ServiceResponse<PaymentMethod>> {
     const paymentMethod = await this.repository.createPaymentMethod({
       orgId,
       type: body.type,
-      stripePaymentMethodId: body.stripePaymentMethodId,
-      paypalEmail: body.paypalEmail,
-      billingDetails: body.billingDetails
+      stripePaymentMethodId: body.stripePaymentMethodId ?? null,
+      paypalEmail: body.paypalEmail ?? null,
+      billingDetails: body.billingDetails ?? null
     });
 
     return { success: true, data: paymentMethod };
@@ -588,7 +577,8 @@ export class BillingService {
     }
 
     const plan = await this.repository.getPlanById(billing.planId);
-    const currentLimit = plan?.limits[type as keyof typeof plan.limits] as number || 0;
+    const currentLimit =
+      (plan?.limits[type as unknown as keyof typeof plan.limits] as number | undefined) ?? 0;
 
     const quotaRequest = await this.repository.createQuotaRequest({
       orgId,

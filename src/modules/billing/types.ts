@@ -451,6 +451,7 @@ export interface UpdateSettingsBody {
   billingEmail?: string;
   billingAddress?: Record<string, any>;
   taxId?: string;
+  netTermsDays?: number;
 }
 
 export interface ApplyCouponBody {
@@ -470,6 +471,12 @@ export interface ListQueryParams {
   startDate?: string;
   endDate?: string;
 }
+
+// Backward-compatible aliases used by routes/service
+export type RequestWithUser = AuthenticatedRequest;
+export type UpdateBillingSettingsBody = UpdateSettingsBody;
+export type QuotaIncreaseBody = QuotaIncreaseRequest;
+export type ListInvoicesQuery = ListQueryParams;
 
 // ============================================
 // WEBHOOK TYPES

@@ -1,11 +1,8 @@
 // quota-service.ts - Quota Management Service
 
 import { BillingRepository } from './repository.js';
-import {
-  UsageMetricType,
-  ServiceResponse,
-  PlanLimits
-} from './types.js';
+import { UsageMetricType } from './types.js';
+import type { ServiceResponse, PlanLimits } from './types.js';
 import {
   checkLimitExceeded,
   projectUsage,

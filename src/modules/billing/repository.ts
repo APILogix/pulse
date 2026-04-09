@@ -34,8 +34,8 @@ const logger = createBillingLogger('Repository');
 export class BillingRepository {
   private pool;
 
-  constructor(pool: Pool) {
-    this.pool = pool;
+  constructor(poolInstance: Pool = pool) {
+    this.pool = poolInstance;
   }
 
   // ============================================
