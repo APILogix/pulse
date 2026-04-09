@@ -34,12 +34,12 @@ async function billingModule(
     quotaService
   });
 
-  try {
-    await repository.seedDefaultPlans();
-    logger.info('Billing module initialized and plans seeded');
-  } catch (error) {
-    logger.error('Failed to seed default plans', error);
-  }
+  // try {
+  //   await repository.seedDefaultPlans();
+  //   logger.info('Billing module initialized and plans seeded');
+  // } catch (error) {
+  //   logger.error('Failed to seed default plans', error);
+  // }
 
   await fastify.register(billingRoutes, { prefix: '/billing' });
 

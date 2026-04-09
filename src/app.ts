@@ -18,6 +18,7 @@ import { registerPlugins } from "./config/plugins.js";
 import { registerAuthModule } from "./modules/auth/auth.module.js";
 import { registerBillingModule } from "./modules/billing/billing.module.js";
 import fastifyRawBody from "fastify-raw-body";
+import registerOrganizationModule from "./modules/organization/organization.module.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -110,6 +111,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       throw err;
     }
 
+     try {
+      await app.register(registerOrganizationModule);
+      logger.info("Organization module registered successfully");
+    } catch (err) {
+      logger.error({ err }, "Failed to register organization module");
+      throw err;
+    }
     try {
       await app.register(registerBillingModule);
       logger.info("Billing module registered successfully");

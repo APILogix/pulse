@@ -1,0 +1,293 @@
+{
+  "info": {
+    "name": "API Monitoring Backend - Organization Module",
+    "_postman_id": "f460f787-6498-42f1-8df5-76362bc38df7",
+    "description": "Postman collection for /organizations routes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "" },
+    { "key": "orgId", "value": "" },
+    { "key": "memberUserId", "value": "" },
+    { "key": "invitationId", "value": "" },
+    { "key": "slug", "value": "acme-team" },
+    { "key": "invitationToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Organizations",
+      "item": [
+        {
+          "name": "Create Organization",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Inc\",\n  \"billingEmail\": \"billing@acme.com\",\n  \"billingName\": \"Acme Billing\",\n  \"dataRegion\": \"us-east-1\",\n  \"enforceSso\": false,\n  \"enforceMfa\": false\n}"
+            },
+            "url": "{{baseUrl}}/organizations"
+          }
+        },
+        {
+          "name": "List My Organizations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations"
+          }
+        },
+        {
+          "name": "Get Organization",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}"
+          }
+        },
+        {
+          "name": "Update Organization",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Platform\",\n  \"description\": \"Updated org description\",\n  \"websiteUrl\": \"https://acme.com\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}"
+          }
+        },
+        {
+          "name": "Delete Organization",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/organizations/{{orgId}}"
+          }
+        },
+        {
+          "name": "Restore Organization",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/restore"
+          }
+        },
+        {
+          "name": "Get Audit Log",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/audit-log?limit=50&offset=0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Billing and Security",
+      "item": [
+        {
+          "name": "Get Billing",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/billing"
+          }
+        },
+        {
+          "name": "Update Billing",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"billingEmail\": \"finance@acme.com\",\n  \"billingName\": \"Acme Finance\",\n  \"billingAddress\": {\n    \"street\": \"1 Main St\",\n    \"city\": \"San Francisco\",\n    \"state\": \"CA\",\n    \"zip\": \"94105\",\n    \"country\": \"US\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/billing"
+          }
+        },
+        {
+          "name": "Get Plan",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/plan"
+          }
+        },
+        {
+          "name": "Upgrade Plan",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": \"professional\",\n  \"billingCycle\": \"monthly\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/plan/upgrade"
+          }
+        },
+        {
+          "name": "Get Security Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/security-settings"
+          }
+        },
+        {
+          "name": "Update Security Settings",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enforceSso\": true,\n  \"enforceMfa\": true,\n  \"allowedEmailDomains\": [\"acme.com\"],\n  \"sessionTimeoutMinutes\": 120\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/security-settings"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Members",
+      "item": [
+        {
+          "name": "List Members",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members"
+          }
+        },
+        {
+          "name": "Get Member",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members/{{memberUserId}}"
+          }
+        },
+        {
+          "name": "Add Member",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{memberUserId}}\",\n  \"role\": \"member\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members"
+          }
+        },
+        {
+          "name": "Remove Member",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members/{{memberUserId}}"
+          }
+        },
+        {
+          "name": "Update Member Role",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"admin\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members/{{memberUserId}}/role"
+          }
+        },
+        {
+          "name": "Transfer Ownership",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/members/{{memberUserId}}/transfer-ownership"
+          }
+        },
+        {
+          "name": "Leave Organization",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/leave"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invitations",
+      "item": [
+        {
+          "name": "List Invitations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/{{orgId}}/invitations?status=pending"
+          }
+        },
+        {
+          "name": "Create Invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new.user@acme.com\",\n  \"role\": \"member\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/{{orgId}}/invitations"
+          }
+        },
+        {
+          "name": "Accept Invitation",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{invitationToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/organizations/invitations/accept"
+          }
+        },
+        {
+          "name": "Validate Invitation Token (Public)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/invitations/validate?token={{invitationToken}}"
+          }
+        },
+        {
+          "name": "Decline Invitation",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/organizations/invitations/{{invitationId}}/decline"
+          }
+        },
+        {
+          "name": "Resend Invitation",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/organizations/invitations/{{invitationId}}/resend"
+          }
+        },
+        {
+          "name": "Revoke Invitation",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/organizations/invitations/{{invitationId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Utilities",
+      "item": [
+        {
+          "name": "Check Slug Availability",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{baseUrl}}/organizations/slug-available/{{slug}}"
+          }
+        }
+      ]
+    }
+  ]
+}
