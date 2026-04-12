@@ -1,9 +1,12 @@
-import { createHash } from 'crypto';
+import { createHash } from "crypto";
+import { generateInvitationToken } from "./utils.js";
 import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
   type AddMemberInput,
+  type AuditAction,
+  type AuditResourceType,
   type CreateInvitationInput,
   type CreateOrganizationInput,
   type OrgRole,
@@ -13,10 +16,10 @@ import {
   type OrganizationServiceDependencies,
   type UpdateBillingInput,
   type UpdateOrganizationInput,
+  type UpdateOrganizationRecord,
   type UpdateSecurityInput,
-  type UpgradePlanInput
-} from './types.js';
-import { generateInvitationToken, generateSlug } from './utils.js';
+  type UpgradePlanInput,
+} from "./types.js";
 
 interface RequestMeta {
   ipAddress: string | null;
@@ -24,56 +27,43 @@ interface RequestMeta {
 }
 
 const ROLE_HIERARCHY: Record<OrgRole, number> = {
-  owner: 4,
-  admin: 3,
+  owner: 5,
+  admin: 4,
+  billing: 3,
   member: 2,
-  viewer: 1
+  viewer: 1,
 };
 
 export class OrganizationService {
   constructor(private readonly deps: OrganizationServiceDependencies) {}
 
-  async createOrganization(data: CreateOrganizationInput, ownerUserId: string, meta?: RequestMeta): Promise<Organization> {
-    const now = new Date();
-    const trialEndsAt = new Date(now);
-    trialEndsAt.setDate(trialEndsAt.getDate() + 14);
-
+  async createOrganization(
+    data: CreateOrganizationInput,
+    ownerUserId: string,
+    meta?: RequestMeta,
+  ): Promise<Organization> {
     const org = await this.deps.repository.create({
       name: data.name,
-      slug: data.slug ?? generateSlug(data.name),
-      description: data.description ?? null,
-      websiteUrl: data.websiteUrl ?? null,
       ownerUserId,
-      billingEmail: data.billingEmail,
-      billingName: data.billingName ?? null,
-      billingAddress: data.billingAddress ?? null,
-      dataRegion: data.dataRegion,
-      enforceSso: data.enforceSso,
-      enforceMfa: data.enforceMfa,
-      allowedEmailDomains: data.allowedEmailDomains ?? null,
-      ipAllowlist: data.ipAllowlist ?? null,
-      status: 'trial',
-      trialStartedAt: now,
-      trialEndsAt,
-      planId: 'starter',
-      planStartedAt: now,
-      sessionTimeoutMinutes: 480,
-      dataRetentionDays: 30
     });
 
-    await this.audit(org.id, ownerUserId, 'organization.created', 'organization', org.id, {
-      planId: org.planId,
-      dataRegion: org.dataRegion
-    }, meta);
+    // await this.audit(
+    //   org.id,
+    //   ownerUserId,
+    //   "org.created",
+    //   "organization",
+    //   org.id,
+    //   { name: org.name, planId: org.planId },
+    //   meta,
+    // );
 
-    this.deps.logger.info({ orgId: org.id, ownerUserId }, 'Organization created');
+    // this.deps.logger.info({ orgId: org.id, ownerUserId }, "Organization created");
 
-    await this.safeEmit('organization.created', {
-      orgId: org.id,
-      ownerUserId,
-      planId: org.planId,
-      dataRegion: org.dataRegion
-    });
+    // await this.safeEmit("organization.created", {
+    //   orgId: org.id,
+    //   ownerUserId,
+    //   planId: org.planId,
+    // });
 
     return org;
   }
@@ -85,15 +75,15 @@ export class OrganizationService {
   async getOrganization(orgId: string, userId: string, requiredRole?: OrgRole): Promise<Organization> {
     const [org, membership] = await Promise.all([
       this.deps.repository.findById(orgId),
-      this.deps.repository.findMember(orgId, userId)
+      this.deps.repository.findMember(orgId, userId),
     ]);
 
     if (!org) {
-      throw new NotFoundError('Organization');
+      throw new NotFoundError("Organization");
     }
 
     if (!membership || !membership.isActive) {
-      throw new ForbiddenError('Not a member of this organization');
+      throw new ForbiddenError("Not a member of this organization");
     }
 
     if (requiredRole && !this.hasRequiredRole(membership.role, requiredRole)) {
@@ -107,11 +97,12 @@ export class OrganizationService {
     orgId: string,
     data: UpdateOrganizationInput,
     userId: string,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<Organization> {
-    await this.getOrganization(orgId, userId, 'admin');
+    await this.getOrganization(orgId, userId, "admin");
 
-    const updatePayload: Parameters<typeof this.deps.repository.update>[1] = {};
+    const updatePayload: UpdateOrganizationRecord = {};
+
     if (data.name !== undefined) updatePayload.name = data.name;
     if (data.description !== undefined) updatePayload.description = data.description;
     if (data.websiteUrl !== undefined) updatePayload.websiteUrl = data.websiteUrl;
@@ -121,76 +112,100 @@ export class OrganizationService {
     if (data.dataRegion !== undefined) updatePayload.dataRegion = data.dataRegion;
     if (data.enforceSso !== undefined) updatePayload.enforceSso = data.enforceSso;
     if (data.enforceMfa !== undefined) updatePayload.enforceMfa = data.enforceMfa;
-    if (data.allowedEmailDomains !== undefined) updatePayload.allowedEmailDomains = data.allowedEmailDomains;
+    if (data.allowedEmailDomains !== undefined) {
+      updatePayload.allowedEmailDomains = data.allowedEmailDomains;
+    }
     if (data.ipAllowlist !== undefined) updatePayload.ipAllowlist = data.ipAllowlist;
     if (data.sessionTimeoutMinutes !== undefined) {
       updatePayload.sessionTimeoutMinutes = data.sessionTimeoutMinutes;
     }
-    if (data.dataRetentionDays !== undefined) updatePayload.dataRetentionDays = data.dataRetentionDays;
+    if (data.dataRetentionDays !== undefined) {
+      updatePayload.dataRetentionDays = data.dataRetentionDays;
+    }
 
     const updated = await this.deps.repository.update(orgId, updatePayload);
 
-    await this.audit(orgId, userId, 'organization.updated', 'organization', orgId, {
-      fields: Object.keys(data)
-    }, meta);
+    await this.audit(
+      orgId,
+      userId,
+      "org.updated",
+      "organization",
+      orgId,
+      { fields: Object.keys(updatePayload) },
+      meta,
+    );
 
-    this.deps.logger.info({ orgId, updatedBy: userId }, 'Organization updated');
+    this.deps.logger.info({ orgId, updatedBy: userId }, "Organization updated");
 
     return updated;
   }
 
   async deleteOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<void> {
     const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || member.role !== 'owner') {
-      throw new ForbiddenError('Only owner can delete organization');
+    if (!member || member.role !== "owner") {
+      throw new ForbiddenError("Only owner can delete organization");
     }
 
     await this.deps.repository.softDelete(orgId, userId);
 
-    await this.audit(orgId, userId, 'organization.deleted', 'organization', orgId, null, meta);
-    this.deps.logger.warn({ orgId, deletedBy: userId }, 'Organization deleted');
+    await this.audit(orgId, userId, "org.deleted", "organization", orgId, null, meta);
+    this.deps.logger.warn({ orgId, deletedBy: userId }, "Organization deleted");
 
-    await this.safeEmit('organization.deleted', { orgId, deletedBy: userId });
+    await this.safeEmit("organization.deleted", { orgId, deletedBy: userId });
   }
 
   async restoreOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<Organization> {
     const org = await this.deps.repository.findById(orgId, true);
     if (!org || !org.deletedAt) {
-      throw new NotFoundError('Organization');
+      throw new NotFoundError("Organization");
     }
 
     if (org.ownerUserId !== userId) {
-      throw new ForbiddenError('Only owner can restore organization');
+      throw new ForbiddenError("Only owner can restore organization");
     }
 
     await this.deps.repository.restore(orgId);
-    await this.audit(orgId, userId, 'organization.restored', 'organization', orgId, null, meta);
+    await this.audit(orgId, userId, "org.updated", "organization", orgId, { restored: true }, meta);
 
     const restored = await this.deps.repository.findById(orgId);
     if (!restored) {
-      throw new NotFoundError('Organization');
+      throw new NotFoundError("Organization");
     }
 
-    this.deps.logger.info({ orgId, restoredBy: userId }, 'Organization restored');
+    this.deps.logger.info({ orgId, restoredBy: userId }, "Organization restored");
     return restored;
   }
 
   async getAuditLogs(orgId: string, userId: string, limit = 50, offset = 0) {
-    await this.getOrganization(orgId, userId, 'admin');
+    await this.getOrganization(orgId, userId, "admin");
     return this.deps.repository.findAuditLogs(orgId, limit, offset);
   }
 
-  async updateBilling(orgId: string, data: UpdateBillingInput, userId: string, meta?: RequestMeta): Promise<Organization> {
-    await this.getOrganization(orgId, userId, 'admin');
+  async updateBilling(
+    orgId: string,
+    data: UpdateBillingInput,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<Organization> {
+    await this.getOrganization(orgId, userId, "admin");
 
     const updated = await this.deps.repository.update(orgId, {
       billingEmail: data.billingEmail,
       billingName: data.billingName ?? null,
-      billingAddress: data.billingAddress
+      billingAddress: data.billingAddress,
     });
 
-    await this.audit(orgId, userId, 'billing.updated', 'organization', orgId, null, meta);
-    this.deps.logger.info({ orgId, updatedBy: userId }, 'Billing settings updated');
+    await this.audit(
+      orgId,
+      userId,
+      "org.updated",
+      "organization",
+      orgId,
+      { section: "billing" },
+      meta,
+    );
+
+    this.deps.logger.info({ orgId, updatedBy: userId }, "Billing settings updated");
 
     return updated;
   }
@@ -199,48 +214,71 @@ export class OrganizationService {
     orgId: string,
     data: UpdateSecurityInput,
     userId: string,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<Organization> {
-    await this.getOrganization(orgId, userId, 'admin');
+    await this.getOrganization(orgId, userId, "admin");
 
     const updated = await this.deps.repository.update(orgId, {
       enforceSso: data.enforceSso,
       enforceMfa: data.enforceMfa,
-      allowedEmailDomains: data.allowedEmailDomains ?? null,
-      ipAllowlist: data.ipAllowlist ?? null,
-      sessionTimeoutMinutes: data.sessionTimeoutMinutes
+      allowedEmailDomains: data.allowedEmailDomains,
+      ipAllowlist: data.ipAllowlist,
+      sessionTimeoutMinutes: data.sessionTimeoutMinutes,
     });
 
-    await this.audit(orgId, userId, 'security.updated', 'organization', orgId, {
-      enforceSso: data.enforceSso,
-      enforceMfa: data.enforceMfa
-    }, meta);
+    await this.audit(
+      orgId,
+      userId,
+      "org.updated",
+      "organization",
+      orgId,
+      {
+        section: "security",
+        enforceSso: data.enforceSso,
+        enforceMfa: data.enforceMfa,
+      },
+      meta,
+    );
 
-    this.deps.logger.info({ orgId, updatedBy: userId }, 'Security settings updated');
+    this.deps.logger.info({ orgId, updatedBy: userId }, "Security settings updated");
     return updated;
   }
 
-  async upgradePlan(orgId: string, data: UpgradePlanInput, userId: string, meta?: RequestMeta): Promise<Organization> {
+  async upgradePlan(
+    orgId: string,
+    data: UpgradePlanInput,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<Organization> {
     const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || member.role !== 'owner') {
-      throw new ForbiddenError('Only owner can upgrade plan');
+    if (!member || member.role !== "owner") {
+      throw new ForbiddenError("Only owner can upgrade plan");
     }
 
     const updated = await this.deps.repository.update(orgId, {
       planId: data.planId,
-      planStartedAt: new Date()
+      planStartedAt: new Date(),
+      billingStatus: "active",
     });
 
-    await this.audit(orgId, userId, 'plan.upgraded', 'organization', orgId, {
-      planId: data.planId,
-      billingCycle: data.billingCycle
-    }, meta);
+    await this.audit(
+      orgId,
+      userId,
+      "billing.subscription_created",
+      "subscription",
+      orgId,
+      {
+        planId: data.planId,
+        billingCycle: data.billingCycle,
+      },
+      meta,
+    );
 
-    await this.safeEmit('billing.plan_changed', {
+    await this.safeEmit("billing.plan_changed", {
       orgId,
       planId: data.planId,
       billingCycle: data.billingCycle,
-      changedBy: userId
+      changedBy: userId,
     });
 
     return updated;
@@ -256,7 +294,7 @@ export class OrganizationService {
 
     const member = await this.deps.repository.findMember(orgId, targetUserId);
     if (!member) {
-      throw new NotFoundError('Member');
+      throw new NotFoundError("Member");
     }
 
     return member;
@@ -266,16 +304,16 @@ export class OrganizationService {
     orgId: string,
     data: AddMemberInput,
     addedBy: string,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<OrganizationMember> {
     const actor = await this.deps.repository.findMember(orgId, addedBy);
-    if (!actor || !this.hasRequiredRole(actor.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     const existing = await this.deps.repository.findMember(orgId, data.userId);
     if (existing?.isActive) {
-      throw new ConflictError('User is already a member');
+      throw new ConflictError("User is already a member");
     }
 
     const member = await this.deps.repository.addMember({
@@ -286,49 +324,71 @@ export class OrganizationService {
       isActive: true,
       invitedBy: addedBy,
       invitedAt: new Date(),
-      joinedMethod: 'admin_add',
-      lastActiveAt: new Date()
+      joinedMethod: "admin_add",
+      lastActiveAt: new Date(),
     });
 
-    await this.audit(orgId, addedBy, 'member.added', 'member', data.userId, { role: data.role }, meta);
+    await this.audit(
+      orgId,
+      addedBy,
+      "org.member_invited",
+      "organization",
+      orgId,
+      { memberUserId: data.userId, role: data.role, method: "admin_add" },
+      meta,
+    );
 
-    await this.safeEmit('organization.member.added', {
+    await this.safeEmit("organization.member.added", {
       orgId,
       userId: data.userId,
       role: data.role,
-      method: 'admin_add'
+      method: "admin_add",
     });
 
     return member;
   }
 
-  async removeMember(orgId: string, userId: string, removedBy: string, reason?: string, meta?: RequestMeta): Promise<void> {
+  async removeMember(
+    orgId: string,
+    userId: string,
+    removedBy: string,
+    reason?: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
     const [actor, target] = await Promise.all([
       this.deps.repository.findMember(orgId, removedBy),
-      this.deps.repository.findMember(orgId, userId)
+      this.deps.repository.findMember(orgId, userId),
     ]);
 
-    if (!actor || !this.hasRequiredRole(actor.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     if (!target || !target.isActive) {
-      throw new NotFoundError('Member');
+      throw new NotFoundError("Member");
     }
 
-    if (target.role === 'owner' && actor.role !== 'owner') {
-      throw new ForbiddenError('Cannot remove organization owner');
+    if (target.role === "owner" && actor.role !== "owner") {
+      throw new ForbiddenError("Cannot remove organization owner");
     }
 
-    if (target.role === 'owner') {
+    if (target.role === "owner") {
       const ownerCount = await this.deps.repository.countActiveOwners(orgId);
       if (ownerCount <= 1) {
-        throw new ForbiddenError('Cannot remove the last owner');
+        throw new ForbiddenError("Cannot remove the last owner");
       }
     }
 
     await this.deps.repository.removeMember(orgId, userId, removedBy, reason);
-    await this.audit(orgId, removedBy, 'member.removed', 'member', userId, { reason: reason ?? null }, meta);
+    await this.audit(
+      orgId,
+      removedBy,
+      "org.member_removed",
+      "organization",
+      orgId,
+      { memberUserId: userId, reason: reason ?? null },
+      meta,
+    );
   }
 
   async updateMemberRole(
@@ -336,85 +396,103 @@ export class OrganizationService {
     userId: string,
     newRole: OrgRole,
     updatedBy: string,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<void> {
     const [actor, target] = await Promise.all([
       this.deps.repository.findMember(orgId, updatedBy),
-      this.deps.repository.findMember(orgId, userId)
+      this.deps.repository.findMember(orgId, userId),
     ]);
 
-    if (!actor || !this.hasRequiredRole(actor.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     if (!target || !target.isActive) {
-      throw new NotFoundError('Member');
+      throw new NotFoundError("Member");
     }
 
-    if (newRole === 'owner' && actor.role !== 'owner') {
-      throw new ForbiddenError('Only owner can assign owner role');
+    if (newRole === "owner" && actor.role !== "owner") {
+      throw new ForbiddenError("Only owner can assign owner role");
     }
 
-    if (target.role === 'owner' && newRole !== 'owner') {
+    if (target.role === "owner" && newRole !== "owner") {
       const ownerCount = await this.deps.repository.countActiveOwners(orgId);
       if (ownerCount <= 1) {
-        throw new ForbiddenError('Cannot demote the last owner');
+        throw new ForbiddenError("Cannot demote the last owner");
       }
     }
 
     await this.deps.repository.updateMemberRole(orgId, userId, newRole);
-    await this.audit(orgId, updatedBy, 'member.role_updated', 'member', userId, {
-      oldRole: target.role,
-      newRole
-    }, meta);
+    await this.audit(
+      orgId,
+      updatedBy,
+      "org.role_changed",
+      "organization",
+      orgId,
+      { memberUserId: userId, oldRole: target.role, newRole },
+      meta,
+    );
   }
 
   async transferOwnership(orgId: string, toUserId: string, fromUserId: string, meta?: RequestMeta): Promise<void> {
     const [fromMember, toMember] = await Promise.all([
       this.deps.repository.findMember(orgId, fromUserId),
-      this.deps.repository.findMember(orgId, toUserId)
+      this.deps.repository.findMember(orgId, toUserId),
     ]);
 
-    if (!fromMember || fromMember.role !== 'owner') {
-      throw new ForbiddenError('Only owner can transfer ownership');
+    if (!fromMember || fromMember.role !== "owner") {
+      throw new ForbiddenError("Only owner can transfer ownership");
     }
 
     if (!toMember || !toMember.isActive) {
-      throw new NotFoundError('Target member');
+      throw new NotFoundError("Target member");
     }
 
     await this.deps.repository.transferOwnership(orgId, fromUserId, toUserId);
-    await this.audit(orgId, fromUserId, 'ownership.transferred', 'organization', orgId, {
+    await this.audit(
+      orgId,
       fromUserId,
-      toUserId
-    }, meta);
+      "org.role_changed",
+      "organization",
+      orgId,
+      { fromUserId, toUserId, action: "ownership_transfer" },
+      meta,
+    );
   }
 
   async leaveOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<void> {
     const member = await this.deps.repository.findMember(orgId, userId);
     if (!member || !member.isActive) {
-      throw new NotFoundError('Member');
+      throw new NotFoundError("Member");
     }
 
-    if (member.role === 'owner') {
+    if (member.role === "owner") {
       const ownerCount = await this.deps.repository.countActiveOwners(orgId);
       if (ownerCount <= 1) {
-        throw new ForbiddenError('Owner must transfer ownership before leaving');
+        throw new ForbiddenError("Owner must transfer ownership before leaving");
       }
     }
 
-    await this.deps.repository.removeMember(orgId, userId, userId, 'self_leave');
-    await this.audit(orgId, userId, 'member.left', 'member', userId, null, meta);
+    await this.deps.repository.removeMember(orgId, userId, userId, "self_leave");
+    await this.audit(
+      orgId,
+      userId,
+      "org.member_removed",
+      "organization",
+      orgId,
+      { memberUserId: userId, reason: "self_leave" },
+      meta,
+    );
   }
 
   async listInvitations(
     orgId: string,
     userId: string,
-    status?: 'pending' | 'accepted' | 'declined' | 'revoked'
+    status?: "pending" | "accepted" | "declined" | "revoked",
   ): Promise<OrganizationInvitation[]> {
     const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || !this.hasRequiredRole(member.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!member || !this.hasRequiredRole(member.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     return this.deps.repository.findInvitationsByOrgId(orgId, status);
@@ -424,17 +502,16 @@ export class OrganizationService {
     orgId: string,
     data: CreateInvitationInput,
     invitedBy: string,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<{ invitation: OrganizationInvitation; token: string }> {
     const member = await this.deps.repository.findMember(orgId, invitedBy);
-    if (!member || !this.hasRequiredRole(member.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!member || !this.hasRequiredRole(member.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     const token = generateInvitationToken();
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const tokenHash = createHash("sha256").update(token).digest("hex");
     const emailNormalized = data.email.toLowerCase();
-    const emailHash = createHash('sha256').update(emailNormalized).digest('hex');
 
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
@@ -443,23 +520,31 @@ export class OrganizationService {
       orgId,
       invitedBy,
       email: emailNormalized,
-      emailHash,
       role: data.role,
       tokenHash,
-      expiresAt
+      expiresAt,
     });
 
-    await this.audit(orgId, invitedBy, 'invitation.created', 'invitation', invitation.id, {
-      email: emailNormalized,
-      role: data.role
-    }, meta);
+    await this.audit(
+      orgId,
+      invitedBy,
+      "org.member_invited",
+      "organization",
+      orgId,
+      {
+        invitationId: invitation.id,
+        email: emailNormalized,
+        role: data.role,
+      },
+      meta,
+    );
 
-    await this.safeEmit('organization.invitation.created', {
+    await this.safeEmit("organization.invitation.created", {
       invitationId: invitation.id,
       orgId,
       invitedBy,
       email: emailNormalized,
-      token
+      token,
     });
 
     return { invitation, token };
@@ -471,7 +556,7 @@ export class OrganizationService {
     invitedBy?: string;
     expiresAt?: Date;
   }> {
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const tokenHash = createHash("sha256").update(token).digest("hex");
     const invitation = await this.deps.repository.findInvitationByTokenHash(tokenHash);
 
     if (!invitation) {
@@ -487,26 +572,31 @@ export class OrganizationService {
       valid: true,
       organizationName: org.name,
       invitedBy: invitation.invitedBy,
-      expiresAt: invitation.expiresAt
+      expiresAt: invitation.expiresAt,
     };
   }
 
-  async acceptInvitation(token: string, userId: string, userEmail: string, meta?: RequestMeta): Promise<OrganizationMember> {
-    const tokenHash = createHash('sha256').update(token).digest('hex');
+  async acceptInvitation(
+    token: string,
+    userId: string,
+    userEmail: string,
+    meta?: RequestMeta,
+  ): Promise<OrganizationMember> {
+    const tokenHash = createHash("sha256").update(token).digest("hex");
     const invitation = await this.deps.repository.findInvitationByTokenHash(tokenHash);
 
     if (!invitation) {
-      throw new NotFoundError('Invitation');
+      throw new NotFoundError("Invitation");
     }
 
-    const emailHash = createHash('sha256').update(userEmail.toLowerCase()).digest('hex');
+    const emailHash = createHash("sha256").update(userEmail.toLowerCase()).digest("hex");
     if (invitation.emailHash !== emailHash) {
-      throw new ForbiddenError('Invitation email does not match user email');
+      throw new ForbiddenError("Invitation email does not match user email");
     }
 
     const existing = await this.deps.repository.findMember(invitation.orgId, userId);
     if (existing?.isActive) {
-      throw new ConflictError('User is already a member');
+      throw new ConflictError("User is already a member");
     }
 
     await this.deps.repository.acceptInvitation(tokenHash, userId);
@@ -519,17 +609,25 @@ export class OrganizationService {
       isActive: true,
       invitedBy: invitation.invitedBy,
       invitedAt: invitation.createdAt,
-      joinedMethod: 'invite',
-      lastActiveAt: new Date()
+      joinedMethod: "invite",
+      lastActiveAt: new Date(),
     });
 
-    await this.audit(invitation.orgId, userId, 'invitation.accepted', 'invitation', invitation.id, null, meta);
+    await this.audit(
+      invitation.orgId,
+      userId,
+      "org.member_joined",
+      "organization",
+      invitation.orgId,
+      { invitationId: invitation.id },
+      meta,
+    );
 
-    await this.safeEmit('organization.member.added', {
+    await this.safeEmit("organization.member.added", {
       orgId: invitation.orgId,
       userId,
       role: invitation.role,
-      method: 'invite'
+      method: "invite",
     });
 
     return member;
@@ -538,51 +636,75 @@ export class OrganizationService {
   async declineInvitation(invitationId: string, userId: string, meta?: RequestMeta): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
-      throw new NotFoundError('Invitation');
+      throw new NotFoundError("Invitation");
     }
 
     await this.deps.repository.declineInvitation(invitation.tokenHash);
-    await this.audit(invitation.orgId, userId, 'invitation.declined', 'invitation', invitation.id, null, meta);
+    await this.audit(
+      invitation.orgId,
+      userId,
+      "org.updated",
+      "organization",
+      invitation.orgId,
+      { invitationId: invitation.id, action: "declined" },
+      meta,
+    );
   }
 
   async resendInvitation(invitationId: string, userId: string, meta?: RequestMeta): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
-      throw new NotFoundError('Invitation');
+      throw new NotFoundError("Invitation");
     }
 
     const member = await this.deps.repository.findMember(invitation.orgId, userId);
-    if (!member || !this.hasRequiredRole(member.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!member || !this.hasRequiredRole(member.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     if (invitation.resentCount >= 3) {
-      throw new ForbiddenError('Maximum resend limit reached');
+      throw new ForbiddenError("Maximum resend limit reached");
     }
 
     await this.deps.repository.incrementResentCount(invitationId);
-    await this.audit(invitation.orgId, userId, 'invitation.resent', 'invitation', invitation.id, null, meta);
+    await this.audit(
+      invitation.orgId,
+      userId,
+      "org.updated",
+      "organization",
+      invitation.orgId,
+      { invitationId: invitation.id, action: "resent" },
+      meta,
+    );
 
-    await this.safeEmit('organization.invitation.resent', {
+    await this.safeEmit("organization.invitation.resent", {
       invitationId,
       orgId: invitation.orgId,
-      email: invitation.email
+      email: invitation.email,
     });
   }
 
   async revokeInvitation(invitationId: string, revokedBy: string, meta?: RequestMeta): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
-      throw new NotFoundError('Invitation');
+      throw new NotFoundError("Invitation");
     }
 
     const member = await this.deps.repository.findMember(invitation.orgId, revokedBy);
-    if (!member || !this.hasRequiredRole(member.role, 'admin')) {
-      throw new ForbiddenError('Insufficient permissions');
+    if (!member || !this.hasRequiredRole(member.role, "admin")) {
+      throw new ForbiddenError("Insufficient permissions");
     }
 
     await this.deps.repository.revokeInvitation(invitationId, revokedBy);
-    await this.audit(invitation.orgId, revokedBy, 'invitation.revoked', 'invitation', invitation.id, null, meta);
+    await this.audit(
+      invitation.orgId,
+      revokedBy,
+      "org.updated",
+      "organization",
+      invitation.orgId,
+      { invitationId: invitation.id, action: "revoked" },
+      meta,
+    );
   }
 
   async checkSlugAvailability(slug: string): Promise<{ available: boolean; suggestions?: string[] }> {
@@ -591,9 +713,10 @@ export class OrganizationService {
       return { available: true };
     }
 
+    const year = new Date().getUTCFullYear();
     return {
       available: false,
-      suggestions: [`${slug}-corp`, `${slug}-team`, `${slug}-2026`]
+      suggestions: [`${slug}-corp`, `${slug}-team`, `${slug}-${year}`],
     };
   }
 
@@ -604,21 +727,21 @@ export class OrganizationService {
   private async audit(
     orgId: string,
     userId: string | null,
-    action: string,
-    entityType: string,
-    entityId: string | null,
+    action: AuditAction,
+    resourceType: AuditResourceType,
+    resourceId: string | null,
     metadata: Record<string, unknown> | null,
-    meta?: RequestMeta
+    meta?: RequestMeta,
   ): Promise<void> {
     await this.deps.repository.createAuditLog({
       orgId,
       userId,
       action,
-      entityType,
-      entityId,
+      resourceType,
+      resourceId,
       metadata,
-      ipAddress: meta?.ipAddress ?? null,
-      userAgent: meta?.userAgent ?? null
+      ipAddress: meta?.ipAddress ?? "0.0.0.0",
+      userAgent: meta?.userAgent ?? null,
     });
   }
 
@@ -626,7 +749,7 @@ export class OrganizationService {
     try {
       await this.deps.emitEvent(event, payload);
     } catch (error) {
-      this.deps.logger.error({ err: error, event, payload }, 'Failed to emit organization event');
+      this.deps.logger.error({ err: error, event, payload }, "Failed to emit organization event");
     }
   }
 }

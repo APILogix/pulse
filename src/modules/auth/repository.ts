@@ -37,10 +37,23 @@ export async function findUserByClerkId(clerkUserId: string, client?: PoolClient
 
 export async function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
-    `SELECT * FROM users WHERE email_hash = $1 AND deleted_at IS NULL`,
-    [emailHash]
-  );
+const result = await db.query<User>(
+  `
+  SELECT 
+    id,
+    status,
+    status_reason,
+    locked_until,
+    password_hash,
+    login_attempts,
+    mfa_enabled,
+    deleted_at
+  FROM users 
+  WHERE email_hash = $1 
+    AND deleted_at IS NULL
+  `,
+  [emailHash]
+);
   return result.rows[0] || null;
 }
 

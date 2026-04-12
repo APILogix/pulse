@@ -574,9 +574,10 @@ export async function loginWithEmailPassword(
   //     429,
   //   );
   // }
-
+const start = Date.now();
   const user = await repository.findUserByEmailHash(emailHash);
-  if (!user || user.deleted_at || user.status === "deleted") {
+  console.log("DB:", Date.now() - start);
+  if (!user || user.status === "deleted") {
     throw new AuthError(
       "Invalid email or password",
       AuthErrorCodes.INVALID_CREDENTIALS,
@@ -608,8 +609,9 @@ export async function loginWithEmailPassword(
       400,
     );
   }
-
+const passStart = Date.now();
   const passwordValid = await verifyPassword(input.password, user.password_hash);
+  console.log("PASSWORD:", Date.now() - passStart);
   if (!passwordValid) {
     await repository.updateLoginAttempts(user.id, user.login_attempts + 1);
     throw new AuthError(

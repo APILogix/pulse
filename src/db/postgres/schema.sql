@@ -147,62 +147,47 @@ CREATE INDEX idx_mfa_devices_verified ON user_mfa_devices(verified) WHERE verifi
 -- ============================================
 CREATE TABLE organizations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    
-    -- Basic Info
+
+    -- Identity
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(255) UNIQUE NOT NULL,
     description TEXT,
     logo_url TEXT,
     website_url TEXT,
-    
-    -- Ownership & Billing
+
+    -- Ownership
     owner_user_id UUID NOT NULL REFERENCES users(id),
-    billing_email VARCHAR(255) NOT NULL,
-    billing_name VARCHAR(255),
-    billing_address JSONB, -- { street, city, state, zip, country, vat_id }
-    
-    -- Plan & Limits
-    plan_id VARCHAR(50) NOT NULL DEFAULT 'starter',
-    plan_started_at TIMESTAMPTZ DEFAULT NOW(),
-    plan_expires_at TIMESTAMPTZ,
-    
+
     -- Status
     status org_status DEFAULT 'active',
-    trial_started_at TIMESTAMPTZ,
-    trial_ends_at TIMESTAMPTZ,
-    grace_period_ends_at TIMESTAMPTZ, -- After cancellation
-    
-    -- Security Settings
-    enforce_sso BOOLEAN DEFAULT FALSE, -- Force SAML/SSO login
-    enforce_mfa BOOLEAN DEFAULT FALSE, -- Require all members to have MFA
-    allowed_email_domains TEXT[], -- ["company.com"] for auto-join
-    ip_allowlist INET[], -- Restrict access to corporate IPs
-    session_timeout_minutes INTEGER DEFAULT 480, -- 8 hours
-    
-    -- Data Residency (GDPR/CCPA)
-    data_region VARCHAR(50) DEFAULT 'us-east-1', -- us-east-1, eu-west-1, ap-south-1
-    data_retention_days INTEGER DEFAULT 90,
-    
-    -- Soft Delete
+
+    -- Soft delete
     deleted_at TIMESTAMPTZ,
     deleted_by UUID REFERENCES users(id),
-    
+
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    CONSTRAINT valid_trial_dates CHECK (trial_ends_at IS NULL OR trial_ends_at > trial_started_at)
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Indexes for organizations
 CREATE UNIQUE INDEX idx_orgs_slug_active ON organizations(slug) WHERE deleted_at IS NULL;
 CREATE INDEX idx_orgs_owner ON organizations(owner_user_id);
-CREATE INDEX idx_orgs_plan ON organizations(plan_id, status) WHERE status = 'active';
-CREATE INDEX idx_orgs_trial ON organizations(trial_ends_at) 
-    WHERE trial_ends_at IS NOT NULL AND trial_ends_at > NOW();
-CREATE INDEX idx_orgs_data_region ON organizations(data_region);
-CREATE INDEX idx_orgs_ip_allowlist ON organizations USING GIN(ip_allowlist) 
-    WHERE ip_allowlist IS NOT NULL AND array_length(ip_allowlist, 1) > 0;
 
+CREATE TABLE organization_settings (
+    org_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+
+    enforce_sso BOOLEAN DEFAULT FALSE,
+    enforce_mfa BOOLEAN DEFAULT FALSE,
+    allowed_email_domains TEXT[],
+    ip_allowlist INET[],
+    session_timeout_minutes INTEGER DEFAULT 480,
+
+    data_region VARCHAR(50) DEFAULT 'us-east-1',
+    data_retention_days INTEGER DEFAULT 90,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 -- ============================================
 -- MEMBERSHIP: organization_members TABLE
 -- ============================================
@@ -211,11 +196,7 @@ CREATE TABLE organization_members (
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
-    -- Role & Permissions
-    role org_role NOT NULL DEFAULT 'member',
-    
-    -- Role-specific permissions (override defaults)
-    permissions JSONB DEFAULT '{}', -- { "billing:view": true, "settings:edit": false }
+  
     
     -- Status
     is_active BOOLEAN DEFAULT TRUE,

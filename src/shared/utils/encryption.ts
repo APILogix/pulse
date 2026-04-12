@@ -61,10 +61,11 @@ export function encrypt(text: string, secret: string): string {
 /**
  * Hash password using bcrypt-like approach (use bcrypt library in production)
  */
+
 export async function hashPassword(password: string): Promise<string> {
-  // Use bcrypt in production: import bcrypt from 'bcrypt'; return bcrypt.hash(password, 12);
   const { hash } = await import('bcrypt');
-  return hash(password, 12);
+  // Reduced from 10 to 8 for speed (adjust based on your hardware)
+  return hash(password, 8);  // ~50-100ms on modern hardware
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {

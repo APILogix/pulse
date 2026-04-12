@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ZodError } from 'zod';
 import { authenticate } from '../../shared/middleware/auth.js';
 import { OrganizationService } from './organizationservice.js';
@@ -55,6 +56,7 @@ function handleOrganizationError(error: unknown, reply: FastifyReply) {
     });
   }
 
+  console.log(error)
   return reply.code(500).send({
     success: false,
     error: {
@@ -89,13 +91,11 @@ function requestMeta(request: FastifyRequest) {
   };
 }
 
-export const organizationRoutes: FastifyPluginAsync<{ service: OrganizationService }> = async (
-  fastify,
-  { service }
-) => {
-  fastify.addHook('onRequest', async (request) => {
-    request.log.info({ method: request.method, url: request.url }, 'Organization request start');
-  });
+export async function organizationRoutes(
+  fastify: FastifyInstance,
+  options: FastifyPluginOptions
+): Promise<void> {
+  const service = fastify.organization.service;
 
   fastify.post(
     '/',
@@ -113,7 +113,7 @@ export const organizationRoutes: FastifyPluginAsync<{ service: OrganizationServi
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
-      const result = await service.listUserOrganizations(authed.user.id);
+      const result = await service.listUserOrganizations(request.user.id);
       return reply.send({ success: true, data: result });
     })
   );
