@@ -68,7 +68,7 @@ export class OrganizationService {
     return org;
   }
 
-  async listUserOrganizations(userId: string): Promise<Array<Organization & { memberRole: OrgRole }>> {
+  async listUserOrganizations(userId: string): Promise<Array<{ id: string; name: string; logoUrl: string | null }>> {
     return this.deps.repository.findByUserId(userId);
   }
 

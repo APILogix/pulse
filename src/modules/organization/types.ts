@@ -269,31 +269,31 @@ export interface CreateOrganizationRecord {
 }
 
 export interface UpdateOrganizationRecord {
-  name?: string;
-  description?: string | null;
-  websiteUrl?: string | null;
-  logoUrl?: string | null;
-  ownerUserId?: string;
-  status?: OrgStatus;
-  billingStatus?: SubscriptionStatus;
-  billingEmail?: string;
-  billingName?: string | null;
-  billingAddress?: BillingAddress | null;
-  planId?: string;
-  planStartedAt?: Date;
-  planExpiresAt?: Date | null;
-  trialStartedAt?: Date | null;
-  trialEndsAt?: Date | null;
-  gracePeriodEndsAt?: Date | null;
-  enforceSso?: boolean;
-  enforceMfa?: boolean;
-  allowedEmailDomains?: string[] | null;
-  ipAllowlist?: string[] | null;
-  sessionTimeoutMinutes?: number;
-  dataRegion?: string;
-  dataRetentionDays?: number;
-  deletedAt?: Date | null;
-  deletedBy?: string | null;
+  name?: string | undefined;
+  description?: string | null | undefined;
+  websiteUrl?: string | null | undefined;
+  logoUrl?: string | null | undefined;
+  ownerUserId?: string | undefined;
+  status?: OrgStatus | undefined;
+  billingStatus?: SubscriptionStatus | undefined;
+  billingEmail?: string | undefined;
+  billingName?: string | null | undefined;
+  billingAddress?: BillingAddress | null | undefined;
+  planId?: string | undefined;
+  planStartedAt?: Date | undefined;
+  planExpiresAt?: Date | null | undefined;
+  trialStartedAt?: Date | null | undefined;
+  trialEndsAt?: Date | null | undefined;
+  gracePeriodEndsAt?: Date | null | undefined;
+  enforceSso?: boolean | undefined;
+  enforceMfa?: boolean | undefined;
+  allowedEmailDomains?: string[] | null | undefined;
+  ipAllowlist?: string[] | null | undefined;
+  sessionTimeoutMinutes?: number | undefined;
+  dataRegion?: string | undefined;
+  dataRetentionDays?: number | undefined;
+  deletedAt?: Date | null | undefined;
+  deletedBy?: string | null | undefined;
 }
 
 export interface AddMemberRecord {
