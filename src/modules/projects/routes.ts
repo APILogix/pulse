@@ -24,6 +24,7 @@ function requestMeta(request: FastifyRequest) {
   };
 }
 
+
 function withErrorHandling(
   handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
 ) {
@@ -240,6 +241,10 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
         body,
         requestMeta(request),
       );
+
+      // store key in redis 
+      
+// store key in lpu cashe 
 
       return reply.code(201).send({
         success: true,

@@ -128,6 +128,7 @@ export class ProjectsRepository {
     query: ListProjectsQuery,
     client?: PoolClient,
   ): Promise<{ projects: ProjectListItem[]; total: number }> {
+    console.log("Repository: listProjects called with", { orgId, query });
     const db = client ?? this.db;
     const params: Array<string | number> = [orgId];
     const whereClauses = ["p.org_id = $1"];
@@ -468,6 +469,7 @@ export class ProjectsRepository {
         ],
       );
 
+      
       return this.mapApiKeyRecord(result.rows[0]!);
     } catch (error) {
       if ((error as { code?: string }).code === "23505") {

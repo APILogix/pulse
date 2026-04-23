@@ -1,0 +1,485 @@
+{
+  "info": {
+    "_postman_id": "57a86eb7-3a11-4371-8e63-b9d6b8efb6d4",
+    "name": "API Monitoring Backend - Ingestion",
+    "description": "Postman collection for all ingestion routes under /api/v1. Public ingestion endpoints use the SDK API key in the JSON body. Protected operational endpoints require Authorization: Bearer {{accessToken}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Public",
+      "item": [
+        {
+          "name": "SDK Init",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/init",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "init"
+              ]
+            },
+            "description": "Initialize the SDK and fetch remote ingestion config for an API key."
+          }
+        },
+        {
+          "name": "Main Ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\",\n  \"events\": [\n    {\n      \"type\": \"request\",\n      \"requestId\": \"550e8400-e29b-41d4-a716-446655440000\",\n      \"url\": \"/api/orders\",\n      \"method\": \"POST\",\n      \"statusCode\": 201,\n      \"latency\": 142,\n      \"timestamp\": 1713528000000,\n      \"headers\": {\n        \"content-type\": \"application/json\",\n        \"x-request-id\": \"req_123\"\n      },\n      \"query\": {},\n      \"bodySize\": 512,\n      \"userId\": \"user_123\"\n    },\n    {\n      \"type\": \"error\",\n      \"requestId\": \"550e8400-e29b-41d4-a716-446655440001\",\n      \"message\": \"Database timeout while creating order\",\n      \"name\": \"DatabaseTimeoutError\",\n      \"stack\": [\n        \"DatabaseTimeoutError: Database timeout while creating order\",\n        \"    at OrdersService.create (/app/src/orders/service.ts:42:13)\"\n      ],\n      \"fingerprint\": \"db-timeout:create-order\",\n      \"timestamp\": 1713528005000,\n      \"context\": {\n        \"route\": \"/api/orders\",\n        \"method\": \"POST\",\n        \"region\": \"ap-south-1\"\n      }\n    },\n    {\n      \"type\": \"log\",\n      \"level\": \"info\",\n      \"message\": \"Order queued for fulfillment\",\n      \"timestamp\": 1713528010000,\n      \"metadata\": {\n        \"orderId\": \"ord_123\",\n        \"source\": \"checkout-service\"\n      }\n    },\n    {\n      \"type\": \"metric\",\n      \"name\": \"queue_depth\",\n      \"value\": 18,\n      \"unit\": \"count\",\n      \"tags\": {\n        \"queue\": \"fulfillment\",\n        \"service\": \"checkout\"\n      },\n      \"timestamp\": 1713528015000\n    }\n  ],\n  \"metadata\": {\n    \"sdkVersion\": \"1.2.0\",\n    \"compression\": \"none\",\n    \"batchId\": \"batch-demo-001\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest"
+              ]
+            },
+            "description": "Ingest a mixed batch of request, error, log, and metric events."
+          }
+        },
+        {
+          "name": "Requests Ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\",\n  \"events\": [\n    {\n      \"type\": \"request\",\n      \"requestId\": \"550e8400-e29b-41d4-a716-446655440010\",\n      \"url\": \"/api/payments/intent\",\n      \"method\": \"POST\",\n      \"statusCode\": 200,\n      \"latency\": 87,\n      \"timestamp\": 1713528100000,\n      \"headers\": {\n        \"content-type\": \"application/json\"\n      },\n      \"query\": {},\n      \"bodySize\": 342,\n      \"userId\": \"user_123\"\n    }\n  ],\n  \"metadata\": {\n    \"sdkVersion\": \"1.2.0\",\n    \"compression\": \"none\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest/requests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "requests"
+              ]
+            },
+            "description": "Typed endpoint that accepts only request events."
+          }
+        },
+        {
+          "name": "Errors Ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\",\n  \"events\": [\n    {\n      \"type\": \"error\",\n      \"requestId\": \"550e8400-e29b-41d4-a716-446655440020\",\n      \"message\": \"Stripe charge failed\",\n      \"name\": \"PaymentProviderError\",\n      \"stack\": [\n        \"PaymentProviderError: Stripe charge failed\",\n        \"    at PaymentsService.charge (/app/src/payments/service.ts:88:11)\"\n      ],\n      \"fingerprint\": \"stripe-charge-failed\",\n      \"timestamp\": 1713528200000,\n      \"context\": {\n        \"provider\": \"stripe\",\n        \"route\": \"/api/payments/charge\",\n        \"statusCode\": 502\n      }\n    }\n  ],\n  \"metadata\": {\n    \"sdkVersion\": \"1.2.0\",\n    \"compression\": \"none\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest/errors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "errors"
+              ]
+            },
+            "description": "Typed endpoint that accepts only error events."
+          }
+        },
+        {
+          "name": "Logs Ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\",\n  \"events\": [\n    {\n      \"type\": \"log\",\n      \"level\": \"warn\",\n      \"message\": \"Cache miss rate exceeded threshold\",\n      \"timestamp\": 1713528300000,\n      \"metadata\": {\n        \"cache\": \"project-api-key\",\n        \"missRate\": 0.37,\n        \"service\": \"ingestion-api\"\n      }\n    }\n  ],\n  \"metadata\": {\n    \"sdkVersion\": \"1.2.0\",\n    \"compression\": \"none\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "logs"
+              ]
+            },
+            "description": "Typed endpoint that accepts only log events."
+          }
+        },
+        {
+          "name": "Metrics Ingest",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apiKey\": \"{{ingestionApiKey}}\",\n  \"events\": [\n    {\n      \"type\": \"metric\",\n      \"name\": \"http_latency_p95\",\n      \"value\": 243,\n      \"unit\": \"ms\",\n      \"tags\": {\n        \"route\": \"/api/orders\",\n        \"method\": \"POST\",\n        \"env\": \"production\"\n      },\n      \"timestamp\": 1713528400000\n    }\n  ],\n  \"metadata\": {\n    \"sdkVersion\": \"1.2.0\",\n    \"compression\": \"none\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest/metrics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "metrics"
+              ]
+            },
+            "description": "Typed endpoint that accepts only metric events."
+          }
+        },
+        {
+          "name": "Public Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "health"
+              ]
+            },
+            "description": "Health check for Redis, database, and queue connectivity."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Protected",
+      "item": [
+        {
+          "name": "Ingestion Health",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/ingest/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ingest",
+                "health"
+              ]
+            },
+            "description": "Operational health for the ingestion queue and in-memory buffer."
+          }
+        },
+        {
+          "name": "Get Limits",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/limits?apiKey={{ingestionApiKey}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "limits"
+              ],
+              "query": [
+                {
+                  "key": "apiKey",
+                  "value": "{{ingestionApiKey}}"
+                }
+              ]
+            },
+            "description": "Fetch per-second, per-minute, and max-batch limits for an ingestion API key."
+          }
+        },
+        {
+          "name": "List DLQ Jobs",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dlq?start=0&end=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dlq"
+              ],
+              "query": [
+                {
+                  "key": "start",
+                  "value": "0"
+                },
+                {
+                  "key": "end",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": "Inspect failed ingestion jobs in the dead-letter queue."
+          }
+        },
+        {
+          "name": "Reprocess DLQ Job",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dlq/reprocess/{{dlqJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dlq",
+                "reprocess",
+                "{{dlqJobId}}"
+              ]
+            },
+            "description": "Retry a single failed job by its BullMQ job id."
+          }
+        },
+        {
+          "name": "Reprocess All DLQ",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/dlq/reprocess-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dlq",
+                "reprocess-all"
+              ]
+            },
+            "description": "Retry up to the service batch-size worth of failed jobs. No request body is required."
+          }
+        },
+        {
+          "name": "Replay Events",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"projectId\": \"{{projectId}}\",\n  \"startTime\": \"{{replayStartTime}}\",\n  \"endTime\": \"{{replayEndTime}}\",\n  \"eventTypes\": [\n    \"request\",\n    \"error\",\n    \"log\",\n    \"metric\"\n  ],\n  \"targetQueue\": \"ingestion\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/replay",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "replay"
+              ]
+            },
+            "description": "Replay stored events for a project and time window back into the queue."
+          }
+        },
+        {
+          "name": "Debug Event",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/debug/events/{{debugEventId}}?projectId={{projectId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "debug",
+                "events",
+                "{{debugEventId}}"
+              ],
+              "query": [
+                {
+                  "key": "projectId",
+                  "value": "{{projectId}}"
+                }
+              ]
+            },
+            "description": "Fetch a stored event by event id and project id."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "ingestionApiKey",
+      "value": "replace-with-project-api-key"
+    },
+    {
+      "key": "projectId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "dlqJobId",
+      "value": "1"
+    },
+    {
+      "key": "debugEventId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "replayStartTime",
+      "value": "2026-04-19T00:00:00.000Z"
+    },
+    {
+      "key": "replayEndTime",
+      "value": "2026-04-19T23:59:59.999Z"
+    }
+  ]
+}

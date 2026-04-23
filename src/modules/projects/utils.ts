@@ -27,6 +27,7 @@ export function handleProjectError(
   reply: FastifyReply,
 ): FastifyReply {
   if (error instanceof ProjectError) {
+    console.log("ProjectError:", { error});
     return reply.code(error.statusCode).send({
       success: false,
       error: {

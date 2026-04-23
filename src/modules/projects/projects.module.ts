@@ -18,7 +18,9 @@ async function projectsModule(
   _options: FastifyPluginOptions,
 ): Promise<void> {
   const repository = new ProjectsRepository();
-  const service = new ProjectsService(repository, fastify.log);
+  // fastify.redisCache is decorated by the ingestion module, which is
+  // registered before this module in app.ts — so it is always available here.
+  const service = new ProjectsService(repository, fastify.log, fastify.redisCache);
 
   fastify.decorate("projects", {
     repository,
