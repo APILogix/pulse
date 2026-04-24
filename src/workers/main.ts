@@ -1,0 +1,55 @@
+/**
+ * Worker process bootstrap.
+ *
+ * Flow:
+ * 1. Open Redis and Postgres connections dedicated to background work.
+ * 2. Construct shared worker dependencies.
+ * 3. Register all enabled BullMQ workers through `initializeWorkers()`.
+ * 4. Keep the process alive until it receives a termination signal, then close
+ *    workers and infrastructure cleanly.
+ */
+import Redis from 'ioredis';
+import { Pool } from 'pg';
+import { env } from '../config/env.js';
+import { RedisCache } from '../db/redis/cache.js';
+import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
+import { initializeWorkers } from './index.js';
+
+async function bootstrapWorkers(): Promise<void> {
+  const redis = new Redis(env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy: (times: number) => Math.min(times * 50, 2000),
+  });
+
+  const pgPool = new Pool({
+    connectionString: env.DATABASE_URL,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+    application_name: 'ingestion_workers',
+  });
+
+  await redis.ping();
+  await pgPool.query('SELECT 1');
+
+  const cache = new RedisCache(redis);
+  const writer = new PostgresWriter(pgPool);
+
+  initializeWorkers(redis, {
+    writer,
+    cache,
+    shutdown: async () => {
+      await redis.quit();
+      await pgPool.end();
+    },
+  });
+
+  console.log('[Workers] Worker process started');
+  console.log('[Workers] Active workers: ingestion');
+}
+
+bootstrapWorkers().catch((error) => {
+  console.error('[Workers] Failed to start worker process', error);
+  process.exit(1);
+});

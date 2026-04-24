@@ -1,6 +1,15 @@
 /**
  * Clerk Webhook Handler
  * Processes events from Clerk authentication service
+ *
+ * Flow:
+ * 1. Verify Svix/Clerk signature headers against the raw payload.
+ * 2. Switch by Clerk event type.
+ * 3. Convert supported user lifecycle events into the local auth service
+ *    contract.
+ *
+ * The local user record remains the backend source for authorization/session
+ * behavior after the external identity event is accepted.
  */
 
 import type  { FastifyRequest } from 'fastify';
@@ -14,6 +23,8 @@ const CLERK_WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET!;
  * Verify Clerk webhook signature
  */
 export function verifyClerkWebhook(request: FastifyRequest): boolean {
+  // Clerk signs the combination of id, timestamp, and raw body. Verification
+  // must use rawBody when available because parsed JSON can change formatting.
   const svixId = request.headers['svix-id'] as string;
   const svixTimestamp = request.headers['svix-timestamp'] as string;
   const svixSignature = request.headers['svix-signature'] as string;
@@ -43,6 +54,8 @@ export function verifyClerkWebhook(request: FastifyRequest): boolean {
  * Process Clerk webhook event
  */
 export async function processClerkWebhook(payload: ClerkWebhookPayload, ipAddress: string, requestId: string): Promise<void> {
+  // Each case should be idempotent because webhook providers can retry delivery
+  // after network failures or non-2xx responses.
   switch (payload.type) {
     case 'user.created': {
       const primaryEmail = payload.data.email_addresses?.[0];

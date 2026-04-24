@@ -1,4 +1,15 @@
-// routes.ts - Billing Routes for Fastify
+/**
+ * Billing routes for Fastify.
+ *
+ * Flow:
+ * 1. Resolve organization context from authenticated user data or x-org-id.
+ * 2. Delegate pricing, subscription, payment-method, invoice, usage, quota, and
+ *    portal operations to BillingService.
+ * 3. Convert BillingError instances into stable API responses.
+ *
+ * Webhook endpoints intentionally skip authenticate because payment providers
+ * call them directly; provider signature validation belongs in the service.
+ */
 
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply } from 'fastify';
 import {
@@ -25,6 +36,8 @@ export async function billingRoutes(
   fastify: FastifyInstance,
   options: FastifyPluginOptions
 ): Promise<void> {
+  // Billing service is supplied by the billing module decorator. Routes keep the
+  // HTTP surface area grouped by billing domain.
   const service = fastify.billing.service;
 
   // ============================================
@@ -660,6 +673,8 @@ export async function billingRoutes(
 // ============================================
 
 function handleBillingError(error: any, reply: FastifyReply) {
+  // BillingError carries client-safe status, code, message, and optional details.
+  // Unknown errors are logged and collapsed into a generic 500 response.
   if (error instanceof BillingError) {
     return reply.code(error.statusCode).send({
       success: false,
@@ -682,6 +697,8 @@ function handleBillingError(error: any, reply: FastifyReply) {
 }
 
 function getOrgId(request: any): string {
+  // Prefer org context attached by auth/middleware, then fall back to explicit
+  // header context for clients that operate across multiple organizations.
   const orgIdFromUser = request.user?.orgId;
   const orgIdFromHeader = request.headers['x-org-id'];
   const orgId = orgIdFromUser ?? (typeof orgIdFromHeader === 'string' ? orgIdFromHeader : undefined);

@@ -1,3 +1,14 @@
+/**
+ * Project repository.
+ *
+ * Flow:
+ * 1. Accept service-level identifiers and query options.
+ * 2. Execute parameterized SQL against projects, project_api_keys, and
+ *    organization membership tables.
+ * 3. Map snake_case database rows into camelCase domain objects.
+ * 4. Translate expected database conflicts/misses into ProjectError where the
+ *    service needs a stable error code.
+ */
 import type { Pool, PoolClient } from "pg";
 import { pool } from "../../config/database.js";
 import type {
@@ -81,6 +92,8 @@ export class ProjectsRepository {
   async withTransaction<T>(
     callback: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
+    // Used by service operations such as API-key rotation where multiple writes
+    // must commit or roll back as one unit.
     const client = await this.db.connect();
 
     try {
@@ -128,6 +141,8 @@ export class ProjectsRepository {
     query: ListProjectsQuery,
     client?: PoolClient,
   ): Promise<{ projects: ProjectListItem[]; total: number }> {
+    // Build filters from validated query params. Column names used for sorting
+    // come from a fixed map, not user-provided strings.
     console.log("Repository: listProjects called with", { orgId, query });
     const db = client ?? this.db;
     const params: Array<string | number> = [orgId];
@@ -287,6 +302,8 @@ export class ProjectsRepository {
     },
     client?: PoolClient,
   ): Promise<Project> {
+    // Dynamic assignment keeps PATCH semantics: only explicitly supplied fields
+    // are written, and an empty update returns the current record.
     const db = client ?? this.db;
     const assignments: string[] = [];
     const values: Array<string | null> = [];
@@ -389,6 +406,8 @@ export class ProjectsRepository {
     query: ListApiKeysQuery,
     client?: PoolClient,
   ): Promise<{ keys: ProjectApiKey[]; total: number }> {
+    // API-key list responses never include key hashes; those stay available only
+    // through internal record queries.
     const db = client ?? this.db;
     const params: Array<string | number | boolean> = [projectId];
     const whereClauses = ["project_id = $1"];
@@ -445,6 +464,8 @@ export class ProjectsRepository {
     },
     client?: PoolClient,
   ): Promise<ProjectApiKeyRecord> {
+    // Persist keyHash for verification and keyPrefix for candidate narrowing.
+    // The full API key is never stored.
     const db = client ?? this.db;
     try {
       const result = await db.query<ApiKeyRow>(
@@ -644,6 +665,8 @@ export class ProjectsRepository {
       project: Project;
     }>
   > {
+    // The prefix lookup limits candidate keys before the service performs
+    // constant-time comparison against the full hash.
     const db = client ?? this.db;
     const result = await db.query<ApiKeyCandidateRow>(
       `SELECT
@@ -707,6 +730,8 @@ export class ProjectsRepository {
   }
 
   private mapProject(row: ProjectRow): Project {
+    // Keep database naming isolated in the repository so services and routes use
+    // stable camelCase module types.
     return {
       id: row.id,
       orgId: row.org_id,

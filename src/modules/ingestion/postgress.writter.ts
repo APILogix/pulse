@@ -1,3 +1,14 @@
+/**
+ * Postgres writer for ingestion workers and lookup endpoints.
+ *
+ * Flow:
+ * 1. API-key authentication reads project_api_keys joined to projects and
+ *    returns only active, unexpired credentials.
+ * 2. Worker writes first insert the shared events row, then insert type-specific
+ *    child rows such as request_events or error_events in the same logical path.
+ * 3. Debug and replay reads use project-scoped queries so callers can inspect or
+ *    requeue historical telemetry without crossing tenant boundaries.
+ */
 import { type PoolClient } from 'pg';
 import { pool } from '../../config/database.js';
 import type { EnrichedEvent, SDKRequestEvent, SDKErrorEvent } from './types.js';
@@ -76,6 +87,8 @@ export class PostgresWriter {
 
   /** Batch write to partitioned events table */
   async writeEvents(events: EnrichedEvent[]): Promise<void> {
+    // Bulk insert through UNNEST keeps one database round trip per batch and
+    // ON CONFLICT protects replay/retry paths from duplicate event ids.
     if (events.length === 0) return;
 
     const client = await this.pool.connect();
@@ -125,6 +138,8 @@ export class PostgresWriter {
 
   /** Write request events to child partitioned table */
   async writeRequestEvents(events: EnrichedEvent[]): Promise<void> {
+    // Request events are written after the canonical events rows so the generic
+    // event stream and request-specific analytics stay in sync.
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -171,6 +186,8 @@ export class PostgresWriter {
 
   /** Write error events — error_groups handled by DB trigger */
   async writeErrorEvents(events: EnrichedEvent[]): Promise<void> {
+    // Error events keep the full payload in events and denormalize searchable
+    // error fields into error_events; grouping can then be handled by triggers.
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -215,6 +232,8 @@ export class PostgresWriter {
 
   /** Debug endpoint: fetch full event graph */
   async getEventById(eventId: string, projectId: string): Promise<any> {
+    // Debug lookup returns the base event plus child-table details based on type,
+    // which gives operators one endpoint for full event inspection.
     const client = await this.pool.connect();
     try {
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
@@ -255,6 +274,8 @@ export class PostgresWriter {
     endTime: string,
     eventTypes?: string[]
   ): Promise<EnrichedEvent[]> {
+    // Replay reads a bounded, ordered time window and rebuilds EnrichedEvent-like
+    // payloads so the queue worker can process them through the standard path.
     const client = await this.pool.connect();
     try {
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);

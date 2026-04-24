@@ -1,3 +1,18 @@
+/**
+ * Ingestion business service.
+ *
+ * End-to-end flow:
+ * 1. Hash the SDK API key and resolve the owning project from Redis first, then
+ *    Postgres on cache miss.
+ * 2. Enforce project status and per-project rate limits before accepting data.
+ * 3. Validate batch size and event type permissions.
+ * 4. Apply idempotency per event id to avoid duplicate queue work.
+ * 5. Enrich accepted events with project/org/batch metadata and push them into
+ *    the in-memory buffer for BullMQ delivery.
+ *
+ * This class owns ingestion policy, but it does not write events directly; the
+ * worker side persists queued events through PostgresWriter.
+ */
 import { Queue, Job } from 'bullmq';
 import { RedisCache } from '../../db/redis/cache.js';
 import { PostgresWriter } from './postgress.writter.js';
@@ -16,6 +31,8 @@ import { randomUUID } from 'crypto';
 
 
 function hashApiKey(apiKey: string): string {
+  // API keys are never looked up by plaintext. The same SHA-256 hash is stored
+  // in project_api_keys and used as the cache key.
   return createHash('sha256').update(apiKey).digest('hex');
 }
 
@@ -106,6 +123,8 @@ export class IngestionService {
 
   /** Typed endpoints */
   async ingestRequests(req: IngestRequest): Promise<IngestResponse> {
+    // Typed routes provide a stricter contract than the generic ingest endpoint:
+    // every event in the request must match the route-specific type.
     req.events.forEach((e) => {
       if (e.type !== 'request') throw new Error('INVALID_EVENT_TYPE');
     });
@@ -136,39 +155,46 @@ export class IngestionService {
   /** Central processing pipeline */
   private async processIngest(req: IngestRequest): Promise<IngestResponse> {
     const { apiKey, events } = req;
-    console.log(apiKey,events)
+    console.log(apiKey,events,"logging api keys and events")
 
-    // 1. Auth & Project Resolution
+    // 1. Auth and project resolution. The project carries rate limits,
+    // environment, org ownership, and the allowed event-type policy.
     const project = await this.resolveProject(apiKey);
     if (!project) throw new Error('INVALID_API_KEY');
     if (!project.isActive) throw new Error('PROJECT_INACTIVE');
-
-    // 2. Rate limiting (per second)
+console.log("project resolved",project)
+    // 2. Fast per-second rate limiting protects the queue and database from
+    // sudden spikes.
     const secondLimit = await this.cache.checkRateLimit(
       project.id,
       project.rateLimitPerSecond,
       1
     );
     if (!secondLimit.allowed) throw new Error('RATE_LIMIT_EXCEEDED');
-
-    // 3. Rate limiting (per minute)
+console.log("rate limit pahse 1 ")
+    // 3. Per-minute limiting smooths sustained load while still allowing short
+    // bursts that pass the one-second check.
     const minuteLimit = await this.cache.checkRateLimit(
       project.id,
       project.rateLimitPerMinute,
       60
     );
     if (!minuteLimit.allowed) throw new Error('RATE_LIMIT_EXCEEDED');
-
-    // 4. Validation
+console.log("ratelimit per minute")
+    // 4. Batch validation rejects empty work and oversized client flushes before
+    // idempotency or queue writes are attempted.
     if (!events || events.length === 0) throw new Error('EMPTY_BATCH');
     if (events.length > this.config.maxBatchSize) throw new Error('BATCH_TOO_LARGE');
 
-    // 5. Circuit breaker check
+    // 5. Circuit breaker check stops acceptance when a dependency is already
+    // marked unhealthy. This prevents the buffer from hiding a persistent outage.
     if (await this.cache.isCircuitOpen('database')) {
       throw new Error('CIRCUIT_OPEN');
     }
 
-    // 6. Enrich & dedup
+    // 6. Enrich and deduplicate. Each accepted event receives stable storage
+    // metadata; duplicates and disallowed types are reported as rejected items
+    // without failing the whole batch.
     const batchId = randomUUID();
     const enriched: EnrichedEvent[] = [];
     const errors: Array<{ eventId: string; reason: string }> = [];
@@ -176,19 +202,22 @@ export class IngestionService {
     for (const event of events) {
       const eventId = event.requestId || randomUUID();
 
-      // Type validation
+      // Type validation is project-scoped because different projects/plans may
+      // allow different telemetry categories.
       if (!project.allowedEventTypes.includes(event.type)) {
         errors.push({ eventId, reason: `Event type '${event.type}' not allowed` });
         continue;
       }
 
-      // Idempotency check
+      // Idempotency protects queue workers and database inserts from retries
+      // sent by SDKs after network failures.
       const isNew = await this.cache.checkIdempotency(eventId);
       if (!isNew) {
         errors.push({ eventId, reason: 'Duplicate event' });
         continue;
       }
 
+      console.log("idopodency check")
       enriched.push({
         id: eventId,
         type: event.type,
@@ -201,7 +230,9 @@ export class IngestionService {
       });
     }
 
-    // 7. Push to buffer (non-blocking)
+    console.log("event push")
+    // 7. Push to buffer. The API returns once events are accepted into the
+    // internal queueing path; database persistence happens asynchronously.
     if (enriched.length > 0) {
       await Promise.all(enriched.map((e) => this.buffer.add(e)));
       await Promise.all([
@@ -209,7 +240,7 @@ export class IngestionService {
         this.cache.recordLastIngest(project.id),
       ]);
     }
-
+console.log("all thing done")
     return {
       success: true,
       accepted: enriched.length,
@@ -224,6 +255,8 @@ export class IngestionService {
   }
 
   async getHealth(): Promise<HealthStatus> {
+    // Health is dependency-based: Redis powers cache/rate limits, Postgres powers
+    // project lookup and event storage, and BullMQ powers async ingestion.
     const [redis, database, queue] = await Promise.all([
       this.cache.ping().then(() => true).catch(() => false),
       this.writer.healthCheck(),
@@ -285,6 +318,8 @@ export class IngestionService {
   }
 
   async replayEvents(req: ReplayRequest): Promise<{ replayId: string; queued: number }> {
+    // Replay intentionally uses queue jobs instead of direct writes so historical
+    // events pass through the same worker processing path as live ingestion.
     const { projectId, startTime, endTime, eventTypes } = req;
 
     const events = await this.writer.getEventsForReplay(

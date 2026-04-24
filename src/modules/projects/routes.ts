@@ -1,3 +1,14 @@
+/**
+ * Project route registration.
+ *
+ * Flow:
+ * 1. Authenticate the caller for every project and API-key management endpoint.
+ * 2. Parse params, query, and body with module schemas before calling service
+ *    methods.
+ * 3. Pass request metadata into mutating service calls so audit logging can
+ *    record request id, IP address, and user agent.
+ * 4. Normalize service errors through handleProjectError.
+ */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
 import {
@@ -15,6 +26,8 @@ import {
 import { handleProjectError } from "./utils.js";
 
 function requestMeta(request: FastifyRequest) {
+  // Keep audit metadata extraction in one place so mutating routes record a
+  // consistent request footprint.
   const userAgent = request.headers["user-agent"];
 
   return {
@@ -28,6 +41,7 @@ function requestMeta(request: FastifyRequest) {
 function withErrorHandling(
   handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
 ) {
+  // Wrap every handler with the same logging and domain-error translation path.
   return async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       return await handler(request, reply);
@@ -39,6 +53,8 @@ function withErrorHandling(
 }
 
 export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
+  // The module decorator owns service construction; routes only orchestrate HTTP
+  // concerns and response shapes.
   const service = fastify.projects.service;
 
   fastify.get(
@@ -234,6 +250,8 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       console.log("apikey", request.body,request.params);
       const body = CreateApiKeyBodySchema.parse(request.body);
+      // API keys return the full secret exactly once. Later reads expose only
+      // metadata and prefix, so clients must store this response securely.
       const result = await service.createApiKey(
         orgId,
         projectId,

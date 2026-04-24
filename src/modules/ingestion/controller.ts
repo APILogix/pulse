@@ -1,9 +1,26 @@
+/**
+ * Ingestion controller.
+ *
+ * Flow:
+ * 1. Convert HTTP input into the service contract with minimal transformation.
+ * 2. Delegate validation, project resolution, rate limiting, idempotency, and
+ *    queueing to IngestionService.
+ * 3. Normalize service error codes into stable HTTP responses for SDK clients.
+ *
+ * The controller intentionally stays thin: it owns protocol concerns such as
+ * status codes and response shape, while the service owns business rules.
+ */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { IngestionService } from './service.js';
 
 export class IngestionController {
   constructor(private service: IngestionService) {}
 
+  /**
+   * SDK bootstrap endpoint.
+   * Flow: read apiKey -> resolve project through service -> return SDK runtime
+   * config. Invalid or inactive projects are translated by handleError().
+   */
   async init(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { apiKey } = request.body as { apiKey: string };
@@ -20,16 +37,26 @@ export class IngestionController {
     }
   }
 
+  /**
+   * Generic batch endpoint for mixed event types.
+   * Flow: pass raw batch to service -> service enriches and queues accepted
+   * events -> return 202 because persistence happens asynchronously.
+   */
   async ingest(request: FastifyRequest, reply: FastifyReply) {
     try {
       console.log(request.body)
       const result = await this.service.ingestBatch(request.body as any);
+      console.log("final outpur ",result)
       return reply.status(202).send(result);
     } catch (err: any) {
       return this.handleError(err, reply);
     }
   }
 
+  /**
+   * Typed request-event endpoint. The service rejects any event whose type does
+   * not match this route, which protects downstream request_events inserts.
+   */
   async ingestRequests(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.ingestRequests(request.body as any);
@@ -39,6 +66,7 @@ export class IngestionController {
     }
   }
 
+  /** Typed error-event endpoint for SDK exceptions and crash payloads. */
   async ingestErrors(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.ingestErrors(request.body as any);
@@ -48,6 +76,7 @@ export class IngestionController {
     }
   }
 
+  /** Typed log-event endpoint for application log records. */
   async ingestLogs(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.ingestLogs(request.body as any);
@@ -57,6 +86,7 @@ export class IngestionController {
     }
   }
 
+  /** Typed metric-event endpoint for numeric telemetry samples. */
   async ingestMetrics(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.ingestMetrics(request.body as any);
@@ -66,6 +96,10 @@ export class IngestionController {
     }
   }
 
+  /**
+   * Public health check. Returns 200 only when Redis, Postgres, and queue
+   * connectivity are all healthy; degraded dependencies return 503.
+   */
   async getHealth(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.getHealth();
@@ -79,6 +113,7 @@ export class IngestionController {
     }
   }
 
+  /** Authenticated operational health endpoint for queue and buffer metrics. */
   async getIngestionHealth(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.getIngestionHealth();
@@ -88,6 +123,7 @@ export class IngestionController {
     }
   }
 
+  /** Returns the rate-limit and batch-size policy resolved from an API key. */
   async getLimits(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { apiKey } = request.query as { apiKey: string };
@@ -98,6 +134,7 @@ export class IngestionController {
     }
   }
 
+  /** Lists failed BullMQ jobs so operators can inspect dead-letter payloads. */
   async getDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { start = 0, end = 100 } = request.query as any;
@@ -119,6 +156,7 @@ export class IngestionController {
     }
   }
 
+  /** Requeues one failed BullMQ job after an operator chooses to retry it. */
   async reprocessDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { jobId } = request.params as { jobId: string };
@@ -132,6 +170,7 @@ export class IngestionController {
     }
   }
 
+  /** Requeues a bounded batch of failed jobs for bulk recovery operations. */
   async reprocessAllDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
       const count = await this.service.reprocessAllDLQ();
@@ -141,6 +180,10 @@ export class IngestionController {
     }
   }
 
+  /**
+   * Replays historical events by loading them from Postgres and pushing replay
+   * jobs into the queue with replay metadata.
+   */
   async replay(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.replayEvents(request.body as any);
@@ -150,6 +193,7 @@ export class IngestionController {
     }
   }
 
+  /** Fetches the raw event plus type-specific child table details for debugging. */
   async debugEvent(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
@@ -162,6 +206,10 @@ export class IngestionController {
     }
   }
 
+  /**
+   * Converts domain error codes thrown by the service into SDK-safe HTTP
+   * responses. Unknown errors remain generic to avoid leaking internals.
+   */
   private handleError(err: Error, reply: FastifyReply) {
     const code = err.message;
     const errorMap: Record<string, { status: number; message: string }> = {

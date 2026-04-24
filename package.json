@@ -8,8 +8,10 @@
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "dev:workers": "tsx watch src/workers/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
+    "start:workers": "tsx src/workers/main.ts",
     "start:prod": "NODE_ENV=production node dist/main.js",
     "lint": "eslint src --ext .ts",
     "test": "vitest",

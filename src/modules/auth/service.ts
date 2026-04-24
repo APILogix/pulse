@@ -1,6 +1,16 @@
 /**
  * Auth Service - Business Logic
  * Enterprise-grade security with rate limiting, encryption, and audit logging
+ *
+ * Flow:
+ * 1. Normalize and hash identity inputs before repository lookups.
+ * 2. Enforce account state, password policy, rate limits, and MFA rules in one
+ *    place so routes stay thin.
+ * 3. Persist sessions with hashed refresh tokens, then issue signed access and
+ *    refresh JWTs.
+ * 4. Store short-lived MFA/login challenges in Redis so failed attempts and
+ *    expiry do not depend on process memory.
+ * 5. Emit audit logs for sensitive lifecycle actions where enabled.
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
@@ -97,6 +107,7 @@ async function generateBackupCodes(): Promise<{
   plain: string[];
   hashed: string[];
 }> {
+  // Backup codes are shown once as plaintext and stored only as SHA-256 hashes.
   const codes: string[] = [];
   for (let i = 0; i < 10; i++) {
     const bytes = await randomBytesAsync(5);
@@ -128,6 +139,8 @@ async function checkRateLimit(
   limit: number,
   windowSeconds: number,
 ): Promise<boolean> {
+  // Redis INCR + EXPIRE gives a simple fixed-window limiter that works across
+  // multiple Node.js processes.
   const redisKey = `rate_limit:${key}`;
   const current = await redis.incr(redisKey);
   if (current === 1) {
@@ -175,6 +188,8 @@ function toUserProfile(user: User, isAdmin = false): UserProfile {
  * Validate user is active and not locked
  */
 function validateUserActive(user: User): void {
+  // Central account-state guard used before exposing profile data or issuing
+  // new privileged actions.
   if (user.deleted_at) {
     throw new AuthError(
       "User account has been deleted",
@@ -213,6 +228,8 @@ async function ensurePasswordNotReused(
   user: User,
   newPassword: string,
 ): Promise<void> {
+  // Compare the candidate password against the current hash and password
+  // history using the normal password verifier instead of comparing raw hashes.
   const previousHashes = getUserPasswordHashes(user);
 
   for (const hash of previousHashes) {
@@ -234,6 +251,8 @@ async function revokeUserSessions(
   userId: string,
   reason: string,
 ): Promise<number> {
+  // Revocation is persisted on every active session. Access-token blacklist
+  // support is available separately for immediate jti/session invalidation.
   const sessions = await repository.listActiveSessionsByUser(userId);
   console.log("sessions", sessions)
   for (const session of sessions) {
@@ -259,6 +278,9 @@ async function issueSessionForUser(options: {
   deviceType: string | undefined;
   mfaVerified: boolean;
 }): Promise<IssuedSession> {
+  // Session creation needs the database session id before the refresh JWT can be
+  // signed, so a temporary hash is inserted and then replaced by the real token
+  // hash after JWT generation.
   const now = Date.now();
   const expiresAt = new Date(now + REFRESH_TOKEN_TTL_SECONDS * 1000);
   const absoluteExpiresAt = new Date(
@@ -327,6 +349,8 @@ async function createLoginMFAChallenge(options: {
   expiresAt: Date;
   deviceType: string;
 }> {
+  // Login MFA challenges are stored in Redis with attempt counters and device
+  // metadata. No access or refresh token is issued until this challenge succeeds.
   const challengeId = generateId();
   const expiresAt = new Date(
     Date.now() + MFA_LOGIN_CHALLENGE_TTL_SECONDS * 1000,
@@ -358,6 +382,8 @@ async function consumeBackupCode(
   userId: string,
   code: string,
 ): Promise<boolean> {
+  // A matching backup code is removed immediately, making backup-code use
+  // one-time even under repeated login attempts.
   const devices = await repository.findMFADevicesByUserId(userId, false);
 
   for (const device of devices) {
@@ -393,6 +419,8 @@ export async function createUserFromEmail(
   ipAddress: string,
   requestId: string,
 ): Promise<User> {
+  // Email uniqueness is checked through a normalized hash so lookups do not need
+  // plaintext email comparison.
   // Check email hash collision
   const emailHash = createHash("sha256")
     .update(input.email.toLowerCase())
@@ -556,6 +584,8 @@ export async function loginWithEmailPassword(
     session_id: string;
   }
 > {
+  // Login flow: normalize email -> find user -> validate account state ->
+  // verify password -> either create MFA challenge or issue a full session.
   const normalizedEmail = normalizeEmail(input.email);
   const emailHash = createHash("sha256")
     .update(normalizedEmail)
@@ -711,6 +741,8 @@ export async function verifyLoginMFAChallenge(
   session_id: string;
   user_id: string;
 }> {
+  // MFA login completion consumes the Redis challenge, validates the selected
+  // device or backup code, and only then creates the user session.
   const rawChallenge = await redis.get(`auth_login_challenge:${input.challenge_id}`);
   if (!rawChallenge) {
     throw new AuthError(
@@ -1160,6 +1192,8 @@ export async function setupMFA(
   input: MFASetupInput,
   ipAddress: string,
 ): Promise<TOTPSetup> {
+  // Setup creates an unverified MFA device first. The device becomes active only
+  // after verifyMFASetup proves the user can generate a valid TOTP code.
   // Rate limit
   // const rateKey = `mfa_setup:${userId}`;
   // const allowed = await checkRateLimit(
@@ -1274,6 +1308,8 @@ export async function verifyMFASetup(
   userId: string,
   input: MFAVerifySetupInput,
 ): Promise<void> {
+  // Verification promotes the device, stores backup-code hashes, enables MFA on
+  // the user, and clears temporary Redis setup state.
   const rateKey = `mfa_verify:${userId}`;
   const allowed = await checkRateLimit(
     rateKey,
@@ -1685,6 +1721,8 @@ export async function refreshAccessToken(
   ipAddress: string,
   userAgent: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
+  // Refresh uses token rotation: verify JWT claims, match the stored token hash,
+  // enforce absolute expiry, then replace the refresh hash and issue new tokens.
   // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
   console.log("refresh token found phase 3")
   let decoded: { sub: string; jti: string; type: string };

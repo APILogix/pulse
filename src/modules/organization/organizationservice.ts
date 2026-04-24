@@ -1,3 +1,15 @@
+/**
+ * Organization business service.
+ *
+ * Flow:
+ * 1. Verify membership and role hierarchy before organization operations.
+ * 2. Keep owner-only actions, admin actions, billing/security updates, and
+ *    invitation lifecycle rules centralized outside the routes.
+ * 3. Persist state through the repository and write audit records for sensitive
+ *    changes.
+ * 4. Emit domain events best-effort; event failures are logged but do not roll
+ *    back already committed organization state.
+ */
 import { createHash } from "crypto";
 import { generateInvitationToken } from "./utils.js";
 import {
@@ -42,6 +54,9 @@ export class OrganizationService {
     ownerUserId: string,
     meta?: RequestMeta,
   ): Promise<Organization> {
+    // Creation is delegated to the repository because it must create the
+    // organization, owner membership, settings, billing, and initial usage rows
+    // in one transaction.
     const org = await this.deps.repository.create({
       name: data.name,
       ownerUserId,
@@ -73,6 +88,8 @@ export class OrganizationService {
   }
 
   async getOrganization(orgId: string, userId: string, requiredRole?: OrgRole): Promise<Organization> {
+    // Fetch organization and membership in parallel, then enforce membership
+    // and optional minimum role before returning organization details.
     const [org, membership] = await Promise.all([
       this.deps.repository.findById(orgId),
       this.deps.repository.findMember(orgId, userId),
@@ -99,6 +116,8 @@ export class OrganizationService {
     userId: string,
     meta?: RequestMeta,
   ): Promise<Organization> {
+    // Build a partial update payload so omitted fields keep their current
+    // values. The repository decides which backing table owns each field.
     await this.getOrganization(orgId, userId, "admin");
 
     const updatePayload: UpdateOrganizationRecord = {};
@@ -355,6 +374,8 @@ export class OrganizationService {
     reason?: string,
     meta?: RequestMeta,
   ): Promise<void> {
+    // Member removal checks actor authority, target existence, owner protection,
+    // and last-owner protection before deactivating membership.
     const [actor, target] = await Promise.all([
       this.deps.repository.findMember(orgId, removedBy),
       this.deps.repository.findMember(orgId, userId),
@@ -398,6 +419,8 @@ export class OrganizationService {
     updatedBy: string,
     meta?: RequestMeta,
   ): Promise<void> {
+    // Role changes protect ownership invariants: only owners can grant owner,
+    // and the last owner cannot be demoted.
     const [actor, target] = await Promise.all([
       this.deps.repository.findMember(orgId, updatedBy),
       this.deps.repository.findMember(orgId, userId),
@@ -504,6 +527,8 @@ export class OrganizationService {
     invitedBy: string,
     meta?: RequestMeta,
   ): Promise<{ invitation: OrganizationInvitation; token: string }> {
+    // Invitation tokens are returned once, while only the SHA-256 hash is stored
+    // for later validation and acceptance.
     const member = await this.deps.repository.findMember(orgId, invitedBy);
     if (!member || !this.hasRequiredRole(member.role, "admin")) {
       throw new ForbiddenError("Insufficient permissions");
@@ -582,6 +607,9 @@ export class OrganizationService {
     userEmail: string,
     meta?: RequestMeta,
   ): Promise<OrganizationMember> {
+    // Accepting an invitation validates the token, confirms the accepting
+    // user's email matches the invitation, consumes the invitation, and creates
+    // or reactivates membership.
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const invitation = await this.deps.repository.findInvitationByTokenHash(tokenHash);
 
@@ -721,6 +749,8 @@ export class OrganizationService {
   }
 
   private hasRequiredRole(userRole: OrgRole, required: OrgRole): boolean {
+    // Numeric hierarchy keeps role comparisons simple and consistent across all
+    // organization service methods.
     return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[required];
   }
 
@@ -733,6 +763,8 @@ export class OrganizationService {
     metadata: Record<string, unknown> | null,
     meta?: RequestMeta,
   ): Promise<void> {
+    // The service owns audit shape so route handlers do not duplicate actor,
+    // resource, metadata, or request-context mapping.
     await this.deps.repository.createAuditLog({
       orgId,
       userId,
@@ -746,6 +778,8 @@ export class OrganizationService {
   }
 
   private async safeEmit(event: string, payload: Record<string, unknown>): Promise<void> {
+    // Domain events are non-critical side effects. They should never hide the
+    // successful state change from the caller.
     try {
       await this.deps.emitEvent(event, payload);
     } catch (error) {

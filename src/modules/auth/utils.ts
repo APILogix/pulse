@@ -1,3 +1,13 @@
+/**
+ * Auth utility functions.
+ *
+ * Flow:
+ * - Token helpers sign short-lived access tokens and longer-lived refresh
+ *   tokens with separate secrets.
+ * - Cookie helpers keep refresh-token transport consistent across auth routes.
+ * - Normalization/history helpers keep identity and password policy behavior
+ *   centralized in one module.
+ */
 import { createHash, randomBytes } from 'crypto';
 import jwt from 'jsonwebtoken';
 
@@ -10,6 +20,8 @@ export const MFA_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
 
 export function hashToken(token: string): string {
+  // Persist token hashes instead of raw token values so database access cannot
+  // recover bearer credentials.
   return createHash('sha256').update(token).digest('hex');
 }
 
@@ -56,6 +68,8 @@ export function generateRefreshToken(
 }
 
 export function getRefreshCookieOptions() {
+  // Refresh cookies are httpOnly and path-scoped to auth endpoints; production
+  // also requires secure transport.
   return {
     httpOnly: true,
     secure: env.NODE_ENV === 'production',
@@ -73,6 +87,8 @@ export function buildPasswordHistory(
   currentHistory: unknown,
   currentPasswordHash: string | null,
 ): string[] {
+  // Keep only recent password hashes. The service uses password verification
+  // against these hashes to prevent password reuse.
   const history = Array.isArray(currentHistory)
     ? currentHistory.filter((entry): entry is string => typeof entry === 'string')
     : [];

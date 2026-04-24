@@ -1,4 +1,13 @@
-// quota-service.ts - Quota Management Service
+/**
+ * Quota management service.
+ *
+ * Flow:
+ * 1. Load organization billing, plan limits, and current usage counters.
+ * 2. Resolve the relevant plan limit for the requested usage metric.
+ * 3. Check whether the requested increment would exceed the limit.
+ * 4. Return allowed/current/limit/remaining data for callers that need to gate
+ *    API work before it is performed.
+ */
 
 import { BillingRepository } from './repository.js';
 import { UsageMetricType } from './types.js';
@@ -27,6 +36,8 @@ export class QuotaService {
     metricType: UsageMetricType,
     requestedAmount: number = 1
   ): Promise<ServiceResponse<{ allowed: boolean; current: number; limit: number | null; remaining: number }>> {
+    // Quota checks are read-first and side-effect-free. Call incrementUsage only
+    // after the protected operation succeeds.
     try {
       const billing = await this.repository.getOrganizationBilling(orgId);
       if (!billing) {
@@ -80,6 +91,9 @@ export class QuotaService {
     metricType: UsageMetricType,
     amount: number = 1
   ): Promise<ServiceResponse<{ newTotal: number }>> {
+    // This method calculates the expected new total for the caller. Persistence
+    // can be added through BillingRepository.incrementUsageCounter when metering
+    // is wired into production traffic.
     try {
       const counter = await this.repository.getUsageCounter(orgId);
       let newTotal = amount;
@@ -112,6 +126,8 @@ export class QuotaService {
   }
 
   async getUsageReport(orgId: string): Promise<ServiceResponse<any>> {
+    // Report combines billing-period dates with counters and projected usage so
+    // account pages can show current and expected consumption.
     try {
       const billing = await this.repository.getOrganizationBilling(orgId);
       const plan = billing ? await this.repository.getPlanById(billing.planId) : null;
@@ -180,6 +196,8 @@ export class QuotaService {
   }
 
   private getLimitFromPlan(limits: PlanLimits, metricType: UsageMetricType): number | null {
+    // Some metrics are intentionally unlimited on the current plan model and
+    // return null; callers should treat null as no hard cap.
     switch (metricType) {
       case UsageMetricType.API_REQUESTS:
         return limits.apiRequestsPerMin * 60 * 24 * 30; // Monthly

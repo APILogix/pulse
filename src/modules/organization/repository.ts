@@ -1,3 +1,14 @@
+/**
+ * Organization repository.
+ *
+ * Flow:
+ * 1. Execute all organization, member, invitation, billing-settings, and audit
+ *    SQL through parameterized queries.
+ * 2. Use explicit transactions for multi-table workflows such as organization
+ *    creation, updates, and ownership transfer.
+ * 3. Map database rows into module domain types so services do not depend on
+ *    snake_case database columns.
+ */
 import type { Pool } from "pg";
 import { pool } from "../../config/database.js";
 import { generateSlug, sanitizeBillingAddress } from "./utils.js";
@@ -117,6 +128,8 @@ function asPgError(error: unknown): { code?: string } {
 }
 
 function parseBillingContact(invoiceNotes: string | null): BillingContact {
+  // Billing contact data is currently serialized into invoice_notes. This parser
+  // keeps invalid or legacy JSON from breaking organization reads.
   if (!invoiceNotes) {
     return { billingEmail: "", billingName: null, billingAddress: null };
   }
@@ -143,6 +156,8 @@ export class OrganizationRepository implements IOrganizationRepository {
   }
 
   async create(org: CreateOrganizationRecord): Promise<Organization> {
+    // Organization creation is atomic: create org, owner membership, default
+    // settings, starter billing, and initial usage row in one transaction.
     const client = await this.db.connect();
 
     console.log("Creating organization", org);
@@ -346,6 +361,8 @@ console.log("member also created")
 }
 
   async update(id: string, data: UpdateOrganizationRecord): Promise<Organization> {
+    // One service-level update can span organizations, organization_settings,
+    // and organization_billing, so the repository fans fields out by owner table.
     const client = await this.db.connect();
 
     try {
@@ -432,6 +449,8 @@ console.log("member also created")
         idColumn: string,
         values: Array<{ column: string; value: unknown }>,
       ) => {
+        // Table and column names come from internal maps above; values remain
+        // parameterized to avoid SQL injection while supporting dynamic PATCHes.
         if (values.length === 0) {
           return;
         }
@@ -648,6 +667,8 @@ console.log("member also created")
   }
 
   async transferOwnership(orgId: string, fromUserId: string, toUserId: string): Promise<void> {
+    // Ownership transfer must update both membership roles and the organization
+    // owner_user_id together.
     const client = await this.db.connect();
 
     try {
@@ -697,6 +718,8 @@ console.log("member also created")
   }
 
   async createInvitation(invitation: CreateInvitationRecord): Promise<OrganizationInvitation> {
+    // Persist only token_hash. The plaintext invitation token is returned by the
+    // service once for email delivery or API response.
     const result = await this.db.query<InvitationRow>(
       `INSERT INTO organization_invitations (
         org_id,
@@ -879,6 +902,8 @@ console.log("member also created")
   }
 
   private mapOrganization(row: OrganizationReadRow): Organization {
+    // Keep database naming isolated in the repository. The rest of the module
+    // consumes camelCase Organization objects.
     // const billingContact = parseBillingContact(row.invoice_notes);
 
     return {

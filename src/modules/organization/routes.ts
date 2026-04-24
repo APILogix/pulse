@@ -1,3 +1,13 @@
+/**
+ * Organization route registration.
+ *
+ * Flow:
+ * 1. Authenticate organization management routes.
+ * 2. Parse params/query/body with Zod schemas before service calls.
+ * 3. Convert Fastify request metadata into service audit metadata.
+ * 4. Delegate membership, invitation, billing, and security rules to
+ *    OrganizationService.
+ */
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ZodError } from 'zod';
@@ -35,6 +45,8 @@ type AuthenticatedRequest = FastifyRequest & {
 };
 
 function handleOrganizationError(error: unknown, reply: FastifyReply) {
+  // Convert domain and validation errors to stable API responses. Unexpected
+  // errors stay generic so internal details are not exposed to clients.
   if (error instanceof OrganizationError) {
     return reply.code(error.statusCode).send({
       success: false,
@@ -69,6 +81,8 @@ function handleOrganizationError(error: unknown, reply: FastifyReply) {
 function withErrorHandling(
   handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>
 ) {
+  // Centralized route wrapper keeps every organization endpoint on the same
+  // logging and error-response path.
   return async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       return await handler(request, reply);
@@ -84,6 +98,7 @@ function asAuthenticated(request: FastifyRequest): AuthenticatedRequest {
 }
 
 function requestMeta(request: FastifyRequest) {
+  // Mutating service calls use this data for audit logs and operational traces.
   const userAgentHeader = request.headers['user-agent'];
   return {
     ipAddress: request.ip ?? null,
@@ -95,6 +110,8 @@ export async function organizationRoutes(
   fastify: FastifyInstance,
   options: FastifyPluginOptions
 ): Promise<void> {
+  // Service dependencies are created by the organization module plugin and
+  // attached to Fastify, keeping route registration focused on HTTP mapping.
   const service = fastify.organization.service;
 
   fastify.post(

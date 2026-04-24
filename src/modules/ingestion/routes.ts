@@ -1,3 +1,16 @@
+/**
+ * Ingestion route registration.
+ *
+ * Flow:
+ * 1. Read infrastructure dependencies that were attached to the Fastify instance
+ *    during application boot: BullMQ ingestion queue, Redis cache, and Postgres writer.
+ * 2. Construct the service once for this route scope so every handler shares the
+ *    same buffer, queue, cache, and persistence objects.
+ * 3. Bind controller methods explicitly because Fastify calls handlers without the
+ *    class instance context.
+ * 4. Attach shutdown cleanup so buffered ingestion events are flushed before the
+ *    Fastify process closes.
+ */
 import type { FastifyInstance } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
 import { IngestionController } from "./controller.js";
@@ -29,6 +42,9 @@ function requireFastifyDecorator<T>(
   fastify: FastifyInstance,
   name: FastifyDecoratorName,
 ): T {
+  // Route registration should fail fast if boot plugins did not wire the
+  // required dependency. This prevents handlers from accepting traffic with a
+  // partially constructed ingestion pipeline.
   const decoratedFastify = fastify as FastifyInstance & Record<string, unknown>;
   const dependency = decoratedFastify[name];
 
@@ -40,6 +56,9 @@ function requireFastifyDecorator<T>(
 }
 
 function assertControllerMethods(controller: IngestionController): void {
+  // Keep route registration honest when controller methods are renamed or
+  // removed. A boot-time error is easier to diagnose than a runtime 500 on a
+  // production ingestion endpoint.
   const methods: ControllerMethodName[] = [
     "init",
     "ingest",
@@ -65,6 +84,8 @@ function assertControllerMethods(controller: IngestionController): void {
 }
 
 export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
+  // Dependencies are owned by application bootstrapping; this module only
+  // composes them into the ingestion use case.
   const ingestionQueue = requireFastifyDecorator<
     FastifyInstance["ingestionQueue"]
   >(fastify, "ingestionQueue");

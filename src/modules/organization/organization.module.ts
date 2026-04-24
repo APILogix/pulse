@@ -1,4 +1,12 @@
-// organization.module.ts - Organization Module for Fastify
+/**
+ * Organization module for Fastify.
+ *
+ * Flow:
+ * 1. Construct repository and service dependencies at boot.
+ * 2. Decorate Fastify with the organization service boundary.
+ * 3. Register organization routes under /organizations.
+ * 4. Log lifecycle events for startup and shutdown diagnostics.
+ */
 
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
@@ -22,6 +30,8 @@ async function organizationModule(
   fastify: FastifyInstance,
   _options: FastifyPluginOptions
 ): Promise<void> {
+  // Repository owns SQL; service owns membership, role, invitation, and audit
+  // rules. Both are registered once per app instance.
   const repository = new OrganizationRepository();
 
   const service = new OrganizationService({

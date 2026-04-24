@@ -1,3 +1,13 @@
+/**
+ * Project utility functions.
+ *
+ * Flow:
+ * - Domain errors and handler helpers standardize project API failures.
+ * - Role helpers keep organization authorization comparisons consistent.
+ * - Slug/API-key helpers generate stable public identifiers while storing only
+ *   hashed secrets.
+ * - Constant-time comparison protects API-key verification from timing leaks.
+ */
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { FastifyReply } from "fastify";
 import { ZodError } from "zod";
@@ -26,6 +36,8 @@ export function handleProjectError(
   error: unknown,
   reply: FastifyReply,
 ): FastifyReply {
+  // The routes call this from a shared wrapper so every project endpoint returns
+  // the same error envelope for domain, validation, and unexpected failures.
   if (error instanceof ProjectError) {
     console.log("ProjectError:", { error});
     return reply.code(error.statusCode).send({
@@ -65,6 +77,8 @@ export function hasRequiredRole(
 }
 
 export function slugifyProjectName(name: string): string {
+  // Slugs are restricted to URL-safe lowercase tokens and receive a random
+  // fallback if the project name contains no usable characters.
   const slug = name
     .toLowerCase()
     .trim()
@@ -111,6 +125,8 @@ export function createApiKey(environment: ProjectEnvironment): {
   keyPrefix: string;
   keyHash: string;
 } {
+  // The full key is returned once. The prefix is public metadata for candidate
+  // lookup and the hash is the only value persisted for verification.
   const prefix = environment === "production" ? "pk_live_" : "pk_dev_";
   const rawKey = `${prefix}${randomBytes(20).toString("hex")}`;
 
@@ -132,6 +148,8 @@ export function extractApiKeyPrefix(rawKey: string): string | null {
 }
 
 export function constantTimeEqualHex(left: string, right: string): boolean {
+  // Length mismatch is rejected before timingSafeEqual because the Node API
+  // requires buffers of equal length.
   const leftBuffer = Buffer.from(left, "hex");
   const rightBuffer = Buffer.from(right, "hex");
 

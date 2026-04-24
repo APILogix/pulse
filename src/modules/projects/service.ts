@@ -1,3 +1,15 @@
+/**
+ * Project business service.
+ *
+ * Flow:
+ * 1. Validate organization/project access before reads and mutations.
+ * 2. Enforce project status transitions and API-key limits.
+ * 3. Generate API-key material in memory, persist only hashes/prefixes, and
+ *    return the full key once.
+ * 4. Populate Redis and LRU caches after API-key creation so ingestion can
+ *    resolve new keys without waiting for a cache miss.
+ * 5. Write audit records for sensitive project and API-key lifecycle changes.
+ */
 import type { FastifyBaseLogger } from "fastify";
 import { logAudit } from "../../shared/middleware/audit-logger.js";
 import { ProjectsRepository } from "./repository.js";
@@ -74,6 +86,8 @@ export class ProjectsService {
     body: CreateProjectBody,
     meta: RequestMeta,
   ): Promise<Project> {
+    // Project slugs are scoped to an organization. Prefix defaults derive from
+    // the final unique slug so generated API URLs stay stable and readable.
     // await this.requireOrganizationAccess(orgId, userId, "admin");
     const slug = await this.generateUniqueSlug(orgId, body.name);
     const defaultPrefixes = buildApiPrefixes(slug);
@@ -121,6 +135,8 @@ export class ProjectsService {
     body: UpdateProjectBody,
     meta: RequestMeta,
   ): Promise<Project> {
+    // Status changes are validated before persistence so invalid lifecycle
+    // transitions never reach the database.
     const currentProject = await this.requireProjectAccess(
       orgId,
       projectId,
@@ -288,6 +304,8 @@ export class ProjectsService {
     body: CreateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
+    // API-key creation stores only the hash and prefix. The plaintext full key
+    // exists only in this request/response cycle.
     // await this.requireProjectAccess(orgId, projectId, userId, "admin");
     this.assertFutureExpiry(body.expiresAt);
 
@@ -336,7 +354,8 @@ export class ProjectsService {
     // Store in Redis (instance method — no longer broken static stub)
     await this.redisCache.setProjectByApiKeyHash(keyMaterial.keyHash, projectConfig, ttl);
 
-    // Store in LRU cache with the same shape
+    // Store in LRU cache with the same shape for a second, in-process fast path
+    // used by components that do not need a Redis round trip.
     apiKeyCache.set(keyMaterial.keyHash, projectConfig);
 
     // await this.audit(
@@ -445,6 +464,8 @@ export class ProjectsService {
     body: RotateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
+    // Rotation is transactional: deactivate the old key and create the new key
+    // together so there is no partially rotated state.
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     this.assertFutureExpiry(body.expiresAt);
 
@@ -608,6 +629,8 @@ export class ProjectsService {
   }
 
   async validateApiKey(rawKey: string): Promise<ProjectApiKeyRecord | null> {
+    // Prefix narrows the candidate set, then constant-time hash comparison
+    // prevents timing leaks when checking the full secret.
     const keyPrefix = extractApiKeyPrefix(rawKey);
     if (!keyPrefix) {
       return null;
@@ -638,6 +661,8 @@ export class ProjectsService {
     userId: string,
     requiredRole: OrgRole,
   ) {
+    // Organization membership is the root authorization check for project
+    // operations because projects are scoped under organizations.
     console.log("Checking organization access", { orgId, userId, requiredRole });
     const membership = await this.repository.findOrganizationMembership(
       orgId,
@@ -672,6 +697,8 @@ export class ProjectsService {
     userId: string,
     requiredRole: OrgRole,
   ): Promise<Project> {
+    // Project access composes organization membership with project existence.
+    // The service returns the project so callers do not need a second lookup.
     await this.requireOrganizationAccess(orgId, userId, requiredRole);
     const project = await this.repository.findProjectById(orgId, projectId);
 
@@ -683,6 +710,8 @@ export class ProjectsService {
   }
 
   private async generateUniqueSlug(orgId: string, name: string): Promise<string> {
+    // Deterministic slug generation with numeric suffixes keeps project URLs
+    // readable while avoiding org-local collisions.
     const baseSlug = slugifyProjectName(name);
     let candidate = baseSlug;
     let suffix = 1;
@@ -729,6 +758,8 @@ export class ProjectsService {
     meta: RequestMeta,
     metadata?: Record<string, unknown>,
   ): Promise<void> {
+    // Audit entries are shaped here so all service methods record consistent
+    // actor, resource, request, and metadata fields.
     const entry: {
       user_id: string;
       org_id: string;

@@ -1,4 +1,17 @@
-// billing.service.ts - Billing Business Logic Service
+/**
+ * Billing business service.
+ *
+ * Flow:
+ * 1. Read pricing plans and billing state from BillingRepository.
+ * 2. Enforce subscription lifecycle rules before creating, changing, canceling,
+ *    or reactivating subscriptions.
+ * 3. Calculate derived billing values such as discounts, proration, MRR, usage
+ *    projections, and invoice totals.
+ * 4. Return ServiceResponse envelopes that routes can send directly.
+ *
+ * Payment provider integrations are represented here as placeholders until the
+ * provider clients are wired in.
+ */
 
 import { BillingRepository } from './repository.js';
 import {
@@ -66,6 +79,8 @@ export class BillingService {
   }
 
   async comparePlans(): Promise<ServiceResponse<any>> {
+    // Build a feature-by-feature matrix so the frontend can render a comparison
+    // table without understanding the plan schema.
     const plans = await this.repository.getAllPlans(false);
     
     const allFeatures = new Set<string>();
@@ -145,6 +160,8 @@ export class BillingService {
     orgId: string,
     body: CreateSubscriptionBody
   ): Promise<ServiceResponse<OrganizationBilling>> {
+    // Subscription creation is transactional because it validates existing
+    // billing state, reads the plan, and inserts the new billing profile.
     return this.repository.withTransaction(async (client) => {
       const existing = await this.repository.getOrganizationBilling(orgId);
       if (existing && existing.status !== SubscriptionStatus.CANCELED) {
@@ -187,6 +204,8 @@ export class BillingService {
     orgId: string,
     body: ChangePlanBody
   ): Promise<ServiceResponse<OrganizationBilling>> {
+    // Plan changes calculate proration against the current period before
+    // updating the subscription record.
     return this.repository.withTransaction(async (client) => {
       const currentBilling = await this.repository.getOrganizationBilling(orgId);
       if (!currentBilling) {
@@ -427,6 +446,8 @@ export class BillingService {
   // ============================================
 
   async getCurrentUsage(orgId: string): Promise<ServiceResponse<UsageSummary>> {
+    // Usage summary combines subscription period, plan limits, and accumulated
+    // counters to produce current, overage, and projected usage.
     const billing = await this.repository.getOrganizationBilling(orgId);
     if (!billing) {
       throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
@@ -571,6 +592,8 @@ export class BillingService {
     type: UsageMetricType,
     body: QuotaIncreaseBody
   ): Promise<ServiceResponse<QuotaRequest>> {
+    // Store the current plan limit with the request so later review can see what
+    // the customer was constrained by at request time.
     const billing = await this.repository.getOrganizationBilling(orgId);
     if (!billing) {
       throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
@@ -650,6 +673,8 @@ export class BillingService {
   // ============================================
 
   async applyCoupon(orgId: string, code: string): Promise<ServiceResponse<any>> {
+    // Coupon application validates existence, expiry, and redemption limits
+    // before incrementing usage.
     const coupon = await this.repository.getCouponByCode(code);
     if (!coupon) {
       throw new BillingError(BillingErrorCodes.COUPON_INVALID, 'Invalid coupon code', 400);

@@ -1,4 +1,14 @@
-// utils.ts - Billing Utilities
+/**
+ * Billing utility functions.
+ *
+ * Flow:
+ * - Date helpers define billing periods and report windows.
+ * - Calculation helpers produce proration, tax, discounts, MRR, limits, and
+ *   invoice totals.
+ * - Mapping helpers translate provider statuses into local billing enums.
+ * - BillingError and logger helpers standardize route/service error handling
+ *   and diagnostics.
+ */
 
 import {
   type PlanLimits,
@@ -61,6 +71,8 @@ export function calculateProration(
   daysRemaining: number,
   daysInPeriod: number
 ): { credit: number; charge: number; net: number } {
+  // Proration credits unused current-plan time and charges remaining new-plan
+  // time using daily rates from the current billing period.
   const dailyCurrentRate = currentPrice / daysInPeriod;
   const dailyNewRate = newPrice / daysInPeriod;
   
@@ -192,6 +204,7 @@ export function checkLimitExceeded(
   current: number,
   limit: number | null
 ): { exceeded: boolean; percentage: number; remaining: number } {
+  // Null limit means unlimited for the current plan/metric.
   if (limit === null) {
     return { exceeded: false, percentage: 0, remaining: Infinity };
   }
@@ -218,6 +231,8 @@ export function generateLineItems(
   discount: { description: string; amount: number } | null = null,
   tax: { description: string; amount: number; rate: number } | null = null
 ): InvoiceLineItem[] {
+  // Build invoice rows in display order: base plan, overages, discount, then
+  // tax. Totals are calculated separately from this normalized list.
   const items: InvoiceLineItem[] = [
     {
       description: `${planName} - Subscription`,
@@ -267,6 +282,8 @@ export function calculateInvoiceTotals(lineItems: InvoiceLineItem[]): {
   tax: number;
   total: number;
 } {
+  // Totals are derived from line item types so invoice generation can add new
+  // lines without duplicating subtotal/discount/tax math.
   const subtotal = lineItems
     .filter(item => item.type === 'plan' || item.type === 'overage')
     .reduce((sum, item) => sum + item.amount, 0);
@@ -298,6 +315,8 @@ export function projectUsage(
   daysElapsed: number,
   daysInPeriod: number
 ): number {
+  // Simple linear projection based on current burn rate across the billing
+  // period.
   if (daysElapsed === 0) return currentUsage;
   const dailyRate = currentUsage / daysElapsed;
   return Math.round(dailyRate * daysInPeriod);

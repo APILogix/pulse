@@ -1,4 +1,14 @@
-// repository.ts - Billing Repository
+/**
+ * Billing repository.
+ *
+ * Flow:
+ * 1. Read plan, subscription, payment method, invoice, usage, coupon, and quota
+ *    data from PostgreSQL.
+ * 2. Use optional PoolClient parameters so services can wrap related writes in
+ *    transactions.
+ * 3. Build dynamic UPDATE and filter queries from trusted internal field maps.
+ * 4. Map database rows into billing module domain objects.
+ */
 
 import { pool} from '../../config/database.js';
 import type { Pool, PoolClient } from 'pg';
@@ -43,6 +53,8 @@ export class BillingRepository {
   // ============================================
 
   async withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+    // Shared transaction helper for service workflows that need multiple billing
+    // writes to commit atomically.
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -215,6 +227,8 @@ export class BillingRepository {
   }
 
   async seedDefaultPlans(): Promise<void> {
+    // Idempotent seed operation. Existing plans are updated in place so local
+    // setup and migrations can run repeatedly.
     const plans = [
       {
         id: 'starter',
@@ -402,6 +416,8 @@ export class BillingRepository {
     updates: Partial<OrganizationBilling>,
     client?: PoolClient
   ): Promise<OrganizationBilling> {
+    // Dynamic update keeps PATCH semantics for billing profiles. Only supplied
+    // fields are changed, and updated_at is always refreshed.
     const db = client || this.pool;
     
     const setClauses: string[] = [];
@@ -574,6 +590,8 @@ export class BillingRepository {
     paymentMethod: Partial<PaymentMethod>,
     client?: PoolClient
   ): Promise<PaymentMethod> {
+    // First active payment method becomes default automatically to keep checkout
+    // and invoice payment flows usable without a second request.
     const db = client || this.pool;
     
     // If this is the first payment method, make it default
@@ -752,6 +770,8 @@ export class BillingRepository {
     invoice: Partial<Invoice>,
     client?: PoolClient
   ): Promise<Invoice> {
+    // Invoice number generation locks the billing row with FOR UPDATE so two
+    // invoice writers cannot reuse the same invoice number.
     const db = client || this.pool;
     
     // Generate invoice number
@@ -939,6 +959,8 @@ export class BillingRepository {
       granularity?: 'hourly' | 'daily' | 'monthly' | undefined;
     } = {}
   ): Promise<UsageRecord[]> {
+    // Usage filters are optional and additive, enabling summary and drill-down
+    // queries from the same method.
     let whereClause = 'WHERE org_id = $1';
     const values: any[] = [orgId];
     let paramIndex = 2;
@@ -984,6 +1006,8 @@ export class BillingRepository {
     amount: number = 1,
     client?: PoolClient
   ): Promise<void> {
+    // Metric names are mapped to trusted columns before SQL is built. Unknown
+    // metric keys fail fast instead of producing unsafe SQL.
     const db = client || this.pool;
     
     const columnMap: Record<string, string> = {

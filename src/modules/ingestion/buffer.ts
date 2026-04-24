@@ -1,3 +1,16 @@
+/**
+ * Ingestion buffer.
+ *
+ * Flow:
+ * 1. Events are accepted into memory immediately to keep SDK ingestion latency
+ *    low.
+ * 2. The buffer flushes either when it reaches maxSize or when the short timer
+ *    expires.
+ * 3. Flushes create BullMQ jobs in bulk with event ids as job ids, giving the
+ *    queue another idempotency layer.
+ * 4. If BullMQ rejects a flush, events are pushed back into memory and bounded
+ *    backpressure prevents unbounded process growth.
+ */
 import { Queue, Job } from 'bullmq';
 import type { EnrichedEvent } from './types.js';
 
@@ -35,6 +48,8 @@ export class IngestionBuffer {
   }
 
   async add(event: EnrichedEvent): Promise<void> {
+    // A full buffer flushes synchronously; otherwise a timer gives nearby events
+    // a chance to coalesce into one BullMQ addBulk call.
     this.buffer.push(event);
 
     if (this.buffer.length >= this.maxSize) {
@@ -45,6 +60,8 @@ export class IngestionBuffer {
   }
 
   async flush(): Promise<void> {
+    // Only one flush may own the buffer at a time. This avoids duplicate jobs
+    // and preserves the retry path when addBulk fails.
     if (this.isFlushing || this.buffer.length === 0) return;
 
     this.isFlushing = true;
@@ -76,6 +93,9 @@ export class IngestionBuffer {
   }
 
   private async pushToQueue(events: EnrichedEvent[]): Promise<void> {
+    // BullMQ handles worker retries, exponential backoff, and failed-job
+    // retention. The jobId is the event id so repeated flush attempts stay
+    // idempotent at the queue layer.
     const jobs = events.map((event) => ({
       name: event.type,
       data: event,
@@ -92,6 +112,8 @@ export class IngestionBuffer {
   }
 
   async destroy(): Promise<void> {
+    // Shutdown must drain the timer and try a bounded final flush so accepted
+    // API events are not silently abandoned during process termination.
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;

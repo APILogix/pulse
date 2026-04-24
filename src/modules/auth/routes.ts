@@ -1,6 +1,14 @@
 /**
  * Auth Routes - Fastify route handlers
  * Enterprise security headers, rate limiting, validation
+ *
+ * Flow:
+ * 1. Route handlers validate request payloads with auth schemas.
+ * 2. Request metadata is extracted for security checks, session fingerprinting,
+ *    and audit logging.
+ * 3. Business decisions are delegated to service.ts.
+ * 4. Access tokens are returned in the response body, while refresh tokens are
+ *    stored as httpOnly cookies to reduce client-side exposure.
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -48,6 +56,8 @@ interface RequestWithUser extends FastifyRequest {
 // ============================================
 
 function handleAuthError(error: unknown, reply: FastifyReply) {
+  // AuthError is the domain error contract used by the service. Anything else
+  // is treated as unexpected and intentionally returns a generic response.
   if (error instanceof AuthError) {
     return reply.status(error.statusCode).send({
       error: {
@@ -79,7 +89,9 @@ function sendAuthSession(
     user_id?: string;
   },
 ) {
-  // Set refresh token as httpOnly secure cookie
+  // Set refresh token as httpOnly secure cookie. The body receives only the
+  // short-lived access token so JavaScript clients never need to store refresh
+  // credentials directly.
   reply.setCookie('refresh_token', payload.refresh_token, getRefreshCookieOptions());
 
   // Send only access token in response body (never expose refresh token)
@@ -99,6 +111,9 @@ function sendAuthSession(
 // ============================================
 
 async function credentialRoutes(fastify: FastifyInstance) {
+  // Credential routes cover password login, MFA completion, and password reset
+  // flows. They are rate-limited where brute-force or token guessing risk is
+  // highest.
   // POST /auth/login - Password login
   fastify.post(
     '/login',
@@ -238,6 +253,8 @@ async function credentialRoutes(fastify: FastifyInstance) {
 // ============================================
 
 async function userRoutes(fastify: FastifyInstance) {
+  // User routes expose self-service profile operations and admin-only account
+  // management. The service layer owns permission checks and audit logging.
   // POST /auth/users - Create user 
   fastify.post(
     '/users',
@@ -433,6 +450,8 @@ async function userRoutes(fastify: FastifyInstance) {
 // ============================================
 
 async function mfaRoutes(fastify: FastifyInstance) {
+  // MFA routes are split into setup, verification, challenge, device management,
+  // and backup-code flows. Sensitive verification endpoints are rate-limited.
   // POST /auth/mfa/setup - Initialize MFA setup
   fastify.post(
     '/mfa/setup',
@@ -662,6 +681,8 @@ async function mfaRoutes(fastify: FastifyInstance) {
 // ============================================
 
 async function sessionRoutes(fastify: FastifyInstance) {
+  // Session routes manage active refresh-token sessions. Refresh rotates the
+  // cookie token; logout and revocation invalidate persisted session state.
   // GET /auth/sessions - List active sessions
   fastify.get(
     '/sessions',
@@ -773,6 +794,8 @@ async function sessionRoutes(fastify: FastifyInstance) {
 // ============================================
 
 export default async function authRoutes(fastify: FastifyInstance) {
+  // Register each auth sub-area under the same /auth prefix configured by the
+  // module loader.
   // Health check for auth module
   fastify.get('/health', async () => ({ status: 'ok', module: 'auth' }));
 

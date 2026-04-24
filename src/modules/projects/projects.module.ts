@@ -1,3 +1,13 @@
+/**
+ * Projects module for Fastify.
+ *
+ * Flow:
+ * 1. Construct project repository and service at boot.
+ * 2. Reuse the Redis cache decorator created by the ingestion module for API-key
+ *    cache population.
+ * 3. Decorate Fastify with project dependencies.
+ * 4. Register project routes under the organization-scoped prefix.
+ */
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";
 import fp from "fastify-plugin";
 import { ProjectsRepository } from "./repository.js";
@@ -17,6 +27,8 @@ async function projectsModule(
   fastify: FastifyInstance,
   _options: FastifyPluginOptions,
 ): Promise<void> {
+  // Project service depends on Redis cache because API-key creation primes the
+  // same cache the ingestion service reads on the hot path.
   const repository = new ProjectsRepository();
   // fastify.redisCache is decorated by the ingestion module, which is
   // registered before this module in app.ts — so it is always available here.

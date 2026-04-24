@@ -1,6 +1,18 @@
 /**
  * Auth Repository - Pure SQL queries for PostgreSQL
  * No business logic, only data access
+ *
+ * Flow:
+ * 1. User queries read and mutate the users table while respecting soft-delete
+ *    rules where relevant.
+ * 2. MFA queries manage device state, primary-device selection, and backup-code
+ *    hashes.
+ * 3. Password/email verification queries create and consume one-time token rows.
+ * 4. Session queries persist refresh-token hashes and revoke/expire sessions.
+ *
+ * Repository functions intentionally accept an optional PoolClient so service
+ * methods can compose multiple writes inside a transaction without duplicating
+ * SQL.
  */
 
 import { pool } from "../../config/database.js";
@@ -37,6 +49,8 @@ export async function findUserByClerkId(clerkUserId: string, client?: PoolClient
 
 export async function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null> {
   const db = client || pool;
+// Login only needs security-critical columns, so this query avoids loading full
+// user profile data on the hot authentication path.
 const result = await db.query<User>(
   `
   SELECT 
@@ -105,6 +119,8 @@ export async function updateUser(
   data: Partial<Pick<User, 'full_name' | 'avatar_url' | 'timezone' | 'locale' | 'preferred_mfa_method'>>,
   client?: PoolClient
 ): Promise<User | null> {
+  // Build the SET clause from only supplied fields. This preserves existing user
+  // values and avoids writing undefined over nullable columns.
   const db = client || pool;
   const fields: string[] = [];
   const values: unknown[] = [];
@@ -197,6 +213,8 @@ export async function listUsers(
   },
   client?: PoolClient
 ): Promise<{ users: User[]; total: number }> {
+  // The count query and page query share the same filters so pagination metadata
+  // matches the returned rows.
   const db = client || pool;
   const { status, limit = 20, offset = 0, search } = options;
   
@@ -370,7 +388,7 @@ export async function updateMFADevicePrimary(
   client?: PoolClient
 ): Promise<void> {
   const db = client || pool;
-  // Use transaction to ensure only one primary
+  // Use transaction to ensure only one primary MFA device exists per user.
   await db.query('BEGIN');
   try {
     // Remove primary from all others
@@ -629,6 +647,8 @@ export async function createSession(
   },
   client?: PoolClient
 ): Promise<UserSession> {
+  // Store only the refresh-token hash. The signed refresh token itself is sent to
+  // the client cookie and cannot be recovered from the database.
   const db = client || pool;
   const result = await db.query<UserSession>(
     `INSERT INTO user_sessions (
@@ -746,6 +766,8 @@ export async function updateSessionActivity(
 }
 
 export async function cleanupExpiredSessions(client?: PoolClient): Promise<number> {
+  // Expired sessions are marked instead of deleted so audit/debug tooling can
+  // still explain why a refresh token stopped working.
   const db = client || pool;
   const result = await db.query(
     `UPDATE user_sessions 
@@ -761,6 +783,8 @@ export async function cleanupExpiredSessions(client?: PoolClient): Promise<numbe
 // ============================================
 
 export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+  // Shared transaction wrapper for auth service operations that need multiple
+  // repository calls to commit or roll back together.
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
