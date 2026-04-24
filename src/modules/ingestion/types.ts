@@ -36,6 +36,7 @@ export interface SDKLogEvent {
   level: 'debug' | 'info' | 'warn' | 'error';
   message: string;
   timestamp: number;
+  requestId?: string;
   metadata?: Record<string, any>;
 }
 
@@ -46,6 +47,8 @@ export interface SDKMetricEvent {
   value: number;
   unit?: string;
   tags?: Record<string, string>;
+  metadata?: Record<string, any>;
+  requestId?: string;
   timestamp: number;
 }
 

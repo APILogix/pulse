@@ -97,7 +97,7 @@ export class PostgresWriter {
 
       const projectId = events[0].projectId;
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
-
+console.log(events,"while writting events")
       const query = `
         INSERT INTO events (
           id, project_id, type, request_id, timestamp, payload, ingested_at
@@ -145,7 +145,7 @@ export class PostgresWriter {
       await client.query('BEGIN');
       const projectId = events[0].projectId;
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
-
+console.log("before send to event writer",events)
       await this.writeEvents(events);
 
       const query = `
