@@ -69,9 +69,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
 
     await app.register(cors, {
-      origin: env.NODE_ENV === "development"
-        ? ["http://localhost:3000", "http://localhost:5173"]
-        : ["https://yourdomain.com"],
+      origin:true,
       credentials: true,
     });
 
