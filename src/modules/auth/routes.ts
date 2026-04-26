@@ -15,13 +15,13 @@ import {
   ChangePasswordSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
+  VerifyEmailSchema,
   MFASetupSchema,
   MFAVerifySetupSchema,
   MFAVerifySchema,
   BackupCodeVerificationSchema,
   AuthError,
   AuthErrorCodes,
-  EmptyBodySchema,
 } from './types.js';
 
 import { authenticate, requireAdmin, requireMFA } from '../../shared/middleware/auth.js';
@@ -102,6 +102,9 @@ async function credentialRoutes(fastify: FastifyInstance) {
   // POST /auth/login - Password login
   fastify.post(
     '/login',
+    {
+      preHandler: [rateLimit({ keyPrefix: 'login', max: 5, window: 900 })],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const body = LoginSchema.parse(request.body);
@@ -223,7 +226,6 @@ async function credentialRoutes(fastify: FastifyInstance) {
           clientInfo.ip,
           request.id,
         );
-        console.log("password complte")
 
         return reply.send({ message: 'Password changed successfully' });
       } catch (error) {
@@ -255,6 +257,25 @@ async function userRoutes(fastify: FastifyInstance) {
         return reply.status(201).send({
           message: 'Account created successfully'
         });
+      } catch (error) {
+        return handleAuthError(error, reply);
+      }
+    }
+  );
+
+  // POST /auth/users/verify-email - Verify account email with emailed token
+  fastify.post(
+    '/users/verify-email',
+    {
+      preHandler: [rateLimit({ keyPrefix: 'email_verify', max: 10, window: 900 })],
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const body = VerifyEmailSchema.parse(request.body);
+        const { ip } = getClientInfo(request);
+        await service.verifyEmail(body, ip, request.id);
+
+        return reply.send({ message: 'Email verified successfully' });
       } catch (error) {
         return handleAuthError(error, reply);
       }
@@ -448,9 +469,14 @@ async function mfaRoutes(fastify: FastifyInstance) {
 
         return reply.status(201).send({
           data: {
+            device_id: setup.deviceId,
+            method: setup.method,
+            issuer: setup.issuer,
+            account_name: setup.accountName,
             secret: setup.secret,
             qr_code_url: setup.qrCodeUrl,
             backup_codes: setup.backupCodes,
+            expires_at: setup.expiresAt,
             warning: 'Save these backup codes - they will only be shown once!',
           },
         });
@@ -464,7 +490,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/verify-setup',
     {
-      preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
+      preHandler: [authenticate],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -509,7 +535,8 @@ async function mfaRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const body = MFAVerifySchema.parse(request.body);
-        const result = await service.verifyMFAChallenge(body.challenge_id, body);
+        const { ip } = getClientInfo(request);
+        const result = await service.verifyMFAChallenge(body.challenge_id, body, ip);
 
         // Issue tokens or complete login flow
         return reply.send({
@@ -554,7 +581,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/mfa/devices/:id',
     {
-      preHandler: [authenticate rateLimit({ max: 5, window: 300 })],
+      preHandler: [authenticate ,rateLimit({ max: 5, window: 300 })],
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -562,8 +589,8 @@ async function mfaRoutes(fastify: FastifyInstance) {
         const body = (request.body || {}) as { mfa_code?: string };
         const { ip } = getClientInfo(request);
         await service.removeMFADevice(
-          params.id,
           request.user.id,
+          params.id,
           body.mfa_code,
           ip,
           request.id,
@@ -596,7 +623,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/backup-codes',
     {
-      preHandler: [authenticate rateLimit({ max: 3, window: 86400 })], // Once per day
+      preHandler: [authenticate, rateLimit({ max: 3, window: 86400 })], // Once per day
     },
     async (request: RequestWithUser, reply: FastifyReply) => {
       try {
@@ -618,12 +645,12 @@ async function mfaRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/backup-codes/verify',
     {
-      preHandler: [rateLimit({ max: 5, window: 300 })],
+      preHandler: [authenticate, rateLimit({ keyPrefix: 'mfa_backup_verify', max: 5, window: 300 })],
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
+    async (request: RequestWithUser, reply: FastifyReply) => {
       try {
         const body = BackupCodeVerificationSchema.parse(request.body);
-        const valid = await service.verifyBackupCode(body.user_id, body);
+        const valid = await service.verifyBackupCode(request.user.id, body);
 
         if (!valid) {
           return reply.status(401).send({
@@ -715,20 +742,19 @@ async function sessionRoutes(fastify: FastifyInstance) {
   // POST /auth/sessions/refresh - Refresh access token
   fastify.post(
     '/sessions/refresh',
-   
+    {
+      preHandler: [rateLimit({ keyPrefix: 'refresh', max: 20, window: 300 })],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { ip, userAgent } = getClientInfo(request);
-        console.log("refresh session hit")
         // Read refresh token from httpOnly cookie
         const refreshToken = (request.cookies as Record<string, string | undefined>)?.refresh_token;
         if (!refreshToken) {
-          console.log("refresh token not found")
           return reply.status(401).send({
             error: { code: 'MISSING_REFRESH_TOKEN', message: 'Refresh token cookie not found' },
           });
         }
-        console.log("refresh token found")
         const result = await service.refreshAccessToken(refreshToken, ip, userAgent);
 
         // Set new refresh token cookie (token rotation)

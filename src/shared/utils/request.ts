@@ -1,4 +1,10 @@
 import type { FastifyRequest } from 'fastify';
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    clientInfo: ClientInfo | null;
+  }
+}
 // ============================================
 // TYPES
 // ============================================
@@ -94,9 +100,11 @@ export function getClientInfo(request: FastifyRequest): ClientInfo {
 // ============================================
 
 function extractIp(request: FastifyRequest): string {
+  const forwardedFor = request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim();
+
   // Priority order for IP extraction
   const candidates = [
-    request.headers['x-forwarded-for']?.toString().split(',')[0].trim(),
+    forwardedFor,
     request.headers['x-real-ip']?.toString(),
     request.headers['cf-connecting-ip']?.toString(), // Cloudflare
     request.ip,
@@ -249,13 +257,15 @@ export function generateRequestFingerprint(clientInfo: ClientInfo): string {
 // ============================================
 
 export function formatRequestLog(request: FastifyRequest, clientInfo: ClientInfo, durationMs: number): object {
+  const requestWithStatus = request as FastifyRequest & { statusCode?: number };
+
   return {
     requestId: clientInfo.requestId,
     timestamp: clientInfo.timestamp,
     method: request.method,
     url: request.url,
-    route: request.routerPath,
-    statusCode: request.statusCode,
+    route: request.routeOptions.url,
+    statusCode: requestWithStatus.statusCode,
     durationMs,
     client: {
       ip: clientInfo.ip,

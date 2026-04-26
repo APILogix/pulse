@@ -34,7 +34,7 @@ CREATE TABLE users (
     -- Profile (PII - encrypted at application layer)
     email VARCHAR(255) NOT NULL,
     email_hash VARCHAR(64) GENERATED ALWAYS AS (encode(digest(lower(email), 'sha256'), 'hex')) STORED,
-    email_verified BOOLEAN DEFAULT TRUE,
+    email_verified BOOLEAN DEFAULT FALSE,
     email_verified_at TIMESTAMPTZ,
     
     full_name VARCHAR(255) NOT NULL,
@@ -130,15 +130,12 @@ CREATE TABLE user_mfa_devices (
     
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    -- Only one primary device per user
-    CONSTRAINT one_primary_mfa UNIQUE (user_id, is_primary) 
-        DEFERRABLE INITIALLY DEFERRED
 );
 
 -- Indexes for MFA devices
 CREATE INDEX idx_mfa_devices_user ON user_mfa_devices(user_id) WHERE is_active = TRUE;
 CREATE INDEX idx_mfa_devices_type ON user_mfa_devices(device_type);
+CREATE UNIQUE INDEX one_primary_mfa ON user_mfa_devices(user_id) WHERE is_primary = TRUE AND is_active = TRUE;
 CREATE INDEX idx_mfa_devices_primary ON user_mfa_devices(user_id) WHERE is_primary = TRUE;
 CREATE INDEX idx_mfa_devices_verified ON user_mfa_devices(verified) WHERE verified = FALSE; -- Pending verification
 
@@ -632,7 +629,6 @@ CREATE POLICY org_member_isolation ON organizations
 CREATE VIEW user_dashboard AS
 SELECT 
     u.id,
-    u.clerk_user_id,
     u.full_name,
     u.email_hash,
     u.status,

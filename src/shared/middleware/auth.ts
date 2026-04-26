@@ -28,6 +28,10 @@ export async function authenticate(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
+  if (request.method === 'OPTIONS') {
+    return;
+  }
+
   const log = request.log; // Fastify logger (pino)
 
   try {
@@ -164,6 +168,11 @@ export async function authenticate(
       });
     }
 
+    const mfaVerified =
+      !user.mfa_enabled ||
+      (Boolean(session.mfa_verified_at) &&
+        (!session.mfa_expires_at || new Date(session.mfa_expires_at) > new Date()));
+
     // =========================
     // 5. ATTACH USER
     // =========================
@@ -172,7 +181,7 @@ export async function authenticate(
       email: user.email,
       isAdmin: Boolean((user as any).is_admin),
       sessionId: decoded.jti,
-      mfaVerified: decoded.mfa_verified ?? false,
+      mfaVerified,
     };
 
     log.info(

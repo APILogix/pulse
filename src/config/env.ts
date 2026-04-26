@@ -8,6 +8,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   PORT: z.string().transform(Number).default(3000),
   HOST: z.string().default('0.0.0.0'),
+  APP_NAME: z.string().default('API Monitoring'),
+  APP_URL: z.string().url().default('http://localhost:3000'),
 
   // Database
   DATABASE_URL: z.string(),
@@ -18,8 +20,20 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
   ENCRYPTION_KEY: z.string().length(32),
-  CLERK_SECRET_KEY: z.string(),
-  CLERK_PUBLISHABLE_KEY: z.string(),
+  CORS_ORIGINS: z.string().optional(),
+  FRONTEND_URL: z.string().optional(),
+
+  // Email / SMTP
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  SMTP_FROM_EMAIL: z.string().email().default('security@example.com'),
+  SMTP_FROM_NAME: z.string().default('API Monitoring Security'),
 
   // AI
   OPENAI_API_KEY: z.string().optional(),

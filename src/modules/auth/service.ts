@@ -3,7 +3,7 @@
  * Enterprise-grade security with rate limiting, encryption, and audit logging
  */
 
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import * as OTPAuth from "otpauth"; // Install: npm install otpauth
 import QRCode from "qrcode"; // Install: npm install qrcode
@@ -29,6 +29,7 @@ import type {
   ChangePasswordInput,
   ForgotPasswordInput,
   ResetPasswordInput,
+  VerifyEmailInput,
 } from "./types.js";
 import bcrypt from "bcrypt";
 import * as repository from "./repository.js";
@@ -55,6 +56,13 @@ import {
   normalizeEmail,
 } from "./utils.js";
 import { env } from "../../config/env.js";
+import { sendEmail } from "../../shared/email/mailer.js";
+import {
+  emailVerificationTemplate,
+  mfaCodeTemplate,
+  mfaStatusTemplate,
+  passwordResetTemplate,
+} from "../../shared/email/templates.js";
 // ============================================
 // CONSTANTS & CONFIG
 // ============================================
@@ -74,6 +82,14 @@ const RATE_LIMITS = {
   PASSWORD_CHECK: { points: 10, duration: 60 * 15 },
 };
 
+const MFA_TOTP_ISSUER = "API Monitoring";
+// Use SHA1 for widest authenticator-app compatibility.
+const MFA_TOTP_ALGORITHM = "SHA1";
+const MFA_TOTP_DIGITS = 6;
+const MFA_TOTP_PERIOD = 30;
+const MFA_EMAIL_CODE_TTL_SECONDS = 10 * 60;
+const EMAIL_VERIFICATION_TTL_SECONDS = 24 * 60 * 60;
+
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
@@ -88,6 +104,38 @@ const randomBytesAsync = promisify(randomBytes);
  */
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function generateEmailCode(): string {
+  return randomInt(100000, 1_000_000).toString();
+}
+
+function verifyHash(plain: string, hashed: string): boolean {
+  const plainHash = hashToken(plain);
+  try {
+    return timingSafeEqual(Buffer.from(plainHash), Buffer.from(hashed));
+  } catch {
+    return false;
+  }
+}
+
+function appBaseUrl(): string {
+  return config.FRONTEND_URL || config.APP_URL;
+}
+
+function buildAppUrl(path: string, params: Record<string, string>): string {
+  const url = new URL(path, appBaseUrl());
+  for (const [key, value] of Object.entries(params)) {
+    url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
+async function sendAuthEmail(
+  to: string,
+  template: ReturnType<typeof passwordResetTemplate>,
+): Promise<void> {
+  await sendEmail({ to, ...template });
 }
 
 /**
@@ -118,6 +166,64 @@ function verifyBackupCodeHash(plain: string, hashed: string): boolean {
   } catch {
     return false;
   }
+}
+
+function createTotp(secret: OTPAuth.Secret | string, accountName?: string): OTPAuth.TOTP {
+  return new OTPAuth.TOTP({
+    issuer: MFA_TOTP_ISSUER,
+    label: accountName || MFA_TOTP_ISSUER,
+    algorithm: MFA_TOTP_ALGORITHM,
+    digits: MFA_TOTP_DIGITS,
+    period: MFA_TOTP_PERIOD,
+    secret: typeof secret === "string" ? OTPAuth.Secret.fromBase32(secret) : secret,
+  });
+}
+
+async function sendMFAEmailCode(options: {
+  user: User;
+  code: string;
+  purpose: "setup" | "login" | "challenge";
+  deviceName?: string;
+}): Promise<void> {
+  await sendAuthEmail(
+    options.user.email,
+    mfaCodeTemplate({
+      appName: config.APP_NAME,
+      userName: options.user.full_name,
+      code: options.code,
+      expiresInMinutes: Math.floor(MFA_EMAIL_CODE_TTL_SECONDS / 60),
+      purpose: options.purpose,
+      ...(options.deviceName ? { deviceName: options.deviceName } : {}),
+    }),
+  );
+}
+
+async function verifyEmailCodeState(options: {
+  redisKey: string;
+  code: string;
+  ttlSeconds: number;
+}): Promise<boolean> {
+  const raw = await redis.get(options.redisKey);
+  if (!raw) return false;
+
+  const state = JSON.parse(raw) as {
+    codeHash: string;
+    attempts: number;
+  };
+
+  if (state.attempts >= 3) {
+    await redis.del(options.redisKey);
+    return false;
+  }
+
+  if (verifyHash(options.code, state.codeHash)) {
+    await redis.del(options.redisKey);
+    return true;
+  }
+
+  state.attempts += 1;
+  await redis.setex(options.redisKey, options.ttlSeconds, JSON.stringify(state));
+  return false;
 }
 
 /**
@@ -235,7 +341,6 @@ async function revokeUserSessions(
   reason: string,
 ): Promise<number> {
   const sessions = await repository.listActiveSessionsByUser(userId);
-  console.log("sessions", sessions)
   for (const session of sessions) {
     await repository.revokeSession(session.id, reason);
     // await blacklistAccessToken(session.id);
@@ -331,6 +436,8 @@ async function createLoginMFAChallenge(options: {
   const expiresAt = new Date(
     Date.now() + MFA_LOGIN_CHALLENGE_TTL_SECONDS * 1000,
   );
+  const emailCode =
+    options.challengeDevice.device_type === "email" ? generateEmailCode() : null;
 
   await redis.setex(
     `auth_login_challenge:${challengeId}`,
@@ -344,8 +451,18 @@ async function createLoginMFAChallenge(options: {
       ipAddress: options.ipAddress,
       userAgent: options.userAgent,
       attempts: 0,
+      codeHash: emailCode ? hashToken(emailCode) : undefined,
     }),
   );
+
+  if (emailCode) {
+    await sendMFAEmailCode({
+      user: options.user,
+      code: emailCode,
+      purpose: "login",
+      deviceName: options.challengeDevice.device_name,
+    });
+  }
 
   return {
     challengeId,
@@ -384,6 +501,22 @@ async function consumeBackupCode(
   return false;
 }
 
+async function verifyDeviceCodeOrBackup(
+  user: User,
+  device: MFADevice,
+  code: string,
+): Promise<boolean> {
+  if (device.device_type === "totp" && device.secret_encrypted) {
+    const secret = decrypt(device.secret_encrypted, config.ENCRYPTION_KEY);
+    const totp = createTotp(secret, user.email);
+    if (totp.validate({ token: code, window: 1 }) !== null) {
+      return true;
+    }
+  }
+
+  return consumeBackupCode(user.id, code);
+}
+
 // ============================================
 // USER SERVICES
 // ============================================
@@ -394,8 +527,9 @@ export async function createUserFromEmail(
   requestId: string,
 ): Promise<User> {
   // Check email hash collision
+  const normalizedEmailAddress = normalizeEmail(input.email);
   const emailHash = createHash("sha256")
-    .update(input.email.toLowerCase())
+    .update(normalizedEmailAddress)
     .digest("hex");
   const emailExists = await repository.findUserByEmailHash(emailHash);
   if (emailExists) {
@@ -410,24 +544,31 @@ export async function createUserFromEmail(
   const passwordhash = await hashPassword(input.password);
   const user = await repository.createUser({
     id: generateUUID(),
-    email: input.email,
+    email: normalizedEmailAddress,
     full_name: input.full_name,
     avatar_url: input.avatar_url,
     email_hash: emailHash,
     password: passwordhash,
   });
 
-  // // Audit log
-  // await logAudit({
-  //   user_id: user.id,
-  //   org_id: null,
-  //   action: "user.created",
-  //   resource_type: "user",
-  //   resource_id: user.id,
-  //   ip_address: ipAddress,
-  //   request_id,
-  //   metadata: { source: "clerk_webhook", email_verified: input.email_verified },
-  // });
+  const verificationToken = generateSecureToken();
+  const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000);
+  await repository.createEmailVerification({
+    user_id: user.id,
+    email: user.email,
+    token_hash: hashAuthToken(verificationToken),
+    expires_at: expiresAt,
+  });
+
+  await sendAuthEmail(
+    user.email,
+    emailVerificationTemplate({
+      appName: config.APP_NAME,
+      userName: user.full_name,
+      actionUrl: buildAppUrl("/verify-email", { token: verificationToken }),
+      expiresInMinutes: Math.floor(EMAIL_VERIFICATION_TTL_SECONDS / 60),
+    }),
+  );
 
   return user;
 }
@@ -561,19 +702,19 @@ export async function loginWithEmailPassword(
     .update(normalizedEmail)
     .digest("hex");
 
-  // const rateKey = `login:${emailHash}:${ipAddress}`;
-  // const allowed = await checkRateLimit(
-  //   rateKey,
-  //   RATE_LIMITS.LOGIN.points,
-  //   RATE_LIMITS.LOGIN.duration,
-  // );
-  // if (!allowed) {
-  //   throw new AuthError(
-  //     "Too many login attempts",
-  //     AuthErrorCodes.RATE_LIMITED,
-  //     429,
-  //   );
-  // }
+  const rateKey = `login:${emailHash}:${ipAddress}`;
+  const allowed = await checkRateLimit(
+    rateKey,
+    RATE_LIMITS.LOGIN.points,
+    RATE_LIMITS.LOGIN.duration,
+  );
+  if (!allowed) {
+    throw new AuthError(
+      "Too many login attempts",
+      AuthErrorCodes.RATE_LIMITED,
+      429,
+    );
+  }
 
   const user = await repository.findUserByEmailHash(emailHash);
   if (!user || user.deleted_at || user.status === "deleted") {
@@ -668,8 +809,6 @@ export async function loginWithEmailPassword(
     deviceType: clientDeviceType,
     mfaVerified: !user.mfa_enabled,
   });
-  console.log(session, "session ")
-
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
 
@@ -725,6 +864,7 @@ export async function verifyLoginMFAChallenge(
     deviceType?: string;
     clientDeviceType?: string;
     attempts: number;
+    codeHash?: string;
   };
 
   if (challenge.attempts >= 3) {
@@ -753,20 +893,13 @@ export async function verifyLoginMFAChallenge(
   }
 
   let verified = false;
-  const secret = device.secret_encrypted
-    ? decrypt(device.secret_encrypted, config.ENCRYPTION_KEY)
-    : null;
-
-  if (secret) {
-    const totp = new OTPAuth.TOTP({
-      issuer: "api-monitoring-backend",
-      algorithm: "SHA256",
-      digits: 6,
-      period: 30,
-      secret: OTPAuth.Secret.fromBase32(secret),
-    });
+  if (device.device_type === "totp" && device.secret_encrypted) {
+    const secret = decrypt(device.secret_encrypted, config.ENCRYPTION_KEY);
+    const totp = createTotp(secret, user.email);
 
     verified = totp.validate({ token: input.code, window: 1 }) !== null;
+  } else if (device.device_type === "email" && challenge.codeHash) {
+    verified = verifyHash(input.code, challenge.codeHash);
   }
 
   if (!verified) {
@@ -839,7 +972,7 @@ export async function requestPasswordReset(
   const user = await repository.findUserByEmailHash(emailHash);
 
   if (!user || user.deleted_at) {
-    return { message: "If the email exists, a password reset link has been sent" };
+    return { message: "Account not found with this email .check again " };
   }
 
   const resetToken = generateSecureToken();
@@ -853,16 +986,26 @@ export async function requestPasswordReset(
     expires_at: expiresAt,
   });
 
-  await logAudit({
-    user_id: user.id,
-    org_id: null,
-    action: "user.updated",
-    resource_type: "user",
-    resource_id: user.id,
-    ip_address: ipAddress,
-    request_id: requestId,
-    metadata: { action: "password_reset_requested" },
-  });
+  // await logAudit({
+  //   user_id: user.id,
+  //   org_id: null,
+  //   action: "user.updated",
+  //   resource_type: "user",
+  //   resource_id: user.id,
+  //   ip_address: ipAddress,
+  //   request_id: requestId,
+  //   metadata: { action: "password_reset_requested" },
+  // });
+
+  await sendAuthEmail(
+    user.email,
+    passwordResetTemplate({
+      appName: config.APP_NAME,
+      userName: user.full_name,
+      actionUrl: buildAppUrl("/reset-password", { token: resetToken }),
+      expiresInMinutes: Math.floor(PASSWORD_RESET_TTL_SECONDS / 60),
+    }),
+  );
 
   if (config.NODE_ENV !== "production") {
     return {
@@ -872,6 +1015,37 @@ export async function requestPasswordReset(
   }
 
   return { message: "If the email exists, a password reset link has been sent" };
+}
+
+export async function verifyEmail(
+  input: VerifyEmailInput,
+  ipAddress: string,
+  requestId: string,
+): Promise<void> {
+  const tokenHash = hashAuthToken(input.token);
+  const verification = await repository.findEmailVerificationByToken(tokenHash);
+
+  if (!verification) {
+    throw new AuthError(
+      "Invalid or expired email verification token",
+      AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
+      400,
+    );
+  }
+
+  await repository.markEmailVerificationUsed(verification.id);
+  await repository.markEmailAsVerified(verification.user_id);
+
+  await logAudit({
+    user_id: verification.user_id,
+    org_id: null,
+    action: "user.updated",
+    resource_type: "user",
+    resource_id: verification.user_id,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { action: "email_verified", email: verification.email },
+  });
 }
 
 export async function resetPasswordWithToken(
@@ -941,7 +1115,6 @@ export async function changePassword(
     throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
   }
 
-  console.log("user fetched", user)
   if (user.mfa_enabled && !mfaVerified) {
     throw new AuthError(
       "MFA verification required",
@@ -970,7 +1143,6 @@ export async function changePassword(
     );
   }
 
-  console.log("password check pass ")
   await ensurePasswordNotReused(user, input.new_password);
 
   const passwordHash = await hashPassword(input.new_password);
@@ -978,7 +1150,6 @@ export async function changePassword(
     user.password_history,
     user.password_hash,
   );
-  console.log("password history pass")
 
   const updated = await repository.updateUserPassword(
     user.id,
@@ -986,16 +1157,11 @@ export async function changePassword(
     passwordHistory,
   );
 
-
-  console.log("before password update", updated)
   if (!updated) {
     throw new AuthError("Password update failed", AuthErrorCodes.USER_NOT_FOUND, 500);
   }
 
-  console.log("after password update")
-
   await revokeUserSessions(user.id, "Password changed");
-  console.log("session revoked succeesfully ")
   // await logAudit({
   //   user_id: user.id,
   //   org_id: null,
@@ -1159,19 +1325,19 @@ export async function setupMFA(
   ipAddress: string,
 ): Promise<TOTPSetup> {
   // Rate limit
-  // const rateKey = `mfa_setup:${userId}`;
-  // const allowed = await checkRateLimit(
-  //   rateKey,
-  //   RATE_LIMITS.MFA_SETUP.points,
-  //   RATE_LIMITS.MFA_SETUP.duration,
-  // );
-  // if (!allowed) {
-  //   throw new AuthError(
-  //     "Too many MFA setup attempts",
-  //     AuthErrorCodes.RATE_LIMITED,
-  //     429,
-  //   );
-  // }
+  const rateKey = `mfa_setup:${userId}`;
+  const allowed = await checkRateLimit(
+    rateKey,
+    RATE_LIMITS.MFA_SETUP.points,
+    RATE_LIMITS.MFA_SETUP.duration,
+  );
+  if (!allowed) {
+    throw new AuthError(
+      "Too many MFA setup attempts",
+      AuthErrorCodes.RATE_LIMITED,
+      429,
+    );
+  }
 
   const user = await repository.findUserById(userId);
   if (!user) {
@@ -1194,14 +1360,7 @@ export async function setupMFA(
   if (input.type === "totp") {
     // Generate TOTP secret
     const secret = new OTPAuth.Secret({ size: 32 });
-    const totp = new OTPAuth.TOTP({
-      issuer: "api-monitoring-backend",
-      label: user.email,
-      algorithm: "SHA256",
-      digits: 6,
-      period: 30,
-      secret,
-    });
+    const totp = createTotp(secret, user.email);
 
     const secretEncrypted = encrypt(secret.base32, config.ENCRYPTION_KEY);
 
@@ -1228,6 +1387,10 @@ export async function setupMFA(
     const qrCodeUrl = await QRCode.toDataURL(totp.toString());
 
     return {
+      deviceId: device.id,
+      issuer: MFA_TOTP_ISSUER,
+      accountName: user.email,
+      method: "totp",
       secret: secret.base32, // Show once
       qrCodeUrl,
       backupCodes, // Show once
@@ -1247,22 +1410,55 @@ export async function setupMFA(
   }
 
   if (input.type === "email") {
-    // Use user's email, send code
+    const emailAddress = input.email ? normalizeEmail(input.email) : user.email;
+    if (emailAddress !== user.email) {
+      throw new AuthError(
+        "Email MFA must use the verified account email",
+        "VALIDATION_ERROR",
+        400,
+      );
+    }
+
     const device = await repository.createMFADevice({
       user_id: userId,
       device_type: "email",
       device_name: input.device_name,
-      secret_encrypted: encrypt(user.email, config.ENCRYPTION_KEY),
+      secret_encrypted: null,
       is_primary: existingDevices.length === 0,
-      device_metadata: { email: user.email, setup_ip: ipAddress },
+      device_metadata: { email: emailAddress, setup_ip: ipAddress },
     });
 
-    // TODO: Send verification email with code
-    throw new AuthError(
-      "Email MFA setup - verification email sent",
-      "PENDING_VERIFICATION",
-      202,
+    const { plain: backupCodes, hashed } = await generateBackupCodes();
+    const code = generateEmailCode();
+    const expiresAt = new Date(Date.now() + MFA_EMAIL_CODE_TTL_SECONDS * 1000);
+
+    await redis.setex(
+      `mfa_email_setup:${device.id}`,
+      MFA_EMAIL_CODE_TTL_SECONDS,
+      JSON.stringify({
+        userId,
+        deviceId: device.id,
+        codeHash: hashToken(code),
+        backupCodesHash: hashed,
+        attempts: 0,
+      }),
     );
+
+    await sendMFAEmailCode({
+      user,
+      code,
+      purpose: "setup",
+      deviceName: input.device_name,
+    });
+
+    return {
+      deviceId: device.id,
+      issuer: config.APP_NAME,
+      accountName: emailAddress,
+      method: "email",
+      backupCodes,
+      expiresAt,
+    };
   }
 
   throw new AuthError("Invalid MFA type", "VALIDATION_ERROR", 400);
@@ -1285,7 +1481,6 @@ export async function verifyMFASetup(
       429,
     );
   }
-
   const device = await repository.findMFADeviceById(input.device_id, userId);
   if (!device || device.verified) {
     throw new AuthError(
@@ -1294,29 +1489,62 @@ export async function verifyMFASetup(
       400,
     );
   }
+  let backupCodesHash: string[] | null = null;
 
-  // Verify TOTP code
-  const secret = decrypt(device.secret_encrypted!, config.ENCRYPTION_KEY);
-  const totp = new OTPAuth.TOTP({
-    issuer: "YourAppName",
-    algorithm: "SHA256",
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
-  });
+  if (device.device_type === "totp") {
+    const secret = decrypt(device.secret_encrypted!, config.ENCRYPTION_KEY);
+    const totp = createTotp(secret);
 
-  const delta = totp.validate({ token: input.code, window: 1 });
-  if (delta === null) {
-    throw new AuthError(
-      "Invalid verification code",
-      AuthErrorCodes.MFA_INVALID,
-      400,
-    );
+    const delta = totp.validate({ token: input.code, window: 1 });
+    if (delta === null) {
+      throw new AuthError(
+        "Invalid verification code",
+        AuthErrorCodes.MFA_INVALID,
+        400,
+      );
+    }
+
+    const tempBackup = await redis.get(`mfa_backup_temp:${device.id}`);
+    backupCodesHash = tempBackup ? JSON.parse(tempBackup) : null;
+  } else if (device.device_type === "email") {
+    const rawSetup = await redis.get(`mfa_email_setup:${device.id}`);
+    if (!rawSetup) {
+      throw new AuthError(
+        "Verification code expired",
+        AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+        400,
+      );
+    }
+
+    const setupState = JSON.parse(rawSetup) as {
+      codeHash: string;
+      backupCodesHash: string[];
+      attempts: number;
+    };
+
+    if (setupState.attempts >= 3) {
+      await redis.del(`mfa_email_setup:${device.id}`);
+      throw new AuthError("Too many failed attempts", AuthErrorCodes.MFA_INVALID, 400);
+    }
+
+    if (!verifyHash(input.code, setupState.codeHash)) {
+      setupState.attempts += 1;
+      await redis.setex(
+        `mfa_email_setup:${device.id}`,
+        MFA_EMAIL_CODE_TTL_SECONDS,
+        JSON.stringify(setupState),
+      );
+      throw new AuthError(
+        "Invalid verification code",
+        AuthErrorCodes.MFA_INVALID,
+        400,
+      );
+    }
+
+    backupCodesHash = setupState.backupCodesHash;
+  } else {
+    throw new AuthError("Unsupported MFA device type", AuthErrorCodes.MFA_INVALID, 400);
   }
-
-  // Get backup codes from temp storage
-  const tempBackup = await redis.get(`mfa_backup_temp:${device.id}`);
-  const backupCodesHash = tempBackup ? JSON.parse(tempBackup) : null;
 
   // Verify device and save backup codes
   await repository.verifyMFADevice(device.id, backupCodesHash);
@@ -1327,11 +1555,29 @@ export async function verifyMFASetup(
 
   // Cleanup
   await redis.del(`mfa_backup_temp:${device.id}`);
+  await redis.del(`mfa_email_setup:${device.id}`);
+
+  const user = await repository.findUserById(userId);
+  if (user) {
+    await sendAuthEmail(
+      user.email,
+      mfaStatusTemplate({
+        appName: config.APP_NAME,
+        userName: user.full_name,
+        enabled: true,
+      }),
+    );
+  }
 }
 
 export async function createMFAChallenge(
   userId: string,
 ): Promise<MFAChallenge> {
+  const user = await repository.findUserById(userId);
+  if (!user) {
+    throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
   const devices = await repository.findMFADevicesByUserId(userId);
   const verifiedDevices = devices.filter((d) => d.verified && d.is_active);
 
@@ -1363,6 +1609,7 @@ export async function createMFAChallenge(
     deviceType: primary.device_type,
     expiresAt: new Date(Date.now() + SESSION_CONFIG.MFA_CHALLENGE_TTL * 1000),
   };
+  const emailCode = primary.device_type === "email" ? generateEmailCode() : null;
 
   // Store challenge in Redis
   await redis.setex(
@@ -1372,8 +1619,18 @@ export async function createMFAChallenge(
       userId,
       deviceId: primary.id,
       attempts: 0,
+      codeHash: emailCode ? hashToken(emailCode) : undefined,
     }),
   );
+
+  if (emailCode) {
+    await sendMFAEmailCode({
+      user,
+      code: emailCode,
+      purpose: "challenge",
+      deviceName: primary.device_name,
+    });
+  }
 
   return challenge;
 }
@@ -1381,6 +1638,7 @@ export async function createMFAChallenge(
 export async function verifyMFAChallenge(
   challengeId: string,
   input: MFAVerifyInput,
+  ipAddress = "unknown",
 ): Promise<{ userId: string; deviceId: string }> {
   const challengeData = await redis.get(`mfa_challenge:${challengeId}`);
   if (!challengeData) {
@@ -1408,17 +1666,16 @@ export async function verifyMFAChallenge(
     throw new AuthError("MFA device invalid", AuthErrorCodes.MFA_INVALID, 400);
   }
 
-  // Verify code
-  const secret = decrypt(device.secret_encrypted!, config.ENCRYPTION_KEY);
-  const totp = new OTPAuth.TOTP({
-    algorithm: "SHA256",
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
-  });
+  let verified = false;
+  if (device.device_type === "totp") {
+    const secret = decrypt(device.secret_encrypted!, config.ENCRYPTION_KEY);
+    const totp = createTotp(secret);
+    verified = totp.validate({ token: input.code, window: 1 }) !== null;
+  } else if (device.device_type === "email" && challenge.codeHash) {
+    verified = verifyHash(input.code, challenge.codeHash);
+  }
 
-  const delta = totp.validate({ token: input.code, window: 1 });
-  if (delta === null) {
+  if (!verified) {
     // Increment attempts
     challenge.attempts++;
     await redis.setex(
@@ -1436,7 +1693,7 @@ export async function verifyMFAChallenge(
   await repository.withTransaction(async (client) => {
     await client.query(
       `UPDATE user_mfa_devices SET last_used_at = NOW(), last_used_ip = $2 WHERE id = $1`,
-      [device.id, "ip_from_request"], // Pass IP from context
+      [device.id, ipAddress],
     );
   });
 
@@ -1486,19 +1743,8 @@ export async function removeMFADevice(
       );
     }
 
-    // Verify the code against this device before allowing removal
-    const secret = decrypt(
-      targetDevice.secret_encrypted!,
-      config.ENCRYPTION_KEY,
-    );
-    const totp = new OTPAuth.TOTP({
-      algorithm: "SHA256",
-      digits: 6,
-      period: 30,
-      secret: OTPAuth.Secret.fromBase32(secret),
-    });
-
-    if (totp.validate({ token: mfaCode, window: 1 }) === null) {
+    const user = await repository.findUserById(userId);
+    if (!user || !(await verifyDeviceCodeOrBackup(user, targetDevice, mfaCode))) {
       throw new AuthError("Invalid MFA code", AuthErrorCodes.MFA_INVALID, 400);
     }
 
@@ -1537,15 +1783,8 @@ export async function generateNewBackupCodes(
   }
   const primary = primaryCandidate;
 
-  const secret = decrypt(primary.secret_encrypted!, config.ENCRYPTION_KEY);
-  const totp = new OTPAuth.TOTP({
-    algorithm: "SHA256",
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
-  });
-
-  if (totp.validate({ token: mfaCode, window: 1 }) === null) {
+  const user = await repository.findUserById(userId);
+  if (!user || !(await verifyDeviceCodeOrBackup(user, primary, mfaCode))) {
     throw new AuthError("Invalid MFA code", AuthErrorCodes.MFA_INVALID, 400);
   }
 
@@ -1584,16 +1823,8 @@ export async function disableMFA(
   }
   const primary = primaryCandidate;
 
-  // Verify code
-  const secret = decrypt(primary.secret_encrypted!, config.ENCRYPTION_KEY);
-  const totp = new OTPAuth.TOTP({
-    algorithm: "SHA256",
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
-  });
-
-  if (totp.validate({ token: mfaCode, window: 1 }) === null) {
+  const user = await repository.findUserById(userId);
+  if (!user || !(await verifyDeviceCodeOrBackup(user, primary, mfaCode))) {
     throw new AuthError("Invalid MFA code", AuthErrorCodes.MFA_INVALID, 400);
   }
 
@@ -1621,6 +1852,15 @@ export async function disableMFA(
     request_id: requestId || "unknown",
     metadata: { reason: "user_disabled" },
   });
+
+  await sendAuthEmail(
+    user.email,
+    mfaStatusTemplate({
+      appName: config.APP_NAME,
+      userName: user.full_name,
+      enabled: false,
+    }),
+  );
 }
 
 // ============================================
@@ -1684,7 +1924,6 @@ export async function refreshAccessToken(
   userAgent: string,
 ): Promise<{ accessToken: string; refreshToken: string; expiresAt: Date }> {
   // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
-  console.log("refresh token found phase 3")
   let decoded: { sub: string; jti: string; type: string };
   try {
     const jwt = (await import("jsonwebtoken")).default;
@@ -1751,18 +1990,24 @@ export async function refreshAccessToken(
       ? new Date(session.absolute_expires_at)
       : newExpiresAt;
 
-  // Update session with new refresh token hash
-  await repository.withTransaction(async (client) => {
-    await client.query(
-      `UPDATE user_sessions 
-       SET refresh_token_hash = $2, access_token_jti = $3, expires_at = $4, last_active_at = NOW()
-       WHERE id = $1`,
-      [session.id, newRefreshHash, accessTokenJti, finalExpiresAt],
-    );
-  });
+  const rotatedSession = await repository.rotateSessionRefreshToken(
+    session.id,
+    tokenHash,
+    newRefreshHash,
+    accessTokenJti,
+    finalExpiresAt,
+  );
+
+  if (!rotatedSession) {
+    await repository.revokeSession(session.id, "Refresh token replay detected");
+    throw new AuthError("Invalid refresh token", AuthErrorCodes.SESSION_INVALID, 401);
+  }
 
   // Generate JWT access token
-  const mfaVerified = Boolean(session.mfa_verified_at) || !user.mfa_enabled;
+  const mfaVerified =
+    !user.mfa_enabled ||
+    (Boolean(rotatedSession.mfa_verified_at) &&
+      (!rotatedSession.mfa_expires_at || new Date(rotatedSession.mfa_expires_at) > new Date()));
 
   const accessToken = generateAccessToken(
     session.user_id,
@@ -1781,29 +2026,3 @@ export async function logout(sessionId: string): Promise<void> {
   await repository.revokeSession(sessionId, "User logout");
   await blacklistAccessToken(sessionId);
 }
-
-// ============================================
-// WEBHOOK HANDLERS
-// ============================================
-
-export async function handleClerkWebhook(
-  payload: unknown,
-  signature: string,
-  secret: string,
-): Promise<void> {
-  // Verify webhook signature
-  const expectedSig = createHash("sha256")
-    .update(JSON.stringify(payload) + secret)
-    .digest("hex");
-  if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
-    throw new AuthError(
-      "Invalid webhook signature",
-      AuthErrorCodes.WEBHOOK_INVALID,
-      401,
-    );
-  }
-
-  // Process based on event type
-  // Implementation depends on Clerk's specific webhook format
-}
-// Add these to the existing service.ts if not already present

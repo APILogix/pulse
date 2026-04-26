@@ -21,7 +21,6 @@ export type OrgRole = z.infer<typeof OrgRole>;
 // Database User type (from PostgreSQL)
 export interface User {
   id: string; // UUID
-  clerk_user_id: string;
   email: string;
   email_hash: string;
   email_verified: boolean;
@@ -102,9 +101,14 @@ export interface MFADevice {
 
 // TOTP Setup Response
 export interface TOTPSetup {
-  secret: string; // Plain secret - only shown once
-  qrCodeUrl: string;
-  backupCodes: string[]; // Plain backup codes - only shown once
+  deviceId: string;
+  issuer: string;
+  accountName: string;
+  method: "totp" | "email";
+  secret?: string; // Plain secret - only shown once
+  qrCodeUrl?: string;
+  backupCodes?: string[]; // Plain backup codes - only shown once
+  expiresAt?: Date;
 }
 
 // MFA Challenge
@@ -244,6 +248,12 @@ export const ResetPasswordSchema = z.object({
 
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
 
+export const VerifyEmailSchema = z.object({
+  token: z.string().min(1),
+});
+
+export type VerifyEmailInput = z.infer<typeof VerifyEmailSchema>;
+
 // MFA Setup
 export const MFASetupSchema = z.object({
   type: z.enum(['totp', 'sms', 'email']),
@@ -256,8 +266,8 @@ export type MFASetupInput = z.infer<typeof MFASetupSchema>;
 
 // MFA Verify Setup
 export const MFAVerifySetupSchema = z.object({
-  device_id: z.string().uuid(),
-  code: z.string().length(6).regex(/^\d+$/),
+  device_id: z.string(),
+  code: z.string().length(6),
 });
 
 export type MFAVerifySetupInput = z.infer<typeof MFAVerifySetupSchema>;
@@ -278,34 +288,12 @@ export const BackupCodeSchema = z.object({
 export type BackupCodeInput = z.infer<typeof BackupCodeSchema>;
 
 export const BackupCodeVerificationSchema = z.object({
-  user_id: z.string().uuid(),
   code: z.string().length(10).regex(/^[a-z0-9]+$/),
 });
 
 export type BackupCodeVerificationInput = z.infer<typeof BackupCodeVerificationSchema>;
 
-// ============================================
-// WEBHOOK TYPES
-// ============================================
-
 export const EmptyBodySchema = z.undefined();
-export const ClerkWebhookSchema = z.object({
-  type: z.enum(['user.created', 'user.updated', 'user.deleted', 'session.created', 'session.ended']),
-  data: z.object({
-    id: z.string(), // Clerk user/session ID
-    email_addresses: z.array(z.object({
-      email_address: z.string().email(),
-      verification: z.object({ status: z.string() }).optional(),
-    })).optional(),
-    first_name: z.string().optional(),
-    last_name: z.string().optional(),
-    image_url: z.string().optional(),
-    deleted: z.boolean().optional(),
-  }),
-  timestamp: z.number(),
-});
-
-export type ClerkWebhookPayload = z.infer<typeof ClerkWebhookSchema>;
 
 // ============================================
 // ERROR TYPES

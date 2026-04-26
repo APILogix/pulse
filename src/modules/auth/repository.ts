@@ -26,15 +26,6 @@ export async function findUserById(id: string, client?: PoolClient): Promise<Use
   return result.rows[0] || null;
 }
 
-export async function findUserByClerkId(clerkUserId: string, client?: PoolClient): Promise<User | null> {
-  const db = client || pool;
-  const result = await db.query<User>(
-    `SELECT * FROM users WHERE clerk_user_id = $1 AND deleted_at IS NULL`,
-    [clerkUserId]
-  );
-  return result.rows[0] || null;
-}
-
 export async function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null> {
   const db = client || pool;
   const result = await db.query<User>(
@@ -59,8 +50,8 @@ export async function createUser(
 
   const result = await db.query<User>(
     `INSERT INTO users (
-      id, email, email_hash, full_name, avatar_url, password_hash, status
-    ) VALUES ($1, $2, $3, $4, $5,$6, 'active')
+      id, email, email_hash, full_name, avatar_url, password_hash, status, email_verified, email_verified_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', FALSE, NULL)
     RETURNING *`,
     [
       data.id, //  FIXED
@@ -651,6 +642,30 @@ export async function findSessionByRefreshToken(
     `SELECT * FROM user_sessions 
      WHERE refresh_token_hash = $1 AND status = 'active'`,
     [tokenHash]
+  );
+  return result.rows[0] || null;
+}
+
+export async function rotateSessionRefreshToken(
+  sessionId: string,
+  oldRefreshTokenHash: string,
+  newRefreshTokenHash: string,
+  accessTokenJti: string,
+  expiresAt: Date,
+  client?: PoolClient,
+): Promise<UserSession | null> {
+  const db = client || pool;
+  const result = await db.query<UserSession>(
+    `UPDATE user_sessions
+     SET refresh_token_hash = $3,
+         access_token_jti = $4,
+         expires_at = $5,
+         last_active_at = NOW()
+     WHERE id = $1
+       AND refresh_token_hash = $2
+       AND status = 'active'
+     RETURNING *`,
+    [sessionId, oldRefreshTokenHash, newRefreshTokenHash, accessTokenJti, expiresAt],
   );
   return result.rows[0] || null;
 }

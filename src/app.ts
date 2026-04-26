@@ -1,7 +1,6 @@
 import Fastify from "fastify";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import helmet from "@fastify/helmet";
-import cors from "@fastify/cors";
 import compress from "@fastify/compress";
 import cookie from "@fastify/cookie";
 import fastifyRateLimit from "@fastify/rate-limit";  // ✅ RENAMED
@@ -17,6 +16,8 @@ import { logger } from "./config/logger.js";
 import { registerPlugins } from "./config/plugins.js";
 import { registerAuthModule } from "./modules/auth/auth.module.js";
 import fastifyRawBody from "fastify-raw-body";
+import { registerCors } from "./plugins/cors.js";
+import cors from "@fastify/cors";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -26,7 +27,7 @@ declare module "fastify" {
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: false,  // ✅ Use your logger instance
+    logger: false,  //  Use your logger instance
     trustProxy: true,
     genReqId: () => `req-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     connectionTimeout: 30000,
@@ -64,13 +65,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       hsts: env.NODE_ENV === "production" ? { maxAge: 31536000 } : false,
     });
 
-    await app.register(cors, {
-      origin: env.NODE_ENV === "development"
-        ? ["http://localhost:3000", "http://localhost:5173"]
-        : ["https://yourdomain.com"],
-      credentials: true,
-    });
-
+    // await app.register(registerCors);
+// Register CORS
+await app.register(cors, {
+  origin: true, // ⚠️ we'll fix this below
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS","PATCH"],
+  credentials: true
+});
     await app.register(compress);
     await app.register(cookie, { secret: env.JWT_SECRET });
 

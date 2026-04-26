@@ -1,22 +1,23 @@
-import { connect } from 'node:http2';
 import { buildApp } from './app.js';
+import type { FastifyInstance } from 'fastify';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 
 async function bootstrap() {
+  let app: FastifyInstance | undefined;
   try {
-    const app = await buildApp();
+    await connectDB();
+    app = await buildApp();
+    const server = app;
 
     // Graceful shutdown handling
     const closeListeners = async () => {
       logger.info('Shutting down server...');
       
-      app.server.closeIdleConnections(); // Close keep-alive connections
-     await  closeDatabase(); // Close DB pool immediately to prevent new queries
-      await app.close();
-      
-    
+      server.server.closeIdleConnections(); // Close keep-alive connections
+      await server.close();
+      await closeDatabase();
       
       logger.info('Server shut down complete');
       process.exit(0);
@@ -35,8 +36,6 @@ async function bootstrap() {
       },
     });
 
-    await connectDB(); // Ensure DB connection is established before accepting requests
-
     // Log startup metrics
     logger.info({
       port: env.PORT,
@@ -47,6 +46,10 @@ async function bootstrap() {
 
   } catch (error) {
     logger.fatal(error, 'Failed to start server');
+    if (app) {
+      await app.close();
+    }
+    await closeDatabase();
     process.exit(1);
   }
 }
