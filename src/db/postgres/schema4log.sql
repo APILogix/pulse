@@ -37,7 +37,6 @@ CREATE TABLE events_default PARTITION OF events DEFAULT;
 
 -- ==========================================
 -- 2. REQUEST EVENTS (Partitioned + Optimized)
--- ==========================================
 CREATE TABLE request_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     event_id UUID NOT NULL,
@@ -45,7 +44,9 @@ CREATE TABLE request_events (
     
     request_id UUID,
     url TEXT,
-    method VARCHAR(10) CHECK (method IN ('GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD')),
+    method VARCHAR(10) CHECK (
+        method IN ('GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD')
+    ),
     status_code INT CHECK (status_code BETWEEN 100 AND 599),
     latency_ms INT NOT NULL CHECK (latency_ms >= 0),
     
@@ -57,13 +58,12 @@ CREATE TABLE request_events (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     
-    -- Foreign key to events with deferred constraint
     CONSTRAINT fk_request_event 
         FOREIGN KEY (event_id) 
         REFERENCES events(id) 
         ON DELETE CASCADE 
         DEFERRABLE INITIALLY DEFERRED
-) PARTITION BY RANGE (timestamp);
+);
 
 -- ==========================================
 -- 3. ERROR EVENTS (Partitioned + Critical)
@@ -77,24 +77,22 @@ CREATE TABLE error_events (
     message TEXT NOT NULL,
     error_type VARCHAR(100) NOT NULL,
     
-    -- Fingerprinting for grouping (hash of error_type + normalized stack)
     fingerprint VARCHAR(64) NOT NULL,
     
-    -- Structured data with compression
-    stack JSONB COMPRESSION lz4,
-    context JSONB COMPRESSION lz4,
+    stack JSONB,
+    context JSONB,
     metadata JSONB DEFAULT '{}',
     
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    resolved_at TIMESTAMPTZ, -- For error tracking workflow
+    resolved_at TIMESTAMPTZ,
     resolved_by UUID,
     
     CONSTRAINT fk_error_event 
         FOREIGN KEY (event_id) 
         REFERENCES events(id) 
         ON DELETE CASCADE
-) PARTITION BY RANGE (timestamp);
+);
 
 -- ==========================================
 -- 4. ERROR AGGREGATION (Hot table - Not partitioned)

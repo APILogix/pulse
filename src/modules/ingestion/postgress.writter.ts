@@ -96,6 +96,7 @@ export class PostgresWriter {
       await client.query('BEGIN');
 
       const projectId = events[0].projectId;
+      console.log("Porejct id 2",projectId)
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
 console.log(events,"while writting events")
       const query = `
@@ -106,7 +107,6 @@ console.log(events,"while writting events")
           $1::uuid[], $2::uuid[], $3::varchar[], $4::uuid[], 
           $5::timestamptz[], $6::jsonb[], $7::timestamptz[]
         )
-        ON CONFLICT (id) DO NOTHING
       `;
 
       const ids = events.map((e) => e.id);
@@ -127,9 +127,11 @@ console.log(events,"while writting events")
         ingestedAts,
       ]);
 
+      console.log("query complte ")
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
+      console.log(err)
       throw err;
     } finally {
       client.release();
@@ -144,6 +146,7 @@ console.log(events,"while writting events")
     try {
       await client.query('BEGIN');
       const projectId = events[0].projectId;
+      console.log("project id",projectId)
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
 console.log("before send to event writer",events)
       await this.writeEvents(events);
@@ -178,6 +181,7 @@ console.log("before send to event writer",events)
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
+      console.log("err occured after simple event",err)
       throw err;
     } finally {
       client.release();
