@@ -12,7 +12,6 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ZodError } from 'zod';
 import { authenticate } from '../../shared/middleware/auth.js';
-import { OrganizationService } from './organizationservice.js';
 import {
   AcceptInvitationSchema,
   AddMemberSchema,
@@ -26,6 +25,7 @@ import {
   MemberParamsSchema,
   OrgIdParamsSchema,
   OrganizationError,
+  PaginationQuerySchema,
   SlugParamsSchema,
   UpdateBillingSchema,
   UpdateOrganizationSchema,
@@ -130,8 +130,9 @@ export async function organizationRoutes(
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
-      const result = await service.listUserOrganizations(request.user.id);
-      return reply.send({ success: true, data: result });
+      const query = PaginationQuerySchema.parse(request.query ?? {});
+      const result = await service.listUserOrganizations(authed.user.id, query);
+      return reply.send({ success: true, ...result });
     })
   );
 
@@ -187,8 +188,8 @@ export async function organizationRoutes(
       const authed = asAuthenticated(request);
       const { id } = IdParamsSchema.parse(request.params);
       const query = AuditQuerySchema.parse(request.query ?? {});
-      const result = await service.getAuditLogs(id, authed.user.id, query.limit, query.offset);
-      return reply.send({ success: true, data: result });
+      const result = await service.getAuditLogs(id, authed.user.id, query);
+      return reply.send({ success: true, ...result });
     })
   );
 
@@ -198,19 +199,8 @@ export async function organizationRoutes(
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
       const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const org = await service.getOrganization(orgId, authed.user.id);
-
-      return reply.send({
-        success: true,
-        data: {
-          billingEmail: org.billingEmail,
-          billingName: org.billingName,
-          billingAddress: org.billingAddress,
-          planId: org.planId,
-          planStartedAt: org.planStartedAt,
-          planExpiresAt: org.planExpiresAt
-        }
-      });
+      const result = await service.getBilling(orgId, authed.user.id);
+      return reply.send({ success: true, data: result });
     })
   );
 
@@ -232,16 +222,8 @@ export async function organizationRoutes(
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
       const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const org = await service.getOrganization(orgId, authed.user.id);
-      return reply.send({
-        success: true,
-        data: {
-          planId: org.planId,
-          status: org.status,
-          trialEndsAt: org.trialEndsAt,
-          planExpiresAt: org.planExpiresAt
-        }
-      });
+      const result = await service.getPlan(orgId, authed.user.id);
+      return reply.send({ success: true, data: result });
     })
   );
 
@@ -263,17 +245,8 @@ export async function organizationRoutes(
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
       const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const org = await service.getOrganization(orgId, authed.user.id, 'admin');
-      return reply.send({
-        success: true,
-        data: {
-          enforceSso: org.enforceSso,
-          enforceMfa: org.enforceMfa,
-          allowedEmailDomains: org.allowedEmailDomains,
-          ipAllowlist: org.ipAllowlist,
-          sessionTimeoutMinutes: org.sessionTimeoutMinutes
-        }
-      });
+      const result = await service.getSecuritySettings(orgId, authed.user.id);
+      return reply.send({ success: true, data: result });
     })
   );
 
@@ -295,8 +268,9 @@ export async function organizationRoutes(
     withErrorHandling(async (request, reply) => {
       const authed = asAuthenticated(request);
       const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const result = await service.listMembers(orgId, authed.user.id);
-      return reply.send({ success: true, data: result });
+      const query = PaginationQuerySchema.parse(request.query ?? {});
+      const result = await service.listMembers(orgId, authed.user.id, query);
+      return reply.send({ success: true, ...result });
     })
   );
 
@@ -375,8 +349,8 @@ export async function organizationRoutes(
       const authed = asAuthenticated(request);
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const query = InvitationListQuerySchema.parse(request.query ?? {});
-      const result = await service.listInvitations(orgId, authed.user.id, query.status);
-      return reply.send({ success: true, data: result });
+      const result = await service.listInvitations(orgId, authed.user.id, query, query.status);
+      return reply.send({ success: true, ...result });
     })
   );
 

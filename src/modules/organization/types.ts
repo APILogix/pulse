@@ -15,8 +15,13 @@ export const SubscriptionStatusSchema = z.enum([
   "unpaid",
   "paused",
 ]);
-export const OrgRoleSchema = z.enum(["owner", "admin", "member", "viewer", "billing"]);
-export const JoinMethodSchema = z.enum(["invite", "sso_auto_provision", "admin_add"]);
+export const OrgRoleSchema = z.enum(["admin", "member"]);
+export const JoinMethodSchema = z.enum([
+  "invite",
+  "sso_auto_provision",
+  "admin_add",
+  "self_created",
+]);
 
 export const AuditActionSchema = z.enum([
   "user.created",
@@ -77,6 +82,7 @@ export type OrgRole = z.infer<typeof OrgRoleSchema>;
 export type JoinMethod = z.infer<typeof JoinMethodSchema>;
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 export type AuditResourceType = z.infer<typeof AuditResourceTypeSchema>;
+export type InvitationStatus = "pending" | "accepted" | "declined" | "revoked";
 
 export const UuidSchema = z.string().uuid();
 
@@ -94,16 +100,21 @@ const ipv4Regex =
 
 export const IdParamsSchema = z.object({ id: UuidSchema });
 export const OrgIdParamsSchema = z.object({ orgId: UuidSchema });
-export const MemberParamsSchema = z.object({ orgId: UuidSchema, userId: UuidSchema });
+export const MemberParamsSchema = z.object({
+  orgId: UuidSchema,
+  userId: UuidSchema,
+});
 export const InvitationParamsSchema = z.object({ id: UuidSchema });
 export const SlugParamsSchema = z.object({ slug: z.string().min(1).max(255) });
 
-export const AuditQuerySchema = z.object({
+export const PaginationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
-export const InvitationListQuerySchema = z.object({
+export const AuditQuerySchema = PaginationQuerySchema;
+
+export const InvitationListQuerySchema = PaginationQuerySchema.extend({
   status: z.enum(["pending", "accepted", "declined", "revoked"]).optional(),
 });
 
@@ -126,7 +137,10 @@ export const UpdateOrganizationSchema = z.object({
   enforceSso: z.boolean().optional(),
   enforceMfa: z.boolean().optional(),
   allowedEmailDomains: z.array(z.string()).nullable().optional(),
-  ipAllowlist: z.array(z.string().regex(ipv4Regex, "Invalid IPv4 or CIDR")).nullable().optional(),
+  ipAllowlist: z
+    .array(z.string().regex(ipv4Regex, "Invalid IPv4 or CIDR"))
+    .nullable()
+    .optional(),
   sessionTimeoutMinutes: z.number().int().min(5).max(1440).optional(),
   dataRetentionDays: z.number().int().min(1).optional(),
 });
@@ -141,7 +155,10 @@ export const UpdateSecuritySchema = z.object({
   enforceSso: z.boolean(),
   enforceMfa: z.boolean(),
   allowedEmailDomains: z.array(z.string()).nullable().optional(),
-  ipAllowlist: z.array(z.string().regex(ipv4Regex, "Invalid IPv4 or CIDR")).nullable().optional(),
+  ipAllowlist: z
+    .array(z.string().regex(ipv4Regex, "Invalid IPv4 or CIDR"))
+    .nullable()
+    .optional(),
   sessionTimeoutMinutes: z.number().int().min(5).max(1440).default(480),
 });
 
@@ -152,7 +169,6 @@ export const UpgradePlanSchema = z.object({
 
 export const AddMemberSchema = z.object({
   userId: UuidSchema,
-  role: OrgRoleSchema.default("member"),
 });
 
 export const UpdateRoleSchema = z.object({
@@ -177,10 +193,23 @@ export type AddMemberInput = z.infer<typeof AddMemberSchema>;
 export type UpdateRoleInput = z.infer<typeof UpdateRoleSchema>;
 export type CreateInvitationInput = z.infer<typeof CreateInvitationSchema>;
 export type AcceptInvitationInput = z.infer<typeof AcceptInvitationSchema>;
-
 export type BillingAddress = z.infer<typeof BillingAddressSchema>;
 
-export interface Organization {
+export interface PaginationQuery {
+  limit: number;
+  offset: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+  };
+}
+
+export interface OrganizationRow {
   id: string;
   name: string;
   slug: string;
@@ -193,10 +222,9 @@ export interface Organization {
   billingEmail: string;
   billingName: string | null;
   billingAddress: BillingAddress | null;
-  planId: string;
-  planStartedAt: Date;
+  planId: string | null;
+  planStartedAt: Date | null;
   planExpiresAt: Date | null;
-  trialStartedAt: Date | null;
   trialEndsAt: Date | null;
   gracePeriodEndsAt: Date | null;
   enforceSso: boolean;
@@ -207,38 +235,41 @@ export interface Organization {
   dataRegion: string;
   dataRetentionDays: number;
   deletedAt: Date | null;
-  deletedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface OrganizationMember {
+export interface UserOrganizationRow {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+  role: OrgRole;
+  createdAt: Date;
+}
+
+export interface OrganizationMemberRow {
   id: string;
   orgId: string;
   userId: string;
+  email: string;
+  fullName: string;
   role: OrgRole;
-  permissions: Record<string, boolean>;
   isActive: boolean;
-  deactivatedAt: Date | null;
-  deactivatedBy: string | null;
-  deactivationReason: string | null;
-  invitedBy: string | null;
-  invitedAt: Date | null;
-  joinedAt: Date;
-  joinedMethod: JoinMethod;
-  lastActiveAt: Date | null;
   createdAt: Date;
-  updatedAt: Date;
+  lastActiveAt: Date | null;
 }
 
-export interface OrganizationInvitation {
+export interface OrganizationInvitationRow {
   id: string;
   orgId: string;
   invitedBy: string;
+  invitedByEmail: string | null;
+  invitedByName: string | null;
   email: string;
-  emailHash: string;
+  emailHash?: string;
   role: OrgRole;
-  tokenHash: string;
+  tokenHash?: string;
   expiresAt: Date;
   acceptedAt: Date | null;
   acceptedBy: string | null;
@@ -250,7 +281,7 @@ export interface OrganizationInvitation {
   createdAt: Date;
 }
 
-export interface AuditLog {
+export interface AuditLogRow {
   id: string;
   orgId: string | null;
   userId: string | null;
@@ -260,6 +291,88 @@ export interface AuditLog {
   metadata: Record<string, unknown> | null;
   ipAddress: string;
   userAgent: string | null;
+  createdAt: Date;
+}
+
+export interface OrganizationResponseDto {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  logoUrl: string | null;
+  websiteUrl: string | null;
+  ownerUserId: string;
+  status: OrgStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface UserOrganizationResponseDto {
+  id: string;
+  name: string;
+  slug: string;
+  logoUrl: string | null;
+  role: OrgRole;
+  createdAt: Date;
+}
+
+export interface BillingResponseDto {
+  billingEmail: string;
+  billingName: string | null;
+  billingAddress: BillingAddress | null;
+  planId: string | null;
+  billingStatus: SubscriptionStatus | null;
+  planStartedAt: Date | null;
+  planExpiresAt: Date | null;
+}
+
+export interface PlanResponseDto {
+  planId: string | null;
+  billingStatus: SubscriptionStatus | null;
+  trialEndsAt: Date | null;
+  planExpiresAt: Date | null;
+}
+
+export interface SecuritySettingsResponseDto {
+  enforceSso: boolean;
+  enforceMfa: boolean;
+  allowedEmailDomains: string[] | null;
+  ipAllowlist: string[] | null;
+  sessionTimeoutMinutes: number;
+}
+
+export interface MemberResponseDto {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: OrgRole;
+  isActive: boolean;
+  createdAt: Date;
+  lastActiveAt: Date | null;
+}
+
+export interface InvitationResponseDto {
+  id: string;
+  email: string;
+  role: OrgRole;
+  status: InvitationStatus;
+  invitedAt: Date;
+  expiresAt: Date;
+  invitedBy: {
+    id: string;
+    email: string | null;
+    name: string | null;
+  };
+}
+
+export interface AuditLogResponseDto {
+  id: string;
+  userId: string | null;
+  action: AuditAction;
+  resourceType: AuditResourceType;
+  resourceId: string | null;
+  metadata: Record<string, unknown> | null;
   createdAt: Date;
 }
 
@@ -282,7 +395,6 @@ export interface UpdateOrganizationRecord {
   planId?: string | undefined;
   planStartedAt?: Date | undefined;
   planExpiresAt?: Date | null | undefined;
-  trialStartedAt?: Date | null | undefined;
   trialEndsAt?: Date | null | undefined;
   gracePeriodEndsAt?: Date | null | undefined;
   enforceSso?: boolean | undefined;
@@ -293,14 +405,11 @@ export interface UpdateOrganizationRecord {
   dataRegion?: string | undefined;
   dataRetentionDays?: number | undefined;
   deletedAt?: Date | null | undefined;
-  deletedBy?: string | null | undefined;
 }
 
 export interface AddMemberRecord {
   orgId: string;
   userId: string;
-  role: OrgRole;
-  permissions: Record<string, boolean>;
   isActive: boolean;
   invitedBy: string | null;
   invitedAt: Date | null;
@@ -317,37 +426,76 @@ export interface CreateInvitationRecord {
   expiresAt: Date;
 }
 
+export interface CreateAuditLogRecord {
+  orgId: string;
+  userId: string | null;
+  action: AuditAction;
+  resourceType: AuditResourceType;
+  resourceId: string | null;
+  metadata: Record<string, unknown> | null;
+  ipAddress: string;
+  userAgent: string | null;
+}
+
 export interface IOrganizationRepository {
-  create(org: CreateOrganizationRecord): Promise<Organization>;
-  findById(id: string, includeDeleted?: boolean): Promise<Organization | null>;
-  findBySlug(slug: string): Promise<Organization | null>;
-  findByUserId(userId: string): Promise<Array<{ id: string; name: string; logoUrl: string | null }>>;
-  update(id: string, data: UpdateOrganizationRecord): Promise<Organization>;
+  create(org: CreateOrganizationRecord): Promise<OrganizationRow>;
+  findById(id: string, includeDeleted?: boolean): Promise<OrganizationRow | null>;
+  findBySlug(slug: string): Promise<OrganizationRow | null>;
+  findByUserId(
+    userId: string,
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<UserOrganizationRow>>;
+  update(id: string, data: UpdateOrganizationRecord): Promise<OrganizationRow>;
   softDelete(id: string, deletedBy: string): Promise<void>;
   restore(id: string): Promise<void>;
 
-  addMember(member: AddMemberRecord): Promise<OrganizationMember>;
-  removeMember(orgId: string, userId: string, deactivatedBy: string, reason?: string): Promise<void>;
-  findMember(orgId: string, userId: string): Promise<OrganizationMember | null>;
-  findMembersByOrgId(orgId: string): Promise<OrganizationMember[]>;
-  updateMemberRole(orgId: string, userId: string, role: OrgRole): Promise<void>;
-  transferOwnership(orgId: string, fromUserId: string, toUserId: string): Promise<void>;
-  countActiveOwners(orgId: string): Promise<number>;
+  addMember(member: AddMemberRecord): Promise<OrganizationMemberRow>;
+  removeMember(
+    orgId: string,
+    userId: string,
+    deactivatedBy: string,
+    reason?: string,
+  ): Promise<void>;
+  findMember(
+    orgId: string,
+    userId: string,
+  ): Promise<OrganizationMemberRow | null>;
+  findMembersByOrgId(
+    orgId: string,
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<OrganizationMemberRow>>;
+  updateMemberRole(orgId: string, userId: string): Promise<void>;
+  transferOwnership(
+    orgId: string,
+    fromUserId: string,
+    toUserId: string,
+  ): Promise<void>;
 
-  createInvitation(invitation: CreateInvitationRecord): Promise<OrganizationInvitation>;
-  findInvitationById(id: string): Promise<OrganizationInvitation | null>;
-  findInvitationByTokenHash(tokenHash: string): Promise<OrganizationInvitation | null>;
+  createInvitation(
+    invitation: CreateInvitationRecord,
+  ): Promise<OrganizationInvitationRow>;
+  findInvitationById(
+    id: string,
+    includeSecrets?: boolean,
+  ): Promise<OrganizationInvitationRow | null>;
+  findInvitationByTokenHash(
+    tokenHash: string,
+  ): Promise<OrganizationInvitationRow | null>;
   findInvitationsByOrgId(
     orgId: string,
-    status?: "pending" | "accepted" | "declined" | "revoked",
-  ): Promise<OrganizationInvitation[]>;
+    pagination: PaginationQuery,
+    status?: InvitationStatus,
+  ): Promise<PaginatedResponse<OrganizationInvitationRow>>;
   acceptInvitation(tokenHash: string, acceptedBy: string): Promise<void>;
-  declineInvitation(tokenHash: string): Promise<void>;
+  declineInvitation(id: string): Promise<void>;
   revokeInvitation(id: string, revokedBy: string): Promise<void>;
   incrementResentCount(id: string): Promise<void>;
 
-  createAuditLog(entry: Omit<AuditLog, "id" | "createdAt">): Promise<void>;
-  findAuditLogs(orgId: string, limit?: number, offset?: number): Promise<AuditLog[]>;
+  createAuditLog(entry: CreateAuditLogRecord): Promise<void>;
+  findAuditLogs(
+    orgId: string,
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<AuditLogRow>>;
 }
 
 export interface OrganizationServiceDependencies {

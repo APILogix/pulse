@@ -163,7 +163,6 @@ CREATE TABLE organizations (
 
     -- Soft delete
     deleted_at TIMESTAMPTZ,
-    deleted_by UUID REFERENCES users(id),
 
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -195,9 +194,7 @@ CREATE TABLE organization_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
-  
-    
+
     -- Status
     is_active BOOLEAN DEFAULT TRUE,
     deactivated_at TIMESTAMPTZ,
@@ -224,11 +221,10 @@ CREATE TABLE organization_members (
 -- Indexes for organization members
 CREATE INDEX idx_members_org ON organization_members(org_id) WHERE is_active = TRUE;
 CREATE INDEX idx_members_user ON organization_members(user_id) WHERE is_active = TRUE;
-CREATE INDEX idx_members_role ON organization_members(org_id, role) WHERE is_active = TRUE;
 CREATE INDEX idx_members_invited ON organization_members(invited_at) WHERE joined_at IS NULL; -- Pending invites
 
 -- Composite index for common query: "Get my orgs with my role"
-CREATE INDEX idx_members_user_orgs ON organization_members(user_id, org_id, role) 
+CREATE INDEX idx_members_user_orgs ON organization_members(user_id, org_id) 
     WHERE is_active = TRUE;
 
 -- ============================================
@@ -621,9 +617,10 @@ SELECT
     u.last_login_at,
     u.created_at,
     COUNT(DISTINCT om.org_id) as org_count,
-    COUNT(DISTINCT CASE WHEN om.role = 'owner' THEN om.org_id END) as owned_orgs
+    COUNT(DISTINCT CASE WHEN o.owner_user_id = u.id THEN om.org_id END) as owned_orgs
 FROM users u
 LEFT JOIN organization_members om ON u.id = om.user_id AND om.is_active = TRUE
+LEFT JOIN organizations o ON o.id = om.org_id AND o.deleted_at IS NULL
 WHERE u.deleted_at IS NULL
 GROUP BY u.id;
 

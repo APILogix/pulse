@@ -1,15 +1,3 @@
-/**
- * Organization business service.
- *
- * Flow:
- * 1. Verify membership and role hierarchy before organization operations.
- * 2. Keep owner-only actions, admin actions, billing/security updates, and
- *    invitation lifecycle rules centralized outside the routes.
- * 3. Persist state through the repository and write audit records for sensitive
- *    changes.
- * 4. Emit domain events best-effort; event failures are logged but do not roll
- *    back already committed organization state.
- */
 import { createHash } from "crypto";
 import { generateInvitationToken } from "./utils.js";
 import {
@@ -18,19 +6,32 @@ import {
   NotFoundError,
   type AddMemberInput,
   type AuditAction,
+  type AuditLogResponseDto,
+  type AuditLogRow,
   type AuditResourceType,
+  type BillingResponseDto,
   type CreateInvitationInput,
   type CreateOrganizationInput,
+  type InvitationResponseDto,
+  type InvitationStatus,
+  type MemberResponseDto,
   type OrgRole,
-  type Organization,
-  type OrganizationInvitation,
-  type OrganizationMember,
+  type OrganizationInvitationRow,
+  type OrganizationMemberRow,
+  type OrganizationResponseDto,
+  type OrganizationRow,
   type OrganizationServiceDependencies,
+  type PaginatedResponse,
+  type PaginationQuery,
+  type PlanResponseDto,
+  type SecuritySettingsResponseDto,
   type UpdateBillingInput,
   type UpdateOrganizationInput,
   type UpdateOrganizationRecord,
   type UpdateSecurityInput,
   type UpgradePlanInput,
+  type UserOrganizationResponseDto,
+  type UserOrganizationRow,
 } from "./types.js";
 
 interface RequestMeta {
@@ -39,11 +40,8 @@ interface RequestMeta {
 }
 
 const ROLE_HIERARCHY: Record<OrgRole, number> = {
-  owner: 5,
-  admin: 4,
-  billing: 3,
-  member: 2,
-  viewer: 1,
+  admin: 2,
+  member: 1,
 };
 
 export class OrganizationService {
@@ -53,61 +51,44 @@ export class OrganizationService {
     data: CreateOrganizationInput,
     ownerUserId: string,
     meta?: RequestMeta,
-  ): Promise<Organization> {
-    // Creation is delegated to the repository because it must create the
-    // organization, owner membership, settings, billing, and initial usage rows
-    // in one transaction.
+  ): Promise<OrganizationResponseDto> {
     const org = await this.deps.repository.create({
       name: data.name,
       ownerUserId,
     });
 
-    // await this.audit(
-    //   org.id,
-    //   ownerUserId,
-    //   "org.created",
-    //   "organization",
-    //   org.id,
-    //   { name: org.name, planId: org.planId },
-    //   meta,
-    // );
+    await this.audit(
+      org.id,
+      ownerUserId,
+      "org.created",
+      "organization",
+      org.id,
+      { name: org.name },
+      meta,
+    );
 
-    // this.deps.logger.info({ orgId: org.id, ownerUserId }, "Organization created");
-
-    // await this.safeEmit("organization.created", {
-    //   orgId: org.id,
-    //   ownerUserId,
-    //   planId: org.planId,
-    // });
-
-    return org;
+    return this.toOrganizationDto(org);
   }
 
-  async listUserOrganizations(userId: string): Promise<Array<{ id: string; name: string; logoUrl: string | null }>> {
-    return this.deps.repository.findByUserId(userId);
+  async listUserOrganizations(
+    userId: string,
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<UserOrganizationResponseDto>> {
+    const result = await this.deps.repository.findByUserId(userId, pagination);
+    return this.mapPage(result, (row) => this.toUserOrganizationDto(row));
   }
 
-  async getOrganization(orgId: string, userId: string, requiredRole?: OrgRole): Promise<Organization> {
-    // Fetch organization and membership in parallel, then enforce membership
-    // and optional minimum role before returning organization details.
-    const [org, membership] = await Promise.all([
-      this.deps.repository.findById(orgId),
-      this.deps.repository.findMember(orgId, userId),
-    ]);
-
-    if (!org) {
-      throw new NotFoundError("Organization");
-    }
-
-    if (!membership || !membership.isActive) {
-      throw new ForbiddenError("Not a member of this organization");
-    }
-
-    if (requiredRole && !this.hasRequiredRole(membership.role, requiredRole)) {
-      throw new ForbiddenError(`Requires ${requiredRole} role`);
-    }
-
-    return org;
+  async getOrganization(
+    orgId: string,
+    userId: string,
+    requiredRole?: OrgRole,
+  ): Promise<OrganizationResponseDto> {
+    const org = await this.requireOrganizationAccess(
+      orgId,
+      userId,
+      requiredRole,
+    );
+    return this.toOrganizationDto(org);
   }
 
   async updateOrganization(
@@ -115,19 +96,23 @@ export class OrganizationService {
     data: UpdateOrganizationInput,
     userId: string,
     meta?: RequestMeta,
-  ): Promise<Organization> {
-    // Build a partial update payload so omitted fields keep their current
-    // values. The repository decides which backing table owns each field.
-    await this.getOrganization(orgId, userId, "admin");
+  ): Promise<OrganizationResponseDto> {
+    await this.requireOrganizationAccess(orgId, userId, "admin");
 
     const updatePayload: UpdateOrganizationRecord = {};
 
     if (data.name !== undefined) updatePayload.name = data.name;
-    if (data.description !== undefined) updatePayload.description = data.description;
+    if (data.description !== undefined) {
+      updatePayload.description = data.description;
+    }
     if (data.websiteUrl !== undefined) updatePayload.websiteUrl = data.websiteUrl;
-    if (data.billingEmail !== undefined) updatePayload.billingEmail = data.billingEmail;
+    if (data.billingEmail !== undefined) {
+      updatePayload.billingEmail = data.billingEmail;
+    }
     if (data.billingName !== undefined) updatePayload.billingName = data.billingName;
-    if (data.billingAddress !== undefined) updatePayload.billingAddress = data.billingAddress;
+    if (data.billingAddress !== undefined) {
+      updatePayload.billingAddress = data.billingAddress;
+    }
     if (data.dataRegion !== undefined) updatePayload.dataRegion = data.dataRegion;
     if (data.enforceSso !== undefined) updatePayload.enforceSso = data.enforceSso;
     if (data.enforceMfa !== undefined) updatePayload.enforceMfa = data.enforceMfa;
@@ -154,50 +139,73 @@ export class OrganizationService {
       meta,
     );
 
-    this.deps.logger.info({ orgId, updatedBy: userId }, "Organization updated");
-
-    return updated;
+    return this.toOrganizationDto(updated);
   }
 
-  async deleteOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<void> {
-    const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || member.role !== "owner") {
-      throw new ForbiddenError("Only owner can delete organization");
+  async deleteOrganization(
+    orgId: string,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
+    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
+    if (org.ownerUserId !== userId) {
+      throw new ForbiddenError("Only the organization owner can delete organization");
     }
 
     await this.deps.repository.softDelete(orgId, userId);
-
     await this.audit(orgId, userId, "org.deleted", "organization", orgId, null, meta);
-    this.deps.logger.warn({ orgId, deletedBy: userId }, "Organization deleted");
-
     await this.safeEmit("organization.deleted", { orgId, deletedBy: userId });
   }
 
-  async restoreOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<Organization> {
+  async restoreOrganization(
+    orgId: string,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<OrganizationResponseDto> {
     const org = await this.deps.repository.findById(orgId, true);
     if (!org || !org.deletedAt) {
       throw new NotFoundError("Organization");
     }
 
     if (org.ownerUserId !== userId) {
-      throw new ForbiddenError("Only owner can restore organization");
+      throw new ForbiddenError("Only the organization owner can restore organization");
     }
 
     await this.deps.repository.restore(orgId);
-    await this.audit(orgId, userId, "org.updated", "organization", orgId, { restored: true }, meta);
+    await this.audit(
+      orgId,
+      userId,
+      "org.updated",
+      "organization",
+      orgId,
+      { restored: true },
+      meta,
+    );
 
     const restored = await this.deps.repository.findById(orgId);
     if (!restored) {
       throw new NotFoundError("Organization");
     }
 
-    this.deps.logger.info({ orgId, restoredBy: userId }, "Organization restored");
-    return restored;
+    return this.toOrganizationDto(restored);
   }
 
-  async getAuditLogs(orgId: string, userId: string, limit = 50, offset = 0) {
-    await this.getOrganization(orgId, userId, "admin");
-    return this.deps.repository.findAuditLogs(orgId, limit, offset);
+  async getAuditLogs(
+    orgId: string,
+    userId: string,
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<AuditLogResponseDto>> {
+    await this.requireOrganizationAccess(orgId, userId, "admin");
+    const result = await this.deps.repository.findAuditLogs(orgId, pagination);
+    return this.mapPage(result, (row) => this.toAuditLogDto(row));
+  }
+
+  async getBilling(
+    orgId: string,
+    userId: string,
+  ): Promise<BillingResponseDto> {
+    const org = await this.requireOrganizationAccess(orgId, userId);
+    return this.toBillingDto(org);
   }
 
   async updateBilling(
@@ -205,8 +213,8 @@ export class OrganizationService {
     data: UpdateBillingInput,
     userId: string,
     meta?: RequestMeta,
-  ): Promise<Organization> {
-    await this.getOrganization(orgId, userId, "admin");
+  ): Promise<BillingResponseDto> {
+    await this.requireOrganizationAccess(orgId, userId, "admin");
 
     const updated = await this.deps.repository.update(orgId, {
       billingEmail: data.billingEmail,
@@ -224,9 +232,57 @@ export class OrganizationService {
       meta,
     );
 
-    this.deps.logger.info({ orgId, updatedBy: userId }, "Billing settings updated");
+    return this.toBillingDto(updated);
+  }
 
-    return updated;
+  async getPlan(orgId: string, userId: string): Promise<PlanResponseDto> {
+    const org = await this.requireOrganizationAccess(orgId, userId);
+    return this.toPlanDto(org);
+  }
+
+  async upgradePlan(
+    orgId: string,
+    data: UpgradePlanInput,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<PlanResponseDto> {
+    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
+    if (org.ownerUserId !== userId) {
+      throw new ForbiddenError("Only the organization owner can upgrade plan");
+    }
+
+    const updated = await this.deps.repository.update(orgId, {
+      planId: data.planId,
+      planStartedAt: new Date(),
+      billingStatus: "active",
+    });
+
+    await this.audit(
+      orgId,
+      userId,
+      "billing.subscription_created",
+      "subscription",
+      orgId,
+      { planId: data.planId, billingCycle: data.billingCycle },
+      meta,
+    );
+
+    await this.safeEmit("billing.plan_changed", {
+      orgId,
+      planId: data.planId,
+      billingCycle: data.billingCycle,
+      changedBy: userId,
+    });
+
+    return this.toPlanDto(updated);
+  }
+
+  async getSecuritySettings(
+    orgId: string,
+    userId: string,
+  ): Promise<SecuritySettingsResponseDto> {
+    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
+    return this.toSecuritySettingsDto(org);
   }
 
   async updateSecuritySettings(
@@ -234,8 +290,8 @@ export class OrganizationService {
     data: UpdateSecurityInput,
     userId: string,
     meta?: RequestMeta,
-  ): Promise<Organization> {
-    await this.getOrganization(orgId, userId, "admin");
+  ): Promise<SecuritySettingsResponseDto> {
+    await this.requireOrganizationAccess(orgId, userId, "admin");
 
     const updated = await this.deps.repository.update(orgId, {
       enforceSso: data.enforceSso,
@@ -259,64 +315,35 @@ export class OrganizationService {
       meta,
     );
 
-    this.deps.logger.info({ orgId, updatedBy: userId }, "Security settings updated");
-    return updated;
+    return this.toSecuritySettingsDto(updated);
   }
 
-  async upgradePlan(
+  async listMembers(
     orgId: string,
-    data: UpgradePlanInput,
     userId: string,
-    meta?: RequestMeta,
-  ): Promise<Organization> {
-    const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || member.role !== "owner") {
-      throw new ForbiddenError("Only owner can upgrade plan");
-    }
-
-    const updated = await this.deps.repository.update(orgId, {
-      planId: data.planId,
-      planStartedAt: new Date(),
-      billingStatus: "active",
-    });
-
-    await this.audit(
+    pagination: PaginationQuery,
+  ): Promise<PaginatedResponse<MemberResponseDto>> {
+    await this.requireOrganizationAccess(orgId, userId);
+    const result = await this.deps.repository.findMembersByOrgId(
       orgId,
-      userId,
-      "billing.subscription_created",
-      "subscription",
-      orgId,
-      {
-        planId: data.planId,
-        billingCycle: data.billingCycle,
-      },
-      meta,
+      pagination,
     );
-
-    await this.safeEmit("billing.plan_changed", {
-      orgId,
-      planId: data.planId,
-      billingCycle: data.billingCycle,
-      changedBy: userId,
-    });
-
-    return updated;
+    return this.mapPage(result, (row) => this.toMemberDto(row));
   }
 
-  async listMembers(orgId: string, userId: string): Promise<OrganizationMember[]> {
-    await this.getOrganization(orgId, userId);
-    return this.deps.repository.findMembersByOrgId(orgId);
-  }
-
-  async getMember(orgId: string, targetUserId: string, requestingUserId: string): Promise<OrganizationMember> {
-    await this.getOrganization(orgId, requestingUserId);
+  async getMember(
+    orgId: string,
+    targetUserId: string,
+    requestingUserId: string,
+  ): Promise<MemberResponseDto> {
+    await this.requireOrganizationAccess(orgId, requestingUserId);
 
     const member = await this.deps.repository.findMember(orgId, targetUserId);
     if (!member) {
       throw new NotFoundError("Member");
     }
 
-    return member;
+    return this.toMemberDto(member);
   }
 
   async addMember(
@@ -324,11 +351,8 @@ export class OrganizationService {
     data: AddMemberInput,
     addedBy: string,
     meta?: RequestMeta,
-  ): Promise<OrganizationMember> {
-    const actor = await this.deps.repository.findMember(orgId, addedBy);
-    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
+  ): Promise<MemberResponseDto> {
+    await this.requireOrganizationAccess(orgId, addedBy, "admin");
 
     const existing = await this.deps.repository.findMember(orgId, data.userId);
     if (existing?.isActive) {
@@ -338,8 +362,6 @@ export class OrganizationService {
     const member = await this.deps.repository.addMember({
       orgId,
       userId: data.userId,
-      role: data.role,
-      permissions: {},
       isActive: true,
       invitedBy: addedBy,
       invitedAt: new Date(),
@@ -353,18 +375,18 @@ export class OrganizationService {
       "org.member_invited",
       "organization",
       orgId,
-      { memberUserId: data.userId, role: data.role, method: "admin_add" },
+      { memberUserId: data.userId, role: "member", method: "admin_add" },
       meta,
     );
 
     await this.safeEmit("organization.member.added", {
       orgId,
       userId: data.userId,
-      role: data.role,
+      role: "member",
       method: "admin_add",
     });
 
-    return member;
+    return this.toMemberDto(member);
   }
 
   async removeMember(
@@ -374,30 +396,17 @@ export class OrganizationService {
     reason?: string,
     meta?: RequestMeta,
   ): Promise<void> {
-    // Member removal checks actor authority, target existence, owner protection,
-    // and last-owner protection before deactivating membership.
-    const [actor, target] = await Promise.all([
-      this.deps.repository.findMember(orgId, removedBy),
+    const [org, target] = await Promise.all([
+      this.requireOrganizationAccess(orgId, removedBy, "admin"),
       this.deps.repository.findMember(orgId, userId),
     ]);
-
-    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
 
     if (!target || !target.isActive) {
       throw new NotFoundError("Member");
     }
 
-    if (target.role === "owner" && actor.role !== "owner") {
-      throw new ForbiddenError("Cannot remove organization owner");
-    }
-
-    if (target.role === "owner") {
-      const ownerCount = await this.deps.repository.countActiveOwners(orgId);
-      if (ownerCount <= 1) {
-        throw new ForbiddenError("Cannot remove the last owner");
-      }
+    if (org.ownerUserId === userId) {
+      throw new ForbiddenError("Cannot remove the organization owner");
     }
 
     await this.deps.repository.removeMember(orgId, userId, removedBy, reason);
@@ -419,33 +428,25 @@ export class OrganizationService {
     updatedBy: string,
     meta?: RequestMeta,
   ): Promise<void> {
-    // Role changes protect ownership invariants: only owners can grant owner,
-    // and the last owner cannot be demoted.
-    const [actor, target] = await Promise.all([
-      this.deps.repository.findMember(orgId, updatedBy),
+    const [org, target] = await Promise.all([
+      this.requireOrganizationAccess(orgId, updatedBy, "admin"),
       this.deps.repository.findMember(orgId, userId),
     ]);
-
-    if (!actor || !this.hasRequiredRole(actor.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
 
     if (!target || !target.isActive) {
       throw new NotFoundError("Member");
     }
 
-    if (newRole === "owner" && actor.role !== "owner") {
-      throw new ForbiddenError("Only owner can assign owner role");
+    if (org.ownerUserId === userId) {
+      throw new ForbiddenError("Cannot change the organization owner's role");
     }
 
-    if (target.role === "owner" && newRole !== "owner") {
-      const ownerCount = await this.deps.repository.countActiveOwners(orgId);
-      if (ownerCount <= 1) {
-        throw new ForbiddenError("Cannot demote the last owner");
-      }
+    if (newRole === "admin") {
+      await this.deps.repository.transferOwnership(orgId, updatedBy, userId);
+    } else {
+      await this.deps.repository.updateMemberRole(orgId, userId);
     }
 
-    await this.deps.repository.updateMemberRole(orgId, userId, newRole);
     await this.audit(
       orgId,
       updatedBy,
@@ -457,14 +458,19 @@ export class OrganizationService {
     );
   }
 
-  async transferOwnership(orgId: string, toUserId: string, fromUserId: string, meta?: RequestMeta): Promise<void> {
-    const [fromMember, toMember] = await Promise.all([
-      this.deps.repository.findMember(orgId, fromUserId),
+  async transferOwnership(
+    orgId: string,
+    toUserId: string,
+    fromUserId: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
+    const [org, toMember] = await Promise.all([
+      this.requireOrganizationAccess(orgId, fromUserId, "admin"),
       this.deps.repository.findMember(orgId, toUserId),
     ]);
 
-    if (!fromMember || fromMember.role !== "owner") {
-      throw new ForbiddenError("Only owner can transfer ownership");
+    if (org.ownerUserId !== fromUserId) {
+      throw new ForbiddenError("Only the organization owner can transfer ownership");
     }
 
     if (!toMember || !toMember.isActive) {
@@ -483,17 +489,14 @@ export class OrganizationService {
     );
   }
 
-  async leaveOrganization(orgId: string, userId: string, meta?: RequestMeta): Promise<void> {
-    const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || !member.isActive) {
-      throw new NotFoundError("Member");
-    }
-
-    if (member.role === "owner") {
-      const ownerCount = await this.deps.repository.countActiveOwners(orgId);
-      if (ownerCount <= 1) {
-        throw new ForbiddenError("Owner must transfer ownership before leaving");
-      }
+  async leaveOrganization(
+    orgId: string,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
+    const org = await this.requireOrganizationAccess(orgId, userId);
+    if (org.ownerUserId === userId) {
+      throw new ForbiddenError("Owner must transfer ownership before leaving");
     }
 
     await this.deps.repository.removeMember(orgId, userId, userId, "self_leave");
@@ -511,14 +514,16 @@ export class OrganizationService {
   async listInvitations(
     orgId: string,
     userId: string,
-    status?: "pending" | "accepted" | "declined" | "revoked",
-  ): Promise<OrganizationInvitation[]> {
-    const member = await this.deps.repository.findMember(orgId, userId);
-    if (!member || !this.hasRequiredRole(member.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
-
-    return this.deps.repository.findInvitationsByOrgId(orgId, status);
+    pagination: PaginationQuery,
+    status?: InvitationStatus,
+  ): Promise<PaginatedResponse<InvitationResponseDto>> {
+    await this.requireOrganizationAccess(orgId, userId, "admin");
+    const result = await this.deps.repository.findInvitationsByOrgId(
+      orgId,
+      pagination,
+      status,
+    );
+    return this.mapPage(result, (row) => this.toInvitationDto(row));
   }
 
   async inviteMember(
@@ -526,13 +531,8 @@ export class OrganizationService {
     data: CreateInvitationInput,
     invitedBy: string,
     meta?: RequestMeta,
-  ): Promise<{ invitation: OrganizationInvitation; token: string }> {
-    // Invitation tokens are returned once, while only the SHA-256 hash is stored
-    // for later validation and acceptance.
-    const member = await this.deps.repository.findMember(orgId, invitedBy);
-    if (!member || !this.hasRequiredRole(member.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
+  ): Promise<{ invitation: InvitationResponseDto; token: string }> {
+    await this.requireOrganizationAccess(orgId, invitedBy, "admin");
 
     const token = generateInvitationToken();
     const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -572,7 +572,7 @@ export class OrganizationService {
       token,
     });
 
-    return { invitation, token };
+    return { invitation: this.toInvitationDto(invitation), token };
   }
 
   async validateInvitationToken(token: string): Promise<{
@@ -582,7 +582,9 @@ export class OrganizationService {
     expiresAt?: Date;
   }> {
     const tokenHash = createHash("sha256").update(token).digest("hex");
-    const invitation = await this.deps.repository.findInvitationByTokenHash(tokenHash);
+    const invitation = await this.deps.repository.findInvitationByTokenHash(
+      tokenHash,
+    );
 
     if (!invitation) {
       return { valid: false };
@@ -593,12 +595,23 @@ export class OrganizationService {
       return { valid: false };
     }
 
-    return {
+    const response: {
+      valid: boolean;
+      organizationName?: string;
+      invitedBy?: string;
+      expiresAt?: Date;
+    } = {
       valid: true,
       organizationName: org.name,
-      invitedBy: invitation.invitedBy,
       expiresAt: invitation.expiresAt,
     };
+
+    const inviter = invitation.invitedByName ?? invitation.invitedByEmail;
+    if (inviter) {
+      response.invitedBy = inviter;
+    }
+
+    return response;
   }
 
   async acceptInvitation(
@@ -606,23 +619,27 @@ export class OrganizationService {
     userId: string,
     userEmail: string,
     meta?: RequestMeta,
-  ): Promise<OrganizationMember> {
-    // Accepting an invitation validates the token, confirms the accepting
-    // user's email matches the invitation, consumes the invitation, and creates
-    // or reactivates membership.
+  ): Promise<MemberResponseDto> {
     const tokenHash = createHash("sha256").update(token).digest("hex");
-    const invitation = await this.deps.repository.findInvitationByTokenHash(tokenHash);
+    const invitation = await this.deps.repository.findInvitationByTokenHash(
+      tokenHash,
+    );
 
-    if (!invitation) {
+    if (!invitation || !invitation.emailHash) {
       throw new NotFoundError("Invitation");
     }
 
-    const emailHash = createHash("sha256").update(userEmail.toLowerCase()).digest("hex");
+    const emailHash = createHash("sha256")
+      .update(userEmail.toLowerCase())
+      .digest("hex");
     if (invitation.emailHash !== emailHash) {
       throw new ForbiddenError("Invitation email does not match user email");
     }
 
-    const existing = await this.deps.repository.findMember(invitation.orgId, userId);
+    const existing = await this.deps.repository.findMember(
+      invitation.orgId,
+      userId,
+    );
     if (existing?.isActive) {
       throw new ConflictError("User is already a member");
     }
@@ -632,8 +649,6 @@ export class OrganizationService {
     const member = await this.deps.repository.addMember({
       orgId: invitation.orgId,
       userId,
-      role: invitation.role,
-      permissions: {},
       isActive: true,
       invitedBy: invitation.invitedBy,
       invitedAt: invitation.createdAt,
@@ -658,16 +673,20 @@ export class OrganizationService {
       method: "invite",
     });
 
-    return member;
+    return this.toMemberDto(member);
   }
 
-  async declineInvitation(invitationId: string, userId: string, meta?: RequestMeta): Promise<void> {
+  async declineInvitation(
+    invitationId: string,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
       throw new NotFoundError("Invitation");
     }
 
-    await this.deps.repository.declineInvitation(invitation.tokenHash);
+    await this.deps.repository.declineInvitation(invitationId);
     await this.audit(
       invitation.orgId,
       userId,
@@ -679,16 +698,17 @@ export class OrganizationService {
     );
   }
 
-  async resendInvitation(invitationId: string, userId: string, meta?: RequestMeta): Promise<void> {
+  async resendInvitation(
+    invitationId: string,
+    userId: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
       throw new NotFoundError("Invitation");
     }
 
-    const member = await this.deps.repository.findMember(invitation.orgId, userId);
-    if (!member || !this.hasRequiredRole(member.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
+    await this.requireOrganizationAccess(invitation.orgId, userId, "admin");
 
     if (invitation.resentCount >= 3) {
       throw new ForbiddenError("Maximum resend limit reached");
@@ -712,16 +732,17 @@ export class OrganizationService {
     });
   }
 
-  async revokeInvitation(invitationId: string, revokedBy: string, meta?: RequestMeta): Promise<void> {
+  async revokeInvitation(
+    invitationId: string,
+    revokedBy: string,
+    meta?: RequestMeta,
+  ): Promise<void> {
     const invitation = await this.deps.repository.findInvitationById(invitationId);
     if (!invitation) {
       throw new NotFoundError("Invitation");
     }
 
-    const member = await this.deps.repository.findMember(invitation.orgId, revokedBy);
-    if (!member || !this.hasRequiredRole(member.role, "admin")) {
-      throw new ForbiddenError("Insufficient permissions");
-    }
+    await this.requireOrganizationAccess(invitation.orgId, revokedBy, "admin");
 
     await this.deps.repository.revokeInvitation(invitationId, revokedBy);
     await this.audit(
@@ -735,7 +756,9 @@ export class OrganizationService {
     );
   }
 
-  async checkSlugAvailability(slug: string): Promise<{ available: boolean; suggestions?: string[] }> {
+  async checkSlugAvailability(
+    slug: string,
+  ): Promise<{ available: boolean; suggestions?: string[] }> {
     const existing = await this.deps.repository.findBySlug(slug);
     if (!existing) {
       return { available: true };
@@ -748,10 +771,154 @@ export class OrganizationService {
     };
   }
 
+  private async requireOrganizationAccess(
+    orgId: string,
+    userId: string,
+    requiredRole?: OrgRole,
+  ): Promise<OrganizationRow> {
+    const [org, membership] = await Promise.all([
+      this.deps.repository.findById(orgId),
+      this.deps.repository.findMember(orgId, userId),
+    ]);
+
+    if (!org) {
+      throw new NotFoundError("Organization");
+    }
+
+    if (!membership || !membership.isActive) {
+      throw new ForbiddenError("Not a member of this organization");
+    }
+
+    if (requiredRole && !this.hasRequiredRole(membership.role, requiredRole)) {
+      throw new ForbiddenError(`Requires ${requiredRole} role`);
+    }
+
+    return org;
+  }
+
   private hasRequiredRole(userRole: OrgRole, required: OrgRole): boolean {
-    // Numeric hierarchy keeps role comparisons simple and consistent across all
-    // organization service methods.
-    return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[required];
+    return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[required] ?? 0);
+  }
+
+  private mapPage<TInput, TOutput>(
+    page: PaginatedResponse<TInput>,
+    mapper: (row: TInput) => TOutput,
+  ): PaginatedResponse<TOutput> {
+    return {
+      data: page.data.map(mapper),
+      pagination: page.pagination,
+    };
+  }
+
+  private toOrganizationDto(org: OrganizationRow): OrganizationResponseDto {
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      description: org.description,
+      logoUrl: org.logoUrl,
+      websiteUrl: org.websiteUrl,
+      ownerUserId: org.ownerUserId,
+      status: org.status,
+      createdAt: org.createdAt,
+      updatedAt: org.updatedAt,
+    };
+  }
+
+  private toUserOrganizationDto(
+    org: UserOrganizationRow,
+  ): UserOrganizationResponseDto {
+    return {
+      id: org.id,
+      name: org.name,
+      slug: org.slug,
+      logoUrl: org.logoUrl,
+      role: org.role,
+      createdAt: org.createdAt,
+    };
+  }
+
+  private toBillingDto(org: OrganizationRow): BillingResponseDto {
+    return {
+      billingEmail: org.billingEmail,
+      billingName: org.billingName,
+      billingAddress: org.billingAddress,
+      planId: org.planId,
+      billingStatus: org.billingStatus,
+      planStartedAt: org.planStartedAt,
+      planExpiresAt: org.planExpiresAt,
+    };
+  }
+
+  private toPlanDto(org: OrganizationRow): PlanResponseDto {
+    return {
+      planId: org.planId,
+      billingStatus: org.billingStatus,
+      trialEndsAt: org.trialEndsAt,
+      planExpiresAt: org.planExpiresAt,
+    };
+  }
+
+  private toSecuritySettingsDto(
+    org: OrganizationRow,
+  ): SecuritySettingsResponseDto {
+    return {
+      enforceSso: org.enforceSso,
+      enforceMfa: org.enforceMfa,
+      allowedEmailDomains: org.allowedEmailDomains,
+      ipAllowlist: org.ipAllowlist,
+      sessionTimeoutMinutes: org.sessionTimeoutMinutes,
+    };
+  }
+
+  private toMemberDto(member: OrganizationMemberRow): MemberResponseDto {
+    return {
+      id: member.id,
+      userId: member.userId,
+      email: member.email,
+      name: member.fullName,
+      role: member.role,
+      isActive: member.isActive,
+      createdAt: member.createdAt,
+      lastActiveAt: member.lastActiveAt,
+    };
+  }
+
+  private toInvitationDto(
+    invitation: OrganizationInvitationRow,
+  ): InvitationResponseDto {
+    return {
+      id: invitation.id,
+      email: invitation.email,
+      role: invitation.role,
+      status: this.invitationStatus(invitation),
+      invitedAt: invitation.createdAt,
+      expiresAt: invitation.expiresAt,
+      invitedBy: {
+        id: invitation.invitedBy,
+        email: invitation.invitedByEmail,
+        name: invitation.invitedByName,
+      },
+    };
+  }
+
+  private invitationStatus(invitation: OrganizationInvitationRow): InvitationStatus {
+    if (invitation.acceptedAt) return "accepted";
+    if (invitation.declinedAt) return "declined";
+    if (invitation.revokedAt) return "revoked";
+    return "pending";
+  }
+
+  private toAuditLogDto(row: AuditLogRow): AuditLogResponseDto {
+    return {
+      id: row.id,
+      userId: row.userId,
+      action: row.action,
+      resourceType: row.resourceType,
+      resourceId: row.resourceId,
+      metadata: row.metadata,
+      createdAt: row.createdAt,
+    };
   }
 
   private async audit(
@@ -763,8 +930,6 @@ export class OrganizationService {
     metadata: Record<string, unknown> | null,
     meta?: RequestMeta,
   ): Promise<void> {
-    // The service owns audit shape so route handlers do not duplicate actor,
-    // resource, metadata, or request-context mapping.
     await this.deps.repository.createAuditLog({
       orgId,
       userId,
@@ -777,13 +942,17 @@ export class OrganizationService {
     });
   }
 
-  private async safeEmit(event: string, payload: Record<string, unknown>): Promise<void> {
-    // Domain events are non-critical side effects. They should never hide the
-    // successful state change from the caller.
+  private async safeEmit(
+    event: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
     try {
       await this.deps.emitEvent(event, payload);
     } catch (error) {
-      this.deps.logger.error({ err: error, event, payload }, "Failed to emit organization event");
+      this.deps.logger.error(
+        { err: error, event, payload },
+        "Failed to emit organization event",
+      );
     }
   }
 }
