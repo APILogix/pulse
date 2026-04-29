@@ -15,6 +15,7 @@ interface ErrorGroupParams extends ProjectParams {
 }
 
 type QueryValue = string | undefined;
+const DEFAULT_CACHE_WINDOW_MS = 2 * 60 * 1_000;
 
 export async function analyticsRoutes(
   fastify: FastifyInstance,
@@ -34,7 +35,7 @@ export async function analyticsRoutes(
         hasMore: result.hasMore,
         nextCursor: result.nextCursor,
         queryTimeMs: result.queryTimeMs,
-        cacheHit: result.cacheHit ?? false,
+        ...cacheMeta(result),
       },
       data: result.data,
     });
@@ -53,7 +54,7 @@ export async function analyticsRoutes(
         projectId,
         eventId,
         queryTimeMs: result.queryTimeMs,
-        cacheHit: result.cacheHit ?? false,
+        ...cacheMeta(result),
       },
       data: result.data,
     });
@@ -69,7 +70,7 @@ export async function analyticsRoutes(
         projectId,
         timeRange: toIsoRange(range),
         queryTimeMs: result.queryTimeMs,
-        cacheHit: result.cacheHit ?? false,
+        ...cacheMeta(result),
       },
       data: result.data,
     });
@@ -86,7 +87,7 @@ export async function analyticsRoutes(
         timeRange: toIsoRange(range),
         generatedAt: new Date().toISOString(),
         queryTimeMs: result.queryTimeMs,
-        cacheHit: result.cacheHit ?? false,
+        ...cacheMeta(result),
       },
       data: result.data,
     });
@@ -116,7 +117,7 @@ export async function analyticsRoutes(
         hasMore: result.hasMore,
         nextCursor: result.nextCursor,
         queryTimeMs: result.queryTimeMs,
-        cacheHit: result.cacheHit ?? false,
+        ...cacheMeta(result),
       },
       data: result.data,
     });
@@ -206,9 +207,18 @@ function parseEventListQuery(query: Record<string, QueryValue>): EventListQuery 
 }
 
 function parseTimeRange(query: Record<string, QueryValue>, fallbackMs: number): TimeRange {
-  const to = parseDate(query.to) ?? new Date();
+  const explicitTo = parseDate(query.to);
+  // If the client does not pass `to`, using raw new Date() makes every request
+  // produce a unique cache key down to the millisecond. Bucket the implicit
+  // moving window into the same 2-minute window as the cache TTL so repeated
+  // dashboard/list calls can actually reuse LRU/Redis entries.
+  const to = explicitTo ?? floorDate(new Date(), DEFAULT_CACHE_WINDOW_MS);
   const from = parseDate(query.from) ?? new Date(to.getTime() - fallbackMs);
   return { from, to };
+}
+
+function floorDate(date: Date, bucketMs: number): Date {
+  return new Date(Math.floor(date.getTime() / bucketMs) * bucketMs);
 }
 
 function parseDate(value: QueryValue): Date | null {
@@ -248,6 +258,37 @@ function toIsoRange(range: TimeRange): { from: string; to: string } {
     from: range.from.toISOString(),
     to: range.to.toISOString(),
   };
+}
+
+function cacheMeta(result: {
+  cacheHit: boolean;
+  cacheLayer?: "lru" | "redis";
+  cacheLookupMs: number;
+  deduped?: boolean;
+}): {
+  cacheHit: boolean;
+  cacheLayer?: "lru" | "redis";
+  cacheLookupMs: number;
+  deduped?: boolean;
+} {
+  const meta: {
+    cacheHit: boolean;
+    cacheLayer?: "lru" | "redis";
+    cacheLookupMs: number;
+    deduped?: boolean;
+  } = {
+    cacheHit: result.cacheHit,
+    cacheLookupMs: result.cacheLookupMs,
+  };
+
+  if (result.cacheLayer !== undefined) {
+    meta.cacheLayer = result.cacheLayer;
+  }
+  if (result.deduped !== undefined) {
+    meta.deduped = result.deduped;
+  }
+
+  return meta;
 }
 
 function notFound(reply: FastifyReply, request: FastifyRequest, code: string, message: string): FastifyReply {

@@ -1,0 +1,337 @@
+{
+  "info": {
+    "_postman_id": "8d3c7b5d-5b8e-4e92-8d1b-2f7a9c3e4b6a",
+    "name": "API Monitoring Backend - Analytics",
+    "description": "Postman collection for all analytics routes under /analytics. Every request requires Authorization: Bearer {{accessToken}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "List Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/events?from={{from}}&to={{to}}&type=request&statusCode=200&method=GET&limit=25&sort=desc&q={{eventSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}",
+                  "description": "ISO timestamp. Defaults to 7 days before to when omitted."
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}",
+                  "description": "ISO timestamp. Defaults to current time when omitted."
+                },
+                {
+                  "key": "type",
+                  "value": "request",
+                  "description": "Allowed values: request, error, custom."
+                },
+                {
+                  "key": "statusCode",
+                  "value": "200",
+                  "description": "Optional HTTP status code filter."
+                },
+                {
+                  "key": "method",
+                  "value": "GET",
+                  "description": "Optional HTTP method filter."
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{eventCursor}}",
+                  "disabled": true,
+                  "description": "Use meta.nextCursor from a previous response."
+                },
+                {
+                  "key": "limit",
+                  "value": "25",
+                  "description": "1 to 100. Defaults to 25."
+                },
+                {
+                  "key": "sort",
+                  "value": "desc",
+                  "description": "Allowed values: asc, desc."
+                },
+                {
+                  "key": "q",
+                  "value": "{{eventSearch}}",
+                  "description": "Optional search query."
+                }
+              ]
+            },
+            "description": "Returns paginated project events with filters for time range, event type, status code, method, cursor, limit, sort, and search query."
+          }
+        },
+        {
+          "name": "Get Event Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Returns base event data plus request, error, and trace details for one event."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Requests",
+      "item": [
+        {
+          "name": "Request Overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/requests/overview?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "requests",
+                "overview"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}",
+                  "description": "ISO timestamp. Defaults to 24 hours before to when omitted."
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}",
+                  "description": "ISO timestamp. Defaults to current time when omitted."
+                }
+              ]
+            },
+            "description": "Returns request analytics overview for the selected project and time range."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/dashboard?from={{from}}&to={{to}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "dashboard"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "{{from}}",
+                  "description": "ISO timestamp. Defaults to 24 hours before to when omitted."
+                },
+                {
+                  "key": "to",
+                  "value": "{{to}}",
+                  "description": "ISO timestamp. Defaults to current time when omitted."
+                }
+              ]
+            },
+            "description": "Returns dashboard data: requests, errors, top endpoints, top errors, and status distribution."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Groups",
+      "item": [
+        {
+          "name": "List Error Groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/error-groups?status=all&priority={{priority}}&limit=25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "error-groups"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "all",
+                  "description": "Allowed values: all, resolved, unresolved."
+                },
+                {
+                  "key": "priority",
+                  "value": "{{priority}}",
+                  "description": "Optional numeric priority filter."
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{errorGroupCursor}}",
+                  "disabled": true,
+                  "description": "Use meta.nextCursor from a previous response."
+                },
+                {
+                  "key": "limit",
+                  "value": "25",
+                  "description": "1 to 100. Defaults to 25."
+                }
+              ]
+            },
+            "description": "Returns paginated error groups with status, priority, cursor, and limit filters."
+          }
+        },
+        {
+          "name": "Update Error Group",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"priority\": 2,\n  \"isResolved\": false,\n  \"resolvedBy\": \"{{resolvedBy}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/error-groups/{{fingerprint}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "error-groups",
+                "{{fingerprint}}"
+              ]
+            },
+            "description": "Updates an error group's priority, resolved state, and resolver. The API also accepts snake_case fields: is_resolved and resolved_by."
+          }
+        },
+        {
+          "name": "Resolve Error Group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolvedBy\": \"{{resolvedBy}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/error-groups/{{fingerprint}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "error-groups",
+                "{{fingerprint}}",
+                "resolve"
+              ]
+            },
+            "description": "Marks an error group as resolved. The API also accepts resolved_by."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Analytics Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/analytics/{{projectId}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "analytics",
+                "{{projectId}}",
+                "health"
+              ]
+            },
+            "description": "Checks analytics database and cache connectivity for the selected project. Returns 200 when healthy and 503 when degraded."
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "projectId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "eventId",
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    {
+      "key": "fingerprint",
+      "value": "replace-with-error-fingerprint"
+    }
+  ]
+}

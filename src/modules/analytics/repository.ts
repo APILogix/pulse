@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { pool } from "../../config/database.js";
 import type {
   DashboardData,
@@ -18,9 +18,12 @@ interface CursorPayload {
 export class AnalyticsRepository {
   private readonly maxLimit = 100;
 
-  constructor(private readonly db: Pool = pool) {}
+  constructor(private readonly db = pool) {}
 
-  async listEvents(projectId: string, query: EventListQuery): Promise<PaginatedResult> {
+  async listEvents(
+    projectId: string,
+    query: EventListQuery,
+  ): Promise<PaginatedResult> {
     const limit = this.clampLimit(query.limit);
     const params: unknown[] = [projectId, query.from, query.to];
     const where = ["e.project_id = $1", "e.timestamp BETWEEN $2 AND $3"];
@@ -43,7 +46,9 @@ export class AnalyticsRepository {
 
     if (query.searchQuery) {
       params.push(`%${query.searchQuery}%`);
-      where.push(`(e.payload::text ILIKE $${++index} OR ee.message ILIKE $${index} OR re.url ILIKE $${index})`);
+      where.push(
+        `(e.payload::text ILIKE $${++index} OR ee.message ILIKE $${index} OR re.url ILIKE $${index})`,
+      );
     }
 
     const cursor = this.decodeCursor(query.cursor);
@@ -59,69 +64,99 @@ export class AnalyticsRepository {
     const whereSql = where.join(" AND ");
 
     return this.withProjectContext(projectId, async (client) => {
+      const start = Date.now();
+
+      // 🔒 enforce max limit
+      const safeLimit = Math.min(limit ?? 50, 100);
+
+      // ⚠️ fetch one extra row for pagination detection
+      const listQuery = `
+    SELECT
+      e.id,
+      e.type,
+      e.timestamp,
+      re.method,
+      re.url,
+      re.status_code,
+      re.latency_ms,
+      (ee.event_id IS NOT NULL) AS has_error
+    FROM events e
+    LEFT JOIN request_events re
+      ON re.event_id = e.id AND re.project_id = e.project_id
+    LEFT JOIN error_events ee
+      ON ee.event_id = e.id AND ee.project_id = e.project_id
+    WHERE ${whereSql}
+    ORDER BY e.timestamp ${order}, e.id ${order}
+    LIMIT $${limitParam}
+  `;
+
+      // ❌ count query is expensive → make optional
+      const shouldFetchCount = false;
+
       const [items, count] = await Promise.all([
-        client.query(
-          `
-            SELECT
-              e.id,
-              e.project_id,
-              e.type,
-              e.request_id,
-              e.timestamp,
-              e.ingested_at,
-              e.payload,
-              re.method,
-              re.url,
-              re.status_code,
-              re.latency_ms,
-              ee.error_type,
-              ee.message AS error_message,
-              ee.fingerprint
-            FROM events e
-            LEFT JOIN request_events re
-              ON re.event_id = e.id AND re.project_id = e.project_id
-            LEFT JOIN error_events ee
-              ON ee.event_id = e.id AND ee.project_id = e.project_id
-            WHERE ${whereSql}
-            ORDER BY e.timestamp ${order}, e.id ${order}
-            LIMIT $${limitParam}
-          `,
-          params,
-        ),
-        client.query(
-          `
+        client.query(listQuery, params),
+        shouldFetchCount
+          ? client.query(
+              `
             SELECT COUNT(*)::int AS total
             FROM events e
-            LEFT JOIN request_events re
-              ON re.event_id = e.id AND re.project_id = e.project_id
-            LEFT JOIN error_events ee
-              ON ee.event_id = e.id AND ee.project_id = e.project_id
             WHERE ${whereSql}
           `,
-          params.slice(0, -1),
-        ),
+              params.slice(0, -1),
+            )
+          : Promise.resolve(null),
       ]);
 
       const rows = items.rows;
-      const data = rows.slice(0, limit);
+
+      // pagination logic
+      const hasMore = rows.length > safeLimit;
+      const data = rows.slice(0, safeLimit);
       const last = data.at(-1);
 
-      return {
-        data,
-        totalEstimated: Number(count.rows[0]?.total ?? 0),
-        hasMore: rows.length > limit,
-        nextCursor: rows.length > limit && last ? this.encodeCursor(last.timestamp, last.id) : null,
-        queryTimeMs: 0,
+      const response: PaginatedResult = {
+        data: data.map((row) => ({
+          id: row.id,
+          type: row.type,
+          timestamp: row.timestamp,
+          method: row.method,
+          url: row.url,
+          statusCode: row.status_code,
+          latencyMs: row.latency_ms,
+          hasError: row.has_error,
+        })),
+        hasMore,
+        nextCursor:
+          hasMore && last ? this.encodeCursor(last.timestamp, last.id) : null,
+        queryTimeMs: Date.now() - start,
       };
+
+      if (count) {
+        response.totalEstimated = Number(count.rows[0]?.total ?? 0);
+      }
+
+      return response;
     });
   }
 
-  async getEventDetails(projectId: string, eventId: string): Promise<EventDetails | null> {
+  async getEventDetails(
+    projectId: string,
+    eventId: string,
+  ): Promise<EventDetails | null> {
     return this.withProjectContext(projectId, async (client) => {
       const [base, request, error, trace] = await Promise.all([
-        client.query("SELECT * FROM events WHERE project_id = $1 AND id = $2 LIMIT 1", [projectId, eventId]),
-        client.query("SELECT * FROM request_events WHERE project_id = $1 AND event_id = $2 LIMIT 1", [projectId, eventId]),
-        client.query("SELECT * FROM error_events WHERE project_id = $1 AND event_id = $2 LIMIT 1", [projectId, eventId]),
+        client.query(
+          "SELECT * FROM events WHERE project_id = $1 AND id = $2 LIMIT 1",
+          [projectId, eventId],
+        ),
+        client.query(
+          "SELECT * FROM request_events WHERE project_id = $1 AND event_id = $2 LIMIT 1",
+          [projectId, eventId],
+        ),
+        client.query(
+          "SELECT * FROM error_events WHERE project_id = $1 AND event_id = $2 LIMIT 1",
+          [projectId, eventId],
+        ),
         client.query(
           `
             SELECT id, type, timestamp, payload
@@ -147,8 +182,13 @@ export class AnalyticsRepository {
     });
   }
 
-  async getRequestOverview(projectId: string, range: TimeRange): Promise<unknown> {
-    return this.one(projectId, `
+  async getRequestOverview(
+    projectId: string,
+    range: TimeRange,
+  ): Promise<unknown> {
+    return this.one(
+      projectId,
+      `
       SELECT jsonb_build_object(
         'total_requests', COUNT(*),
         'avg_latency_ms', COALESCE(ROUND(AVG(latency_ms)), 0),
@@ -159,13 +199,21 @@ export class AnalyticsRepository {
       ) AS data
       FROM request_events
       WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-    `, [projectId, range.from, range.to]);
+    `,
+      [projectId, range.from, range.to],
+    );
   }
 
-  async getDashboard(projectId: string, range: TimeRange): Promise<DashboardData> {
+  async getDashboard(
+    projectId: string,
+    range: TimeRange,
+  ): Promise<DashboardData> {
     return this.withProjectContext(projectId, async (client) => {
-      const [requests, errors, endpoints, topErrors, status] = await Promise.all([
-        this.queryData(client, `
+      const [requests, errors, endpoints, topErrors, status] =
+        await Promise.all([
+          this.queryData(
+            client,
+            `
           SELECT jsonb_build_object(
             'total', COUNT(*),
             'avg_latency_ms', COALESCE(ROUND(AVG(latency_ms)), 0),
@@ -174,8 +222,12 @@ export class AnalyticsRepository {
           ) AS data
           FROM request_events
           WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-        `, [projectId, range.from, range.to]),
-        this.queryData(client, `
+        `,
+            [projectId, range.from, range.to],
+          ),
+          this.queryData(
+            client,
+            `
           SELECT jsonb_build_object(
             'total', COUNT(*),
             'unresolved', COUNT(*) FILTER (WHERE is_resolved = FALSE),
@@ -183,8 +235,12 @@ export class AnalyticsRepository {
           ) AS data
           FROM error_groups
           WHERE project_id = $1 AND last_seen BETWEEN $2 AND $3
-        `, [projectId, range.from, range.to]),
-        this.queryRows(client, `
+        `,
+            [projectId, range.from, range.to],
+          ),
+          this.queryRows(
+            client,
+            `
           SELECT md5(COALESCE(url, '') || COALESCE(method, '')) AS endpoint_hash,
                  url, method, COUNT(*)::int AS requests,
                  COALESCE(ROUND(AVG(latency_ms)), 0)::int AS avg_latency_ms
@@ -193,15 +249,23 @@ export class AnalyticsRepository {
           GROUP BY url, method
           ORDER BY requests DESC
           LIMIT 10
-        `, [projectId, range.from, range.to]),
-        this.queryRows(client, `
+        `,
+            [projectId, range.from, range.to],
+          ),
+          this.queryRows(
+            client,
+            `
           SELECT fingerprint, error_type, last_message, occurrences, priority, is_resolved, last_seen
           FROM error_groups
           WHERE project_id = $1 AND last_seen BETWEEN $2 AND $3
           ORDER BY occurrences DESC
           LIMIT 10
-        `, [projectId, range.from, range.to]),
-        this.queryData(client, `
+        `,
+            [projectId, range.from, range.to],
+          ),
+          this.queryData(
+            client,
+            `
           SELECT jsonb_build_object(
             '2xx', COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
             '3xx', COUNT(*) FILTER (WHERE status_code BETWEEN 300 AND 399),
@@ -210,8 +274,10 @@ export class AnalyticsRepository {
           ) AS data
           FROM request_events
           WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-        `, [projectId, range.from, range.to]),
-      ]);
+        `,
+            [projectId, range.from, range.to],
+          ),
+        ]);
 
       return {
         requests,
@@ -224,7 +290,10 @@ export class AnalyticsRepository {
     });
   }
 
-  async listErrorGroups(projectId: string, query: ErrorGroupListQuery): Promise<PaginatedResult> {
+  async listErrorGroups(
+    projectId: string,
+    query: ErrorGroupListQuery,
+  ): Promise<PaginatedResult> {
     const limit = this.clampLimit(query.limit);
     const params: unknown[] = [projectId];
     const where = ["project_id = $1"];
@@ -262,7 +331,10 @@ export class AnalyticsRepository {
           `,
           params,
         ),
-        client.query(`SELECT COUNT(*)::int AS total FROM error_groups WHERE ${whereSql}`, params.slice(0, -1)),
+        client.query(
+          `SELECT COUNT(*)::int AS total FROM error_groups WHERE ${whereSql}`,
+          params.slice(0, -1),
+        ),
       ]);
 
       const data = items.rows.slice(0, limit);
@@ -272,13 +344,20 @@ export class AnalyticsRepository {
         data,
         totalEstimated: Number(count.rows[0]?.total ?? 0),
         hasMore: items.rows.length > limit,
-        nextCursor: items.rows.length > limit && last ? new Date(last.last_seen).toISOString() : null,
+        nextCursor:
+          items.rows.length > limit && last
+            ? new Date(last.last_seen).toISOString()
+            : null,
         queryTimeMs: 0,
       };
     });
   }
 
-  async updateErrorGroup(projectId: string, fingerprint: string, update: ErrorGroupUpdate): Promise<unknown | null> {
+  async updateErrorGroup(
+    projectId: string,
+    fingerprint: string,
+    update: ErrorGroupUpdate,
+  ): Promise<unknown | null> {
     const sets: string[] = ["updated_at = NOW()"];
     const params: unknown[] = [projectId, fingerprint];
     let index = params.length;
@@ -310,23 +389,39 @@ export class AnalyticsRepository {
 
   async checkHealth(projectId: string): Promise<boolean> {
     try {
-      await this.withProjectContext(projectId, (client) => client.query("SELECT 1"));
+      await this.withProjectContext(projectId, (client) =>
+        client.query("SELECT 1"),
+      );
       return true;
     } catch {
       return false;
     }
   }
 
-  private async one(projectId: string, sql: string, params: unknown[]): Promise<unknown> {
-    return this.withProjectContext(projectId, async (client) => this.queryData(client, sql, params));
+  private async one(
+    projectId: string,
+    sql: string,
+    params: unknown[],
+  ): Promise<unknown> {
+    return this.withProjectContext(projectId, async (client) =>
+      this.queryData(client, sql, params),
+    );
   }
 
-  private async queryData(client: PoolClient, sql: string, params: unknown[]): Promise<unknown> {
+  private async queryData(
+    client: PoolClient,
+    sql: string,
+    params: unknown[],
+  ): Promise<unknown> {
     const result = await client.query(sql, params);
     return result.rows[0]?.data ?? null;
   }
 
-  private async queryRows(client: PoolClient, sql: string, params: unknown[]): Promise<unknown[]> {
+  private async queryRows(
+    client: PoolClient,
+    sql: string,
+    params: unknown[],
+  ): Promise<unknown[]> {
     const result = await client.query(sql, params);
     return result.rows;
   }
@@ -338,7 +433,10 @@ export class AnalyticsRepository {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
-      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
+      await client.query(
+        "SELECT set_config('app.current_project_id', $1, true)",
+        [projectId],
+      );
       const result = await callback(client);
       await client.query("COMMIT");
       return result;
@@ -368,7 +466,9 @@ export class AnalyticsRepository {
     }
 
     try {
-      return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as CursorPayload;
+      return JSON.parse(
+        Buffer.from(cursor, "base64url").toString("utf8"),
+      ) as CursorPayload;
     } catch {
       return null;
     }

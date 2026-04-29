@@ -24,12 +24,22 @@ export interface ErrorGroupListQuery {
 
 export interface PaginatedResult<T = unknown> {
   data: T[];
-  totalEstimated: number;
+
+  // Pagination
   hasMore: boolean;
   nextCursor: string | null;
+
+  // Optional (expensive → not always returned)
+  totalEstimated?: number;
+
+  // Performance
   queryTimeMs: number;
-  cacheHit?: boolean;
-  cacheLayer?: "lru" | "redis";
+
+  // Cache metadata (grouped properly)
+  cache?: {
+    hit: boolean;
+    layer?: "lru" | "redis";
+  };
 }
 
 export interface EventDetails {
