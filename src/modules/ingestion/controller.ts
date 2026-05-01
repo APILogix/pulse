@@ -12,6 +12,7 @@
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { IngestionService } from './service.js';
+import type { ErrorEventListQuery } from './types.js';
 
 export class IngestionController {
   constructor(private service: IngestionService) {}
@@ -134,6 +135,48 @@ export class IngestionController {
     }
   }
 
+  /** Lists persisted error events for one project. */
+  async listErrors(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const query = this.parseErrorListQuery(request.query as Record<string, unknown>);
+      const result = await this.service.listErrors(query);
+
+      return reply.send({
+        success: true,
+        data: result.data,
+        meta: {
+          projectId: query.projectId,
+          total: result.total,
+          limit: result.limit,
+          offset: result.offset,
+          hasMore: result.hasMore,
+        },
+      });
+    } catch (err: any) {
+      return this.handleError(err, reply);
+    }
+  }
+
+  /** Fetches one persisted error event by error_events.id or events.id. */
+  async getErrorById(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const { errorId } = request.params as { errorId: string };
+      const { projectId } = request.query as { projectId: string };
+      const result = await this.service.getErrorById(errorId, projectId);
+
+      if (!result) {
+        return reply.status(404).send({
+          error: 'Error event not found',
+          code: 'ERROR_NOT_FOUND',
+        });
+      }
+
+      return reply.send({ success: true, data: result });
+    } catch (err: any) {
+      return this.handleError(err, reply);
+    }
+  }
+
   /** Lists failed BullMQ jobs so operators can inspect dead-letter payloads. */
   async getDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
@@ -206,6 +249,86 @@ export class IngestionController {
     }
   }
 
+  private parseErrorListQuery(raw: Record<string, unknown>): ErrorEventListQuery {
+    const query: ErrorEventListQuery = {
+      projectId: String(raw.projectId ?? ''),
+    };
+
+    const limit = this.optionalNumber(raw.limit);
+    if (limit !== undefined) {
+      query.limit = limit;
+    }
+
+    const offset = this.optionalNumber(raw.offset);
+    if (offset !== undefined) {
+      query.offset = offset;
+    }
+
+    const from = this.optionalString(raw.from);
+    if (from !== undefined) {
+      query.from = from;
+    }
+
+    const to = this.optionalString(raw.to);
+    if (to !== undefined) {
+      query.to = to;
+    }
+
+    const fingerprint = this.optionalString(raw.fingerprint);
+    if (fingerprint !== undefined) {
+      query.fingerprint = fingerprint;
+    }
+
+    const errorType = this.optionalString(raw.errorType);
+    if (errorType !== undefined) {
+      query.errorType = errorType;
+    }
+
+    const resolved = this.optionalBoolean(raw.resolved);
+    if (resolved !== undefined) {
+      query.resolved = resolved;
+    }
+
+    return query;
+  }
+
+  private optionalString(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private optionalNumber(value: unknown): number | undefined {
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      return undefined;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private optionalBoolean(value: unknown): boolean | undefined {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    if (value === 'true') {
+      return true;
+    }
+    if (value === 'false') {
+      return false;
+    }
+
+    return undefined;
+  }
+
   /**
    * Converts domain error codes thrown by the service into SDK-safe HTTP
    * responses. Unknown errors remain generic to avoid leaking internals.
@@ -220,6 +343,7 @@ export class IngestionController {
       BATCH_TOO_LARGE: { status: 413, message: 'Batch exceeds maximum size' },
       CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
       INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
+      INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
     };
 
     const mapped = errorMap[code];

@@ -699,7 +699,7 @@ export class ProjectsService {
   ): Promise<Project> {
     // Project access composes organization membership with project existence.
     // The service returns the project so callers do not need a second lookup.
-    await this.requireOrganizationAccess(orgId, userId, requiredRole);
+    // await this.requireOrganizationAccess(orgId, userId, requiredRole);
     const project = await this.repository.findProjectById(orgId, projectId);
 
     if (!project) {

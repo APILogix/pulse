@@ -9,9 +9,15 @@
  * 3. Debug and replay reads use project-scoped queries so callers can inspect or
  *    requeue historical telemetry without crossing tenant boundaries.
  */
-import { type PoolClient } from 'pg';
-import { pool } from '../../config/database.js';
-import type { EnrichedEvent, SDKRequestEvent, SDKErrorEvent } from './types.js';
+import { type Pool, type PoolClient } from 'pg';
+import type {
+  EnrichedEvent,
+  ErrorEventListResult,
+  ErrorEventRecord,
+  NormalizedErrorEventListQuery,
+  SDKErrorEvent,
+  SDKRequestEvent,
+} from './types.js';
 
 
 
@@ -24,6 +30,25 @@ export interface ProjectAuthResult {
   apiKeyId: string;
   isActive: boolean;
   expiresAt: Date | null;
+}
+
+interface ErrorEventRow {
+  id: string;
+  event_id: string;
+  project_id: string;
+  request_id: string | null;
+  message: string;
+  error_type: string;
+  fingerprint: string;
+  stack: unknown;
+  context: unknown;
+  metadata: unknown;
+  timestamp: Date | string;
+  created_at: Date | string;
+  resolved_at: Date | string | null;
+  resolved_by: string | null;
+  ingested_at: Date | string | null;
+  payload: SDKErrorEvent | string;
 }
 
 export class PostgresWriter {
@@ -89,13 +114,14 @@ export class PostgresWriter {
   async writeEvents(events: EnrichedEvent[]): Promise<void> {
     // Bulk insert through UNNEST keeps one database round trip per batch and
     // ON CONFLICT protects replay/retry paths from duplicate event ids.
-    if (events.length === 0) return;
+    const firstEvent = events[0];
+    if (!firstEvent) return;
 
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
 
-      const projectId = events[0].projectId;
+      const projectId = firstEvent.projectId;
       console.log("Porejct id 2",projectId)
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
 console.log(events,"while writting events")
@@ -142,10 +168,13 @@ console.log(events,"while writting events")
   async writeRequestEvents(events: EnrichedEvent[]): Promise<void> {
     // Request events are written after the canonical events rows so the generic
     // event stream and request-specific analytics stay in sync.
+    const firstEvent = events[0];
+    if (!firstEvent) return;
+
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const projectId = events[0].projectId;
+      const projectId = firstEvent.projectId;
       console.log("project id",projectId)
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
 console.log("before send to event writer",events)
@@ -192,10 +221,13 @@ console.log("before send to event writer",events)
   async writeErrorEvents(events: EnrichedEvent[]): Promise<void> {
     // Error events keep the full payload in events and denormalize searchable
     // error fields into error_events; grouping can then be handled by triggers.
+    const firstEvent = events[0];
+    if (!firstEvent) return;
+
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const projectId = events[0].projectId;
+      const projectId = firstEvent.projectId;
       await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
 
       await this.writeEvents(events);
@@ -232,6 +264,135 @@ console.log("before send to event writer",events)
     } finally {
       client.release();
     }
+  }
+
+  async listErrorEvents(
+    query: NormalizedErrorEventListQuery,
+  ): Promise<ErrorEventListResult> {
+    return this.withProjectContext(query.projectId, async (client) => {
+      const params: unknown[] = [query.projectId];
+      const where = ['ee.project_id = $1'];
+      let index = params.length;
+
+      if (query.from) {
+        params.push(query.from);
+        where.push(`ee.timestamp >= $${++index}`);
+      }
+
+      if (query.to) {
+        params.push(query.to);
+        where.push(`ee.timestamp <= $${++index}`);
+      }
+
+      if (query.fingerprint) {
+        params.push(query.fingerprint);
+        where.push(`ee.fingerprint = $${++index}`);
+      }
+
+      if (query.errorType) {
+        params.push(query.errorType);
+        where.push(`ee.error_type = $${++index}`);
+      }
+
+      if (query.resolved !== undefined) {
+        where.push(
+          query.resolved
+            ? 'ee.resolved_at IS NOT NULL'
+            : 'ee.resolved_at IS NULL',
+        );
+      }
+
+      const whereSql = where.join(' AND ');
+      const countParams = [...params];
+
+      params.push(query.limit, query.offset);
+      const limitParam = ++index;
+      const offsetParam = ++index;
+
+      const list = await client.query<ErrorEventRow>(
+        `
+          SELECT
+            ee.id,
+            ee.event_id,
+            ee.project_id,
+            ee.request_id,
+            ee.message,
+            ee.error_type,
+            ee.fingerprint,
+            ee.stack,
+            ee.context,
+            ee.metadata,
+            ee.timestamp,
+            ee.created_at,
+            ee.resolved_at,
+            ee.resolved_by,
+            e.ingested_at,
+            e.payload
+          FROM error_events ee
+          INNER JOIN events e
+            ON e.id = ee.event_id AND e.project_id = ee.project_id
+          WHERE ${whereSql}
+          ORDER BY ee.timestamp DESC, ee.id DESC
+          LIMIT $${limitParam}
+          OFFSET $${offsetParam}
+        `,
+        params,
+      );
+
+      const count = await client.query<{ total: string }>(
+        `SELECT COUNT(*)::int AS total FROM error_events ee WHERE ${whereSql}`,
+        countParams,
+      );
+
+      const total = Number(count.rows[0]?.total ?? 0);
+
+      return {
+        data: list.rows.map((row) => this.mapErrorEvent(row)),
+        total,
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: query.offset + list.rows.length < total,
+      };
+    });
+  }
+
+  async getErrorEventById(
+    errorId: string,
+    projectId: string,
+  ): Promise<ErrorEventRecord | null> {
+    return this.withProjectContext(projectId, async (client) => {
+      const result = await client.query<ErrorEventRow>(
+        `
+          SELECT
+            ee.id,
+            ee.event_id,
+            ee.project_id,
+            ee.request_id,
+            ee.message,
+            ee.error_type,
+            ee.fingerprint,
+            ee.stack,
+            ee.context,
+            ee.metadata,
+            ee.timestamp,
+            ee.created_at,
+            ee.resolved_at,
+            ee.resolved_by,
+            e.ingested_at,
+            e.payload
+          FROM error_events ee
+          INNER JOIN events e
+            ON e.id = ee.event_id AND e.project_id = ee.project_id
+          WHERE ee.project_id = $1
+            AND (ee.id = $2 OR ee.event_id = $2)
+          LIMIT 1
+        `,
+        [projectId, errorId],
+      );
+
+      const row = result.rows[0];
+      return row ? this.mapErrorEvent(row) : null;
+    });
   }
 
   /** Debug endpoint: fetch full event graph */
@@ -329,6 +490,54 @@ console.log("before send to event writer",events)
       return true;
     } catch {
       return false;
+    }
+  }
+
+  private mapErrorEvent(row: ErrorEventRow): ErrorEventRecord {
+    const payload =
+      typeof row.payload === 'string'
+        ? JSON.parse(row.payload) as SDKErrorEvent
+        : row.payload;
+
+    return {
+      id: row.id,
+      eventId: row.event_id,
+      projectId: row.project_id,
+      requestId: row.request_id,
+      message: row.message,
+      errorType: row.error_type,
+      fingerprint: row.fingerprint,
+      stack: row.stack,
+      context: row.context,
+      metadata: row.metadata,
+      timestamp: new Date(row.timestamp).toISOString(),
+      createdAt: new Date(row.created_at).toISOString(),
+      resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+      resolvedBy: row.resolved_by,
+      ingestedAt: row.ingested_at ? new Date(row.ingested_at).toISOString() : null,
+      payload,
+    };
+  }
+
+  private async withProjectContext<T>(
+    projectId: string,
+    callback: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        "SELECT set_config('app.current_project_id', $1, true)",
+        [projectId],
+      );
+      const result = await callback(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
     }
   }
 }

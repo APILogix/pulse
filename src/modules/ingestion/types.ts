@@ -78,6 +78,49 @@ export interface IngestResponse {
   errors?: Array<{ eventId: string; reason: string }>;
 }
 
+export interface ErrorEventListQuery {
+  projectId: string;
+  limit?: number;
+  offset?: number;
+  from?: string;
+  to?: string;
+  fingerprint?: string;
+  errorType?: string;
+  resolved?: boolean;
+}
+
+export interface NormalizedErrorEventListQuery extends ErrorEventListQuery {
+  limit: number;
+  offset: number;
+}
+
+export interface ErrorEventRecord {
+  id: string;
+  eventId: string;
+  projectId: string;
+  requestId: string | null;
+  message: string;
+  errorType: string;
+  fingerprint: string;
+  stack: unknown;
+  context: unknown;
+  metadata: unknown;
+  timestamp: string;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  ingestedAt: string | null;
+  payload: SDKErrorEvent;
+}
+
+export interface ErrorEventListResult {
+  data: ErrorEventRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
 /** SDK Init Response — Matches your SDK expectation exactly */
 export interface SDKInitResponse {
   success: boolean;
@@ -204,4 +247,38 @@ export const ReplaySchema: FastifySchema = {
       targetQueue: { type: 'string', default: 'ingestion' }
     }
   }
+};
+
+export const ErrorListSchema: FastifySchema = {
+  querystring: {
+    type: 'object',
+    required: ['projectId'],
+    properties: {
+      projectId: { type: 'string', format: 'uuid' },
+      limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+      offset: { type: 'integer', minimum: 0, default: 0 },
+      from: { type: 'string', format: 'date-time' },
+      to: { type: 'string', format: 'date-time' },
+      fingerprint: { type: 'string', minLength: 1, maxLength: 128 },
+      errorType: { type: 'string', minLength: 1, maxLength: 100 },
+      resolved: { type: 'boolean' },
+    },
+  },
+};
+
+export const ErrorByIdSchema: FastifySchema = {
+  params: {
+    type: 'object',
+    required: ['errorId'],
+    properties: {
+      errorId: { type: 'string', format: 'uuid' },
+    },
+  },
+  querystring: {
+    type: 'object',
+    required: ['projectId'],
+    properties: {
+      projectId: { type: 'string', format: 'uuid' },
+    },
+  },
 };

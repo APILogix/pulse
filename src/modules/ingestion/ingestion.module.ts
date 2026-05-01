@@ -12,7 +12,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { Queue } from 'bullmq';
-import Redis from "ioredis";
+import { Redis } from "ioredis";
 import { Pool } from 'pg';
 import { ingestionRoutes } from './routes.js';
 import { RedisCache } from '../../db/redis/cache.js';

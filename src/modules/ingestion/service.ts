@@ -21,6 +21,10 @@ import type {
   IngestRequest,
   IngestResponse,
   EnrichedEvent,
+  ErrorEventListQuery,
+  ErrorEventListResult,
+  ErrorEventRecord,
+  NormalizedErrorEventListQuery,
   ReplayRequest,
   HealthStatus,
   SDKEvent,
@@ -218,16 +222,21 @@ console.log("ratelimit per minute")
       }
 
       console.log("idopodency check")
-      enriched.push({
+      const enrichedEvent: EnrichedEvent = {
         id: eventId,
         type: event.type,
         projectId: project.id,
         orgId: project.orgId,
-        requestId: event.requestId,
         receivedAt: Date.now(),
         batchId,
         payload: event,
-      });
+      };
+
+      if (event.requestId !== undefined) {
+        enrichedEvent.requestId = event.requestId;
+      }
+
+      enriched.push(enrichedEvent);
     }
 
     console.log("event push")
@@ -241,7 +250,7 @@ console.log("ratelimit per minute")
       ]);
     }
 console.log("all thing done")
-    return {
+    const response: IngestResponse = {
       success: true,
       accepted: enriched.length,
       rejected: errors.length,
@@ -250,8 +259,13 @@ console.log("all thing done")
         remaining: minuteLimit.remaining,
         resetAt: minuteLimit.resetAt,
       },
-      errors: errors.length > 0 ? errors : undefined,
     };
+
+    if (errors.length > 0) {
+      response.errors = errors;
+    }
+
+    return response;
   }
 
   async getHealth(): Promise<HealthStatus> {
@@ -346,11 +360,87 @@ console.log("all thing done")
     return { replayId, queued: events.length };
   }
 
+  async listErrors(
+    query: ErrorEventListQuery,
+  ): Promise<ErrorEventListResult> {
+    return this.writer.listErrorEvents(
+      this.normalizeErrorEventListQuery(query),
+    );
+  }
+
+  async getErrorById(
+    errorId: string,
+    projectId: string,
+  ): Promise<ErrorEventRecord | null> {
+    return this.writer.getErrorEventById(errorId, projectId);
+  }
+
   async getDebugEvent(eventId: string, projectId: string) {
     return this.writer.getEventById(eventId, projectId);
   }
 
   async shutdown(): Promise<void> {
     await this.buffer.destroy();
+  }
+
+  private normalizeErrorEventListQuery(
+    query: ErrorEventListQuery,
+  ): NormalizedErrorEventListQuery {
+    const normalized: NormalizedErrorEventListQuery = {
+      projectId: query.projectId,
+      limit: this.normalizeInteger(query.limit, 50, 1, 100),
+      offset: this.normalizeInteger(query.offset, 0, 0, 100_000),
+    };
+
+    const from = this.parseOptionalDate(query.from);
+    const to = this.parseOptionalDate(query.to);
+
+    if (from && to && from.getTime() > to.getTime()) {
+      throw new Error('INVALID_DATE_RANGE');
+    }
+
+    if (from) {
+      normalized.from = from.toISOString();
+    }
+    if (to) {
+      normalized.to = to.toISOString();
+    }
+    if (query.fingerprint) {
+      normalized.fingerprint = query.fingerprint;
+    }
+    if (query.errorType) {
+      normalized.errorType = query.errorType;
+    }
+    if (query.resolved !== undefined) {
+      normalized.resolved = query.resolved;
+    }
+
+    return normalized;
+  }
+
+  private parseOptionalDate(value?: string): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('INVALID_DATE_RANGE');
+    }
+
+    return date;
+  }
+
+  private normalizeInteger(
+    value: number | undefined,
+    fallback: number,
+    min: number,
+    max: number,
+  ): number {
+    if (value === undefined || !Number.isFinite(value)) {
+      return fallback;
+    }
+
+    return Math.max(min, Math.min(Math.trunc(value), max));
   }
 }

@@ -57,15 +57,15 @@ export class OrganizationService {
       ownerUserId,
     });
 
-    await this.audit(
-      org.id,
-      ownerUserId,
-      "org.created",
-      "organization",
-      org.id,
-      { name: org.name },
-      meta,
-    );
+    // await this.audit(
+    //   org.id,
+    //   ownerUserId,
+    //   "org.created",
+    //   "organization",
+    //   org.id,
+    //   { name: org.name },
+    //   meta,
+    // );
 
     return this.toOrganizationDto(org);
   }

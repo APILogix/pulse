@@ -15,7 +15,13 @@ import type { FastifyInstance } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
 import { IngestionController } from "./controller.js";
 import { IngestionService } from "./service.js";
-import { IngestSchema, InitSchema, ReplaySchema } from "./types.js";
+import {
+  ErrorByIdSchema,
+  ErrorListSchema,
+  IngestSchema,
+  InitSchema,
+  ReplaySchema,
+} from "./types.js";
 
 type FastifyDecoratorName =
   | "ingestionQueue"
@@ -32,6 +38,8 @@ type ControllerMethodName =
   | "getHealth"
   | "getIngestionHealth"
   | "getLimits"
+  | "listErrors"
+  | "getErrorById"
   | "getDLQ"
   | "reprocessDLQ"
   | "reprocessAllDLQ"
@@ -69,6 +77,8 @@ function assertControllerMethods(controller: IngestionController): void {
     "getHealth",
     "getIngestionHealth",
     "getLimits",
+    "listErrors",
+    "getErrorById",
     "getDLQ",
     "reprocessDLQ",
     "reprocessAllDLQ",
@@ -177,6 +187,24 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
       },
     },
     controller.getLimits.bind(controller),
+  );
+
+  fastify.get(
+    "/v1/errors",
+    {
+      preHandler: [authenticate],
+      schema: ErrorListSchema,
+    },
+    controller.listErrors.bind(controller),
+  );
+
+  fastify.get(
+    "/v1/errors/:errorId",
+    {
+      preHandler: [authenticate],
+      schema: ErrorByIdSchema,
+    },
+    controller.getErrorById.bind(controller),
   );
 
   fastify.get(
