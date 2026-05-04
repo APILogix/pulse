@@ -216,11 +216,13 @@ function validateUserActive(user: User): void {
 
 function getUserPasswordHashes(user: User): string[] {
   const history = Array.isArray(user.password_history)
-    ? user.password_history.filter((entry): entry is string => typeof entry === "string")
+    ? user.password_history.filter(
+        (entry): entry is string => typeof entry === "string",
+      )
     : [];
 
-  return [user.password_hash, ...history].filter(
-    (entry): entry is string => Boolean(entry),
+  return [user.password_hash, ...history].filter((entry): entry is string =>
+    Boolean(entry),
   );
 }
 
@@ -254,7 +256,7 @@ async function revokeUserSessions(
   // Revocation is persisted on every active session. Access-token blacklist
   // support is available separately for immediate jti/session invalidation.
   const sessions = await repository.listActiveSessionsByUser(userId);
-  console.log("sessions", sessions)
+  console.log("sessions", sessions);
   for (const session of sessions) {
     await repository.revokeSession(session.id, reason);
     // await blacklistAccessToken(session.id);
@@ -389,8 +391,8 @@ async function consumeBackupCode(
   for (const device of devices) {
     const codes = Array.isArray(device.backup_codes_hash)
       ? device.backup_codes_hash.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
+          (entry): entry is string => typeof entry === "string",
+        )
       : [];
 
     const matchIndex = codes.findIndex((hashedCode) =>
@@ -434,14 +436,12 @@ export async function createUserFromEmail(
     );
   }
 
-
   const passwordhash = await hashPassword(input.password);
   const user = await repository.createUser({
     id: generateUUID(),
     email: input.email,
     full_name: input.full_name,
     avatar_url: input.avatar_url,
-    email_hash: emailHash,
     password: passwordhash,
   });
 
@@ -479,7 +479,16 @@ export async function updateCurrentUser(
   }
   validateUserActive(user);
 
-  const updates: Partial<Pick<User, "full_name" | "avatar_url" | "timezone" | "locale" | "preferred_mfa_method">> = {};
+  const updates: Partial<
+    Pick<
+      User,
+      | "full_name"
+      | "avatar_url"
+      | "timezone"
+      | "locale"
+      | "preferred_mfa_method"
+    >
+  > = {};
   if (input.full_name !== undefined) updates.full_name = input.full_name;
   if (input.avatar_url !== undefined) updates.avatar_url = input.avatar_url;
   if (input.timezone !== undefined) updates.timezone = input.timezone;
@@ -569,27 +578,25 @@ export async function loginWithEmailPassword(
   requestId: string,
 ): Promise<
   | {
-    mfa_required: true;
-    challenge_id: string;
-    expires_at: Date;
-    device_type: string;
-    user_id: string;
-  }
+      mfa_required: true;
+      challenge_id: string;
+      expires_at: Date;
+      device_type: string;
+      user_id: string;
+    }
   | {
-    mfa_required: false;
-    access_token: string;
-    refresh_token: string;
-    expires_at: Date;
-    token_type: "Bearer";
-    session_id: string;
-  }
+      mfa_required: false;
+      access_token: string;
+      refresh_token: string;
+      expires_at: Date;
+      token_type: "Bearer";
+      session_id: string;
+    }
 > {
   // Login flow: normalize email -> find user -> validate account state ->
   // verify password -> either create MFA challenge or issue a full session.
   const normalizedEmail = normalizeEmail(input.email);
-  const emailHash = createHash("sha256")
-    .update(normalizedEmail)
-    .digest("hex");
+  const emailHash = createHash("sha256").update(normalizedEmail).digest("hex");
 
   // const rateKey = `login:${emailHash}:${ipAddress}`;
   // const allowed = await checkRateLimit(
@@ -604,9 +611,8 @@ export async function loginWithEmailPassword(
   //     429,
   //   );
   // }
-const start = Date.now();
+  const start = Date.now();
   const user = await repository.findUserByEmailHash(emailHash);
-  console.log("DB:", Date.now() - start);
   if (!user || user.status === "deleted") {
     throw new AuthError(
       "Invalid email or password",
@@ -615,6 +621,17 @@ const start = Date.now();
     );
   }
 
+  if (!user.email_verified) {
+    throw new AuthError(
+      "Email not verified",
+      AuthErrorCodes.EMAIL_NOT_VERIFIED,
+      403,
+      {
+        action: "VERIFY_EMAIL",
+        resend_allowed: true,
+      },
+    );
+  }
   if (user.status === "suspended") {
     throw new AuthError(
       `Account suspended: ${user.status_reason || "Contact support"}`,
@@ -639,9 +656,11 @@ const start = Date.now();
       400,
     );
   }
-const passStart = Date.now();
-  const passwordValid = await verifyPassword(input.password, user.password_hash);
-  console.log("PASSWORD:", Date.now() - passStart);
+  const passStart = Date.now();
+  const passwordValid = await verifyPassword(
+    input.password,
+    user.password_hash,
+  );
   if (!passwordValid) {
     await repository.updateLoginAttempts(user.id, user.login_attempts + 1);
     throw new AuthError(
@@ -653,7 +672,9 @@ const passStart = Date.now();
 
   if (user.mfa_enabled) {
     const devices = await repository.findMFADevicesByUserId(user.id);
-    const verifiedDevices = devices.filter((device) => device.verified && device.is_active);
+    const verifiedDevices = devices.filter(
+      (device) => device.verified && device.is_active,
+    );
 
     if (verifiedDevices.length === 0) {
       throw new AuthError(
@@ -700,8 +721,7 @@ const passStart = Date.now();
     deviceType: clientDeviceType,
     mfaVerified: !user.mfa_enabled,
   });
-  console.log(session, "session ")
-
+  console.log(session, "session ");
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
 
@@ -743,7 +763,9 @@ export async function verifyLoginMFAChallenge(
 }> {
   // MFA login completion consumes the Redis challenge, validates the selected
   // device or backup code, and only then creates the user session.
-  const rawChallenge = await redis.get(`auth_login_challenge:${input.challenge_id}`);
+  const rawChallenge = await redis.get(
+    `auth_login_challenge:${input.challenge_id}`,
+  );
   if (!rawChallenge) {
     throw new AuthError(
       "Challenge expired or invalid",
@@ -773,14 +795,13 @@ export async function verifyLoginMFAChallenge(
   const user = await repository.findUserById(challenge.userId);
   if (!user) {
     await redis.del(`auth_login_challenge:${input.challenge_id}`);
-    throw new AuthError(
-      "User not found",
-      AuthErrorCodes.USER_NOT_FOUND,
-      404,
-    );
+    throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
   }
 
-  const device = await repository.findMFADeviceById(challenge.deviceId, user.id);
+  const device = await repository.findMFADeviceById(
+    challenge.deviceId,
+    user.id,
+  );
   if (!device || !device.verified || !device.is_active) {
     await redis.del(`auth_login_challenge:${input.challenge_id}`);
     throw new AuthError("MFA device invalid", AuthErrorCodes.MFA_INVALID, 400);
@@ -867,13 +888,13 @@ export async function requestPasswordReset(
   requestId: string,
 ): Promise<{ message: string; resetToken?: string }> {
   const normalizedEmail = normalizeEmail(input.email);
-  const emailHash = createHash("sha256")
-    .update(normalizedEmail)
-    .digest("hex");
+  const emailHash = createHash("sha256").update(normalizedEmail).digest("hex");
   const user = await repository.findUserByEmailHash(emailHash);
 
   if (!user || user.deleted_at) {
-    return { message: "If the email exists, a password reset link has been sent" };
+    return {
+      message: "If the email exists, a password reset link has been sent",
+    };
   }
 
   const resetToken = generateSecureToken();
@@ -905,7 +926,9 @@ export async function requestPasswordReset(
     };
   }
 
-  return { message: "If the email exists, a password reset link has been sent" };
+  return {
+    message: "If the email exists, a password reset link has been sent",
+  };
 }
 
 export async function resetPasswordWithToken(
@@ -944,7 +967,11 @@ export async function resetPasswordWithToken(
   );
 
   if (!updated) {
-    throw new AuthError("Password reset failed", AuthErrorCodes.USER_NOT_FOUND, 500);
+    throw new AuthError(
+      "Password reset failed",
+      AuthErrorCodes.USER_NOT_FOUND,
+      500,
+    );
   }
 
   await repository.markPasswordResetUsed(reset.id, ipAddress);
@@ -975,7 +1002,7 @@ export async function changePassword(
     throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
   }
 
-  console.log("user fetched", user)
+  console.log("user fetched", user);
   if (user.mfa_enabled && !mfaVerified) {
     throw new AuthError(
       "MFA verification required",
@@ -1004,7 +1031,7 @@ export async function changePassword(
     );
   }
 
-  console.log("password check pass ")
+  console.log("password check pass ");
   await ensurePasswordNotReused(user, input.new_password);
 
   const passwordHash = await hashPassword(input.new_password);
@@ -1012,7 +1039,7 @@ export async function changePassword(
     user.password_history,
     user.password_hash,
   );
-  console.log("password history pass")
+  console.log("password history pass");
 
   const updated = await repository.updateUserPassword(
     user.id,
@@ -1020,16 +1047,19 @@ export async function changePassword(
     passwordHistory,
   );
 
-
-  console.log("before password update", updated)
+  console.log("before password update", updated);
   if (!updated) {
-    throw new AuthError("Password update failed", AuthErrorCodes.USER_NOT_FOUND, 500);
+    throw new AuthError(
+      "Password update failed",
+      AuthErrorCodes.USER_NOT_FOUND,
+      500,
+    );
   }
 
-  console.log("after password update")
+  console.log("after password update");
 
   await revokeUserSessions(user.id, "Password changed");
-  console.log("session revoked succeesfully ")
+  console.log("session revoked succeesfully ");
   // await logAudit({
   //   user_id: user.id,
   //   org_id: null,
@@ -1724,7 +1754,7 @@ export async function refreshAccessToken(
   // Refresh uses token rotation: verify JWT claims, match the stored token hash,
   // enforce absolute expiry, then replace the refresh hash and issue new tokens.
   // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
-  console.log("refresh token found phase 3")
+  console.log("refresh token found phase 3");
   let decoded: { sub: string; jti: string; type: string };
   try {
     const jwt = (await import("jsonwebtoken")).default;
@@ -1732,11 +1762,19 @@ export async function refreshAccessToken(
       algorithms: ["HS256"],
     }) as { sub: string; jti: string; type: string };
   } catch {
-    throw new AuthError("Invalid refresh token", AuthErrorCodes.SESSION_INVALID, 401);
+    throw new AuthError(
+      "Invalid refresh token",
+      AuthErrorCodes.SESSION_INVALID,
+      401,
+    );
   }
 
   if (decoded.type !== "refresh") {
-    throw new AuthError("Invalid token type", AuthErrorCodes.SESSION_INVALID, 401);
+    throw new AuthError(
+      "Invalid token type",
+      AuthErrorCodes.SESSION_INVALID,
+      401,
+    );
   }
 
   // 2. Look up session by refresh token hash
@@ -1749,7 +1787,11 @@ export async function refreshAccessToken(
 
   // Ensure the JWT claims match the session
   if (session.user_id !== decoded.sub || session.id !== decoded.jti) {
-    throw new AuthError("Token-session mismatch", AuthErrorCodes.SESSION_INVALID, 401);
+    throw new AuthError(
+      "Token-session mismatch",
+      AuthErrorCodes.SESSION_INVALID,
+      401,
+    );
   }
 
   // Check expiration
@@ -1821,29 +1863,3 @@ export async function logout(sessionId: string): Promise<void> {
   await repository.revokeSession(sessionId, "User logout");
   await blacklistAccessToken(sessionId);
 }
-
-// ============================================
-// WEBHOOK HANDLERS
-// ============================================
-
-export async function handleClerkWebhook(
-  payload: unknown,
-  signature: string,
-  secret: string,
-): Promise<void> {
-  // Verify webhook signature
-  const expectedSig = createHash("sha256")
-    .update(JSON.stringify(payload) + secret)
-    .digest("hex");
-  if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig))) {
-    throw new AuthError(
-      "Invalid webhook signature",
-      AuthErrorCodes.WEBHOOK_INVALID,
-      401,
-    );
-  }
-
-  // Process based on event type
-  // Implementation depends on Clerk's specific webhook format
-}
-// Add these to the existing service.ts if not already present

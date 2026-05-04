@@ -22,15 +22,15 @@ export const pool = new Pool({
 
 // 🔹 Pool Events (visibility = power)
 pool.on('connect', () => {
-  console.log(' New DB connection established');
+  logger.info(' New DB connection established');
 });
 
 pool.on('acquire', () => {
-  console.log(' Connection acquired from pool');
+  logger.info(' Connection acquired from pool');
 });
 
 pool.on('remove', () => {
-  console.log(' Connection removed');
+  logger.info(' Connection removed');
 });
 
 pool.on('error', (err: any) => {
@@ -43,9 +43,7 @@ export const connectDB = async () => {
     const client = await pool.connect();
 
     const res = await client.query('SELECT NOW()');
-    console.log(' Database connected successfully');
-    console.log(' DB Time:', res.rows[0]);
-
+    logger.info(' Database connected successfully');
     client.release();
   } catch (err) {
     console.error(' Failed to connect to database:', err);
@@ -76,6 +74,6 @@ export const query = async (text: string, params?: any[]) => {
 
 // 🔹 Graceful shutdown
 export const closeDatabase = async () => {
-  console.log(' Closing DB pool...');
+  logger.info(' Closing DB pool...');
   await pool.end();
 };

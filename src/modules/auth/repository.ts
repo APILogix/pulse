@@ -38,14 +38,7 @@ export async function findUserById(id: string, client?: PoolClient): Promise<Use
   return result.rows[0] || null;
 }
 
-export async function findUserByClerkId(clerkUserId: string, client?: PoolClient): Promise<User | null> {
-  const db = client || pool;
-  const result = await db.query<User>(
-    `SELECT * FROM users WHERE clerk_user_id = $1 AND deleted_at IS NULL`,
-    [clerkUserId]
-  );
-  return result.rows[0] || null;
-}
+
 
 export async function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null> {
   const db = client || pool;
@@ -57,6 +50,7 @@ const result = await db.query<User>(
     id,
     status,
     status_reason,
+    email_verified,
     locked_until,
     password_hash,
     login_attempts,
@@ -77,7 +71,6 @@ export async function createUser(
     email: string;
     full_name: string;
     avatar_url?: string | undefined;
-    email_hash: string;
     password?: string | undefined;
   },
   client?: PoolClient
@@ -86,13 +79,12 @@ export async function createUser(
 
   const result = await db.query<User>(
     `INSERT INTO users (
-      id, email, email_hash, full_name, avatar_url, password_hash, status
-    ) VALUES ($1, $2, $3, $4, $5,$6, 'active')
+      id, email,  full_name, avatar_url, password_hash, status
+    ) VALUES ($1, $2, $3, $4, $5, 'active')
     RETURNING *`,
     [
       data.id, //  FIXED
       data.email,
-      data.email_hash,
       data.full_name,
       data.avatar_url || null,
       data.password

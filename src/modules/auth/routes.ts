@@ -153,7 +153,7 @@ async function credentialRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/login/mfa',
     {
-      preHandler: [rateLimit({ max: 5, window: 300 })],
+      // preHandler: [],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -267,7 +267,7 @@ async function userRoutes(fastify: FastifyInstance) {
 
         const { ip } = getClientInfo(request);
 
-        const user = await service.createUserFromEmail(body, ip, request.id);
+        await service.createUserFromEmail(body, ip, request.id);
 
         return reply.status(201).send({
           message: 'Account created successfully'
