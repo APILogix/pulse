@@ -244,6 +244,18 @@ export const ResetPasswordSchema = z.object({
 
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
 
+export const ResendVerificationSchema = z.object({
+  email: z.string().email(),
+});
+
+export type ResendVerificationInput = z.infer<typeof ResendVerificationSchema>;
+
+export const VerifyEmailQuerySchema = z.object({
+  token: z.string().min(32).max(256),
+});
+
+export type VerifyEmailQueryInput = z.infer<typeof VerifyEmailQuerySchema>;
+
 // MFA Setup
 export const MFASetupSchema = z.object({
   type: z.enum(['totp', 'sms', 'email']),
@@ -283,6 +295,13 @@ export const BackupCodeVerificationSchema = z.object({
 });
 
 export type BackupCodeVerificationInput = z.infer<typeof BackupCodeVerificationSchema>;
+
+export const MFAToggleSchema = z.object({
+  enabled: z.boolean(),
+  mfa_code: z.string().length(6).regex(/^\d+$/).optional(),
+});
+
+export type MFAToggleInput = z.infer<typeof MFAToggleSchema>;
 
 // ============================================
 // WEBHOOK TYPES
@@ -347,5 +366,6 @@ export const AuthErrorCodes = {
   WEBHOOK_INVALID: 'WEBHOOK_INVALID',
   INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
   EMAIL_VERIFICATION_INVALID: 'EMAIL_VERIFICATION_INVALID',
+  EMAIL_DELIVERY_FAILED: 'EMAIL_DELIVERY_FAILED',
 } as const;
 

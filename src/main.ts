@@ -1,63 +1,93 @@
-import { connect } from "node:http2";
-import { buildApp } from "./app.js";
-import { env } from "./config/env.js";
-import { logger } from "./config/logger.js";
-import { closeDatabase, connectDB } from "./config/database.js";
-import { connectLogDB } from "./config/log-database.js";
-import { checkRedis, connectRedis } from "./config/redis.js";
+import { buildApp } from './app.js';
+import { env } from './config/env.js';
+import { logger } from './config/logger.js';
+import { closeDatabase, connectDB } from './config/database.js';
+import { connectLogDB, logDB } from './config/log-database.js';
+import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
 
+const bootLogger = logger.child({ component: 'bootstrap' });
+
+/**
+ * Application bootstrap sequence.
+ *
+ * Enterprise boot order:
+ * 1. Connect ALL datastores (fail fast if any are unreachable)
+ * 2. Build Fastify app (register plugins and modules)
+ * 3. Start listening for HTTP traffic
+ *
+ * This ensures no HTTP request is ever accepted before all dependencies
+ * are verified and ready.
+ */
 async function bootstrap() {
   try {
-    const app = await buildApp();
+    // ── Phase 1: Verify datastore connectivity ────────────────────────
+    bootLogger.info('Connecting to datastores');
 
-    // Graceful shutdown handling
-    const closeListeners = async () => {
-      logger.info("Shutting down server...");
-
-      app.server.closeIdleConnections(); // Close keep-alive connections
-      await closeDatabase(); // Close DB pool immediately to prevent new queries
-      await app.close();
-
-      logger.info("Server shut down complete");
-      process.exit(0);
-    };
-
-    process.on("SIGTERM", closeListeners);
-    process.on("SIGINT", closeListeners);
-
-    // Start server
-    await app.listen({
-      port: env.PORT,
-      host: env.HOST,
-      listenTextResolver: (address) => {
-        logger.info(`Server listening at ${address}`);
-        return `Server listening at ${address}`;
-      },
-    });
-
-    await connectDB(); // Ensure DB connection is established before accepting requests
-    // await connectLogDB();
+    await connectDB();
+    await connectLogDB();
     await connectRedis();
-    const isHealthy = await checkRedis();
 
-    if (!isHealthy) {
-     logger.fatal("Redis health check failed");
+    const isRedisHealthy = await checkRedis();
+    if (!isRedisHealthy) {
+      bootLogger.fatal('Redis health check failed — aborting startup');
       process.exit(1);
     }
 
+    bootLogger.info('All datastores connected');
 
-    // Log startup metrics
-    logger.info(
+    // ── Phase 2: Build application ────────────────────────────────────
+    const app = await buildApp();
+
+    // ── Phase 3: Graceful shutdown ────────────────────────────────────
+    const shutdown = async (signal: string) => {
+      bootLogger.info({ signal }, 'Shutdown signal received — draining connections');
+
+      // Stop accepting new connections
+      app.server.closeIdleConnections();
+
+      // Close Fastify (triggers onClose hooks in registered modules)
+      await app.close();
+
+      // Close datastores in reverse order of dependency
+      await closeRedis();
+      await logDB.close();
+      await closeDatabase();
+
+      bootLogger.info('Shutdown complete');
+      process.exit(0);
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+
+    // Handle uncaught errors that slip past Fastify
+    process.on('unhandledRejection', (reason) => {
+      bootLogger.fatal({ reason }, 'Unhandled promise rejection');
+    });
+
+    process.on('uncaughtException', (err) => {
+      bootLogger.fatal({ err }, 'Uncaught exception — shutting down');
+      process.exit(1);
+    });
+
+    // ── Phase 4: Start HTTP server ────────────────────────────────────
+    await app.listen({
+      port: env.PORT,
+      host: env.HOST,
+    });
+
+    bootLogger.info(
       {
         port: env.PORT,
+        host: env.HOST,
         env: env.NODE_ENV,
         pid: process.pid,
-        memory: process.memoryUsage(),
+        memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
       },
-      "Server started successfully",
+      'Server started successfully',
     );
   } catch (error) {
-    logger.fatal(error, "Failed to start server");
+    bootLogger.fatal(error, 'Failed to start server');
     process.exit(1);
   }
 }

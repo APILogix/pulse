@@ -13,20 +13,14 @@
 
 ### Email MFA
 
-1. The authenticated user calls `POST /auth/mfa/setup` with `type: "email"` and a device name.
-2. The API creates an unverified email MFA device for the user's account email only.
-3. The API generates a 6-digit one-time code, stores only its SHA-256 hash in Redis for 10 minutes, and sends the code by SMTP.
-4. The user calls `POST /auth/mfa/verify-setup` with the device id and emailed code.
-5. The API validates the Redis-backed code, marks the device verified, stores hashed backup codes, enables MFA, and sends an MFA-enabled security email.
-6. Future logins using an email primary MFA device send a new one-time code during challenge creation. The code is verified by `POST /auth/login/mfa`.
+Email MFA is not implemented. The service rejects `POST /auth/mfa/setup` with `type: "email"` before creating a device, because the current verification path is TOTP-only. Implement email MFA as a separate challenge flow before enabling this type.
 
 ### Step-Up MFA
 
 1. The authenticated user calls `POST /auth/mfa/challenge`.
 2. The API selects the primary verified MFA device.
 3. If the device is TOTP, the user enters the current authenticator code.
-4. If the device is email, the API sends a fresh 6-digit SMTP code and stores only its hash in Redis.
-5. The user calls `POST /auth/mfa/verify` with the challenge id and code.
+4. The user calls `POST /auth/mfa/verify` with the challenge id and code.
 
 ### Backup Codes
 
@@ -52,6 +46,17 @@ SMTP_FROM_NAME=API Monitoring Security
 
 Use `SMTP_SECURE=true` for implicit TLS providers, usually port `465`. Use `SMTP_SECURE=false` for STARTTLS providers, usually port `587`.
 
+## Unified Email Token Table
+
+All email-link flows use `email_verifications` as the source of truth:
+
+- Signup email verification
+- Resend verification
+- Password reset
+- Future email token-link flows
+
+Raw tokens are never stored. The application stores a SHA-256 hash that includes the route purpose, so a password-reset token cannot be used on the verify-email route. Creating a new token for the same user and email upserts the row and invalidates the previous token.
+
 ## Email Templates
 
 Templates live in `src/shared/email/templates.ts`. The current templates cover:
@@ -63,9 +68,10 @@ Templates live in `src/shared/email/templates.ts`. The current templates cover:
 
 ## Routes That Send Email
 
-- `POST /auth/users`: sends email verification.
-- `POST /auth/password/forgot`: sends password reset.
-- `POST /auth/mfa/setup` with `type: "email"`: sends setup code.
-- `POST /auth/login`: sends login code when primary MFA device is email.
-- `POST /auth/mfa/challenge`: sends step-up code when primary MFA device is email.
+- `POST /auth/register`: sends email verification.
+- `POST /auth/users`: backward-compatible registration alias.
+- `POST /auth/resend-verification`: sends a fresh email verification link.
+- `POST /auth/forgot-password`: sends password reset.
+- `POST /auth/password/forgot`: backward-compatible password reset alias.
+- `PATCH /auth/mfa/toggle`: sends MFA status notification when state changes.
 - `POST /auth/mfa/disable`: sends MFA disabled notification.

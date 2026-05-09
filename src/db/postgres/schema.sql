@@ -34,7 +34,7 @@ CREATE TABLE users (
     -- Profile (PII - encrypted at application layer)
     email VARCHAR(255) NOT NULL,
     email_hash VARCHAR(64) GENERATED ALWAYS AS (encode(digest(lower(email), 'sha256'), 'hex')) STORED,
-    email_verified BOOLEAN DEFAULT TRUE,
+    email_verified BOOLEAN DEFAULT FALSE,
     email_verified_at TIMESTAMPTZ,
     
     full_name VARCHAR(255) NOT NULL,
@@ -440,28 +440,9 @@ CREATE INDEX idx_security_blocked ON security_events(blocked_until)
     WHERE blocked_until > NOW();
 
 -- ============================================
--- PASSWORD RESETS: password_resets TABLE
--- ============================================
-CREATE TABLE password_resets (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
-    token_hash VARCHAR(64) NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    
-    used_at TIMESTAMPTZ,
-    used_ip INET,
-    
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    UNIQUE(user_id, token_hash)
-);
-
-CREATE INDEX idx_password_resets_token ON password_resets(token_hash) WHERE used_at IS NULL;
-CREATE INDEX idx_password_resets_user ON password_resets(user_id, created_at DESC);
-
--- ============================================
--- EMAIL VERIFICATION: email_verifications TABLE
+-- EMAIL TOKEN VERIFICATION: email_verifications TABLE
+-- Shared source of truth for email verification, password reset, and future
+-- email token flows. The application purpose-binds token hashes.
 -- ============================================
 CREATE TABLE email_verifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -479,6 +460,7 @@ CREATE TABLE email_verifications (
 );
 
 CREATE INDEX idx_email_verifications_token ON email_verifications(token_hash) WHERE verified_at IS NULL;
+CREATE UNIQUE INDEX idx_email_verifications_active_token_unique ON email_verifications(token_hash) WHERE verified_at IS NULL;
 
 -- ============================================
 -- API KEY ACCESS LOGS: api_key_access_logs TABLE (For security auditing)

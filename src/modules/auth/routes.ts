@@ -23,9 +23,12 @@ import {
   ChangePasswordSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
+  ResendVerificationSchema,
+  VerifyEmailQuerySchema,
   MFASetupSchema,
   MFAVerifySetupSchema,
   MFAVerifySchema,
+  MFAToggleSchema,
   BackupCodeVerificationSchema,
   AuthError,
   AuthErrorCodes,
@@ -175,17 +178,85 @@ async function credentialRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // POST /auth/password/forgot - Request password reset
+  const forgotPasswordHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = ForgotPasswordSchema.parse(request.body);
+      const clientInfo = getClientInfo(request);
+      const result = await service.requestPasswordReset(
+        body,
+        clientInfo.ip,
+        request.id,
+      );
+
+      return reply.send({ data: result });
+    } catch (error) {
+      return handleAuthError(error, reply);
+    }
+  };
+
+  const resetPasswordHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = ResetPasswordSchema.parse(request.body);
+      const clientInfo = getClientInfo(request);
+      await service.resetPasswordWithToken(
+        body,
+        clientInfo.ip,
+        request.id,
+      );
+
+      return reply.send({ message: 'Password reset successfully' });
+    } catch (error) {
+      return handleAuthError(error, reply);
+    }
+  };
+
+  // POST /auth/forgot-password - Request password reset
+  fastify.post(
+    '/forgot-password',
+    {
+      preHandler: [rateLimit({ max: 5, window: 900 })],
+    },
+    forgotPasswordHandler,
+  );
+
+  // Backward-compatible alias for existing clients.
   fastify.post(
     '/password/forgot',
     {
       preHandler: [rateLimit({ max: 5, window: 900 })],
     },
+    forgotPasswordHandler,
+  );
+
+  // POST /auth/reset-password - Reset password using a token
+  fastify.post(
+    '/reset-password',
+    {
+      preHandler: [rateLimit({ max: 5, window: 900 })],
+    },
+    resetPasswordHandler,
+  );
+
+  // Backward-compatible alias for existing clients.
+  fastify.post(
+    '/password/reset',
+    {
+      preHandler: [rateLimit({ max: 5, window: 900 })],
+    },
+    resetPasswordHandler,
+  );
+
+  // POST /auth/resend-verification - Resend signup verification email
+  fastify.post(
+    '/resend-verification',
+    {
+      preHandler: [rateLimit({ max: 5, window: 900 })],
+    },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const body = ForgotPasswordSchema.parse(request.body);
+        const body = ResendVerificationSchema.parse(request.body);
         const clientInfo = getClientInfo(request);
-        const result = await service.requestPasswordReset(
+        const result = await service.resendVerification(
           body,
           clientInfo.ip,
           request.id,
@@ -198,23 +269,23 @@ async function credentialRoutes(fastify: FastifyInstance) {
     },
   );
 
-  // POST /auth/password/reset - Reset password using a token
-  fastify.post(
-    '/password/reset',
+  // GET /auth/verify-email - Verify signup email token
+  fastify.get(
+    '/verify-email',
     {
-      preHandler: [rateLimit({ max: 5, window: 900 })],
+      preHandler: [rateLimit({ max: 10, window: 900 })],
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const body = ResetPasswordSchema.parse(request.body);
+        const query = VerifyEmailQuerySchema.parse(request.query);
         const clientInfo = getClientInfo(request);
-        await service.resetPasswordWithToken(
-          body,
+        const result = await service.verifyEmail(
+          query,
           clientInfo.ip,
           request.id,
         );
 
-        return reply.send({ message: 'Password reset successfully' });
+        return reply.send({ data: result });
       } catch (error) {
         return handleAuthError(error, reply);
       }
@@ -255,27 +326,40 @@ async function credentialRoutes(fastify: FastifyInstance) {
 async function userRoutes(fastify: FastifyInstance) {
   // User routes expose self-service profile operations and admin-only account
   // management. The service layer owns permission checks and audit logging.
-  // POST /auth/users - Create user 
+  const registerHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = CreateUserSchema.parse(request.body);
+
+      const { ip } = getClientInfo(request);
+
+      await service.createUserFromEmail(body, ip, request.id);
+
+      return reply.status(201).send({
+        message: 'Account created successfully. Check your email to verify your account.',
+      });
+    } catch (error) {
+      return handleAuthError(error, reply);
+    }
+  };
+
+  // POST /auth/register - Create user
+  fastify.post(
+    '/register',
+    {
+      config: { rawBody: true },
+      preHandler: [rateLimit({ max: 5, window: 900 })],
+    },
+    registerHandler,
+  );
+
+  // POST /auth/users - Backward-compatible create user alias
   fastify.post(
     '/users',
     {
       config: { rawBody: true }, // Need raw body for signature verification
+      preHandler: [rateLimit({ max: 5, window: 900 })],
     },
-    async (request: FastifyRequest, reply: FastifyReply) => {
-      try {
-        const body = CreateUserSchema.parse(request.body);
-
-        const { ip } = getClientInfo(request);
-
-        await service.createUserFromEmail(body, ip, request.id);
-
-        return reply.status(201).send({
-          message: 'Account created successfully'
-        });
-      } catch (error) {
-        return handleAuthError(error, reply);
-      }
-    }
+    registerHandler,
   );
 
   // GET /auth/users/me - Get current user
@@ -581,8 +665,8 @@ async function mfaRoutes(fastify: FastifyInstance) {
         const body = (request.body || {}) as { mfa_code?: string };
         const { ip } = getClientInfo(request);
         await service.removeMFADevice(
-          params.id,
           request.user.id,
+          params.id,
           body.mfa_code,
           ip,
           request.id,
@@ -651,6 +735,33 @@ async function mfaRoutes(fastify: FastifyInstance) {
         }
 
         return reply.send({ valid: true });
+      } catch (error) {
+        return handleAuthError(error, reply);
+      }
+    }
+  );
+
+  // PATCH /auth/mfa/toggle - Idempotently enable or disable MFA
+  fastify.patch(
+    '/mfa/toggle',
+    {
+      preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
+    },
+    async (request: RequestWithUser, reply: FastifyReply) => {
+      try {
+        const body = MFAToggleSchema.parse(request.body);
+        const { ip } = getClientInfo(request);
+        const result = await service.toggleMFA(
+          request.user.id,
+          body,
+          ip,
+          request.id,
+        );
+        return reply.send({
+          data: {
+            mfa_enabled: result.enabled,
+          },
+        });
       } catch (error) {
         return handleAuthError(error, reply);
       }

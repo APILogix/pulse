@@ -39,6 +39,9 @@ import type {
   ChangePasswordInput,
   ForgotPasswordInput,
   ResetPasswordInput,
+  ResendVerificationInput,
+  VerifyEmailQueryInput,
+  MFAToggleInput,
 } from "./types.js";
 import bcrypt from "bcrypt";
 import * as repository from "./repository.js";
@@ -65,6 +68,13 @@ import {
   normalizeEmail,
 } from "./utils.js";
 import { env } from "../../config/env.js";
+import { logger } from "../../config/logger.js";
+import {
+  emailVerificationTemplate,
+  mfaStatusTemplate,
+  passwordResetTemplate,
+} from "../../shared/email/templates.js";
+import { emailService } from "../../shared/email/email.service.js";
 // ============================================
 // CONSTANTS & CONFIG
 // ============================================
@@ -82,7 +92,17 @@ const RATE_LIMITS = {
   MFA_SETUP: { points: 3, duration: 60 * 60 }, // 3 per hour
   MFA_VERIFY: { points: 5, duration: 60 * 15 },
   PASSWORD_CHECK: { points: 10, duration: 60 * 15 },
+  EMAIL_VERIFICATION: { points: 5, duration: 60 * 15 },
+  PASSWORD_RESET: { points: 5, duration: 60 * 15 },
 };
+
+const EMAIL_VERIFICATION_TTL_SECONDS = 24 * 60 * 60;
+const GENERIC_PASSWORD_RESET_MESSAGE =
+  "If the email exists, a password reset link has been sent";
+const GENERIC_VERIFICATION_MESSAGE =
+  "If the account exists and is not verified, a verification email has been sent";
+
+type EmailTokenPurpose = "email_verification" | "password_reset";
 
 // ============================================
 // HELPER FUNCTIONS
@@ -98,6 +118,83 @@ const randomBytesAsync = promisify(randomBytes);
  */
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function hashEmailFlowToken(purpose: EmailTokenPurpose, token: string): string {
+  // The purpose is part of the hash input so a reset token cannot be replayed
+  // against the email-verification route, even though both flows share one table.
+  return hashAuthToken(`${purpose}:${token}`);
+}
+
+function getBaseUrl(value: string | undefined, fallback: string): string {
+  return (value || fallback).replace(/\/+$/, "");
+}
+
+function buildVerifyEmailUrl(token: string): string {
+  return `${getBaseUrl(config.APP_URL, "http://localhost:3000")}/auth/verify-email?token=${encodeURIComponent(token)}`;
+}
+
+function buildResetPasswordUrl(token: string): string {
+  return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+function toMinutes(seconds: number): number {
+  return Math.ceil(seconds / 60);
+}
+
+async function sendVerificationEmail(user: Pick<User, "email" | "full_name">, token: string): Promise<void> {
+  try {
+    await emailService.send({
+      to: user.email,
+      ...emailVerificationTemplate({
+        appName: config.APP_NAME,
+        userName: user.full_name,
+        actionUrl: buildVerifyEmailUrl(token),
+        expiresInMinutes: toMinutes(EMAIL_VERIFICATION_TTL_SECONDS),
+      }),
+    });
+  } catch (error) {
+    throw new AuthError(
+      "Unable to send verification email",
+      AuthErrorCodes.EMAIL_DELIVERY_FAILED,
+      503,
+    );
+  }
+}
+
+async function sendPasswordResetEmail(user: Pick<User, "email" | "full_name">, token: string): Promise<void> {
+  try {
+    await emailService.send({
+      to: user.email,
+      ...passwordResetTemplate({
+        appName: config.APP_NAME,
+        userName: user.full_name,
+        actionUrl: buildResetPasswordUrl(token),
+        expiresInMinutes: toMinutes(PASSWORD_RESET_TTL_SECONDS),
+      }),
+    });
+  } catch (error) {
+    throw new AuthError(
+      "Unable to send password reset email",
+      AuthErrorCodes.EMAIL_DELIVERY_FAILED,
+      503,
+    );
+  }
+}
+
+async function sendMFAStatusEmail(user: Pick<User, "email" | "full_name">, enabled: boolean): Promise<void> {
+  try {
+    await emailService.send({
+      to: user.email,
+      ...mfaStatusTemplate({
+        appName: config.APP_NAME,
+        userName: user.full_name,
+        enabled,
+      }),
+    });
+  } catch (error) {
+    logger.warn({ err: error, userEmail: user.email, enabled }, "Failed to send MFA status email");
+  }
 }
 
 /**
@@ -217,8 +314,8 @@ function validateUserActive(user: User): void {
 function getUserPasswordHashes(user: User): string[] {
   const history = Array.isArray(user.password_history)
     ? user.password_history.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
+      (entry): entry is string => typeof entry === "string",
+    )
     : [];
 
   return [user.password_hash, ...history].filter((entry): entry is string =>
@@ -391,8 +488,8 @@ async function consumeBackupCode(
   for (const device of devices) {
     const codes = Array.isArray(device.backup_codes_hash)
       ? device.backup_codes_hash.filter(
-          (entry): entry is string => typeof entry === "string",
-        )
+        (entry): entry is string => typeof entry === "string",
+      )
       : [];
 
     const matchIndex = codes.findIndex((hashedCode) =>
@@ -412,6 +509,22 @@ async function consumeBackupCode(
   return false;
 }
 
+function verifyTotpDeviceCode(device: MFADevice, code: string): boolean {
+  if (device.device_type !== "totp" || !device.secret_encrypted) {
+    return false;
+  }
+
+  const secret = decrypt(device.secret_encrypted, config.ENCRYPTION_KEY);
+  const totp = new OTPAuth.TOTP({
+    algorithm: "SHA256",
+    digits: 6,
+    period: 30,
+    secret: OTPAuth.Secret.fromBase32(secret),
+  });
+
+  return totp.validate({ token: code, window: 1 }) !== null;
+}
+
 // ============================================
 // USER SERVICES
 // ============================================
@@ -424,9 +537,8 @@ export async function createUserFromEmail(
   // Email uniqueness is checked through a normalized hash so lookups do not need
   // plaintext email comparison.
   // Check email hash collision
-  const emailHash = createHash("sha256")
-    .update(input.email.toLowerCase())
-    .digest("hex");
+  const normalizedEmail = normalizeEmail(input.email);
+  const emailHash = createHash("sha256").update(normalizedEmail).digest("hex");
   const emailExists = await repository.findUserByEmailHash(emailHash);
   if (emailExists) {
     throw new AuthError(
@@ -437,25 +549,52 @@ export async function createUserFromEmail(
   }
 
   const passwordhash = await hashPassword(input.password);
-  const user = await repository.createUser({
-    id: generateUUID(),
-    email: input.email,
-    full_name: input.full_name,
-    avatar_url: input.avatar_url,
-    password: passwordhash,
+  const verificationToken = generateSecureToken();
+  const verificationTokenHash = hashEmailFlowToken(
+    "email_verification",
+    verificationToken,
+  );
+  const verificationExpiresAt = new Date(
+    Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000,
+  );
+
+  const user = await repository.withTransaction(async (client) => {
+    const created = await repository.createUser(
+      {
+        id: generateUUID(),
+        email: normalizedEmail,
+        full_name: input.full_name,
+        avatar_url: input.avatar_url,
+        password: passwordhash,
+      },
+      client,
+    );
+
+    await repository.createEmailVerification(
+      {
+        user_id: created.id,
+        email: normalizedEmail,
+        token_hash: verificationTokenHash,
+        expires_at: verificationExpiresAt,
+      },
+      client,
+    );
+
+    return created;
   });
 
-  // // Audit log
-  // await logAudit({
-  //   user_id: user.id,
-  //   org_id: null,
-  //   action: "user.created",
-  //   resource_type: "user",
-  //   resource_id: user.id,
-  //   ip_address: ipAddress,
-  //   request_id,
-  //   metadata: { source: "clerk_webhook", email_verified: input.email_verified },
-  // });
+  await sendVerificationEmail(user, verificationToken);
+
+  await logAudit({
+    user_id: user.id,
+    org_id: null,
+    action: "user.created",
+    resource_type: "user",
+    resource_id: user.id,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { source: "email_password", email_verified: false },
+  });
 
   return user;
 }
@@ -578,20 +717,20 @@ export async function loginWithEmailPassword(
   requestId: string,
 ): Promise<
   | {
-      mfa_required: true;
-      challenge_id: string;
-      expires_at: Date;
-      device_type: string;
-      user_id: string;
-    }
+    mfa_required: true;
+    challenge_id: string;
+    expires_at: Date;
+    device_type: string;
+    user_id: string;
+  }
   | {
-      mfa_required: false;
-      access_token: string;
-      refresh_token: string;
-      expires_at: Date;
-      token_type: "Bearer";
-      session_id: string;
-    }
+    mfa_required: false;
+    access_token: string;
+    refresh_token: string;
+    expires_at: Date;
+    token_type: "Bearer";
+    session_id: string;
+  }
 > {
   // Login flow: normalize email -> find user -> validate account state ->
   // verify password -> either create MFA challenge or issue a full session.
@@ -882,31 +1021,159 @@ export async function verifyLoginMFAChallenge(
   };
 }
 
+export async function resendVerification(
+  input: ResendVerificationInput,
+  ipAddress: string,
+  requestId: string,
+): Promise<{ message: string }> {
+  const normalizedEmail = normalizeEmail(input.email);
+  const emailHash = createHash("sha256").update(normalizedEmail).digest("hex");
+  const rateAllowed = await checkRateLimit(
+    `email_verification:${emailHash}:${ipAddress}`,
+    RATE_LIMITS.EMAIL_VERIFICATION.points,
+    RATE_LIMITS.EMAIL_VERIFICATION.duration,
+  );
+  if (!rateAllowed) {
+    throw new AuthError(
+      "Too many verification email requests",
+      AuthErrorCodes.RATE_LIMITED,
+      429,
+    );
+  }
+
+  const user = await repository.findUserByEmail(normalizedEmail);
+  if (!user || user.deleted_at || user.status !== "active" || user.email_verified) {
+    return { message: GENERIC_VERIFICATION_MESSAGE };
+  }
+
+  const verificationToken = generateSecureToken();
+  await repository.createEmailVerification({
+    user_id: user.id,
+    email: normalizedEmail,
+    token_hash: hashEmailFlowToken("email_verification", verificationToken),
+    expires_at: new Date(Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000),
+  });
+
+  await sendVerificationEmail(user, verificationToken);
+
+  await logAudit({
+    user_id: user.id,
+    org_id: null,
+    action: "user.updated",
+    resource_type: "user",
+    resource_id: user.id,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { action: "email_verification_resent" },
+  });
+
+  return { message: GENERIC_VERIFICATION_MESSAGE };
+}
+
+export async function verifyEmail(
+  input: VerifyEmailQueryInput,
+  ipAddress: string,
+  requestId: string,
+): Promise<{ message: string }> {
+  const tokenHash = hashEmailFlowToken("email_verification", input.token);
+  let verifiedUserId: string | null = null;
+
+  await repository.withTransaction(async (client) => {
+    const verification = await repository.consumeEmailVerificationToken(
+      tokenHash,
+      client,
+    );
+
+    if (!verification) {
+      const existing = await repository.findEmailVerificationByTokenHash(
+        tokenHash,
+        client,
+      );
+
+      if (existing?.verified_at) {
+        const user = await repository.findUserById(existing.user_id, client);
+        if (user?.email_verified) {
+          verifiedUserId = user.id;
+          return;
+        }
+      }
+
+      throw new AuthError(
+        "Invalid or expired verification token",
+        AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
+        400,
+      );
+    }
+
+    const user = await repository.findUserById(verification.user_id, client);
+    if (!user || user.deleted_at || normalizeEmail(user.email) !== normalizeEmail(verification.email)) {
+      throw new AuthError(
+        "Invalid or expired verification token",
+        AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
+        400,
+      );
+    }
+
+    if (!user.email_verified) {
+      await repository.markEmailAsVerified(user.id, client);
+    }
+    verifiedUserId = user.id;
+  });
+
+  if (verifiedUserId) {
+    await logAudit({
+      user_id: verifiedUserId,
+      org_id: null,
+      action: "user.updated",
+      resource_type: "user",
+      resource_id: verifiedUserId,
+      ip_address: ipAddress,
+      request_id: requestId,
+      metadata: { action: "email_verified" },
+    });
+  }
+
+  return { message: "Email verified successfully" };
+}
+
 export async function requestPasswordReset(
   input: ForgotPasswordInput,
   ipAddress: string,
   requestId: string,
-): Promise<{ message: string; resetToken?: string }> {
+): Promise<{ message: string }> {
   const normalizedEmail = normalizeEmail(input.email);
   const emailHash = createHash("sha256").update(normalizedEmail).digest("hex");
-  const user = await repository.findUserByEmailHash(emailHash);
+  const rateAllowed = await checkRateLimit(
+    `password_reset:${emailHash}:${ipAddress}`,
+    RATE_LIMITS.PASSWORD_RESET.points,
+    RATE_LIMITS.PASSWORD_RESET.duration,
+  );
+  if (!rateAllowed) {
+    throw new AuthError(
+      "Too many password reset requests",
+      AuthErrorCodes.RATE_LIMITED,
+      429,
+    );
+  }
 
-  if (!user || user.deleted_at) {
-    return {
-      message: "If the email exists, a password reset link has been sent",
-    };
+  const user = await repository.findUserByEmail(normalizedEmail);
+
+  if (!user || user.deleted_at || user.status !== "active") {
+    return { message: GENERIC_PASSWORD_RESET_MESSAGE };
   }
 
   const resetToken = generateSecureToken();
-  const resetTokenHash = hashAuthToken(resetToken);
+  const resetTokenHash = hashEmailFlowToken("password_reset", resetToken);
   const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_SECONDS * 1000);
 
-  await repository.invalidatePasswordResetsForUser(user.id);
-  await repository.createPasswordReset({
+  await repository.createEmailVerification({
     user_id: user.id,
+    email: normalizedEmail,
     token_hash: resetTokenHash,
     expires_at: expiresAt,
   });
+
+  await sendPasswordResetEmail(user, resetToken);
 
   await logAudit({
     user_id: user.id,
@@ -919,16 +1186,7 @@ export async function requestPasswordReset(
     metadata: { action: "password_reset_requested" },
   });
 
-  if (config.NODE_ENV !== "production") {
-    return {
-      message: "If the email exists, a password reset link has been sent",
-      resetToken,
-    };
-  }
-
-  return {
-    message: "If the email exists, a password reset link has been sent",
-  };
+  return { message: GENERIC_PASSWORD_RESET_MESSAGE };
 }
 
 export async function resetPasswordWithToken(
@@ -936,58 +1194,86 @@ export async function resetPasswordWithToken(
   ipAddress: string,
   requestId: string,
 ): Promise<void> {
-  const tokenHash = hashAuthToken(input.token);
-  const reset = await repository.findPasswordResetByToken(tokenHash);
+  const tokenHash = hashEmailFlowToken("password_reset", input.token);
+  let resetUserId: string | null = null;
 
-  if (!reset) {
+  await repository.withTransaction(async (client) => {
+    const reset = await repository.consumeEmailVerificationToken(
+      tokenHash,
+      client,
+    );
+
+    if (!reset) {
+      throw new AuthError(
+        "Invalid or expired reset token",
+        AuthErrorCodes.PASSWORD_RESET_INVALID,
+        400,
+      );
+    }
+
+    const user = await repository.findUserById(reset.user_id, client);
+    if (!user || user.deleted_at || user.status !== "active") {
+      throw new AuthError(
+        "Invalid or expired reset token",
+        AuthErrorCodes.PASSWORD_RESET_INVALID,
+        400,
+      );
+    }
+
+    if (normalizeEmail(user.email) !== normalizeEmail(reset.email)) {
+      throw new AuthError(
+        "Invalid or expired reset token",
+        AuthErrorCodes.PASSWORD_RESET_INVALID,
+        400,
+      );
+    }
+
+    await ensurePasswordNotReused(user, input.new_password);
+
+    const passwordHash = await hashPassword(input.new_password);
+    const passwordHistory = buildPasswordHistory(
+      user.password_history,
+      user.password_hash,
+    );
+
+    const updated = await repository.updateUserPassword(
+      user.id,
+      passwordHash,
+      passwordHistory,
+      client,
+    );
+
+    if (!updated) {
+      throw new AuthError(
+        "Password reset failed",
+        AuthErrorCodes.USER_NOT_FOUND,
+        500,
+      );
+    }
+
+    resetUserId = user.id;
+  });
+
+  if (!resetUserId) {
     throw new AuthError(
-      "Invalid or expired reset token",
+      "Password reset failed",
       AuthErrorCodes.PASSWORD_RESET_INVALID,
       400,
     );
   }
 
-  const user = await repository.findUserById(reset.user_id);
-  if (!user) {
-    throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
-  }
+  await revokeUserSessions(resetUserId, "Password reset");
 
-  await ensurePasswordNotReused(user, input.new_password);
-
-  const passwordHash = await hashPassword(input.new_password);
-  const passwordHistory = buildPasswordHistory(
-    user.password_history,
-    user.password_hash,
-  );
-
-  const updated = await repository.updateUserPassword(
-    user.id,
-    passwordHash,
-    passwordHistory,
-  );
-
-  if (!updated) {
-    throw new AuthError(
-      "Password reset failed",
-      AuthErrorCodes.USER_NOT_FOUND,
-      500,
-    );
-  }
-
-  await repository.markPasswordResetUsed(reset.id, ipAddress);
-  await repository.invalidatePasswordResetsForUser(user.id);
-  await revokeUserSessions(user.id, "Password reset");
-
-  await logAudit({
-    user_id: user.id,
-    org_id: null,
-    action: "user.password_changed",
-    resource_type: "user",
-    resource_id: user.id,
-    ip_address: ipAddress,
-    request_id: requestId,
-    metadata: { action: "password_reset" },
-  });
+  // await logAudit({
+  //   user_id: resetUserId,
+  //   org_id: null,
+  //   action: "user.password_changed",
+  //   resource_type: "user",
+  //   resource_id: resetUserId,
+  //   ip_address: ipAddress,
+  //   request_id: requestId,
+  //   metadata: { action: "password_reset" },
+  // });
 }
 
 export async function changePassword(
@@ -1313,21 +1599,10 @@ export async function setupMFA(
   }
 
   if (input.type === "email") {
-    // Use user's email, send code
-    const device = await repository.createMFADevice({
-      user_id: userId,
-      device_type: "email",
-      device_name: input.device_name,
-      secret_encrypted: encrypt(user.email, config.ENCRYPTION_KEY),
-      is_primary: existingDevices.length === 0,
-      device_metadata: { email: user.email, setup_ip: ipAddress },
-    });
-
-    // TODO: Send verification email with code
     throw new AuthError(
-      "Email MFA setup - verification email sent",
-      "PENDING_VERIFICATION",
-      202,
+      "Email MFA is not implemented yet. Use TOTP MFA.",
+      "NOT_IMPLEMENTED",
+      501,
     );
   }
 
@@ -1395,6 +1670,11 @@ export async function verifyMFASetup(
 
   // Cleanup
   await redis.del(`mfa_backup_temp:${device.id}`);
+
+  const user = await repository.findUserById(userId);
+  if (user) {
+    await sendMFAStatusEmail(user, true);
+  }
 }
 
 export async function createMFAChallenge(
@@ -1638,12 +1918,85 @@ export async function generateNewBackupCodes(
   return plain; // Show once
 }
 
+export async function toggleMFA(
+  userId: string,
+  input: MFAToggleInput,
+  ipAddress: string,
+  requestId?: string,
+): Promise<{ enabled: boolean }> {
+  const user = await repository.findUserById(userId);
+  if (!user) {
+    throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+  validateUserActive(user);
+
+  if (input.enabled && user.mfa_enabled) {
+    return { enabled: true };
+  }
+
+  if (!input.enabled && !user.mfa_enabled) {
+    return { enabled: false };
+  }
+
+  if (!input.mfa_code) {
+    throw new AuthError(
+      "MFA code is required",
+      AuthErrorCodes.MFA_REQUIRED,
+      400,
+    );
+  }
+
+  if (!input.enabled) {
+    await disableMFA(userId, input.mfa_code, ipAddress, requestId);
+    return { enabled: false };
+  }
+
+  const devices = await repository.findMFADevicesByUserId(userId);
+  const primaryCandidate =
+    devices.find((d) => d.is_primary && d.verified && d.is_active) ||
+    devices.find((d) => d.verified && d.is_active);
+
+  if (!primaryCandidate) {
+    throw new AuthError(
+      "Verified MFA device required before enabling MFA",
+      AuthErrorCodes.MFA_NOT_ENABLED,
+      400,
+    );
+  }
+
+  if (!verifyTotpDeviceCode(primaryCandidate, input.mfa_code)) {
+    throw new AuthError("Invalid MFA code", AuthErrorCodes.MFA_INVALID, 400);
+  }
+
+  await repository.updateUserMFAEnabled(userId, true);
+
+  await logAudit({
+    user_id: userId,
+    org_id: null,
+    action: "user.mfa_enabled",
+    resource_type: "user",
+    resource_id: userId,
+    ip_address: ipAddress,
+    request_id: requestId || "unknown",
+    metadata: { reason: "user_toggled" },
+  });
+
+  await sendMFAStatusEmail(user, true);
+
+  return { enabled: true };
+}
+
 export async function disableMFA(
   userId: string,
   mfaCode: string,
   ipAddress: string,
   requestId?: string,
 ): Promise<void> {
+  const user = await repository.findUserById(userId);
+  if (!user) {
+    throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
   const devices = await repository.findMFADevicesByUserId(userId);
   const primaryCandidate = devices.find((d) => d.is_primary && d.verified);
 
@@ -1652,16 +2005,7 @@ export async function disableMFA(
   }
   const primary = primaryCandidate;
 
-  // Verify code
-  const secret = decrypt(primary.secret_encrypted!, config.ENCRYPTION_KEY);
-  const totp = new OTPAuth.TOTP({
-    algorithm: "SHA256",
-    digits: 6,
-    period: 30,
-    secret: OTPAuth.Secret.fromBase32(secret),
-  });
-
-  if (totp.validate({ token: mfaCode, window: 1 }) === null) {
+  if (!verifyTotpDeviceCode(primary, mfaCode)) {
     throw new AuthError("Invalid MFA code", AuthErrorCodes.MFA_INVALID, 400);
   }
 
@@ -1689,6 +2033,8 @@ export async function disableMFA(
     request_id: requestId || "unknown",
     metadata: { reason: "user_disabled" },
   });
+
+  await sendMFAStatusEmail(user, false);
 }
 
 // ============================================

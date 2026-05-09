@@ -24,7 +24,7 @@ declare module 'fastify' {
   }
 }
 
-const logger = createOrganizationLogger('Module');
+const orgLogger = createOrganizationLogger('Module');
 
 async function organizationModule(
   fastify: FastifyInstance,
@@ -42,24 +42,18 @@ async function organizationModule(
     }
   });
 
-  // ✅ SAME PATTERN AS BILLING
   fastify.decorate('organization', {
     repository,
     service
   });
 
-  try {
-    logger.info('Organization module initialized');
-  } catch (error) {
-    logger.error('Failed to initialize organization module', error);
-  }
-
-  // ✅ SAME AS BILLING
   await fastify.register(organizationRoutes, { prefix: '/organizations' });
 
   fastify.addHook('onClose', async () => {
-    logger.info('Organization module shutting down');
+    orgLogger.info('Organization module shutting down');
   });
+
+  orgLogger.info('Organization module registered');
 }
 
 export const registerOrganizationModule = fp(organizationModule, {

@@ -8,12 +8,15 @@
  * 4. Keep the process alive until it receives a termination signal, then close
  *    workers and infrastructure cleanly.
  */
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
 import { RedisCache } from '../db/redis/cache.js';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { initializeWorkers } from './index.js';
+
+const workerLogger = logger.child({ component: 'workers' });
 
 async function bootstrapWorkers(): Promise<void> {
   const redis = new Redis(env.REDIS_URL, {
@@ -45,11 +48,12 @@ async function bootstrapWorkers(): Promise<void> {
     },
   });
 
-  console.log('[Workers] Worker process started');
-  console.log('[Workers] Active workers: ingestion');
+  workerLogger.info('Worker process started');
+  workerLogger.info('Active workers: ingestion');
 }
 
 bootstrapWorkers().catch((error) => {
-  console.error('[Workers] Failed to start worker process', error);
+  workerLogger.fatal({ error }, 'Failed to start worker process');
   process.exit(1);
 });
+

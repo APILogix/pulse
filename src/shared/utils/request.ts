@@ -1,4 +1,13 @@
 import type { FastifyRequest } from 'fastify';
+
+// Augment Fastify request with properties used in this module
+declare module 'fastify' {
+  interface FastifyRequest {
+    routerPath?: string;
+    statusCode?: number;
+    clientInfo: ClientInfo;
+  }
+}
 // ============================================
 // TYPES
 // ============================================
@@ -96,7 +105,7 @@ export function getClientInfo(request: FastifyRequest): ClientInfo {
 function extractIp(request: FastifyRequest): string {
   // Priority order for IP extraction
   const candidates = [
-    request.headers['x-forwarded-for']?.toString().split(',')[0].trim(),
+    request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim(),
     request.headers['x-real-ip']?.toString(),
     request.headers['cf-connecting-ip']?.toString(), // Cloudflare
     request.ip,
@@ -278,7 +287,7 @@ export function formatRequestLog(request: FastifyRequest, clientInfo: ClientInfo
 import fp from 'fastify-plugin';
 
 export const clientInfoPlugin = fp(async (fastify) => {
-  fastify.decorateRequest('clientInfo', null);
+  fastify.decorateRequest('clientInfo', null as any);
   
   fastify.addHook('onRequest', async (request) => {
     request.clientInfo = getClientInfo(request);

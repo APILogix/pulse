@@ -79,11 +79,11 @@ export async function createUser(
 
   const result = await db.query<User>(
     `INSERT INTO users (
-      id, email,  full_name, avatar_url, password_hash, status
-    ) VALUES ($1, $2, $3, $4, $5, 'active')
+      id, email, full_name, avatar_url, password_hash, status, email_verified
+    ) VALUES ($1, $2, $3, $4, $5, 'active', FALSE)
     RETURNING *`,
     [
-      data.id, //  FIXED
+      data.id,
       data.email,
       data.full_name,
       data.avatar_url || null,
@@ -457,78 +457,15 @@ export async function updateBackupCodesGenerated(
 // PASSWORD RESET / VERIFICATION QUERIES
 // ============================================
 
-export async function createPasswordReset(
-  data: {
-    user_id: string;
-    token_hash: string;
-    expires_at: Date;
-  },
-  client?: PoolClient,
-): Promise<{ id: string; user_id: string; token_hash: string; expires_at: Date }> {
-  const db = client || pool;
-  const result = await db.query<{
-    id: string;
-    user_id: string;
-    token_hash: string;
-    expires_at: Date;
-  }>(
-    `INSERT INTO password_resets (user_id, token_hash, expires_at)
-     VALUES ($1, $2, $3)
-     RETURNING id, user_id, token_hash, expires_at`,
-    [data.user_id, data.token_hash, data.expires_at],
-  );
-  return result.rows[0]!;
-}
-
-export async function findPasswordResetByToken(
-  tokenHash: string,
-  client?: PoolClient,
-): Promise<{ id: string; user_id: string; token_hash: string; expires_at: Date; used_at: Date | null } | null> {
-  const db = client || pool;
-  const result = await db.query<{
-    id: string;
-    user_id: string;
-    token_hash: string;
-    expires_at: Date;
-    used_at: Date | null;
-  }>(
-    `SELECT id, user_id, token_hash, expires_at, used_at
-     FROM password_resets
-     WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [tokenHash],
-  );
-  return result.rows[0] || null;
-}
-
-export async function markPasswordResetUsed(
-  id: string,
-  usedIp: string,
-  client?: PoolClient,
-): Promise<void> {
-  const db = client || pool;
-  await db.query(
-    `UPDATE password_resets
-     SET used_at = NOW(), used_ip = $2
-     WHERE id = $1`,
-    [id, usedIp],
-  );
-}
-
-export async function invalidatePasswordResetsForUser(
-  userId: string,
-  client?: PoolClient,
-): Promise<number> {
-  const db = client || pool;
-  const result = await db.query(
-    `UPDATE password_resets
-     SET used_at = NOW()
-     WHERE user_id = $1 AND used_at IS NULL`,
-    [userId],
-  );
-  return result.rowCount ?? 0;
-}
+export type EmailVerificationRecord = {
+  id: string;
+  user_id: string;
+  email: string;
+  token_hash: string;
+  expires_at: Date;
+  verified_at: Date | null;
+  created_at?: Date;
+};
 
 export async function updateMFADeviceBackupCodes(
   deviceId: string,
@@ -552,18 +489,18 @@ export async function createEmailVerification(
     expires_at: Date;
   },
   client?: PoolClient,
-): Promise<{ id: string; user_id: string; email: string; token_hash: string; expires_at: Date }> {
+): Promise<EmailVerificationRecord> {
   const db = client || pool;
-  const result = await db.query<{
-    id: string;
-    user_id: string;
-    email: string;
-    token_hash: string;
-    expires_at: Date;
-  }>(
+  const result = await db.query<EmailVerificationRecord>(
     `INSERT INTO email_verifications (user_id, email, token_hash, expires_at)
      VALUES ($1, $2, $3, $4)
-     RETURNING id, user_id, email, token_hash, expires_at`,
+     ON CONFLICT (user_id, email)
+     DO UPDATE SET
+       token_hash = EXCLUDED.token_hash,
+       expires_at = EXCLUDED.expires_at,
+       verified_at = NULL,
+       created_at = NOW()
+     RETURNING id, user_id, email, token_hash, expires_at, verified_at, created_at`,
     [data.user_id, data.email, data.token_hash, data.expires_at],
   );
   return result.rows[0]!;
@@ -572,21 +509,47 @@ export async function createEmailVerification(
 export async function findEmailVerificationByToken(
   tokenHash: string,
   client?: PoolClient,
-): Promise<{ id: string; user_id: string; email: string; token_hash: string; expires_at: Date; verified_at: Date | null } | null> {
+): Promise<EmailVerificationRecord | null> {
   const db = client || pool;
-  const result = await db.query<{
-    id: string;
-    user_id: string;
-    email: string;
-    token_hash: string;
-    expires_at: Date;
-    verified_at: Date | null;
-  }>(
-    `SELECT id, user_id, email, token_hash, expires_at, verified_at
+  const result = await db.query<EmailVerificationRecord>(
+    `SELECT id, user_id, email, token_hash, expires_at, verified_at, created_at
      FROM email_verifications
      WHERE token_hash = $1 AND verified_at IS NULL AND expires_at > NOW()
      ORDER BY created_at DESC
      LIMIT 1`,
+    [tokenHash],
+  );
+  return result.rows[0] || null;
+}
+
+export async function findEmailVerificationByTokenHash(
+  tokenHash: string,
+  client?: PoolClient,
+): Promise<EmailVerificationRecord | null> {
+  const db = client || pool;
+  const result = await db.query<EmailVerificationRecord>(
+    `SELECT id, user_id, email, token_hash, expires_at, verified_at, created_at
+     FROM email_verifications
+     WHERE token_hash = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [tokenHash],
+  );
+  return result.rows[0] || null;
+}
+
+export async function consumeEmailVerificationToken(
+  tokenHash: string,
+  client?: PoolClient,
+): Promise<EmailVerificationRecord | null> {
+  const db = client || pool;
+  const result = await db.query<EmailVerificationRecord>(
+    `UPDATE email_verifications
+     SET verified_at = NOW()
+     WHERE token_hash = $1
+       AND verified_at IS NULL
+       AND expires_at > NOW()
+     RETURNING id, user_id, email, token_hash, expires_at, verified_at, created_at`,
     [tokenHash],
   );
   return result.rows[0] || null;

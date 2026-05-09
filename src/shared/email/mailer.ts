@@ -2,11 +2,7 @@ import nodemailer from "nodemailer";
 
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
-import type { EmailTemplate } from "./templates.js";
-
-type EmailMessage = EmailTemplate & {
-  to: string;
-};
+import type { EmailMessage } from "./email.types.js";
 
 let transporter: nodemailer.Transporter | null = null;
 
@@ -35,7 +31,6 @@ function getTransporter(): nodemailer.Transporter {
 export async function sendEmail(message: EmailMessage): Promise<void> {
   try {
     const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
-    console.log("from",env.SMTP_FROM_EMAIL)
     await getTransporter().sendMail({
       from,
       to: message.to,
@@ -43,7 +38,6 @@ export async function sendEmail(message: EmailMessage): Promise<void> {
       html: message.html,
       text: message.text,
     });
-    console.log("email send succesfull")
   } catch (error) {
     logger.error(
       { err: error, to: message.to, subject: message.subject },
