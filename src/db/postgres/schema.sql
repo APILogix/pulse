@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended', 'deleted');
 CREATE TYPE mfa_type AS ENUM ('totp', 'sms', 'email', 'hardware_key', 'backup_codes');
 CREATE TYPE org_role AS ENUM ('owner', 'admin', 'member', 'viewer', 'billing');
-CREATE TYPE org_status AS ENUM ('active', 'suspended', 'cancelled', 'trial_expired');
+CREATE TYPE org_status AS ENUM ('active', 'suspended', 'cancelled', 'trial_expired' ,"pending_verification","archived","locked","unpaid","trialing");
 CREATE TYPE audit_action AS ENUM (
     'user.created', 'user.updated', 'user.deleted', 'user.login', 'user.logout', 'user.password_changed', 'user.mfa_enabled', 'user.mfa_disabled',
     'org.created', 'org.updated', 'org.deleted', 'org.member_invited', 'org.member_joined', 'org.member_removed', 'org.role_changed',
@@ -150,20 +150,20 @@ CREATE TABLE organizations (
 
     -- Identity
     name VARCHAR(255) NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255)  NOT NULL,
     description TEXT,
     logo_url TEXT,
     website_url TEXT,
 
     -- Ownership
     owner_user_id UUID NOT NULL REFERENCES users(id),
-
     -- Status
     status org_status DEFAULT 'active',
 
     -- Soft delete
     deleted_at TIMESTAMPTZ,
 
+created_by UUID REFERENCES users(id)
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
