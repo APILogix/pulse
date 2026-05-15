@@ -1,958 +1,451 @@
-import { createHash } from "crypto";
-import { generateInvitationToken } from "./utils.js";
+import type { FastifyBaseLogger } from "fastify";
+import { OrganizationRepository } from "./repository.js";
+import { generateToken, hashToken } from "./utils.js";
 import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  type AddMemberInput,
-  type AuditAction,
-  type AuditLogResponseDto,
-  type AuditLogRow,
-  type AuditResourceType,
-  type BillingResponseDto,
-  type CreateInvitationInput,
-  type CreateOrganizationInput,
-  type InvitationResponseDto,
-  type InvitationStatus,
-  type MemberResponseDto,
-  type OrgRole,
-  type OrganizationInvitationRow,
-  type OrganizationMemberRow,
-  type OrganizationResponseDto,
-  type OrganizationRow,
+  hasMinRole, canManageRole, isMutableOrg,
+  OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError,
+  type OrgRole, type RequestMeta, type CreateAuditLogRecord,
+  type OrganizationDto, type OrgSettingsDto, type MemberDto, type InvitationDto,
+  type EnvironmentDto, type ApiKeyDto, type SsoProviderDto, type ScimTokenDto,
+  type SecurityEventDto, type AuditLogDto, type QuotaRequestDto, type UserOrganizationDto,
+  type OrganizationRow, type OrgSettingsRow, type OrgMemberRow, type OrgInvitationRow,
   type OrganizationServiceDependencies,
-  type PaginatedResponse,
-  type PaginationQuery,
-  type PlanResponseDto,
-  type SecuritySettingsResponseDto,
-  type UpdateBillingInput,
-  type UpdateOrganizationInput,
-  type UpdateOrganizationRecord,
-  type UpdateSecurityInput,
-  type UpgradePlanInput,
-  type UserOrganizationResponseDto,
-  type UserOrganizationRow,
+  type CursorPaginationQuery, type CursorPaginatedResponse,
 } from "./types.js";
 
-interface RequestMeta {
-  ipAddress: string | null;
-  userAgent: string | null;
+// ── DTO Mappers ─────────────────────────────────
+function toOrgDto(r: OrganizationRow): OrganizationDto {
+  return { id:r.id, name:r.name, slug:r.slug, description:r.description, logoUrl:r.logo_url, websiteUrl:r.website_url, industry:r.industry, companySize:r.company_size, country:r.country, timezone:r.timezone, billingEmail:r.billing_email, supportEmail:r.support_email, ownerUserId:r.owner_user_id, status:r.status, createdAt:r.created_at, updatedAt:r.updated_at };
+}
+function toSettingsDto(r: OrgSettingsRow): OrgSettingsDto {
+  return { enforceSso:r.enforce_sso, enforceMfa:r.enforce_mfa, sessionTimeoutMinutes:r.session_timeout_minutes, dataRegion:r.data_region, dataRetentionDays:r.data_retention_days, auditLogRetentionDays:r.audit_log_retention_days, allowPublicProjects:r.allow_public_projects };
+}
+function toMemberDto(r: OrgMemberRow): MemberDto {
+  return { id:r.id, userId:r.user_id, email:r.email, fullName:r.full_name, role:r.role, status:r.status, joinedAt:r.joined_at, lastActiveAt:r.last_active_at, createdAt:r.created_at };
+}
+function toInviteDto(r: OrgInvitationRow): InvitationDto {
+  return { id:r.id, email:r.email, role:r.role, status:r.status, expiresAt:r.expires_at, invitedAt:r.created_at, invitedBy:{ id:r.invited_by, email:r.invited_by_email??null, name:r.invited_by_name??null } };
 }
 
-const ROLE_HIERARCHY: Record<OrgRole, number> = {
-  admin: 2,
-  member: 1,
-};
-
 export class OrganizationService {
-  constructor(private readonly deps: OrganizationServiceDependencies) {}
+  private repo: OrganizationRepository;
+  private log: FastifyBaseLogger;
+  private emitEvent: (event: string, payload: Record<string, unknown>) => Promise<void>;
 
-  async createOrganization(
-    data: CreateOrganizationInput,
-    ownerUserId: string,
-    meta?: RequestMeta,
-  ): Promise<OrganizationResponseDto> {
-    const org = await this.deps.repository.create({
-      name: data.name,
-      ownerUserId,
-    });
-
-    // await this.audit(
-    //   org.id,
-    //   ownerUserId,
-    //   "org.created",
-    //   "organization",
-    //   org.id,
-    //   { name: org.name },
-    //   meta,
-    // );
-
-    return this.toOrganizationDto(org);
+  constructor(deps: OrganizationServiceDependencies) {
+    this.repo = deps.repository;
+    this.log = deps.logger;
+    this.emitEvent = deps.emitEvent;
   }
 
-  async listUserOrganizations(
-    userId: string,
-    pagination: PaginationQuery,
-  ): Promise<PaginatedResponse<UserOrganizationResponseDto>> {
-    const result = await this.deps.repository.findByUserId(userId, pagination);
-    return this.mapPage(result, (row) => this.toUserOrganizationDto(row));
+  // ── Helpers ───────────────────────────────────
+  private async audit(meta: RequestMeta, data: Omit<CreateAuditLogRecord, "orgId"|"actorUserId"|"actorEmail"|"actorIp"|"actorUserAgent"|"actorSessionId"|"requestId"|"httpMethod"|"endpoint"> & { orgId: string }) {
+    try {
+      await this.repo.createAuditLog({ ...data, actorUserId:meta.actorUserId, actorEmail:meta.actorEmail, actorIp:meta.actorIp, actorUserAgent:meta.actorUserAgent, actorSessionId:meta.actorSessionId, requestId:meta.requestId, httpMethod:meta.httpMethod, endpoint:meta.endpoint });
+    } catch (e) { this.log.error({ err:e }, "Audit log write failed"); }
   }
 
-  async getOrganization(
-    orgId: string,
-    userId: string,
-    requiredRole?: OrgRole,
-  ): Promise<OrganizationResponseDto> {
-    const org = await this.requireOrganizationAccess(
-      orgId,
-      userId,
-      requiredRole,
-    );
-    return this.toOrganizationDto(org);
+  private async requireMember(orgId: string, userId: string, minRole: OrgRole = "viewer") {
+    const member = await this.repo.findActiveMember(orgId, userId);
+    if (!member) throw new ForbiddenError("Not a member of this organization");
+    if (!hasMinRole(member.role, minRole)) throw new ForbiddenError(`Requires ${minRole} role or higher`);
+    return member;
   }
 
-  async updateOrganization(
-    orgId: string,
-    data: UpdateOrganizationInput,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<OrganizationResponseDto> {
-    // await this.requireOrganizationAccess(orgId, userId, "admin");
-
-    const updatePayload: UpdateOrganizationRecord = {};
-
-    if (data.name !== undefined) updatePayload.name = data.name;
-    if (data.description !== undefined) {
-      updatePayload.description = data.description;
-    }
-    if (data.websiteUrl !== undefined) updatePayload.websiteUrl = data.websiteUrl;
-    if (data.billingEmail !== undefined) {
-      updatePayload.billingEmail = data.billingEmail;
-    }
-    if (data.billingName !== undefined) updatePayload.billingName = data.billingName;
-    if (data.billingAddress !== undefined) {
-      updatePayload.billingAddress = data.billingAddress;
-    }
-    if (data.dataRegion !== undefined) updatePayload.dataRegion = data.dataRegion;
-    if (data.enforceSso !== undefined) updatePayload.enforceSso = data.enforceSso;
-    if (data.enforceMfa !== undefined) updatePayload.enforceMfa = data.enforceMfa;
-    if (data.allowedEmailDomains !== undefined) {
-      updatePayload.allowedEmailDomains = data.allowedEmailDomains;
-    }
-    if (data.ipAllowlist !== undefined) updatePayload.ipAllowlist = data.ipAllowlist;
-    if (data.sessionTimeoutMinutes !== undefined) {
-      updatePayload.sessionTimeoutMinutes = data.sessionTimeoutMinutes;
-    }
-    if (data.dataRetentionDays !== undefined) {
-      updatePayload.dataRetentionDays = data.dataRetentionDays;
-    }
-
-    const updated = await this.deps.repository.update(orgId, updatePayload);
-
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   orgId,
-    //   { fields: Object.keys(updatePayload) },
-    //   meta,
-    // );
-
-    return this.toOrganizationDto(updated);
-  }
-
-  async deleteOrganization(
-    orgId: string,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
-    if (org.ownerUserId !== userId) {
-      throw new ForbiddenError("Only the organization owner can delete organization");
-    }
-
-    await this.deps.repository.softDelete(orgId, userId);
-    // await this.audit(orgId, userId, "org.deleted", "organization", orgId, null, meta);
-    // await this.safeEmit("organization.deleted", { orgId, deletedBy: userId });
-  }
-
-  async restoreOrganization(
-    orgId: string,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<OrganizationResponseDto> {
-    const org = await this.deps.repository.findById(orgId, true);
-    if (!org || !org.deletedAt) {
-      throw new NotFoundError("Organization");
-    }
-
-    if (org.ownerUserId !== userId) {
-      throw new ForbiddenError("Only the organization owner can restore organization");
-    }
-
-    await this.deps.repository.restore(orgId);
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   orgId,
-    //   { restored: true },
-    //   meta,
-    // );
-
-    const restored = await this.deps.repository.findById(orgId);
-    if (!restored) {
-      throw new NotFoundError("Organization");
-    }
-
-    return this.toOrganizationDto(restored);
-  }
-
-  async getAuditLogs(
-    orgId: string,
-    userId: string,
-    pagination: PaginationQuery,
-  ): Promise<PaginatedResponse<AuditLogResponseDto>> {
-    // await this.requireOrganizationAccess(orgId, userId, "admin");
-    const result = await this.deps.repository.findAuditLogs(orgId, pagination);
-    return this.mapPage(result, (row) => this.toAuditLogDto(row));
-  }
-
-  async getBilling(
-    orgId: string,
-    userId: string,
-  ): Promise<BillingResponseDto> {
-    const org = await this.requireOrganizationAccess(orgId, userId);
-    return this.toBillingDto(org);
-  }
-
-  async updateBilling(
-    orgId: string,
-    data: UpdateBillingInput,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<BillingResponseDto> {
-    // await this.requireOrganizationAccess(orgId, userId, "admin");
-
-    const updated = await this.deps.repository.update(orgId, {
-      billingEmail: data.billingEmail,
-      billingName: data.billingName ?? null,
-      billingAddress: data.billingAddress,
-    });
-
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   orgId,
-    //   { section: "billing" },
-    //   meta,
-    // );
-
-    return this.toBillingDto(updated);
-  }
-
-  async getPlan(orgId: string, userId: string): Promise<PlanResponseDto> {
-    const org = await this.requireOrganizationAccess(orgId, userId);
-    return this.toPlanDto(org);
-  }
-
-  async upgradePlan(
-    orgId: string,
-    data: UpgradePlanInput,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<PlanResponseDto> {
-    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
-    if (org.ownerUserId !== userId) {
-      throw new ForbiddenError("Only the organization owner can upgrade plan");
-    }
-
-    const updated = await this.deps.repository.update(orgId, {
-      planId: data.planId,
-      planStartedAt: new Date(),
-      billingStatus: "active",
-    });
-
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "billing.subscription_created",
-    //   "subscription",
-    //   orgId,
-    //   { planId: data.planId, billingCycle: data.billingCycle },
-    //   meta,
-    // );
-
-    // await this.safeEmit("billing.plan_changed", {
-    //   orgId,
-    //   planId: data.planId,
-    //   billingCycle: data.billingCycle,
-    //   changedBy: userId,
-    // });
-
-    return this.toPlanDto(updated);
-  }
-
-  async getSecuritySettings(
-    orgId: string,
-    userId: string,
-  ): Promise<SecuritySettingsResponseDto> {
-    const org = await this.requireOrganizationAccess(orgId, userId, "admin");
-    return this.toSecuritySettingsDto(org);
-  }
-
-  async updateSecuritySettings(
-    orgId: string,
-    data: UpdateSecurityInput,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<SecuritySettingsResponseDto> {
-    // await this.requireOrganizationAccess(orgId, userId, "admin");
-
-    const updated = await this.deps.repository.update(orgId, {
-      enforceSso: data.enforceSso,
-      enforceMfa: data.enforceMfa,
-      allowedEmailDomains: data.allowedEmailDomains,
-      ipAllowlist: data.ipAllowlist,
-      sessionTimeoutMinutes: data.sessionTimeoutMinutes,
-    });
-
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   orgId,
-    //   {
-    //     section: "security",
-    //     enforceSso: data.enforceSso,
-    //     enforceMfa: data.enforceMfa,
-    //   },
-    //   meta,
-    // );
-
-    return this.toSecuritySettingsDto(updated);
-  }
-
-  async listMembers(
-    orgId: string,
-    userId: string,
-    pagination: PaginationQuery,
-  ): Promise<PaginatedResponse<MemberResponseDto>> {
-    await this.requireOrganizationAccess(orgId, userId);
-    const result = await this.deps.repository.findMembersByOrgId(
-      orgId,
-      pagination,
-    );
-    return this.mapPage(result, (row) => this.toMemberDto(row));
-  }
-
-  async getMember(
-    orgId: string,
-    targetUserId: string,
-    requestingUserId: string,
-  ): Promise<MemberResponseDto> {
-    await this.requireOrganizationAccess(orgId, requestingUserId);
-
-    const member = await this.deps.repository.findMember(orgId, targetUserId);
-    if (!member) {
-      throw new NotFoundError("Member");
-    }
-
-    return this.toMemberDto(member);
-  }
-
-  async addMember(
-    orgId: string,
-    data: AddMemberInput,
-    addedBy: string,
-    meta?: RequestMeta,
-  ): Promise<MemberResponseDto> {
-    await this.requireOrganizationAccess(orgId, addedBy, "admin");
-
-    const existing = await this.deps.repository.findMember(orgId, data.userId);
-    if (existing?.isActive) {
-      throw new ConflictError("User is already a member");
-    }
-
-    const member = await this.deps.repository.addMember({
-      orgId,
-      userId: data.userId,
-      isActive: true,
-      invitedBy: addedBy,
-      invitedAt: new Date(),
-      joinedMethod: "admin_add",
-      lastActiveAt: new Date(),
-    });
-
-    await this.audit(
-      orgId,
-      addedBy,
-      "org.member_invited",
-      "organization",
-      orgId,
-      { memberUserId: data.userId, role: "member", method: "admin_add" },
-      meta,
-    );
-
-    // await this.safeEmit("organization.member.added", {
-    //   orgId,
-    //   userId: data.userId,
-    //   role: "member",
-    //   method: "admin_add",
-    // });
-
-    return this.toMemberDto(member);
-  }
-
-  async removeMember(
-    orgId: string,
-    userId: string,
-    removedBy: string,
-    reason?: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const [org, target] = await Promise.all([
-      this.requireOrganizationAccess(orgId, removedBy, "admin"),
-      this.deps.repository.findMember(orgId, userId),
-    ]);
-
-    if (!target || !target.isActive) {
-      throw new NotFoundError("Member");
-    }
-
-    if (org.ownerUserId === userId) {
-      throw new ForbiddenError("Cannot remove the organization owner");
-    }
-
-    await this.deps.repository.removeMember(orgId, userId, removedBy, reason);
-    // await this.audit(
-    //   orgId,
-    //   removedBy,
-    //   "org.member_removed",
-    //   "organization",
-    //   orgId,
-    //   { memberUserId: userId, reason: reason ?? null },
-    //   meta,
-    // );
-  }
-
-  async updateMemberRole(
-    orgId: string,
-    userId: string,
-    newRole: OrgRole,
-    updatedBy: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const [org, target] = await Promise.all([
-      this.requireOrganizationAccess(orgId, updatedBy, "admin"),
-      this.deps.repository.findMember(orgId, userId),
-    ]);
-
-    if (!target || !target.isActive) {
-      throw new NotFoundError("Member");
-    }
-
-    if (org.ownerUserId === userId) {
-      throw new ForbiddenError("Cannot change the organization owner's role");
-    }
-
-    if (newRole === "admin") {
-      await this.deps.repository.transferOwnership(orgId, updatedBy, userId);
-    } else {
-      await this.deps.repository.updateMemberRole(orgId, userId);
-    }
-
-    // await this.audit(
-    //   orgId,
-    //   updatedBy,
-    //   "org.role_changed",
-    //   "organization",
-    //   orgId,
-    //   { memberUserId: userId, oldRole: target.role, newRole },
-    //   meta,
-    // );
-  }
-
-  async transferOwnership(
-    orgId: string,
-    toUserId: string,
-    fromUserId: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const [org, toMember] = await Promise.all([
-      this.requireOrganizationAccess(orgId, fromUserId, "admin"),
-      this.deps.repository.findMember(orgId, toUserId),
-    ]);
-
-    if (org.ownerUserId !== fromUserId) {
-      throw new ForbiddenError("Only the organization owner can transfer ownership");
-    }
-
-    if (!toMember || !toMember.isActive) {
-      throw new NotFoundError("Target member");
-    }
-
-    await this.deps.repository.transferOwnership(orgId, fromUserId, toUserId);
-    // await this.audit(
-    //   orgId,
-    //   fromUserId,
-    //   "org.role_changed",
-    //   "organization",
-    //   orgId,
-    //   { fromUserId, toUserId, action: "ownership_transfer" },
-    //   meta,
-    // );
-  }
-
-  async leaveOrganization(
-    orgId: string,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const org = await this.requireOrganizationAccess(orgId, userId);
-    if (org.ownerUserId === userId) {
-      throw new ForbiddenError("Owner must transfer ownership before leaving");
-    }
-
-    await this.deps.repository.removeMember(orgId, userId, userId, "self_leave");
-    // await this.audit(
-    //   orgId,
-    //   userId,
-    //   "org.member_removed",
-    //   "organization",
-    //   orgId,
-    //   { memberUserId: userId, reason: "self_leave" },
-    //   meta,
-    // );
-  }
-
-  async listInvitations(
-    orgId: string,
-    userId: string,
-    pagination: PaginationQuery,
-    status?: InvitationStatus,
-  ): Promise<PaginatedResponse<InvitationResponseDto>> {
-    await this.requireOrganizationAccess(orgId, userId, "admin");
-    const result = await this.deps.repository.findInvitationsByOrgId(
-      orgId,
-      pagination,
-      status,
-    );
-    return this.mapPage(result, (row) => this.toInvitationDto(row));
-  }
-
-  async inviteMember(
-    orgId: string,
-    data: CreateInvitationInput,
-    invitedBy: string,
-    meta?: RequestMeta,
-  ): Promise<{ invitation: InvitationResponseDto; token: string }> {
-    await this.requireOrganizationAccess(orgId, invitedBy, "admin");
-
-    const token = generateInvitationToken();
-    const tokenHash = createHash("sha256").update(token).digest("hex");
-    const emailNormalized = data.email.toLowerCase();
-
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-
-    const invitation = await this.deps.repository.createInvitation({
-      orgId,
-      invitedBy,
-      email: emailNormalized,
-      role: data.role,
-      tokenHash,
-      expiresAt,
-    });
-
-    // await this.audit(
-    //   orgId,
-    //   invitedBy,
-    //   "org.member_invited",
-    //   "organization",
-    //   orgId,
-    //   {
-    //     invitationId: invitation.id,
-    //     email: emailNormalized,
-    //     role: data.role,
-    //   },
-    //   meta,
-    // );
-
-    // await this.safeEmit("organization.invitation.created", {
-    //   invitationId: invitation.id,
-    //   orgId,
-    //   invitedBy,
-    //   email: emailNormalized,
-    //   token,
-    // });
-
-    return { invitation: this.toInvitationDto(invitation), token };
-  }
-
-  async validateInvitationToken(token: string): Promise<{
-    valid: boolean;
-    organizationName?: string;
-    invitedBy?: string;
-    expiresAt?: Date;
-  }> {
-    const tokenHash = createHash("sha256").update(token).digest("hex");
-    const invitation = await this.deps.repository.findInvitationByTokenHash(
-      tokenHash,
-    );
-
-    if (!invitation) {
-      return { valid: false };
-    }
-
-    const org = await this.deps.repository.findById(invitation.orgId);
-    if (!org) {
-      return { valid: false };
-    }
-
-    const response: {
-      valid: boolean;
-      organizationName?: string;
-      invitedBy?: string;
-      expiresAt?: Date;
-    } = {
-      valid: true,
-      organizationName: org.name,
-      expiresAt: invitation.expiresAt,
-    };
-
-    const inviter = invitation.invitedByName ?? invitation.invitedByEmail;
-    if (inviter) {
-      response.invitedBy = inviter;
-    }
-
-    return response;
-  }
-
-  async acceptInvitation(
-    token: string,
-    userId: string,
-    userEmail: string,
-    meta?: RequestMeta,
-  ): Promise<MemberResponseDto> {
-    const tokenHash = createHash("sha256").update(token).digest("hex");
-    const invitation = await this.deps.repository.findInvitationByTokenHash(
-      tokenHash,
-    );
-
-    if (!invitation || !invitation.emailHash) {
-      throw new NotFoundError("Invitation");
-    }
-
-    const emailHash = createHash("sha256")
-      .update(userEmail.toLowerCase())
-      .digest("hex");
-    if (invitation.emailHash !== emailHash) {
-      throw new ForbiddenError("Invitation email does not match user email");
-    }
-
-    const existing = await this.deps.repository.findMember(
-      invitation.orgId,
-      userId,
-    );
-    if (existing?.isActive) {
-      throw new ConflictError("User is already a member");
-    }
-
-    await this.deps.repository.acceptInvitation(tokenHash, userId);
-
-    const member = await this.deps.repository.addMember({
-      orgId: invitation.orgId,
-      userId,
-      isActive: true,
-      invitedBy: invitation.invitedBy,
-      invitedAt: invitation.createdAt,
-      joinedMethod: "invite",
-      lastActiveAt: new Date(),
-    });
-
-    // await this.audit(
-    //   invitation.orgId,
-    //   userId,
-    //   "org.member_joined",
-    //   "organization",
-    //   invitation.orgId,
-    //   { invitationId: invitation.id },
-    //   meta,
-    // );
-
-    // await this.safeEmit("organization.member.added", {
-    //   orgId: invitation.orgId,
-    //   userId,
-    //   role: invitation.role,
-    //   method: "invite",
-    // });
-
-    return this.toMemberDto(member);
-  }
-
-  async declineInvitation(
-    invitationId: string,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const invitation = await this.deps.repository.findInvitationById(invitationId);
-    if (!invitation) {
-      throw new NotFoundError("Invitation");
-    }
-
-    await this.deps.repository.declineInvitation(invitationId);
-    // await this.audit(
-    //   invitation.orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   invitation.orgId,
-    //   { invitationId: invitation.id, action: "declined" },
-    //   meta,
-    // );
-  }
-
-  async resendInvitation(
-    invitationId: string,
-    userId: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const invitation = await this.deps.repository.findInvitationById(invitationId);
-    if (!invitation) {
-      throw new NotFoundError("Invitation");
-    }
-
-    await this.requireOrganizationAccess(invitation.orgId, userId, "admin");
-
-    if (invitation.resentCount >= 3) {
-      throw new ForbiddenError("Maximum resend limit reached");
-    }
-
-    await this.deps.repository.incrementResentCount(invitationId);
-    // await this.audit(
-    //   invitation.orgId,
-    //   userId,
-    //   "org.updated",
-    //   "organization",
-    //   invitation.orgId,
-    //   { invitationId: invitation.id, action: "resent" },
-    //   meta,
-    // );
-
-    // await this.safeEmit("organization.invitation.resent", {
-    //   invitationId,
-    //   orgId: invitation.orgId,
-    //   email: invitation.email,
-    // });
-  }
-
-  async revokeInvitation(
-    invitationId: string,
-    revokedBy: string,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    const invitation = await this.deps.repository.findInvitationById(invitationId);
-    if (!invitation) {
-      throw new NotFoundError("Invitation");
-    }
-
-    await this.requireOrganizationAccess(invitation.orgId, revokedBy, "admin");
-
-    await this.deps.repository.revokeInvitation(invitationId, revokedBy);
-    // await this.audit(
-    //   invitation.orgId,
-    //   revokedBy,
-    //   "org.updated",
-    //   "organization",
-    //   invitation.orgId,
-    //   { invitationId: invitation.id, action: "revoked" },
-    //   meta,
-    // );
-  }
-
-  async checkSlugAvailability(
-    slug: string,
-  ): Promise<{ available: boolean; suggestions?: string[] }> {
-    const existing = await this.deps.repository.findBySlug(slug);
-    if (!existing) {
-      return { available: true };
-    }
-
-    const year = new Date().getUTCFullYear();
-    return {
-      available: false,
-      suggestions: [`${slug}-corp`, `${slug}-team`, `${slug}-${year}`],
-    };
-  }
-
-  private async requireOrganizationAccess(
-    orgId: string,
-    userId: string,
-    requiredRole?: OrgRole,
-  ): Promise<OrganizationRow> {
-    const [org, membership] = await Promise.all([
-      this.deps.repository.findById(orgId),
-      this.deps.repository.findMember(orgId, userId),
-    ]);
-
-    if (!org) {
-      throw new NotFoundError("Organization");
-    }
-
-    if (!membership || !membership.isActive) {
-      throw new ForbiddenError("Not a member of this organization");
-    }
-
-    // if (requiredRole && !this.hasRequiredRole(membership.role, requiredRole)) {
-    //   throw new ForbiddenError(`Requires ${requiredRole} role`);
-    // }
-
+  private async requireMutableOrg(orgId: string) {
+    const org = await this.repo.findOrgById(orgId);
+    if (!org) throw new NotFoundError("Organization");
+    if (!isMutableOrg(org.status)) throw new OrgStatusError(org.status);
     return org;
   }
 
-  private hasRequiredRole(userRole: OrgRole, required: OrgRole): boolean {
-    return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[required] ?? 0);
+  // ── Organization CRUD ─────────────────────────
+  async createOrganization(meta: RequestMeta, data: { name:string; description?:string; industry?:string; companySize?:string; country?:string; timezone?:string; billingEmail?:string }) {
+    const org = await this.repo.createOrg(data.name, meta.actorUserId, data);
+    await this.audit(meta, { orgId:org.id, action:"org.created", entityType:"organization", entityId:org.id, entityName:org.name, newValues:{ name:org.name, slug:org.slug } });
+    return toOrgDto(org);
   }
 
-  private mapPage<TInput, TOutput>(
-    page: PaginatedResponse<TInput>,
-    mapper: (row: TInput) => TOutput,
-  ): PaginatedResponse<TOutput> {
+  async getOrganization(orgId: string, userId: string) {
+    await this.requireMember(orgId, userId);
+    const org = await this.repo.findOrgById(orgId);
+    if (!org) throw new NotFoundError("Organization");
+    return toOrgDto(org);
+  }
+
+  async getOrganizationBySlug(slug: string, userId: string) {
+    const org = await this.repo.findOrgBySlug(slug);
+    if (!org) throw new NotFoundError("Organization");
+    await this.requireMember(org.id, userId);
+    return toOrgDto(org);
+  }
+
+  async updateOrganization(meta: RequestMeta, orgId: string, data: Record<string, unknown>) {
+    const oldOrg = await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const updated = await this.repo.updateOrg(orgId, data);
+    const changed = Object.keys(data).filter(k => data[k] !== undefined);
+    await this.audit(meta, { orgId, action:"org.updated", entityType:"organization", entityId:orgId, entityName:updated.name, oldValues:{ name:oldOrg.name }, newValues:{ name:updated.name }, changedFields:changed });
+    return toOrgDto(updated);
+  }
+
+  async deleteOrganization(meta: RequestMeta, orgId: string) {
+    await this.requireMutableOrg(orgId);
+    const m = await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.repo.softDeleteOrg(orgId);
+    await this.audit(meta, { orgId, action:"org.deleted", entityType:"organization", entityId:orgId, isSensitive:true });
+  }
+
+  async archiveOrganization(meta: RequestMeta, orgId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.repo.archiveOrg(orgId);
+    await this.audit(meta, { orgId, action:"org.archived", entityType:"organization", entityId:orgId });
+  }
+
+  async restoreOrganization(meta: RequestMeta, orgId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const org = await this.repo.restoreOrg(orgId);
+    await this.audit(meta, { orgId, action:"org.restored", entityType:"organization", entityId:orgId });
+    return toOrgDto(org);
+  }
+
+  async transferOwnership(meta: RequestMeta, orgId: string, newOwnerUserId: string) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const target = await this.repo.findActiveMember(orgId, newOwnerUserId);
+    if (!target) throw new NotFoundError("Target member");
+    await this.repo.transferOwnership(orgId, meta.actorUserId, newOwnerUserId);
+    await this.audit(meta, { orgId, action:"org.ownership_transferred", entityType:"organization", entityId:orgId, newValues:{ newOwner:newOwnerUserId }, isSensitive:true });
+  }
+
+  // ── Settings ──────────────────────────────────
+  async getSettings(orgId: string, userId: string) {
+    await this.requireMember(orgId, userId, "admin");
+    const s = await this.repo.getSettings(orgId);
+    if (!s) throw new NotFoundError("Settings");
+    return toSettingsDto(s);
+  }
+
+  async updateSettings(meta: RequestMeta, orgId: string, data: Record<string, unknown>) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const old = await this.repo.getSettings(orgId);
+    const s = await this.repo.updateSettings(orgId, data);
+    await this.audit(meta, { orgId, action:"org.settings_updated", entityType:"settings", entityId:orgId, oldValues:old as any, newValues:s as any, changedFields:Object.keys(data), isSensitive:true });
+    return toSettingsDto(s);
+  }
+
+  // ── Members ───────────────────────────────────
+  async listMembers(orgId: string, userId: string, q: CursorPaginationQuery, filters?: { status?:string; role?:string }) {
+    await this.requireMember(orgId, userId);
+    const result = await this.repo.listMembers(orgId, q, filters);
+    return { data: result.data.map(toMemberDto), meta: result.meta };
+  }
+
+  async getMember(orgId: string, actorUserId: string, targetUserId: string) {
+    await this.requireMember(orgId, actorUserId);
+    const m = await this.repo.findMember(orgId, targetUserId);
+    if (!m) throw new NotFoundError("Member");
+    return toMemberDto(m);
+  }
+
+  async updateMemberRole(meta: RequestMeta, orgId: string, targetUserId: string, newRole: OrgRole) {
+    await this.requireMutableOrg(orgId);
+    const actor = await this.requireMember(orgId, meta.actorUserId, "admin");
+    if (meta.actorUserId === targetUserId) throw new ForbiddenError("Cannot change own role");
+    const target = await this.repo.findActiveMember(orgId, targetUserId);
+    if (!target) throw new NotFoundError("Member");
+    if (!canManageRole(actor.role, target.role)) throw new ForbiddenError("Cannot manage a user with equal or higher role");
+    if (newRole === "owner") throw new ValidationError("Use transfer ownership endpoint");
+    const oldRole = target.role;
+    await this.repo.updateMemberRole(orgId, targetUserId, newRole);
+    await this.audit(meta, { orgId, action:"member.role_updated", entityType:"member", entityId:targetUserId, oldValues:{ role:oldRole }, newValues:{ role:newRole } });
+  }
+
+  async removeMember(meta: RequestMeta, orgId: string, targetUserId: string) {
+    await this.requireMutableOrg(orgId);
+    const actor = await this.requireMember(orgId, meta.actorUserId, "admin");
+    if (meta.actorUserId === targetUserId) throw new ForbiddenError("Cannot remove yourself");
+    const target = await this.repo.findActiveMember(orgId, targetUserId);
+    if (!target) throw new NotFoundError("Member");
+    if (!canManageRole(actor.role, target.role)) throw new ForbiddenError("Cannot remove a user with equal or higher role");
+    if (target.role === "owner") { const c = await this.repo.countOwners(orgId); if (c <= 1) throw new ForbiddenError("Cannot remove the last owner"); }
+    await this.repo.removeMember(orgId, targetUserId, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"member.removed", entityType:"member", entityId:targetUserId, isSensitive:true });
+  }
+
+  async suspendMember(meta: RequestMeta, orgId: string, targetUserId: string) {
+    await this.requireMutableOrg(orgId);
+    const actor = await this.requireMember(orgId, meta.actorUserId, "admin");
+    const target = await this.repo.findActiveMember(orgId, targetUserId);
+    if (!target) throw new NotFoundError("Member");
+    if (!canManageRole(actor.role, target.role)) throw new ForbiddenError("Cannot suspend this user");
+    await this.repo.suspendMember(orgId, targetUserId, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"member.suspended", entityType:"member", entityId:targetUserId });
+  }
+
+  async reactivateMember(meta: RequestMeta, orgId: string, targetUserId: string) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    await this.repo.reactivateMember(orgId, targetUserId);
+    await this.audit(meta, { orgId, action:"member.reactivated", entityType:"member", entityId:targetUserId });
+  }
+
+  // ── Invitations ───────────────────────────────
+  async inviteMember(meta: RequestMeta, orgId: string, email: string, role: OrgRole) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const token = generateToken();
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const inv = await this.repo.createInvitation(orgId, meta.actorUserId, email, role, tokenHash, expiresAt);
+    await this.audit(meta, { orgId, action:"member.invited", entityType:"invitation", entityId:inv.id, newValues:{ email, role } });
+    return { ...toInviteDto(inv), token };
+  }
+
+  async resendInvitation(meta: RequestMeta, orgId: string, invitationId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const inv = await this.repo.findInvitationById(invitationId);
+    if (!inv || inv.org_id !== orgId) throw new NotFoundError("Invitation");
+    if (inv.status !== "pending") throw new ValidationError("Invitation is not pending");
+    await this.repo.incrementResentCount(invitationId);
+    await this.audit(meta, { orgId, action:"invitation.resent", entityType:"invitation", entityId:invitationId });
+  }
+
+  async revokeInvitation(meta: RequestMeta, orgId: string, invitationId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const inv = await this.repo.findInvitationById(invitationId);
+    if (!inv || inv.org_id !== orgId) throw new NotFoundError("Invitation");
+    await this.repo.revokeInvitation(invitationId, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"invitation.revoked", entityType:"invitation", entityId:invitationId });
+  }
+
+  async acceptInvitation(meta: RequestMeta, token: string) {
+    const tokenHash = hashToken(token);
+    const inv = await this.repo.findInvitationByTokenHash(tokenHash);
+    if (!inv) throw new NotFoundError("Invitation");
+    await this.repo.acceptInvitation(tokenHash, meta.actorUserId);
+    await this.repo.addMember(inv.org_id, meta.actorUserId, inv.role, inv.invited_by, "invite");
+    await this.audit(meta, { orgId:inv.org_id, action:"invitation.accepted", entityType:"invitation", entityId:inv.id });
+  }
+
+  async declineInvitation(meta: RequestMeta, invitationId: string) {
+    const inv = await this.repo.findInvitationById(invitationId);
+    if (!inv) throw new NotFoundError("Invitation");
+    await this.repo.declineInvitation(invitationId);
+    await this.audit(meta, { orgId:inv.org_id, action:"invitation.declined", entityType:"invitation", entityId:invitationId });
+  }
+
+  async listInvitations(orgId: string, userId: string, q: CursorPaginationQuery, status?: string) {
+    await this.requireMember(orgId, userId, "admin");
+    const result = await this.repo.listInvitations(orgId, q, status);
+    return { data: result.data.map(toInviteDto), meta: result.meta };
+  }
+
+  // ── Environments ──────────────────────────────
+  async createEnvironment(meta: RequestMeta, orgId: string, data: { name:string; description?:string; isProduction?:boolean }) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const env = await this.repo.createEnvironment(orgId, data.name, data.description??null, data.isProduction??false, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"environment.created", entityType:"environment", entityId:env.id, entityName:env.name });
+    return { id:env.id, name:env.name, slug:env.slug, description:env.description, isProduction:env.is_production, createdAt:env.created_at } as EnvironmentDto;
+  }
+
+  async updateEnvironment(meta: RequestMeta, orgId: string, envId: string, data: Record<string, unknown>) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const env = await this.repo.updateEnvironment(orgId, envId, data);
+    await this.audit(meta, { orgId, action:"environment.updated", entityType:"environment", entityId:envId });
+    return { id:env.id, name:env.name, slug:env.slug, description:env.description, isProduction:env.is_production, createdAt:env.created_at } as EnvironmentDto;
+  }
+
+  async listEnvironments(orgId: string, userId: string) {
+    await this.requireMember(orgId, userId);
+    const rows = await this.repo.listEnvironments(orgId);
+    return rows.map(e => ({ id:e.id, name:e.name, slug:e.slug, description:e.description, isProduction:e.is_production, createdAt:e.created_at }) as EnvironmentDto);
+  }
+
+  // ── API Keys ──────────────────────────────────
+  async createApiKey(meta: RequestMeta, orgId: string, data: { name:string; role?:OrgRole; environmentId?:string; expiresInDays?:number }) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const rawKey = generateToken();
+    const prefix = rawKey.substring(0, 8);
+    const hashed = hashToken(rawKey);
+    const expiresAt = data.expiresInDays ? new Date(Date.now() + data.expiresInDays * 86400000) : null;
+    const key = await this.repo.createApiKey(orgId, data.name, prefix, hashed, data.role ?? "member", data.environmentId ?? null, expiresAt, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"api_key.created", entityType:"api_key", entityId:key.id, entityName:data.name, isSensitive:true });
+    return { ...({ id:key.id, name:key.name, keyPrefix:key.key_prefix, role:key.role, environmentId:key.environment_id, lastUsedAt:key.last_used_at, expiresAt:key.expires_at, revokedAt:key.revoked_at, createdAt:key.created_at } as ApiKeyDto), rawKey };
+  }
+
+  async revokeApiKey(meta: RequestMeta, orgId: string, keyId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    await this.repo.revokeApiKey(orgId, keyId);
+    await this.audit(meta, { orgId, action:"api_key.revoked", entityType:"api_key", entityId:keyId, isSensitive:true });
+  }
+
+  async listApiKeys(orgId: string, userId: string, q: CursorPaginationQuery) {
+    await this.requireMember(orgId, userId, "admin");
+    const result = await this.repo.listApiKeys(orgId, q);
+    return { data: result.data.map(k => ({ id:k.id, name:k.name, keyPrefix:k.key_prefix, role:k.role, environmentId:k.environment_id, lastUsedAt:k.last_used_at, expiresAt:k.expires_at, revokedAt:k.revoked_at, createdAt:k.created_at }) as ApiKeyDto), meta: result.meta };
+  }
+
+  // ── SSO ────────────────────────────────────────
+  async createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const sso = await this.repo.createSsoProvider(orgId, data);
+    await this.audit(meta, { orgId, action:"sso.created", entityType:"sso_provider", entityId:sso.id, isSensitive:true });
+    return { id:sso.id, providerName:sso.provider_name, providerType:sso.provider_type, entityId:sso.entity_id, ssoUrl:sso.sso_url, domain:sso.domain, isActive:sso.is_active, createdAt:sso.created_at } as SsoProviderDto;
+  }
+
+  async updateSsoProvider(meta: RequestMeta, orgId: string, ssoId: string, data: Record<string, unknown>) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const sso = await this.repo.updateSsoProvider(orgId, ssoId, data);
+    await this.audit(meta, { orgId, action:"sso.updated", entityType:"sso_provider", entityId:ssoId });
+    return { id:sso.id, providerName:sso.provider_name, providerType:sso.provider_type, entityId:sso.entity_id, ssoUrl:sso.sso_url, domain:sso.domain, isActive:sso.is_active, createdAt:sso.created_at } as SsoProviderDto;
+  }
+
+  async deleteSsoProvider(meta: RequestMeta, orgId: string, ssoId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.repo.deleteSsoProvider(orgId, ssoId);
+    await this.audit(meta, { orgId, action:"sso.deleted", entityType:"sso_provider", entityId:ssoId, isSensitive:true });
+  }
+
+  // ── SCIM ──────────────────────────────────────
+  async createScimToken(meta: RequestMeta, orgId: string) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const rawToken = generateToken();
+    const hashed = hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 365 * 86400000);
+    const t = await this.repo.createScimToken(orgId, hashed, expiresAt, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"scim_token.created", entityType:"scim_token", entityId:t.id, isSensitive:true });
+    return { ...({ id:t.id, lastUsedAt:t.last_used_at, expiresAt:t.expires_at, revokedAt:t.revoked_at, createdAt:t.created_at } as ScimTokenDto), rawToken };
+  }
+
+  async revokeScimToken(meta: RequestMeta, orgId: string, tokenId: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.repo.revokeScimToken(orgId, tokenId);
+    await this.audit(meta, { orgId, action:"scim_token.revoked", entityType:"scim_token", entityId:tokenId, isSensitive:true });
+  }
+
+  // ── Security & Audit ──────────────────────────
+  async listSecurityEvents(orgId: string, userId: string, q: CursorPaginationQuery, filters?: { severity?:string; eventType?:string }) {
+    await this.requireMember(orgId, userId, "security");
+    const result = await this.repo.listSecurityEvents(orgId, q, filters);
+    return { data: result.data.map(e => ({ id:e.id, userId:e.user_id, eventType:e.event_type, severity:e.severity, ipAddress:e.ip_address, metadata:e.metadata, createdAt:e.created_at }) as SecurityEventDto), meta: result.meta };
+  }
+
+  async listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: { action?:string; entityType?:string; actorUserId?:string }) {
+    await this.requireMember(orgId, userId, "admin");
+    const result = await this.repo.listAuditLogs(orgId, q, filters);
+    return { data: result.data.map(a => ({ id:a.id, actorUserId:a.actor_user_id, actorEmail:a.actor_email, action:a.action, entityType:a.entity_type, entityId:a.entity_id, entityName:a.entity_name, status:a.status, createdAt:a.created_at }) as AuditLogDto), meta: result.meta };
+  }
+
+  // ── Quotas ────────────────────────────────────
+  async createQuotaRequest(meta: RequestMeta, orgId: string, data: { quotaType:string; currentLimit:number; requestedLimit:number; reason:string }) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const qr = await this.repo.createQuotaRequest(orgId, data.quotaType, data.currentLimit, data.requestedLimit, data.reason);
+    await this.audit(meta, { orgId, action:"quota.requested", entityType:"quota_request", entityId:qr.id });
+    return { id:qr.id, quotaType:qr.quota_type, currentLimit:qr.current_limit, requestedLimit:qr.requested_limit, reason:qr.reason, status:qr.status, reviewedAt:qr.reviewed_at, notes:qr.notes, createdAt:qr.created_at } as QuotaRequestDto;
+  }
+
+  async approveQuotaRequest(meta: RequestMeta, orgId: string, requestId: string, notes?: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const qr = await this.repo.reviewQuotaRequest(orgId, requestId, "approved", meta.actorUserId, notes);
+    await this.audit(meta, { orgId, action:"quota.approved", entityType:"quota_request", entityId:requestId });
+    return { id:qr.id, quotaType:qr.quota_type, currentLimit:qr.current_limit, requestedLimit:qr.requested_limit, reason:qr.reason, status:qr.status, reviewedAt:qr.reviewed_at, notes:qr.notes, createdAt:qr.created_at } as QuotaRequestDto;
+  }
+
+  async rejectQuotaRequest(meta: RequestMeta, orgId: string, requestId: string, notes?: string) {
+    await this.requireMember(orgId, meta.actorUserId, "owner");
+    const qr = await this.repo.reviewQuotaRequest(orgId, requestId, "rejected", meta.actorUserId, notes);
+    await this.audit(meta, { orgId, action:"quota.rejected", entityType:"quota_request", entityId:requestId });
+    return { id:qr.id, quotaType:qr.quota_type, currentLimit:qr.current_limit, requestedLimit:qr.requested_limit, reason:qr.reason, status:qr.status, reviewedAt:qr.reviewed_at, notes:qr.notes, createdAt:qr.created_at } as QuotaRequestDto;
+  }
+
+  async listQuotaRequests(orgId: string, userId: string, q: CursorPaginationQuery) {
+    await this.requireMember(orgId, userId, "admin");
+    const result = await this.repo.listQuotaRequests(orgId, q);
+    return { data: result.data.map(qr => ({ id:qr.id, quotaType:qr.quota_type, currentLimit:qr.current_limit, requestedLimit:qr.requested_limit, reason:qr.reason, status:qr.status, reviewedAt:qr.reviewed_at, notes:qr.notes, createdAt:qr.created_at }) as QuotaRequestDto), meta: result.meta };
+  }
+
+  // ── User Organizations ────────────────────────
+  async listUserOrganizations(userId: string, q: CursorPaginationQuery) {
+    const result = await this.repo.listUserOrganizations(userId, q);
     return {
-      data: page.data.map(mapper),
-      pagination: page.pagination,
+      data: result.data.map(r => ({ id:r.id, name:r.name, slug:r.slug, logoUrl:r.logo_url, role:r.role, status:r.status, createdAt:r.created_at }) as UserOrganizationDto),
+      meta: result.meta
     };
   }
 
-  private toOrganizationDto(org: OrganizationRow): OrganizationResponseDto {
+  // ── Validate Invitation Token ─────────────────
+  async validateInvitationToken(token: string) {
+    const tokenHash = hashToken(token);
+    const inv = await this.repo.findInvitationByTokenHash(tokenHash);
+    if (!inv) throw new NotFoundError("Invitation");
+    const org = await this.repo.findOrgById(inv.org_id);
     return {
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-      description: org.description,
-      logoUrl: org.logoUrl,
-      websiteUrl: org.websiteUrl,
-      ownerUserId: org.ownerUserId,
-      status: org.status,
-      createdAt: org.createdAt,
-      updatedAt: org.updatedAt,
+      valid: true,
+      email: inv.email,
+      role: inv.role,
+      orgName: org?.name ?? null,
+      orgSlug: org?.slug ?? null,
+      expiresAt: inv.expires_at,
     };
   }
 
-  private toUserOrganizationDto(
-    org: UserOrganizationRow,
-  ): UserOrganizationResponseDto {
-    return {
-      id: org.id,
-      name: org.name,
-      slug: org.slug,
-      logoUrl: org.logoUrl,
-      role: org.role,
-      createdAt: org.createdAt,
-    };
+  // ── Slug Availability ─────────────────────────
+  async checkSlugAvailability(slug: string) {
+    const available = await this.repo.isSlugAvailable(slug);
+    return { slug, available };
   }
 
-  private toBillingDto(org: OrganizationRow): BillingResponseDto {
-    return {
-      billingEmail: org.billingEmail,
-      billingName: org.billingName,
-      billingAddress: org.billingAddress,
-      planId: org.planId,
-      billingStatus: org.billingStatus,
-      planStartedAt: org.planStartedAt,
-      planExpiresAt: org.planExpiresAt,
-    };
+  // ── Rotate API Key ────────────────────────────
+  async rotateApiKey(meta: RequestMeta, orgId: string, keyId: string) {
+    await this.requireMutableOrg(orgId);
+    await this.requireMember(orgId, meta.actorUserId, "admin");
+    const rawKey = generateToken();
+    const prefix = rawKey.substring(0, 8);
+    const hashed = hashToken(rawKey);
+    const key = await this.repo.rotateApiKey(orgId, keyId, `rotated-key`, prefix, hashed, "member", null, null, meta.actorUserId);
+    await this.audit(meta, { orgId, action:"api_key.rotated", entityType:"api_key", entityId:key.id, newValues:{ oldKeyId:keyId }, isSensitive:true });
+    return { ...({ id:key.id, name:key.name, keyPrefix:key.key_prefix, role:key.role, environmentId:key.environment_id, lastUsedAt:key.last_used_at, expiresAt:key.expires_at, revokedAt:key.revoked_at, createdAt:key.created_at } as ApiKeyDto), rawKey };
   }
 
-  private toPlanDto(org: OrganizationRow): PlanResponseDto {
-    return {
-      planId: org.planId,
-      billingStatus: org.billingStatus,
-      trialEndsAt: org.trialEndsAt,
-      planExpiresAt: org.planExpiresAt,
-    };
+  // ── Export Audit Logs ─────────────────────────
+  async exportAuditLogs(orgId: string, userId: string, filters?: { action?:string; entityType?:string; actorUserId?:string; startDate?:string; endDate?:string }) {
+    await this.requireMember(orgId, userId, "admin");
+    const rows = await this.repo.exportAuditLogs(orgId, filters);
+    return rows.map(a => ({ id:a.id, actorUserId:a.actor_user_id, actorEmail:a.actor_email, action:a.action, entityType:a.entity_type, entityId:a.entity_id, entityName:a.entity_name, oldValues:a.old_values, newValues:a.new_values, changedFields:a.changed_fields, status:a.status, createdAt:a.created_at }) as AuditLogDto & { oldValues:unknown; newValues:unknown; changedFields:unknown });
   }
 
-  private toSecuritySettingsDto(
-    org: OrganizationRow,
-  ): SecuritySettingsResponseDto {
-    return {
-      enforceSso: org.enforceSso,
-      enforceMfa: org.enforceMfa,
-      allowedEmailDomains: org.allowedEmailDomains,
-      ipAllowlist: org.ipAllowlist,
-      sessionTimeoutMinutes: org.sessionTimeoutMinutes,
-    };
-  }
-
-  private toMemberDto(member: OrganizationMemberRow): MemberResponseDto {
-    return {
-      id: member.id,
-      userId: member.userId,
-      email: member.email,
-      name: member.fullName,
-      role: member.role,
-      isActive: member.isActive,
-      createdAt: member.createdAt,
-      lastActiveAt: member.lastActiveAt,
-    };
-  }
-
-  private toInvitationDto(
-    invitation: OrganizationInvitationRow,
-  ): InvitationResponseDto {
-    return {
-      id: invitation.id,
-      email: invitation.email,
-      role: invitation.role,
-      status: this.invitationStatus(invitation),
-      invitedAt: invitation.createdAt,
-      expiresAt: invitation.expiresAt,
-      invitedBy: {
-        id: invitation.invitedBy,
-        email: invitation.invitedByEmail,
-        name: invitation.invitedByName,
-      },
-    };
-  }
-
-  private invitationStatus(invitation: OrganizationInvitationRow): InvitationStatus {
-    if (invitation.acceptedAt) return "accepted";
-    if (invitation.declinedAt) return "declined";
-    if (invitation.revokedAt) return "revoked";
-    return "pending";
-  }
-
-  private toAuditLogDto(row: AuditLogRow): AuditLogResponseDto {
-    return {
-      id: row.id,
-      userId: row.userId,
-      action: row.action,
-      resourceType: row.resourceType,
-      resourceId: row.resourceId,
-      metadata: row.metadata,
-      createdAt: row.createdAt,
-    };
-  }
-
-  private async audit(
-    orgId: string,
-    userId: string | null,
-    action: AuditAction,
-    resourceType: AuditResourceType,
-    resourceId: string | null,
-    metadata: Record<string, unknown> | null,
-    meta?: RequestMeta,
-  ): Promise<void> {
-    await this.deps.repository.createAuditLog({
-      orgId,
-      userId,
-      action,
-      resourceType,
-      resourceId,
-      metadata,
-      ipAddress: meta?.ipAddress ?? "0.0.0.0",
-      userAgent: meta?.userAgent ?? null,
-    });
-  }
-
-  private async safeEmit(
-    event: string,
-    payload: Record<string, unknown>,
-  ): Promise<void> {
-    try {
-      await this.deps.emitEvent(event, payload);
-    } catch (error) {
-      this.deps.logger.error(
-        { err: error, event, payload },
-        "Failed to emit organization event",
-      );
+  // ── Leave Organization ────────────────────────
+  async leaveOrganization(meta: RequestMeta, orgId: string) {
+    await this.requireMutableOrg(orgId);
+    const member = await this.repo.findActiveMember(orgId, meta.actorUserId);
+    if (!member) throw new NotFoundError("Member");
+    if (member.role === "owner") {
+      const ownerCount = await this.repo.countOwners(orgId);
+      if (ownerCount <= 1) throw new ForbiddenError("Cannot leave as the last owner. Transfer ownership first.");
     }
+    await this.repo.removeMember(orgId, meta.actorUserId, meta.actorUserId, "self-leave");
+    await this.audit(meta, { orgId, action:"member.left", entityType:"member", entityId:meta.actorUserId });
+  }
+
+  // ── List SSO Providers ────────────────────────
+  async listSsoProviders(orgId: string, userId: string) {
+    await this.requireMember(orgId, userId, "admin");
+    const rows = await this.repo.listSsoProviders(orgId);
+    return rows.map(sso => ({ id:sso.id, providerName:sso.provider_name, providerType:sso.provider_type, entityId:sso.entity_id, ssoUrl:sso.sso_url, domain:sso.domain, isActive:sso.is_active, createdAt:sso.created_at }) as SsoProviderDto);
+  }
+
+  // ── List SCIM Tokens ──────────────────────────
+  async listScimTokens(orgId: string, userId: string) {
+    await this.requireMember(orgId, userId, "owner");
+    const rows = await this.repo.listScimTokens(orgId);
+    return rows.map(t => ({ id:t.id, lastUsedAt:t.last_used_at, expiresAt:t.expires_at, revokedAt:t.revoked_at, createdAt:t.created_at }) as ScimTokenDto);
   }
 }

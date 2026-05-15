@@ -1,438 +1,447 @@
 /**
  * Organization route registration.
  *
- * Flow:
- * 1. Authenticate organization management routes.
- * 2. Parse params/query/body with Zod schemas before service calls.
- * 3. Convert Fastify request metadata into service audit metadata.
- * 4. Delegate membership, invitation, billing, and security rules to
- *    OrganizationService.
+ * All routes use:
+ * - Zod validation on params/query/body
+ * - RequestMeta for audit trail
+ * - Standardized success/error responses
+ * - withErrorHandling for consistent error mapping
  */
-import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import { authenticate } from '../../shared/middleware/auth.js';
 import {
   AcceptInvitationSchema,
-  AddMemberSchema,
-  AuditQuerySchema,
+  ApiKeyParamsSchema,
+  AuditLogQuerySchema,
+  CreateApiKeySchema,
+  CreateEnvironmentSchema,
   CreateInvitationSchema,
   CreateOrganizationSchema,
+  CreateQuotaRequestSchema,
+  CreateSsoProviderSchema,
+  CursorPaginationSchema,
+  EnvironmentParamsSchema,
   IdParamsSchema,
   InvitationListQuerySchema,
   InvitationParamsSchema,
   InvitationValidateQuerySchema,
   MemberParamsSchema,
+  MembersListQuerySchema,
   OrgIdParamsSchema,
   OrganizationError,
-  PaginationQuerySchema,
+  QuotaRequestParamsSchema,
+  RemoveMemberSchema,
+  ReviewQuotaRequestSchema,
+  ScimTokenParamsSchema,
+  SecurityEventsQuerySchema,
   SlugParamsSchema,
-  UpdateBillingSchema,
+  SsoProviderParamsSchema,
+  SuspendMemberSchema,
+  TransferOwnershipSchema,
+  UpdateEnvironmentSchema,
+  UpdateMemberRoleSchema,
   UpdateOrganizationSchema,
-  UpdateRoleSchema,
-  UpdateSecuritySchema,
-  UpgradePlanSchema
+  UpdateSettingsSchema,
+  UpdateSsoProviderSchema,
+  type RequestMeta,
 } from './types.js';
 
 type AuthenticatedRequest = FastifyRequest & {
-  user: {
-    id: string;
-    email: string;
-    isAdmin: boolean;
-    sessionId: string;
-    mfaVerified: boolean;
-  };
+  user: { id: string; email: string; isAdmin: boolean; sessionId: string; mfaVerified: boolean };
 };
 
 function handleOrganizationError(error: unknown, reply: FastifyReply) {
-  // Convert domain and validation errors to stable API responses. Unexpected
-  // errors stay generic so internal details are not exposed to clients.
   if (error instanceof OrganizationError) {
-    return reply.code(error.statusCode).send({
-      success: false,
-      error: {
-        code: error.code,
-        message: error.message
-      }
-    });
+    return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
   }
-
   if (error instanceof ZodError) {
-    return reply.code(422).send({
-      success: false,
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Validation failed',
-        details: error.flatten()
-      }
-    });
+    return reply.code(422).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: error.flatten() } });
   }
-
-  console.log(error)
-  return reply.code(500).send({
-    success: false,
-    error: {
-      code: 'INTERNAL_ERROR',
-      message: 'Unexpected organization module error'
-    }
-  });
+  return reply.code(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Unexpected organization module error' } });
 }
 
-function withErrorHandling(
-  handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>
-) {
-  // Centralized route wrapper keeps every organization endpoint on the same
-  // logging and error-response path.
+function withErrorHandling(handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      return await handler(request, reply);
-    } catch (error) {
-      request.log.error({ err: error, path: request.url }, 'Organization route failed');
-      return handleOrganizationError(error, reply);
-    }
+    try { return await handler(request, reply); }
+    catch (error) { request.log.error({ err: error, path: request.url }, 'Organization route failed'); return handleOrganizationError(error, reply); }
   };
 }
 
-function asAuthenticated(request: FastifyRequest): AuthenticatedRequest {
-  return request as AuthenticatedRequest;
-}
+function asAuth(request: FastifyRequest): AuthenticatedRequest { return request as AuthenticatedRequest; }
 
-function requestMeta(request: FastifyRequest) {
-  // Mutating service calls use this data for audit logs and operational traces.
-  const userAgentHeader = request.headers['user-agent'];
+function buildMeta(request: FastifyRequest): RequestMeta {
+  const user = asAuth(request).user;
   return {
-    ipAddress: request.ip ?? null,
-    userAgent: typeof userAgentHeader === 'string' ? userAgentHeader : null
+    actorUserId: user.id,
+    actorEmail: user.email,
+    actorSessionId: user.sessionId,
+    actorIp: request.ip ?? '',
+    actorUserAgent: typeof request.headers['user-agent'] === 'string' ? request.headers['user-agent'] : null,
+    httpMethod: request.method,
+    endpoint: request.url,
+    requestId: request.id,
   };
 }
 
-export async function organizationRoutes(
-  fastify: FastifyInstance,
-  options: FastifyPluginOptions
-): Promise<void> {
-  // Service dependencies are created by the organization module plugin and
-  // attached to Fastify, keeping route registration focused on HTTP mapping.
-  const service = fastify.organization.service;
+/** Strip undefined values from Zod output to satisfy exactOptionalPropertyTypes */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function strip<T>(obj: T): T {
+  if (typeof obj !== 'object' || obj === null) return obj;
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) { if (v !== undefined) result[k] = v; }
+  return result as T;
+}
 
-  fastify.post(
-    '/',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const body = CreateOrganizationSchema.parse(request.body);
-      const result = await service.createOrganization(body, authed.user.id, requestMeta(request));
-      return reply.code(201).send({ success: true, data: result });
-    })
-  );
+export async function organizationRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions): Promise<void> {
+  const svc = fastify.organization.service;
+  const auth = { preHandler: [authenticate] };
 
-  fastify.get(
-    '/',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const query = PaginationQuerySchema.parse(request.query ?? {});
-      const result = await service.listUserOrganizations(authed.user.id, query);
-      return reply.send({ success: true, ...result });
-    })
-  );
+  // ═══════════════════════════════════════════════
+  // ORGANIZATION CRUD
+  // ═══════════════════════════════════════════════
 
-  fastify.get(
-    '/:id',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = IdParamsSchema.parse(request.params);
-      const result = await service.getOrganization(id, authed.user.id);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/', auth, withErrorHandling(async (request, reply) => {
+    const body = CreateOrganizationSchema.parse(request.body);
+    const result = await svc.createOrganization(buildMeta(request), strip(body) as any);
+    return reply.code(201).send({ success: true, data: result });
+  }));
 
-  fastify.patch(
-    '/:id',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = IdParamsSchema.parse(request.params);
-      const body = UpdateOrganizationSchema.parse(request.body);
-      const result = await service.updateOrganization(id, body, authed.user.id, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.get('/', auth, withErrorHandling(async (request, reply) => {
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listUserOrganizations(asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
+  }));
 
-  fastify.delete(
-    '/:id',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = IdParamsSchema.parse(request.params);
-      await service.deleteOrganization(id, authed.user.id, requestMeta(request));
-      return reply.code(204).send();
-    })
-  );
+  fastify.get('/:id', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const result = await svc.getOrganization(id, asAuth(request).user.id);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.post(
-    '/:id/restore',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = IdParamsSchema.parse(request.params);
-      const result = await service.restoreOrganization(id, authed.user.id, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.patch('/:id', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const body = UpdateOrganizationSchema.parse(request.body);
+    const result = await svc.updateOrganization(buildMeta(request), id, body);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.get(
-    '/:id/audit-log',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = IdParamsSchema.parse(request.params);
-      const query = AuditQuerySchema.parse(request.query ?? {});
-      const result = await service.getAuditLogs(id, authed.user.id, query);
-      return reply.send({ success: true, ...result });
-    })
-  );
+  fastify.delete('/:id', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    await svc.deleteOrganization(buildMeta(request), id);
+    return reply.code(204).send();
+  }));
 
-  fastify.get(
-    '/:orgId/billing',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const result = await service.getBilling(orgId, authed.user.id);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/:id/archive', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    await svc.archiveOrganization(buildMeta(request), id);
+    return reply.send({ success: true });
+  }));
 
-  fastify.put(
-    '/:orgId/billing',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const body = UpdateBillingSchema.parse(request.body);
-      const result = await service.updateBilling(orgId, body, authed.user.id, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/:id/restore', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const result = await svc.restoreOrganization(buildMeta(request), id);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.get(
-    '/:orgId/plan',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const result = await service.getPlan(orgId, authed.user.id);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/:id/transfer-ownership', auth, withErrorHandling(async (request, reply) => {
+    const { id } = IdParamsSchema.parse(request.params);
+    const body = TransferOwnershipSchema.parse(request.body);
+    await svc.transferOwnership(buildMeta(request), id, body.newOwnerUserId);
+    return reply.send({ success: true });
+  }));
 
-  fastify.post(
-    '/:orgId/plan/upgrade',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const body = UpgradePlanSchema.parse(request.body);
-      const result = await service.upgradePlan(orgId, body, authed.user.id, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  // ═══════════════════════════════════════════════
+  // SETTINGS
+  // ═══════════════════════════════════════════════
 
-  fastify.get(
-    '/:orgId/security-settings',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const result = await service.getSecuritySettings(orgId, authed.user.id);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.get('/:orgId/settings', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const result = await svc.getSettings(orgId, asAuth(request).user.id);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.put(
-    '/:orgId/security-settings',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const body = UpdateSecuritySchema.parse(request.body);
-      const result = await service.updateSecuritySettings(orgId, body, authed.user.id, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.patch('/:orgId/settings', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = UpdateSettingsSchema.parse(request.body);
+    const result = await svc.updateSettings(buildMeta(request), orgId, body);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.get(
-    '/:orgId/members',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const query = PaginationQuerySchema.parse(request.query ?? {});
-      const result = await service.listMembers(orgId, authed.user.id, query);
-      return reply.send({ success: true, ...result });
-    })
-  );
+  // ═══════════════════════════════════════════════
+  // MEMBERS
+  // ═══════════════════════════════════════════════
 
-  fastify.get(
-    '/:orgId/members/:userId',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
-      const result = await service.getMember(orgId, userId, authed.user.id);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.get('/:orgId/members', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = MembersListQuerySchema.parse(request.query ?? {});
+    const { status, role, ...pagination } = query;
+    const result = await svc.listMembers(orgId, asAuth(request).user.id, pagination, strip({ status, role }) as any);
+    return reply.send({ success: true, ...result });
+  }));
 
-  fastify.post(
-    '/:orgId/members',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const body = AddMemberSchema.parse(request.body);
-      const result = await service.addMember(orgId, body, authed.user.id, requestMeta(request));
-      return reply.code(201).send({ success: true, data: result });
-    })
-  );
+  fastify.get('/:orgId/members/:userId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, userId } = MemberParamsSchema.parse(request.params);
+    const result = await svc.getMember(orgId, asAuth(request).user.id, userId);
+    return reply.send({ success: true, data: result });
+  }));
 
-  fastify.delete(
-    '/:orgId/members/:userId',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
-      await service.removeMember(orgId, userId, authed.user.id, undefined, requestMeta(request));
-      return reply.code(204).send();
-    })
-  );
+  fastify.patch('/:orgId/members/:userId/role', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, userId } = MemberParamsSchema.parse(request.params);
+    const body = UpdateMemberRoleSchema.parse(request.body);
+    await svc.updateMemberRole(buildMeta(request), orgId, userId, body.role);
+    return reply.send({ success: true });
+  }));
 
-  fastify.patch(
-    '/:orgId/members/:userId/role',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
-      const body = UpdateRoleSchema.parse(request.body);
-      await service.updateMemberRole(orgId, userId, body.role, authed.user.id, requestMeta(request));
-      return reply.send({ success: true });
-    })
-  );
+  fastify.delete('/:orgId/members/:userId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, userId } = MemberParamsSchema.parse(request.params);
+    const body = RemoveMemberSchema.parse(request.body ?? {});
+    await svc.removeMember(buildMeta(request), orgId, userId);
+    return reply.code(204).send();
+  }));
 
-  fastify.post(
-    '/:orgId/members/:userId/transfer-ownership',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId, userId } = MemberParamsSchema.parse(request.params);
-      await service.transferOwnership(orgId, userId, authed.user.id, requestMeta(request));
-      return reply.send({ success: true });
-    })
-  );
+  fastify.post('/:orgId/members/:userId/suspend', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, userId } = MemberParamsSchema.parse(request.params);
+    await svc.suspendMember(buildMeta(request), orgId, userId);
+    return reply.send({ success: true });
+  }));
 
-  fastify.post(
-    '/:orgId/leave',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      await service.leaveOrganization(orgId, authed.user.id, requestMeta(request));
-      return reply.code(204).send();
-    })
-  );
+  fastify.post('/:orgId/members/:userId/reactivate', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, userId } = MemberParamsSchema.parse(request.params);
+    await svc.reactivateMember(buildMeta(request), orgId, userId);
+    return reply.send({ success: true });
+  }));
 
-  fastify.get(
-    '/:orgId/invitations',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const query = InvitationListQuerySchema.parse(request.query ?? {});
-      const result = await service.listInvitations(orgId, authed.user.id, query, query.status);
-      return reply.send({ success: true, ...result });
-    })
-  );
+  fastify.post('/:orgId/leave', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    await svc.leaveOrganization(buildMeta(request), orgId);
+    return reply.code(204).send();
+  }));
 
-  fastify.post(
-    '/:orgId/invitations',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { orgId } = OrgIdParamsSchema.parse(request.params);
-      const body = CreateInvitationSchema.parse(request.body);
-      const result = await service.inviteMember(orgId, body, authed.user.id, requestMeta(request));
+  // ═══════════════════════════════════════════════
+  // INVITATIONS
+  // ═══════════════════════════════════════════════
 
-      return reply.code(201).send({
-        success: true,
-        data: {
-          invitation: result.invitation,
-          token: result.token,
-          inviteUrl: `${process.env.FRONTEND_URL ?? ''}/invite?token=${result.token}`
-        }
-      });
-    })
-  );
+  fastify.get('/:orgId/invitations', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = InvitationListQuerySchema.parse(request.query ?? {});
+    const { status, ...pagination } = query;
+    const result = await svc.listInvitations(orgId, asAuth(request).user.id, pagination, status);
+    return reply.send({ success: true, ...result });
+  }));
 
-  fastify.post(
-    '/invitations/accept',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const body = AcceptInvitationSchema.parse(request.body);
-      const result = await service.acceptInvitation(body.token, authed.user.id, authed.user.email, requestMeta(request));
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/:orgId/invitations', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateInvitationSchema.parse(request.body);
+    const result = await svc.inviteMember(buildMeta(request), orgId, body.email, body.role);
+    return reply.code(201).send({
+      success: true,
+      data: { invitation: result, token: result.token, inviteUrl: `${process.env.FRONTEND_URL ?? ''}/invite?token=${result.token}` }
+    });
+  }));
 
-  fastify.get(
-    '/invitations/validate',
-    withErrorHandling(async (request, reply) => {
-      const query = InvitationValidateQuerySchema.parse(request.query ?? {});
-      const result = await service.validateInvitationToken(query.token);
-      return reply.send({ success: true, data: result });
-    })
-  );
+  fastify.post('/:orgId/invitations/:invitationId/resend', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, invitationId } = (request.params as { orgId: string; invitationId: string });
+    await svc.resendInvitation(buildMeta(request), orgId, invitationId);
+    return reply.send({ success: true });
+  }));
 
-  fastify.post(
-    '/invitations/:id/decline',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = InvitationParamsSchema.parse(request.params);
-      await service.declineInvitation(id, authed.user.id, requestMeta(request));
-      return reply.send({ success: true });
-    })
-  );
+  fastify.delete('/:orgId/invitations/:invitationId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, invitationId } = (request.params as { orgId: string; invitationId: string });
+    await svc.revokeInvitation(buildMeta(request), orgId, invitationId);
+    return reply.code(204).send();
+  }));
 
-  fastify.post(
-    '/invitations/:id/resend',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = InvitationParamsSchema.parse(request.params);
-      await service.resendInvitation(id, authed.user.id, requestMeta(request));
-      return reply.send({ success: true });
-    })
-  );
+  fastify.post('/invitations/accept', auth, withErrorHandling(async (request, reply) => {
+    const body = AcceptInvitationSchema.parse(request.body);
+    await svc.acceptInvitation(buildMeta(request), body.token);
+    return reply.send({ success: true });
+  }));
 
-  fastify.delete(
-    '/invitations/:id',
-    { preHandler: [authenticate] },
-    withErrorHandling(async (request, reply) => {
-      const authed = asAuthenticated(request);
-      const { id } = InvitationParamsSchema.parse(request.params);
-      await service.revokeInvitation(id, authed.user.id, requestMeta(request));
-      return reply.code(204).send();
-    })
-  );
+  fastify.post('/invitations/:id/decline', auth, withErrorHandling(async (request, reply) => {
+    const { id } = InvitationParamsSchema.parse(request.params);
+    await svc.declineInvitation(buildMeta(request), id);
+    return reply.send({ success: true });
+  }));
 
-  fastify.get(
-    '/slug-available/:slug',
-    withErrorHandling(async (request, reply) => {
-      const { slug } = SlugParamsSchema.parse(request.params);
-      const result = await service.checkSlugAvailability(slug);
-      return reply.send({ success: true, data: result });
-    })
-  );
-};
+  fastify.get('/invitations/validate', withErrorHandling(async (request, reply) => {
+    const query = InvitationValidateQuerySchema.parse(request.query ?? {});
+    const result = await svc.validateInvitationToken(query.token);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // ═══════════════════════════════════════════════
+  // ENVIRONMENTS
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const result = await svc.listEnvironments(orgId, asAuth(request).user.id);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateEnvironmentSchema.parse(request.body);
+    const result = await svc.createEnvironment(buildMeta(request), orgId, strip(body) as any);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.patch('/:orgId/environments/:envId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, envId } = EnvironmentParamsSchema.parse(request.params);
+    const body = UpdateEnvironmentSchema.parse(request.body);
+    const result = await svc.updateEnvironment(buildMeta(request), orgId, envId, body);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // ═══════════════════════════════════════════════
+  // API KEYS
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listApiKeys(orgId, asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
+  }));
+
+  fastify.post('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateApiKeySchema.parse(request.body);
+    const result = await svc.createApiKey(buildMeta(request), orgId, strip(body) as any);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.delete('/:orgId/api-keys/:keyId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
+    await svc.revokeApiKey(buildMeta(request), orgId, keyId);
+    return reply.code(204).send();
+  }));
+
+  fastify.post('/:orgId/api-keys/:keyId/rotate', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
+    const result = await svc.rotateApiKey(buildMeta(request), orgId, keyId);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // ═══════════════════════════════════════════════
+  // SSO PROVIDERS
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/sso', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const result = await svc.listSsoProviders(orgId, asAuth(request).user.id);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/sso', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateSsoProviderSchema.parse(request.body);
+    const result = await svc.createSsoProvider(buildMeta(request), orgId, body);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.patch('/:orgId/sso/:ssoId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, ssoId } = SsoProviderParamsSchema.parse(request.params);
+    const body = UpdateSsoProviderSchema.parse(request.body);
+    const result = await svc.updateSsoProvider(buildMeta(request), orgId, ssoId, body);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.delete('/:orgId/sso/:ssoId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, ssoId } = SsoProviderParamsSchema.parse(request.params);
+    await svc.deleteSsoProvider(buildMeta(request), orgId, ssoId);
+    return reply.code(204).send();
+  }));
+
+  // ═══════════════════════════════════════════════
+  // SCIM TOKENS
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/scim-tokens', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const result = await svc.listScimTokens(orgId, asAuth(request).user.id);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/scim-tokens', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const result = await svc.createScimToken(buildMeta(request), orgId);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.delete('/:orgId/scim-tokens/:tokenId', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, tokenId } = ScimTokenParamsSchema.parse(request.params);
+    await svc.revokeScimToken(buildMeta(request), orgId, tokenId);
+    return reply.code(204).send();
+  }));
+
+  // ═══════════════════════════════════════════════
+  // SECURITY & AUDIT
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/security-events', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = SecurityEventsQuerySchema.parse(request.query ?? {});
+    const { severity, eventType, ...pagination } = query;
+    const result = await svc.listSecurityEvents(orgId, asAuth(request).user.id, pagination, strip({ severity, eventType }) as any);
+    return reply.send({ success: true, ...result });
+  }));
+
+  fastify.get('/:orgId/audit-logs', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = AuditLogQuerySchema.parse(request.query ?? {});
+    const { action, entityType, actorUserId, ...pagination } = query;
+    const result = await svc.listAuditLogs(orgId, asAuth(request).user.id, pagination, strip({ action, entityType, actorUserId }) as any);
+    return reply.send({ success: true, ...result });
+  }));
+
+  fastify.get('/:orgId/audit-logs/export', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = AuditLogQuerySchema.parse(request.query ?? {});
+    const result = await svc.exportAuditLogs(orgId, asAuth(request).user.id, strip({ action: query.action, entityType: query.entityType, actorUserId: query.actorUserId }) as any);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // ═══════════════════════════════════════════════
+  // QUOTAS
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listQuotaRequests(orgId, asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
+  }));
+
+  fastify.post('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateQuotaRequestSchema.parse(request.body);
+    const result = await svc.createQuotaRequest(buildMeta(request), orgId, body);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/quota-requests/:requestId/approve', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
+    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
+    const result = await svc.approveQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/quota-requests/:requestId/reject', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
+    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
+    const result = await svc.rejectQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // ═══════════════════════════════════════════════
+  // UTILITY
+  // ═══════════════════════════════════════════════
+
+  fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {
+    const { slug } = SlugParamsSchema.parse(request.params);
+    const result = await svc.checkSlugAvailability(slug);
+    return reply.send({ success: true, data: result });
+  }));
+}
