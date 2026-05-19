@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'crypto';
+import { processInBatches } from '../../lib/concurrency/batching.js';
 function heavyHashing(iterations) {
     let hash = 'initial-seed';
     for (let i = 0; i < iterations; i++) {
@@ -130,23 +131,23 @@ export async function registerStressTestRoute(fastify) {
         const intensity = query.intensity || 'medium';
         const start = Date.now();
         const tasks = [
-            (async () => {
+            async () => {
                 const s = Date.now();
                 heavyHashing(intensity === 'heavy' ? 500000 : 200000);
                 return { op: 'hashing', ms: Date.now() - s };
-            })(),
-            (async () => {
+            },
+            async () => {
                 const s = Date.now();
                 heavySorting(intensity === 'heavy' ? 500000 : 200000);
                 return { op: 'sorting', ms: Date.now() - s };
-            })(),
-            (async () => {
+            },
+            async () => {
                 const s = Date.now();
                 fibonacci(intensity === 'heavy' ? 10000000 : 5000000);
                 return { op: 'fibonacci', ms: Date.now() - s };
-            })(),
+            },
         ];
-        const results = await Promise.all(tasks);
+        const results = await Promise.all(tasks.map(t => t()));
         const totalMs = Date.now() - start;
         return reply.send({
             status: 'completed',

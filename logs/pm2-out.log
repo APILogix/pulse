@@ -145,3 +145,51 @@
 2026-05-19 15:20:43 +05:30: {"level":30,"time":1779184243039,"pid":21152,"env":"production","component":"log-database","msg":"Testing log database connections"}
 2026-05-19 15:20:43 +05:30: {"level":60,"time":1779184243122,"pid":21152,"env":"production","component":"bootstrap","err":{"type":"Error","message":"The server does not support SSL connections","stack":"Error: The server does not support SSL connections\n    at C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\api-monitoring-backend\\node_modules\\pg-pool\\index.js:45:11\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async LogDatabaseManager.connect (C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\api-monitoring-backend\\src\\config\\log-database.ts:70:27)\n    at async bootstrap (C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\api-monitoring-backend\\src\\main.ts:54:5)"},"msg":"Failed to start server"}
 2026-05-19 15:20:46 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:21:03 +05:30: ◇ injecting env (21) from .env // tip: ⌘ override existing { override: true }
+2026-05-19 15:21:09 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:11 +05:30: ◇ injecting env (21) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+2026-05-19 15:21:16 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:17 +05:30: ◇ injecting env (21) from .env // tip: ⌘ override existing { override: true }
+2026-05-19 15:21:24 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:26 +05:30: ◇ injecting env (21) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+2026-05-19 15:21:32 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:33 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:21:40 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:42 +05:30: ◇ injecting env (21) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+2026-05-19 15:21:49 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:50 +05:30: ◇ injecting env (21) from .env // tip: ⌘ suppress logs { quiet: true }
+2026-05-19 15:21:57 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:21:59 +05:30: ◇ injecting env (21) from .env // tip: ⌘ enable debugging { debug: true }
+2026-05-19 15:22:06 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:22:08 +05:30: ◇ injecting env (21) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+2026-05-19 15:22:14 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:22:15 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:22:22 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:22:24 +05:30: ◇ injecting env (21) from .env // tip: ⌘ suppress logs { quiet: true }
+2026-05-19 15:22:31 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:22:32 +05:30: ◇ injecting env (21) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+2026-05-19 15:22:39 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:01 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:37:01 +05:30: ◇ injecting env (21) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+2026-05-19 15:37:08 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:08 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:09 +05:30: ◇ injecting env (21) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+2026-05-19 15:37:10 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:37:15 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:15 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:16 +05:30: ◇ injecting env (21) from .env // tip: ⌘ enable debugging { debug: true }
+2026-05-19 15:37:16 +05:30: ◇ injecting env (21) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+2026-05-19 15:37:22 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:22 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:23 +05:30: ◇ injecting env (21) from .env // tip: ⌘ enable debugging { debug: true }
+2026-05-19 15:37:24 +05:30: ◇ injecting env (21) from .env // tip: ⌘ override existing { override: true }
+2026-05-19 15:37:29 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:29 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:31 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:37:31 +05:30: ◇ injecting env (21) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+2026-05-19 15:37:36 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:36 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:38 +05:30: ◇ injecting env (21) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+2026-05-19 15:37:38 +05:30: ◇ injecting env (21) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+2026-05-19 15:37:44 +05:30: [ORGANIZATION:Module] Organization module registered 
+2026-05-19 15:37:44 +05:30: [ORGANIZATION:Module] Organization module registered 

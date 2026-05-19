@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import { runHashing, runSorting, runFibonacci, simulateAsyncTask, simulateJsonProcessing, } from './helpers.js';
+import { createLimiter } from '../../lib/concurrency/limiters.js';
 // ─── Route Handlers ──────────────────────────────────────────────────────────
 /**
  * GET /benchmark
@@ -53,23 +54,36 @@ async function benchmarkAsync(request, reply) {
     const query = request.query;
     const concurrency = Math.min(Number(query.concurrency ?? 5), 20);
     const start = performance.now();
-    // Build a mix of tasks — delays + in-process work
-    const tasks = await Promise.all([
-        simulateAsyncTask('io-fast', 10),
-        simulateAsyncTask('io-medium', 50),
-        simulateAsyncTask('io-slow', 100),
-        simulateJsonProcessing(2_000),
-        simulateJsonProcessing(5_000),
-        ...Array.from({ length: Math.max(0, concurrency - 5) }, (_, i) => simulateAsyncTask(`io-extra-${i}`, 20 + i * 10)),
-    ]);
+    const limit = createLimiter(Math.min(concurrency, 10));
+    const tasksFn = [
+        () => simulateAsyncTask('io-fast', 10),
+        () => simulateAsyncTask('io-medium', 50),
+        () => simulateAsyncTask('io-slow', 100),
+        () => simulateJsonProcessing(2_000),
+        () => simulateJsonProcessing(5_000),
+        ...Array.from({ length: Math.max(0, concurrency - 5) }, (_, i) => () => simulateAsyncTask(`io-extra-${i}`, 20 + i * 10)),
+    ];
+    const tasks = await Promise.all(tasksFn.map((fn) => limit(fn)));
     const totalMs = Math.round(performance.now() - start);
     return reply.send({ concurrency, tasks, totalMs });
 }
-// ─── Plugin Registration ──────────────────────────────────────────────────────
+import { BackpressureTracker } from '../../lib/concurrency/backpressure.js';
+const heavyTracker = new BackpressureTracker(20);
+const asyncTracker = new BackpressureTracker(50);
 async function benchmarkPlugin(fastify) {
     fastify.get('/benchmark', { config: { rateLimit: false } }, benchmarkLight);
-    fastify.get('/benchmark/heavy', { config: { rateLimit: false } }, benchmarkHeavy);
-    fastify.get('/benchmark/async', { config: { rateLimit: false } }, benchmarkAsync);
+    fastify.get('/benchmark/heavy', {
+        config: { rateLimit: false },
+        preHandler: (req, reply, done) => {
+            heavyTracker.enforce(req, reply, async () => { done(); });
+        }
+    }, benchmarkHeavy);
+    fastify.get('/benchmark/async', {
+        config: { rateLimit: false },
+        preHandler: (req, reply, done) => {
+            asyncTracker.enforce(req, reply, async () => { done(); });
+        }
+    }, benchmarkAsync);
     fastify.log.info('Benchmark routes registered: GET /benchmark, /benchmark/heavy, /benchmark/async');
 }
 export const registerBenchmarkRoutes = fp(benchmarkPlugin, {

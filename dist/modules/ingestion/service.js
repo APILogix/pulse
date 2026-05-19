@@ -17,6 +17,7 @@ import { Queue, Job } from 'bullmq';
 import { RedisCache } from '../../db/redis/cache.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionBuffer } from './buffer.js';
+import { processInBatches } from '../../lib/concurrency/batching.js';
 import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 function hashApiKey(apiKey) {
@@ -199,7 +200,7 @@ export class IngestionService {
         // 7. Push to buffer. The API returns once events are accepted into the
         // internal queueing path; database persistence happens asynchronously.
         if (enriched.length > 0) {
-            await Promise.all(enriched.map((e) => this.buffer.add(e)));
+            await processInBatches(enriched, 100, 20, async (e) => this.buffer.add(e));
             await Promise.all([
                 this.cache.incrementIngestCounter(project.id, 'total'),
                 this.cache.recordLastIngest(project.id),
@@ -272,7 +273,7 @@ export class IngestionService {
     }
     async reprocessAllDLQ(batchSize = 100) {
         const failed = await this.queue.getFailed(0, batchSize);
-        await Promise.all(failed.map((job) => job.retry()));
+        await processInBatches(failed, 50, 10, async (job) => job.retry());
         return failed.length;
     }
     async replayEvents(req) {
