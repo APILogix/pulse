@@ -25,15 +25,12 @@ export class IngestionController {
   async init(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { apiKey } = request.body as { apiKey: string };
-      console.log(request.body)
-      console.log("api key found",apiKey)
       if(!apiKey){
         throw new Error("key not found")
       }
       const result = await this.service.initializeSdk(apiKey);
       return reply.send(result);
     } catch (err: any) {
-      console.log(err)
       return this.handleError(err, reply);
     }
   }
@@ -45,9 +42,7 @@ export class IngestionController {
    */
   async ingest(request: FastifyRequest, reply: FastifyReply) {
     try {
-      console.log(request.body)
       const result = await this.service.ingestBatch(request.body as any);
-      console.log("final outpur ",result)
       return reply.status(202).send(result);
     } catch (err: any) {
       return this.handleError(err, reply);

@@ -8,7 +8,7 @@
  * - withErrorHandling for consistent error mapping
  */
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
-import { ZodError } from 'zod';
+import { env } from '../../config/env.js';
 import { authenticate } from '../../shared/middleware/auth.js';
 import {
   AcceptInvitationSchema,
@@ -55,16 +55,13 @@ function handleOrganizationError(error: unknown, reply: FastifyReply) {
   if (error instanceof OrganizationError) {
     return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
   }
-  if (error instanceof ZodError) {
-    return reply.code(422).send({ success: false, error: { code: 'VALIDATION_ERROR', message: 'Validation failed', details: error.flatten() } });
-  }
   return reply.code(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Unexpected organization module error' } });
 }
 
 function withErrorHandling(handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     try { return await handler(request, reply); }
-    catch (error) { request.log.error({ err: error, path: request.url }, 'Organization route failed'); return handleOrganizationError(error, reply); }
+    catch (error) { return handleOrganizationError(error, reply); }
   };
 }
 
@@ -236,7 +233,7 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     const result = await svc.inviteMember(buildMeta(request), orgId, body.email, body.role);
     return reply.code(201).send({
       success: true,
-      data: { invitation: result, token: result.token, inviteUrl: `${process.env.FRONTEND_URL ?? ''}/invite?token=${result.token}` }
+      data: { invitation: result, token: result.token, inviteUrl: `${env.FRONTEND_URL ?? ''}/invite?token=${result.token}` }
     });
   }));
 

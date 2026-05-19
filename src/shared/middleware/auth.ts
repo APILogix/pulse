@@ -2,6 +2,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
 import { env } from '../../config/env.js';
 import { redis } from '../../config/redis.js';
+import { findSessionById, findUserById } from '../../modules/auth/repository.js';
 
 interface JWTPayload {
   sub: string; // user id
@@ -88,10 +89,6 @@ export async function authenticate(
     // =========================
     // 3. VALIDATE SESSION
     // =========================
-    const { findSessionById, findUserById } = await import(
-      '../../modules/auth/repository.js'
-    );
-
     const session = await findSessionById(decoded.jti);
 
     if (!session) {

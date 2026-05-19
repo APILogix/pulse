@@ -17,6 +17,9 @@ import { Redis } from 'ioredis';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { RedisCache } from '../db/redis/cache.js';
 import type { EnrichedEvent } from '../modules/ingestion/types.js';
+import { logger } from '../config/logger.js';
+
+const workerLogger = logger.child({ component: 'ingestion-worker' });
 
 export function createIngestionWorker(
   connection: Redis,
@@ -81,16 +84,16 @@ export function createIngestionWorker(
   );
 
   worker.on('completed', (job) => {
-    console.log(`[Worker] Job ${job.id} completed (${job.data.type})`);
+    workerLogger.info({ jobId: job.id, type: job.data.type }, 'Job completed');
   });
 
   worker.on('failed', (job, err) => {
-    console.error(`[Worker] Job ${job?.id} failed:`, err.message);
+    workerLogger.error({ jobId: job?.id, err: err.message }, 'Job failed');
     // Alerting integration here (PagerDuty, Slack, etc.)
   });
 
   worker.on('stalled', (jobId) => {
-    console.warn(`[Worker] Job ${jobId} stalled`);
+    workerLogger.warn({ jobId }, 'Job stalled');
   });
 
   return worker;

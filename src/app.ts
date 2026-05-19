@@ -13,16 +13,20 @@ import {
 } from 'fastify-type-provider-zod';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
+import { randomUUID } from 'crypto';
 
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { registerHealthPlugin } from './config/plugins.js';
+import { registerMetricsPlugin } from './config/metrics.js';
 import { registerAuthModule } from './modules/auth/auth.module.js';
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
+import { registerStressTestRoute } from './modules/stress-test/routes.js';
+import { registerBenchmarkRoutes } from './modules/benchmark/routes.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -32,13 +36,23 @@ declare module 'fastify' {
 
 const appLogger = logger.child({ component: 'app' });
 
+function buildCorsOrigin() {
+  if (env.NODE_ENV === 'production') {
+    const allowed = env.ALLOWED_ORIGINS
+      ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+      : [];
+    if (env.FRONTEND_URL) allowed.push(env.FRONTEND_URL);
+    if (env.APP_URL) allowed.push(env.APP_URL);
+    return allowed.length > 0 ? allowed : false;
+  }
+  return true;
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    // Use loggerInstance to pass our pre-configured pino logger to Fastify.
-    // This makes fastify.log.* work correctly in all modules and hooks.
     loggerInstance: logger as any,
     trustProxy: true,
-    genReqId: () => `req-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    genReqId: (req) => req.headers['x-request-id']?.toString() || randomUUID(),
     connectionTimeout: 30000,
     keepAliveTimeout: 65000,
     maxRequestsPerSocket: 1000,
@@ -47,7 +61,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       caseSensitive: false,
       ignoreTrailingSlash: true,
     },
-    disableRequestLogging: true, // We handle request logging ourselves
+    disableRequestLogging: true,
   });
 
   // Zod type provider setup
@@ -77,11 +91,17 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    origin: true,
+    origin: buildCorsOrigin(),
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+    exposedHeaders: ['X-Request-ID'],
   });
 
-  await app.register(compress);
+  await app.register(compress, {
+    threshold: 1024, // Only compress responses > 1KB
+    encodings: ['br', 'gzip', 'deflate'], // Brotli first, then gzip
+  });
   await app.register(cookie, { secret: env.JWT_SECRET });
 
   await app.register(fastifyRawBody, {
@@ -95,13 +115,21 @@ export async function buildApp(): Promise<FastifyInstance> {
     max: 100,
     timeWindow: '1 minute',
     keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
-    skipOnError: true,
+    skipOnError: false,
+    errorResponseBuilder: (_req, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded, retry in ${context.after}`,
+    }),
   });
 
   await app.register(sensible);
 
   // ── Health & Readiness Probes ──────────────────────────────────────
   await app.register(registerHealthPlugin);
+
+  // ── Prometheus Metrics ─────────────────────────────────────────────
+  await app.register(registerMetricsPlugin);
 
   // ── Business Modules ───────────────────────────────────────────────
   // Registration order matters: modules that provide decorators consumed
@@ -119,13 +147,39 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerProjectsModule);   // Depends on ingestion.redisCache
   await app.register(registerAnalyticsModule);
 
+  // ── Stress Test Route (public, no auth) ──────────────────────────────
+  await app.register(registerStressTestRoute);
+
+  // ── Benchmark Routes (public, no auth) ───────────────────────────────
+  await app.register(registerBenchmarkRoutes);
+
   appLogger.info('All modules registered');
+
+  // ── Global Request Timing Hook ──────────────────────────────────────
+  app.addHook('onRequest', async (request) => {
+    request.startTime = Date.now();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const duration = Date.now() - request.startTime;
+    const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
+    appLogger[logLevel](
+      {
+        reqId: request.id,
+        method: request.method,
+        url: request.url,
+        statusCode: reply.statusCode,
+        durationMs: duration,
+        ip: request.ip,
+      },
+      'Request completed',
+    );
+  });
 
   // ── Global Error Handler ───────────────────────────────────────────
   app.setErrorHandler((error: any, request, reply) => {
     const isDev = env.NODE_ENV === 'development';
 
-    // Validation errors → 400
     if (error.validation) {
       if (isDev) {
         appLogger.warn(
@@ -140,7 +194,6 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
     }
 
-    // Fastify-specific errors
     if (error.code === 'FST_ERR_VALIDATION') {
       return reply.status(400).send({
         statusCode: 400,
@@ -148,7 +201,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
     }
 
-    // All other errors
+    if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
+      return reply.status(413).send({
+        statusCode: 413,
+        message: 'Request body too large',
+      });
+    }
+
     const statusCode = error.statusCode || 500;
     if (statusCode >= 500) {
       appLogger.error(

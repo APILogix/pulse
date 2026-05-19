@@ -159,14 +159,13 @@ export class IngestionService {
   /** Central processing pipeline */
   private async processIngest(req: IngestRequest): Promise<IngestResponse> {
     const { apiKey, events } = req;
-    console.log(apiKey,events,"logging api keys and events")
 
     // 1. Auth and project resolution. The project carries rate limits,
     // environment, org ownership, and the allowed event-type policy.
     const project = await this.resolveProject(apiKey);
     if (!project) throw new Error('INVALID_API_KEY');
     if (!project.isActive) throw new Error('PROJECT_INACTIVE');
-console.log("project resolved",project)
+
     // 2. Fast per-second rate limiting protects the queue and database from
     // sudden spikes.
     const secondLimit = await this.cache.checkRateLimit(
@@ -175,7 +174,7 @@ console.log("project resolved",project)
       1
     );
     if (!secondLimit.allowed) throw new Error('RATE_LIMIT_EXCEEDED');
-console.log("rate limit pahse 1 ")
+
     // 3. Per-minute limiting smooths sustained load while still allowing short
     // bursts that pass the one-second check.
     const minuteLimit = await this.cache.checkRateLimit(
@@ -184,7 +183,7 @@ console.log("rate limit pahse 1 ")
       60
     );
     if (!minuteLimit.allowed) throw new Error('RATE_LIMIT_EXCEEDED');
-console.log("ratelimit per minute")
+
     // 4. Batch validation rejects empty work and oversized client flushes before
     // idempotency or queue writes are attempted.
     if (!events || events.length === 0) throw new Error('EMPTY_BATCH');
@@ -221,7 +220,6 @@ console.log("ratelimit per minute")
         continue;
       }
 
-      console.log("idopodency check")
       const enrichedEvent: EnrichedEvent = {
         id: eventId,
         type: event.type,
@@ -239,7 +237,6 @@ console.log("ratelimit per minute")
       enriched.push(enrichedEvent);
     }
 
-    console.log("event push")
     // 7. Push to buffer. The API returns once events are accepted into the
     // internal queueing path; database persistence happens asynchronously.
     if (enriched.length > 0) {
@@ -249,7 +246,7 @@ console.log("ratelimit per minute")
         this.cache.recordLastIngest(project.id),
       ]);
     }
-console.log("all thing done")
+
     const response: IngestResponse = {
       success: true,
       accepted: enriched.length,

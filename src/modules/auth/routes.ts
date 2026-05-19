@@ -58,7 +58,7 @@ interface RequestWithUser extends FastifyRequest {
 // ERROR HANDLER
 // ============================================
 
-function handleAuthError(error: unknown, reply: FastifyReply) {
+function handleAuthError(error: unknown, reply: FastifyReply, request?: FastifyRequest) {
   // AuthError is the domain error contract used by the service. Anything else
   // is treated as unexpected and intentionally returns a generic response.
   if (error instanceof AuthError) {
@@ -72,7 +72,8 @@ function handleAuthError(error: unknown, reply: FastifyReply) {
   }
 
   // Log unexpected errors
-  console.error('Unexpected auth error:', error);
+  const log = request?.log ?? reply.log;
+  log.error({ err: error }, 'Unexpected auth error');
   return reply.status(500).send({
     error: {
       code: 'INTERNAL_ERROR',
@@ -309,7 +310,6 @@ async function credentialRoutes(fastify: FastifyInstance) {
           clientInfo.ip,
           request.id,
         );
-        console.log("password complte")
 
         return reply.send({ message: 'Password changed successfully' });
       } catch (error) {
@@ -851,16 +851,14 @@ async function sessionRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { ip, userAgent } = getClientInfo(request);
-        console.log("refresh session hit")
+
         // Read refresh token from httpOnly cookie
         const refreshToken = (request.cookies as Record<string, string | undefined>)?.refresh_token;
         if (!refreshToken) {
-          console.log("refresh token not found")
           return reply.status(401).send({
             error: { code: 'MISSING_REFRESH_TOKEN', message: 'Refresh token cookie not found' },
           });
         }
-        console.log("refresh token found")
         const result = await service.refreshAccessToken(refreshToken, ip, userAgent);
 
         // Set new refresh token cookie (token rotation)

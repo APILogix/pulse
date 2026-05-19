@@ -41,7 +41,7 @@ import {
   slugifyProjectName,
   validateStatusTransition,
 } from "./utils.js";
-import { apiKeyCache } from "../../config/lrucashe.js";
+import { apiKeyCache, type CachedProjectConfig } from "../../config/lrucashe.js";
 import type { RedisCache } from "../../db/redis/cache.js";
 
 type RequestMeta = {
@@ -67,9 +67,8 @@ export class ProjectsService {
     limit: number;
     offset: number;
   }> {
-    console.log("listProjects called with", { orgId, userId, query });
+    this.logger.debug({ orgId, userId, query }, 'listProjects called');
     // await this.requireOrganizationAccess(orgId, userId, "member");
-    console.log("Organization access granted");
     const result = await this.repository.listProjects(orgId, query);
     const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
 
@@ -91,9 +90,7 @@ export class ProjectsService {
     // await this.requireOrganizationAccess(orgId, userId, "admin");
     const slug = await this.generateUniqueSlug(orgId, body.name);
     const defaultPrefixes = buildApiPrefixes(slug);
-    console.log("defaultPrefixes", defaultPrefixes);
-    console.log("body", body);
-    console.log(slug)
+
 
     const project = await this.repository.createProject({
       orgId,
@@ -334,7 +331,7 @@ export class ProjectsService {
     });
 
     // Build a flat ProjectConfig — this is the exact shape ingestion reads via getProjectByApiKeyHash
-    const projectConfig = {
+    const projectConfig: CachedProjectConfig = {
       id: created.projectId,
       orgId,
       name: created.name ?? "",
@@ -663,13 +660,12 @@ export class ProjectsService {
   ) {
     // Organization membership is the root authorization check for project
     // operations because projects are scoped under organizations.
-    console.log("Checking organization access", { orgId, userId, requiredRole });
+    this.logger.debug({ orgId, userId, requiredRole }, 'Checking organization access');
     const membership = await this.repository.findOrganizationMembership(
       orgId,
       userId,
     );
 
-    console.log("Found membership", membership);
     if (!membership || !membership.isActive) {
       throw new ProjectError(
         "INSUFFICIENT_PERMISSIONS",
@@ -678,7 +674,6 @@ export class ProjectsService {
       );
     }
 
-    console.log("Membership role", membership.role);
     if (!hasRequiredRole(membership.role, requiredRole)) {
       throw new ProjectError(
         "INSUFFICIENT_PERMISSIONS",
@@ -686,7 +681,6 @@ export class ProjectsService {
         403,
       );
     }
-    console.log("Organization access granted");
 
     return membership;
   }

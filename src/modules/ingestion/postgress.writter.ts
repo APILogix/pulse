@@ -59,55 +59,46 @@ export class PostgresWriter {
    * Joins project_api_keys -> projects with active checks.
    */
   async getProjectByApiKeyHash(keyHash: string): Promise<ProjectAuthResult | null> {
-    const client = await this.pool.connect();
-    try {
-      const result = await client.query(`
-        SELECT 
-          p.id as project_id,
-          p.org_id,
-          p.name as project_name,
-          p.status as project_status,
-          k.environment,
-          k.id as key_id,
-          k.is_active,
-          k.expires_at
-        FROM project_api_keys k
-        INNER JOIN projects p ON p.id = k.project_id
-        WHERE k.key_hash = $1
-          AND k.is_active = true
-          AND (k.expires_at IS NULL OR k.expires_at > NOW())
-          AND p.status = 'active'
-        LIMIT 1
-      `, [keyHash]);
+    const result = await this.pool.query(`
+      SELECT 
+        p.id as project_id,
+        p.org_id,
+        p.name as project_name,
+        p.status as project_status,
+        k.environment,
+        k.id as key_id,
+        k.is_active,
+        k.expires_at
+      FROM project_api_keys k
+      INNER JOIN projects p ON p.id = k.project_id
+      WHERE k.key_hash = $1
+        AND k.is_active = true
+        AND (k.expires_at IS NULL OR k.expires_at > NOW())
+        AND p.status = 'active'
+      LIMIT 1
+    `, [keyHash]);
 
-      if (result.rows.length === 0) return null;
+    if (result.rows.length === 0) return null;
 
-      const row = result.rows[0];
-      return {
-        projectId: row.project_id,
-        orgId: row.org_id,
-        projectName: row.project_name,
-        projectStatus: row.project_status,
-        environment: row.environment,
-        apiKeyId: row.key_id,
-        isActive: row.is_active,
-        expiresAt: row.expires_at,
-      };
-    } finally {
-      client.release();
-    }
+    const row = result.rows[0];
+    return {
+      projectId: row.project_id,
+      orgId: row.org_id,
+      projectName: row.project_name,
+      projectStatus: row.project_status,
+      environment: row.environment,
+      apiKeyId: row.key_id,
+      isActive: row.is_active,
+      expiresAt: row.expires_at,
+    };
   }
 
   /** Fire-and-forget last_used update (never block ingestion) */
   async updateApiKeyLastUsed(apiKeyId: string): Promise<void> {
-    try {
-      await this.pool.query(
-        'UPDATE project_api_keys SET last_used_at = NOW() WHERE id = $1',
-        [apiKeyId]
-      );
-    } catch {
-      // Non-critical: silently fail
-    }
+    await this.pool.query(
+      'UPDATE project_api_keys SET last_used_at = NOW() WHERE id = $1',
+      [apiKeyId],
+    ).catch(() => {});
   }
 
   /** Batch write to partitioned events table */
@@ -122,9 +113,8 @@ export class PostgresWriter {
       await client.query('BEGIN');
 
       const projectId = firstEvent.projectId;
-      console.log("Porejct id 2",projectId)
-      await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
-console.log(events,"while writting events")
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
+
       const query = `
         INSERT INTO events (
           id, project_id, type, request_id, timestamp, payload, ingested_at
@@ -153,11 +143,9 @@ console.log(events,"while writting events")
         ingestedAts,
       ]);
 
-      console.log("query complte ")
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
-      console.log(err)
       throw err;
     } finally {
       client.release();
@@ -175,9 +163,8 @@ console.log(events,"while writting events")
     try {
       await client.query('BEGIN');
       const projectId = firstEvent.projectId;
-      console.log("project id",projectId)
-      await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
-console.log("before send to event writer",events)
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
+
       await this.writeEvents(events);
 
       const query = `
@@ -210,7 +197,6 @@ console.log("before send to event writer",events)
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
-      console.log("err occured after simple event",err)
       throw err;
     } finally {
       client.release();
@@ -228,7 +214,7 @@ console.log("before send to event writer",events)
     try {
       await client.query('BEGIN');
       const projectId = firstEvent.projectId;
-      await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
 
       await this.writeEvents(events);
 
@@ -401,7 +387,7 @@ console.log("before send to event writer",events)
     // which gives operators one endpoint for full event inspection.
     const client = await this.pool.connect();
     try {
-      await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
 
       const event = await client.query(
         'SELECT * FROM events WHERE id = $1 AND project_id = $2',
@@ -443,7 +429,7 @@ console.log("before send to event writer",events)
     // payloads so the queue worker can process them through the standard path.
     const client = await this.pool.connect();
     try {
-      await client.query(`SET LOCAL app.current_project_id = '${projectId}'`);
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
 
       let query = `
         SELECT 
@@ -494,10 +480,7 @@ console.log("before send to event writer",events)
   }
 
   private mapErrorEvent(row: ErrorEventRow): ErrorEventRecord {
-    const payload =
-      typeof row.payload === 'string'
-        ? JSON.parse(row.payload) as SDKErrorEvent
-        : row.payload;
+    const payload = typeof row.payload === 'string' ? JSON.parse(row.payload) as SDKErrorEvent : row.payload;
 
     return {
       id: row.id,
@@ -519,17 +502,11 @@ console.log("before send to event writer",events)
     };
   }
 
-  private async withProjectContext<T>(
-    projectId: string,
-    callback: (client: PoolClient) => Promise<T>,
-  ): Promise<T> {
+  private async withProjectContext<T>(projectId: string, callback: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
-        "SELECT set_config('app.current_project_id', $1, true)",
-        [projectId],
-      );
+      await client.query("SELECT set_config('app.current_project_id', $1, true)", [projectId]);
       const result = await callback(client);
       await client.query('COMMIT');
       return result;

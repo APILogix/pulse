@@ -34,6 +34,7 @@ const envSchema = z.object({
   ENCRYPTION_KEY: z.string().length(32),
   CORS_ORIGINS: z.string().optional(),
   FRONTEND_URL: z.string().optional(),
+  ALLOWED_ORIGINS: z.string().default(''),
 
   // Email / SMTP
   SMTP_HOST: z.string().optional(),

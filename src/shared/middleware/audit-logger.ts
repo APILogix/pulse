@@ -1,4 +1,7 @@
 import { pool } from "../../config/database.js";
+import { logger } from "../../config/logger.js";
+
+const auditLog = logger.child({ component: 'audit-logger' });
 
 interface AuditLogEntry {
   user_id: string | null;
@@ -34,7 +37,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
       ]
     );
   } catch (error) {
-    // Log to console but don't fail the request
-    console.error('Failed to write audit log:', error);
+    // Log via pino but don't fail the request — audit writes are best-effort
+    auditLog.error({ err: error, action: entry.action }, 'Failed to write audit log');
   }
 }

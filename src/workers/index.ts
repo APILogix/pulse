@@ -14,6 +14,9 @@ import { Redis } from 'ioredis';
 import { createIngestionWorker } from './ingestion.processor.js';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import type { RedisCache } from '../db/redis/cache.js';
+import { logger } from '../config/logger.js';
+
+const workerLogger = logger.child({ component: 'worker-registry' });
 
 export interface WorkerDependencies {
   writer: PostgresWriter;
@@ -30,7 +33,8 @@ export function initializeWorkers(redis: Redis, deps: WorkerDependencies) {
   // const billingWorker = createBillingWorker(...);
 
   const gracefulShutdown = async (signal: string) => {
-    console.log(`[Workers] Received ${signal}, shutting down...`);
+    workerLogger.info({ signal }, 'Shutdown signal received');
+
     await ingestionWorker.close();
     if (deps.shutdown) {
       await deps.shutdown();

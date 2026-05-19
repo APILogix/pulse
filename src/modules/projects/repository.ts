@@ -143,7 +143,6 @@ export class ProjectsRepository {
   ): Promise<{ projects: ProjectListItem[]; total: number }> {
     // Build filters from validated query params. Column names used for sorting
     // come from a fixed map, not user-provided strings.
-    console.log("Repository: listProjects called with", { orgId, query });
     const db = client ?? this.db;
     const params: Array<string | number> = [orgId];
     const whereClauses = ["p.org_id = $1"];

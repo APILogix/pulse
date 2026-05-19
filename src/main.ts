@@ -7,6 +7,33 @@ import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
 
 const bootLogger = logger.child({ component: 'bootstrap' });
 
+// ── Memory Leak Prevention ─────────────────────────────────────────────
+process.setMaxListeners(20);
+
+const HEAP_CHECK_INTERVAL_MS = 60000;
+const HEAP_GROWTH_THRESHOLD = 0.15; // 15% growth triggers warning
+
+let lastHeapUsed = process.memoryUsage().heapUsed;
+
+setInterval(() => {
+  const current = process.memoryUsage();
+  const growth = (current.heapUsed - lastHeapUsed) / lastHeapUsed;
+
+  if (growth > HEAP_GROWTH_THRESHOLD) {
+    bootLogger.warn(
+      {
+        heapUsedMB: Math.round(current.heapUsed / 1024 / 1024),
+        heapTotalMB: Math.round(current.heapTotal / 1024 / 1024),
+        rssMB: Math.round(current.rss / 1024 / 1024),
+        growthPercent: Math.round(growth * 100),
+      },
+      'Significant heap growth detected',
+    );
+  }
+
+  lastHeapUsed = current.heapUsed;
+}, HEAP_CHECK_INTERVAL_MS).unref();
+
 /**
  * Application bootstrap sequence.
  *
@@ -39,20 +66,28 @@ async function bootstrap() {
     const app = await buildApp();
 
     // ── Phase 3: Graceful shutdown ────────────────────────────────────
+    const SHUTDOWN_TIMEOUT_MS = 15000;
+
     const shutdown = async (signal: string) => {
       bootLogger.info({ signal }, 'Shutdown signal received — draining connections');
 
-      // Stop accepting new connections
-      app.server.closeIdleConnections();
+      const forceExitTimer = setTimeout(() => {
+        bootLogger.fatal('Shutdown timeout exceeded — forcing exit');
+        process.exit(1);
+      }, SHUTDOWN_TIMEOUT_MS);
 
-      // Close Fastify (triggers onClose hooks in registered modules)
+      forceExitTimer.unref();
+
+      app.server.closeIdleConnections();
+      app.server.closeAllConnections();
+
       await app.close();
 
-      // Close datastores in reverse order of dependency
       await closeRedis();
       await logDB.close();
       await closeDatabase();
 
+      clearTimeout(forceExitTimer);
       bootLogger.info('Shutdown complete');
       process.exit(0);
     };
@@ -60,9 +95,9 @@ async function bootstrap() {
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
 
-    // Handle uncaught errors that slip past Fastify
     process.on('unhandledRejection', (reason) => {
-      bootLogger.fatal({ reason }, 'Unhandled promise rejection');
+      bootLogger.fatal({ reason }, 'Unhandled promise rejection — shutting down');
+      process.exit(1);
     });
 
     process.on('uncaughtException', (err) => {
@@ -86,6 +121,12 @@ async function bootstrap() {
       },
       'Server started successfully',
     );
+
+    // Signal PM2 that this worker is ready to accept connections.
+    // In non-PM2 environments process.send is undefined — guard required.
+    if (typeof process.send === 'function') {
+      process.send('ready');
+    }
   } catch (error) {
     bootLogger.fatal(error, 'Failed to start server');
     process.exit(1);

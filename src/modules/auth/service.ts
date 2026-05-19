@@ -353,7 +353,7 @@ async function revokeUserSessions(
   // Revocation is persisted on every active session. Access-token blacklist
   // support is available separately for immediate jti/session invalidation.
   const sessions = await repository.listActiveSessionsByUser(userId);
-  console.log("sessions", sessions);
+  logger.debug({ userId, sessionCount: sessions.length }, 'Revoking user sessions');
   for (const session of sessions) {
     await repository.revokeSession(session.id, reason);
     // await blacklistAccessToken(session.id);
@@ -860,7 +860,7 @@ export async function loginWithEmailPassword(
     deviceType: clientDeviceType,
     mfaVerified: !user.mfa_enabled,
   });
-  console.log(session, "session ");
+
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
 
@@ -1288,7 +1288,7 @@ export async function changePassword(
     throw new AuthError("User not found", AuthErrorCodes.USER_NOT_FOUND, 404);
   }
 
-  console.log("user fetched", user);
+
   if (user.mfa_enabled && !mfaVerified) {
     throw new AuthError(
       "MFA verification required",
@@ -1317,7 +1317,6 @@ export async function changePassword(
     );
   }
 
-  console.log("password check pass ");
   await ensurePasswordNotReused(user, input.new_password);
 
   const passwordHash = await hashPassword(input.new_password);
@@ -1325,7 +1324,7 @@ export async function changePassword(
     user.password_history,
     user.password_hash,
   );
-  console.log("password history pass");
+
 
   const updated = await repository.updateUserPassword(
     user.id,
@@ -1333,7 +1332,6 @@ export async function changePassword(
     passwordHistory,
   );
 
-  console.log("before password update", updated);
   if (!updated) {
     throw new AuthError(
       "Password update failed",
@@ -1342,10 +1340,7 @@ export async function changePassword(
     );
   }
 
-  console.log("after password update");
-
   await revokeUserSessions(user.id, "Password changed");
-  console.log("session revoked succeesfully ");
   // await logAudit({
   //   user_id: user.id,
   //   org_id: null,
@@ -2100,7 +2095,7 @@ export async function refreshAccessToken(
   // Refresh uses token rotation: verify JWT claims, match the stored token hash,
   // enforce absolute expiry, then replace the refresh hash and issue new tokens.
   // 1. Verify the refresh token JWT signature with JWT_REFRESH_SECRET
-  console.log("refresh token found phase 3");
+
   let decoded: { sub: string; jti: string; type: string };
   try {
     const jwt = (await import("jsonwebtoken")).default;

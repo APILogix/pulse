@@ -107,11 +107,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
     FastifyInstance["postgresWriter"]
   >(fastify, "postgresWriter");
 
-  console.log({
-  ingestionQueue: fastify.ingestionQueue,
-  redisCache: fastify.redisCache,
-  postgresWriter: fastify.postgresWriter,
-});
+
   const service = new IngestionService(
     ingestionQueue,
     redisCache,

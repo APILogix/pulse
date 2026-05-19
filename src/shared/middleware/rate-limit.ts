@@ -1,40 +1,55 @@
-import type { FastifyRequest, FastifyReply } from 'fastify';
-import { redis } from '../../config/redis.js';
-    
-interface RateLimitOptions {
+/**
+ * Per-route rate limiting factory.
+ *
+ * Creates route-specific rate limit configurations using @fastify/rate-limit
+ * that override the global rate limit with tighter or looser limits.
+ */
+import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
+
+export interface RouteRateLimitOptions {
   max: number;
-  window: number; // seconds
-  keyPrefix?: string;
+  window: string | number;
+  keyGenerator?: (req: FastifyRequest) => string;
+  ban?: number;
 }
 
-export function rateLimit(options: RateLimitOptions) {
-  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
-    const key = `${options.keyPrefix || 'rl'}:${
-      request.user?.id || request.ip
-    }:${request.routeOptions.url}`;
+export function rateLimit(options: RouteRateLimitOptions): preHandlerHookHandler {
+  return async function rateLimitHandler(request, reply) {
+    const key = options.keyGenerator
+      ? options.keyGenerator(request)
+      : request.ip || 'unknown';
 
-    const windowMs = options.window * 1000;
+    const rateLimitKey = `route_rl:${key}:${request.routerPath}`;
 
-    const current = await redis.incr(key);
-
-    if (current === 1) {
-      await redis.pexpire(key, windowMs);
+    const redis = (request.server as any).redis;
+    if (redis) {
+      try {
+        const current = await redis.incr(rateLimitKey);
+        if (current === 1) {
+          const seconds = typeof options.window === 'string'
+            ? parseInt(options.window, 10)
+            : Math.floor(options.window / 1000);
+          await redis.expire(rateLimitKey, seconds);
+        }
+        if (current > options.max) {
+          return reply.status(429).send({
+            statusCode: 429,
+            error: 'Too Many Requests',
+            message: `Rate limit exceeded. Max ${options.max} requests per ${options.window}`,
+          });
+        }
+      } catch (err) {
+        request.log.warn({ err }, 'Rate limit check failed — allowing request');
+      }
     }
+  };
+}
 
-    const ttl = await redis.pttl(key);
-
-    reply.header('X-RateLimit-Limit', options.max);
-    reply.header('X-RateLimit-Remaining', Math.max(0, options.max - current));
-    reply.header('X-RateLimit-Reset', new Date(Date.now() + ttl).toISOString());
-
-    if (current > options.max) {
-      return reply.status(429).send({
-        error: {
-          code: 'RATE_LIMITED',
-          message: 'Too many requests, please try again later',
-          retry_after: Math.ceil(ttl / 1000),
-        },
-      });
-    }
+export function createRateLimitConfig(options: RouteRateLimitOptions) {
+  return {
+    max: options.max,
+    timeWindow: options.window,
+    keyGenerator: options.keyGenerator || ((req: FastifyRequest) => req.ip || 'unknown'),
+    skipOnError: false,
   };
 }

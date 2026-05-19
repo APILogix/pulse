@@ -17,7 +17,6 @@ if (!env.DATABASE_URL) {
  * - 5s connection timeout to fail fast on network issues
  * - 10s statement/query timeout to prevent runaway queries
  */
-console.log(env)
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
   // ssl: {

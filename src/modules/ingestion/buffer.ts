@@ -13,6 +13,9 @@
  */
 import { Queue, Job } from 'bullmq';
 import type { EnrichedEvent } from './types.js';
+import { logger } from '../../config/logger.js';
+
+const bufferLogger = logger.child({ component: 'ingestion-buffer' });
 
 export interface BufferMetrics {
   pending: number;
@@ -83,7 +86,7 @@ export class IngestionBuffer {
       // If buffer grows too large, drop oldest (backpressure)
       if (this.buffer.length > this.maxSize * 10) {
         const dropped = this.buffer.splice(0, this.buffer.length - this.maxSize * 10);
-        console.error(`[Buffer] Dropped ${dropped.length} events due to backpressure`);
+        bufferLogger.error({ droppedCount: dropped.length }, 'Dropped events due to backpressure');
       }
       
       throw err;
@@ -126,7 +129,7 @@ export class IngestionBuffer {
         break;
       } catch (err) {
         if (i === this.maxRetries - 1) {
-          console.error(`[Buffer] Failed to flush after ${this.maxRetries} attempts. ${this.buffer.length} events lost.`);
+          bufferLogger.error({ lostEvents: this.buffer.length }, 'Failed to flush buffer after max retries');
           throw err;
         }
         await new Promise(r => setTimeout(r, 100 * Math.pow(2, i)));
