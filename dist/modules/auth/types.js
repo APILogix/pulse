@@ -1,6 +1,13 @@
 /**
- * Domain types for Auth Module
- * Pure types - no class instantiation overhead
+ * Domain types for Auth Module.
+ *
+ * Single source of truth for:
+ *   - User and MFADevice row shapes (matched to canonical migration 008).
+ *   - Public API request/response Zod schemas.
+ *   - Strongly-typed error class.
+ *
+ * No class instantiation overhead; everything is a plain type or a Zod
+ * schema that the routes layer parses on the wire.
  */
 import { z } from 'zod';
 // ============================================
@@ -8,64 +15,76 @@ import { z } from 'zod';
 // ============================================
 export const UserStatus = z.enum(['active', 'inactive', 'suspended', 'deleted']);
 export const MFAType = z.enum(['totp', 'sms', 'email', 'hardware_key', 'backup_codes']);
-export const OrgRole = z.enum(['owner', 'admin', 'member', 'viewer', 'billing']);
 // ============================================
 // SESSION TYPES
 // ============================================
 export const SessionStatus = z.enum(['active', 'expired', 'revoked', 'terminated_by_admin']);
 // ============================================
-// API REQUEST/RESPONSE TYPES (Zod Schemas)
+// API REQUEST/RESPONSE SCHEMAS
 // ============================================
 export const StrongPasswordSchema = z
     .string()
-    .min(8, "Password must be at least 8 characters")
-    .max(100)
-    .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-    .regex(/[a-z]/, "Must contain at least one lowercase letter")
-    .regex(/[0-9]/, "Must contain at least one number")
-    .regex(/[^A-Za-z0-9]/, "Must contain at least one special character");
-// User Creation 
+    .min(8, 'Password must be at least 8 characters')
+    .max(128)
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Must contain at least one number')
+    .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character');
+// Registration. Terms/privacy acceptance is required (GDPR Art. 7
+// demonstrability). Avatar URL is optional and may be omitted; PATCH allows
+// explicit null to clear (see UpdateUserSchema below).
 export const CreateUserSchema = z.object({
-    email: z.string().email(),
+    email: z.string().email().max(255),
     full_name: z.string().min(1).max(255),
     password: StrongPasswordSchema,
-    avatar_url: z.string().url().optional(),
+    avatar_url: z.string().url().max(2048).optional(),
+    accept_terms: z.literal(true, {
+        message: 'You must accept the terms of service',
+    }),
+    accept_privacy: z.literal(true, {
+        message: 'You must accept the privacy policy',
+    }),
+    marketing_consent: z.boolean().optional().default(false),
+    terms_version: z.string().max(32).optional(),
+    privacy_version: z.string().max(32).optional(),
 });
-// Login
+// Login.
 export const LoginSchema = z.object({
     email: z.string().email(),
-    password: z.string().min(1),
+    password: z.string().min(1).max(256),
     device_name: z.string().min(1).max(255).optional(),
     remember_me: z.boolean().optional(),
 });
-// Login MFA verification
+// Login MFA verification — accepts 6-digit TOTP OR 10-hex backup code.
 export const LoginMFAVerifySchema = z.object({
-    challenge_id: z.string().min(1),
-    code: z.string().min(6).max(10),
+    challenge_id: z.string().min(1).max(64),
+    code: z
+        .string()
+        .regex(/^(\d{6}|[a-fA-F0-9]{10})$/, 'Code must be 6 digits or 10 hex chars'),
 });
-// User Profile Update
+// Profile update — null allowed for clearing avatar.
 export const UpdateUserSchema = z.object({
     full_name: z.string().min(1).max(255).optional(),
-    avatar_url: z.string().url().optional(),
+    avatar_url: z.union([z.string().url().max(2048), z.null()]).optional(),
     timezone: z.string().max(50).optional(),
     locale: z.string().max(10).optional(),
     preferred_mfa_method: MFAType.optional(),
 });
-// Soft Delete (requires password confirmation)
+// Self-delete (requires password confirmation if user has one).
 export const DeleteUserSchema = z.object({
-    password: z.string().min(1), // For non-SSO users
-    reason: z.string().optional(),
+    password: z.string().min(1).max(256).optional(),
+    reason: z.string().max(500).optional(),
 });
-// Password management
+// Password management.
 export const ChangePasswordSchema = z.object({
-    current_password: z.string().min(1),
+    current_password: z.string().min(1).max(256),
     new_password: StrongPasswordSchema,
 });
 export const ForgotPasswordSchema = z.object({
     email: z.string().email(),
 });
 export const ResetPasswordSchema = z.object({
-    token: z.string().min(1),
+    token: z.string().min(32).max(256),
     new_password: StrongPasswordSchema,
 });
 export const ResendVerificationSchema = z.object({
@@ -74,53 +93,62 @@ export const ResendVerificationSchema = z.object({
 export const VerifyEmailQuerySchema = z.object({
     token: z.string().min(32).max(256),
 });
-// MFA Setup
+// MFA setup.
 export const MFASetupSchema = z.object({
-    type: z.enum(['totp', 'sms', 'email']),
+    type: z.enum(['totp']),
     device_name: z.string().min(1).max(255),
-    phone_number: z.string().optional(), // For SMS
-    email: z.string().email().optional(), // For email MFA
 });
-// MFA Verify Setup
+// MFA verify-setup.
 export const MFAVerifySetupSchema = z.object({
     device_id: z.string().uuid(),
-    code: z.string().length(6).regex(/^\d+$/),
+    code: z.string().length(6).regex(/^\d{6}$/),
 });
-// MFA Challenge Response
+// Step-up MFA challenge response.
 export const MFAVerifySchema = z.object({
-    challenge_id: z.string(),
-    code: z.string().length(6).regex(/^\d+$/),
+    challenge_id: z.string().min(1).max(64),
+    code: z.string().length(6).regex(/^\d{6}$/),
 });
-// Backup Codes
-export const BackupCodeSchema = z.object({
-    code: z.string().length(10).regex(/^[a-z0-9]+$/),
+// Backup-code login during a server-issued login challenge. Hex codes are
+// case-insensitive on the wire; the service normalizes to lowercase before
+// hashing.
+export const BackupCodeLoginSchema = z.object({
+    challenge_id: z.string().min(1).max(64),
+    code: z.string().length(10).regex(/^[a-fA-F0-9]{10}$/),
 });
-export const BackupCodeVerificationSchema = z.object({
-    user_id: z.string().uuid(),
-    code: z.string().length(10).regex(/^[a-z0-9]+$/),
+// MFA disable now uses a two-step email-confirmation flow.
+//   POST /auth/mfa/disable/request  → emails the user a one-time link.
+//   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
+// The TOTP code is still required at request-time so a stolen access token
+// alone cannot initiate the disable.
+export const MFADisableRequestSchema = z.object({
+    mfa_code: z.string().length(6).regex(/^\d{6}$/),
 });
+export const MFADisableConfirmSchema = z.object({
+    token: z.string().min(32).max(256),
+});
+// MFA toggle: enabling still requires a verified device + TOTP. Disabling
+// goes through MFADisableRequest/MFADisableConfirm separately, so this
+// schema only handles enable.
 export const MFAToggleSchema = z.object({
-    enabled: z.boolean(),
-    mfa_code: z.string().length(6).regex(/^\d+$/).optional(),
+    enabled: z.literal(true),
+    mfa_code: z.string().length(6).regex(/^\d{6}$/),
 });
-// ============================================
-// WEBHOOK TYPES
-// ============================================
-export const EmptyBodySchema = z.undefined();
-export const ClerkWebhookSchema = z.object({
-    type: z.enum(['user.created', 'user.updated', 'user.deleted', 'session.created', 'session.ended']),
-    data: z.object({
-        id: z.string(), // Clerk user/session ID
-        email_addresses: z.array(z.object({
-            email_address: z.string().email(),
-            verification: z.object({ status: z.string() }).optional(),
-        })).optional(),
-        first_name: z.string().optional(),
-        last_name: z.string().optional(),
-        image_url: z.string().optional(),
-        deleted: z.boolean().optional(),
-    }),
-    timestamp: z.number(),
+// Removing an MFA device. If it's the LAST verified device, current_password
+// is required (we never accept a TOTP from the device being removed).
+export const MFADeviceRemoveSchema = z.object({
+    current_password: z.string().min(1).max(256).optional(),
+});
+export const SuspendUserSchema = z.object({
+    reason: z.string().min(10).max(500),
+});
+export const ListUsersQuerySchema = z.object({
+    status: UserStatus.optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    offset: z.coerce.number().int().min(0).default(0),
+    search: z.string().min(1).max(255).optional(),
+});
+export const RegenerateBackupCodesSchema = z.object({
+    mfa_code: z.string().length(6).regex(/^\d{6}$/),
 });
 // ============================================
 // ERROR TYPES
@@ -148,19 +176,25 @@ export const AuthErrorCodes = {
     PASSWORD_RESET_EXPIRED: 'PASSWORD_RESET_EXPIRED',
     USER_SUSPENDED: 'USER_SUSPENDED',
     USER_DELETED: 'USER_DELETED',
+    ACCOUNT_LOCKED: 'ACCOUNT_LOCKED',
     MFA_REQUIRED: 'MFA_REQUIRED',
     MFA_INVALID: 'MFA_INVALID',
     MFA_ALREADY_ENABLED: 'MFA_ALREADY_ENABLED',
     MFA_NOT_ENABLED: 'MFA_NOT_ENABLED',
     MFA_CHALLENGE_EXPIRED: 'MFA_CHALLENGE_EXPIRED',
+    MFA_DEVICE_NOT_FOUND: 'MFA_DEVICE_NOT_FOUND',
+    MFA_DISABLE_INVALID: 'MFA_DISABLE_INVALID',
+    STEP_UP_REQUIRED: 'STEP_UP_REQUIRED',
     SESSION_INVALID: 'SESSION_INVALID',
     SESSION_EXPIRED: 'SESSION_EXPIRED',
+    REFRESH_TOKEN_REUSED: 'REFRESH_TOKEN_REUSED',
     PASSWORD_REQUIRED: 'PASSWORD_REQUIRED',
     PASSWORD_INCORRECT: 'PASSWORD_INCORRECT',
     RATE_LIMITED: 'RATE_LIMITED',
-    WEBHOOK_INVALID: 'WEBHOOK_INVALID',
     INSUFFICIENT_PERMISSIONS: 'INSUFFICIENT_PERMISSIONS',
     EMAIL_VERIFICATION_INVALID: 'EMAIL_VERIFICATION_INVALID',
     EMAIL_DELIVERY_FAILED: 'EMAIL_DELIVERY_FAILED',
+    VALIDATION_ERROR: 'VALIDATION_ERROR',
+    INVALID_OPERATION: 'INVALID_OPERATION',
 };
 //# sourceMappingURL=types.js.map

@@ -1,4 +1,4 @@
-interface AuditLogEntry {
+export interface AuditLogEntry {
     user_id: string | null;
     org_id: string | null;
     action: string;
@@ -10,6 +10,10 @@ interface AuditLogEntry {
     metadata?: Record<string, unknown>;
     impersonated_by?: string | null;
 }
-export declare function logAudit(entry: AuditLogEntry): Promise<void>;
-export {};
+/**
+ * Schedule an audit-log write without blocking the caller. Always emits a
+ * structured log line with the audit payload so the audit trail is preserved
+ * even when the audit_logs table write fails.
+ */
+export declare function logAudit(entry: AuditLogEntry): void;
 //# sourceMappingURL=audit-logger.d.ts.map

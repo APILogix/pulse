@@ -1,58 +1,107 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+/**
+ * Cryptographic primitives used across the auth module.
+ *
+ * Encryption (AES-256-GCM with per-record scrypt salt):
+ *   - Each ciphertext bundles a fresh random salt so an attacker who learns
+ *     the master key cannot precompute a rainbow table for derived keys.
+ *   - GCM authenticates the ciphertext to detect tampering.
+ *
+ * Format: salt:iv:authTag:ciphertext (all hex-encoded).
+ *
+ * Password hashing (bcrypt cost 12):
+ *   - bcrypt cost 12 (~150-300ms per hash) follows OWASP 2024 guidance.
+ *     Lowering it to "speed up logins" is a false economy because login
+ *     latency is dominated by network round-trips, not bcrypt; the same
+ *     change makes offline cracking 16x faster after a DB compromise.
+ */
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync, } from 'crypto';
+import bcrypt from 'bcrypt';
 const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
+const IV_LENGTH = 12; // GCM standard; 96-bit IV
 const AUTH_TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
-/**
- * Derive key from secret using scrypt
- */
-function deriveKey(secret) {
-    return scryptSync(secret, 'salt', KEY_LENGTH);
+const SALT_LENGTH = 16;
+const BCRYPT_COST = 12;
+function deriveKey(secret, salt) {
+    // scrypt parameters: N=2^14 keeps key derivation under ~50ms per call which
+    // is acceptable for MFA secret encryption that runs once per device write.
+    return scryptSync(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 });
 }
 /**
- * Encrypt text using AES-256-GCM
+ * Encrypt a UTF-8 string using AES-256-GCM with a per-record random scrypt
+ * salt and IV.
  */
-export function encrypt(text, secret) {
+export function encrypt(plaintext, secret) {
+    const salt = randomBytes(SALT_LENGTH);
     const iv = randomBytes(IV_LENGTH);
-    const key = deriveKey(secret);
+    const key = deriveKey(secret, salt);
     const cipher = createCipheriv(ALGORITHM, key, iv);
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
+    const ciphertext = Buffer.concat([
+        cipher.update(plaintext, 'utf8'),
+        cipher.final(),
+    ]);
     const authTag = cipher.getAuthTag();
-    // Format: iv:authTag:encrypted
-    return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
+    return [
+        salt.toString('hex'),
+        iv.toString('hex'),
+        authTag.toString('hex'),
+        ciphertext.toString('hex'),
+    ].join(':');
 }
 /**
- * Decrypt text using AES-256-GCM
+ * Decrypt a string produced by `encrypt`. Throws on tamper detection or
+ * format mismatch. Callers should treat any thrown error as data corruption
+ * or a key-mismatch and refuse to proceed.
+ *
+ * Backward compatibility: also accepts the legacy 3-segment format
+ * (iv:authTag:ciphertext) using a hardcoded salt, so MFA secrets encrypted
+ * with the older code keep working until they are rotated.
  */
-export function decrypt(encryptedData, secret) {
-    const parts = encryptedData.split(':');
-    if (parts.length !== 3) {
-        throw new Error('Invalid encrypted format');
+export function decrypt(payload, secret) {
+    const parts = payload.split(':');
+    if (parts.length === 4) {
+        const [saltHex, ivHex, authTagHex, ciphertextHex] = parts;
+        const salt = Buffer.from(saltHex, 'hex');
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        const ciphertext = Buffer.from(ciphertextHex, 'hex');
+        const key = deriveKey(secret, salt);
+        const decipher = createDecipheriv(ALGORITHM, key, iv);
+        decipher.setAuthTag(authTag);
+        const plaintext = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+        ]);
+        return plaintext.toString('utf8');
     }
-    // Explicit destructuring AFTER validation
-    const ivHex = parts[0];
-    const authTagHex = parts[1];
-    const encrypted = parts[2];
-    const iv = Buffer.from(ivHex, 'hex');
-    const authTag = Buffer.from(authTagHex, 'hex');
-    const key = deriveKey(secret);
-    const decipher = createDecipheriv(ALGORITHM, key, iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
-    return decrypted;
+    if (parts.length === 3) {
+        // Legacy format with hardcoded scrypt salt 'salt' and 16-byte IV.
+        const [ivHex, authTagHex, ciphertextHex] = parts;
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        const ciphertext = Buffer.from(ciphertextHex, 'hex');
+        const legacyKey = scryptSync(secret, 'salt', KEY_LENGTH);
+        const decipher = createDecipheriv(ALGORITHM, legacyKey, iv);
+        decipher.setAuthTag(authTag);
+        const plaintext = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+        ]);
+        return plaintext.toString('utf8');
+    }
+    throw new Error('Invalid encrypted payload format');
 }
 /**
- * Hash password using bcrypt-like approach (use bcrypt library in production)
+ * Hash a user password using bcrypt with the production cost factor.
  */
 export async function hashPassword(password) {
-    const { hash } = await import('bcrypt');
-    // Reduced from 10 to 8 for speed (adjust based on your hardware)
-    return hash(password, 8); // ~50-100ms on modern hardware
+    return bcrypt.hash(password, BCRYPT_COST);
 }
+/**
+ * Verify a candidate password against a stored bcrypt hash. Constant-time
+ * within bcrypt's own implementation.
+ */
 export async function verifyPassword(password, hash) {
-    const { compare } = await import('bcrypt');
-    return compare(password, hash);
+    return bcrypt.compare(password, hash);
 }
 //# sourceMappingURL=encryption.js.map

@@ -1,21 +1,35 @@
 /**
- * Per-route rate limiting factory.
+ * Per-route Redis-backed rate limiter.
  *
- * Creates route-specific rate limit configurations using @fastify/rate-limit
- * that override the global rate limit with tighter or looser limits.
+ * Returns a Fastify preHandler that increments a Redis counter keyed by
+ * (caller-derived key) + (route URL). Counter resets after `window` seconds.
+ *
+ * Design notes:
+ *   - Falls back to allowing the request when Redis is unavailable so a
+ *     transient cache outage does not become a hard outage. This is logged
+ *     so operators can detect degraded protection.
+ *   - The keyGenerator defaults to request.ip; callers can pass a custom
+ *     generator for per-user or per-email limits.
+ *   - Always sends a Retry-After header on 429 responses.
  */
 import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
 export interface RouteRateLimitOptions {
+    /** Maximum number of requests allowed per window. */
     max: number;
-    window: string | number;
+    /** Window size in seconds. */
+    window: number;
+    /** Optional key derivation; defaults to req.ip. */
     keyGenerator?: (req: FastifyRequest) => string;
-    ban?: number;
+    /** Optional fixed key segment (e.g. "login") to scope counters. */
+    scope?: string;
 }
 export declare function rateLimit(options: RouteRateLimitOptions): preHandlerHookHandler;
-export declare function createRateLimitConfig(options: RouteRateLimitOptions): {
-    max: number;
-    timeWindow: string | number;
-    keyGenerator: (req: FastifyRequest) => string;
-    skipOnError: boolean;
-};
+/**
+ * Build a key generator for `rateLimit` that combines the request IP with a
+ * caller-supplied stable identity key (e.g. an email hash). This pairs the
+ * counters so an attacker cannot exhaust limits with a single IP across many
+ * email targets, while a legitimate user from one IP stays within their own
+ * counter.
+ */
+export declare function ipPlusIdentityKey(identity: (req: FastifyRequest) => string): (req: FastifyRequest) => string;
 //# sourceMappingURL=rate-limit.d.ts.map

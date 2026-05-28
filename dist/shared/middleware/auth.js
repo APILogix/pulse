@@ -1,128 +1,144 @@
 import jwt from 'jsonwebtoken';
-import { env } from '../../config/env.js';
-import { redis } from '../../config/redis.js';
+import { getUserRevokeCutoff, hasFreshStepUp, isAccessTokenBlacklisted, } from '../../modules/auth/cache.js';
 import { findSessionById, findUserById } from '../../modules/auth/repository.js';
+import { AuthErrorCodes } from '../../modules/auth/types.js';
+import { verifyAccessToken } from '../../modules/auth/utils.js';
+function unauthorized(reply, code, message, status = 401) {
+    return reply.status(status).send({
+        error: { code, message },
+    });
+}
 export async function authenticate(request, reply) {
-    const log = request.log; // Fastify logger (pino)
+    const log = request.log;
+    // 1. Authorization header
+    const authHeader = request.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        log.warn({ reqId: request.id }, 'Missing or malformed Authorization header');
+        return void unauthorized(reply, 'UNAUTHORIZED', 'Missing access token');
+    }
+    const accessToken = authHeader.substring(7).trim();
+    if (!accessToken) {
+        return void unauthorized(reply, 'UNAUTHORIZED', 'Missing access token');
+    }
+    // 2. JWT verification
+    let decoded;
     try {
-        // =========================
-        // 1. GET ACCESS TOKEN
-        // =========================
-        const authHeader = request.headers.authorization;
-        if (!authHeader?.startsWith('Bearer ')) {
-            log.warn({ reqId: request.id }, 'Missing or malformed Authorization header');
-            return reply.status(401).send({
-                error: { code: 'UNAUTHORIZED', message: 'Missing access token' },
-            });
+        decoded = verifyAccessToken(accessToken);
+    }
+    catch (err) {
+        const isExpired = err instanceof jwt.TokenExpiredError;
+        log.warn({ reqId: request.id, err: isExpired ? 'expired' : 'invalid' }, isExpired ? 'Access token expired' : 'Invalid access token');
+        return void unauthorized(reply, 'INVALID_TOKEN', isExpired ? 'Access token expired' : 'Invalid access token');
+    }
+    if (decoded.type !== 'access') {
+        log.warn({ reqId: request.id, type: decoded.type }, 'Invalid token type');
+        return void unauthorized(reply, 'INVALID_TOKEN_TYPE', 'Expected access token');
+    }
+    try {
+        // 3. Token-level revocation (in-process LRU)
+        if (isAccessTokenBlacklisted(decoded.jti)) {
+            log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Token revoked');
+            return void unauthorized(reply, 'SESSION_INVALID', 'Session revoked');
         }
-        const accessToken = authHeader.substring(7);
-        // =========================
-        // 2. VERIFY ACCESS TOKEN
-        // =========================
-        let decoded;
-        try {
-            decoded = jwt.verify(accessToken, env.JWT_SECRET, {
-                algorithms: ['HS256'],
-            });
-            log.debug({ reqId: request.id, userId: decoded.sub, sessionId: decoded.jti }, 'Access token verified');
+        // 4. User-wide revocation. The cutoff is epoch millis; the JWT's `iat`
+        //    is in seconds. Tokens issued at-or-before the cutoff are dead.
+        const cutoff = getUserRevokeCutoff(decoded.sub);
+        if (cutoff !== null && decoded.iat * 1000 <= cutoff) {
+            log.warn({ reqId: request.id, userId: decoded.sub, cutoff }, 'User-wide revocation matched');
+            return void unauthorized(reply, 'SESSION_INVALID', 'Credentials no longer valid');
         }
-        catch (err) {
-            const isExpired = err instanceof jwt.TokenExpiredError;
-            log.warn({ reqId: request.id, error: err }, isExpired ? 'Access token expired' : 'Invalid access token');
-            return reply.status(401).send({
-                error: {
-                    code: 'INVALID_TOKEN',
-                    message: isExpired ? 'Access token expired' : 'Invalid access token',
-                },
-            });
-        }
-        if (decoded.type !== 'access') {
-            log.warn({ reqId: request.id, type: decoded.type }, 'Invalid token type');
-            return reply.status(401).send({
-                error: { code: 'INVALID_TOKEN_TYPE', message: 'Expected access token' },
-            });
-        }
-        // =========================
-        // 3. VALIDATE SESSION
-        // =========================
+        // 5-7. Database lookups (only after the in-process fast paths)
         const session = await findSessionById(decoded.jti);
         if (!session) {
             log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session not found');
-            return reply.status(401).send({
-                error: { code: 'SESSION_INVALID', message: 'Session not found' },
-            });
+            return void unauthorized(reply, 'SESSION_INVALID', 'Session not found');
         }
         if (session.status !== 'active') {
             log.warn({ reqId: request.id, sessionId: decoded.jti, status: session.status }, 'Session inactive');
-            return reply.status(401).send({
-                error: { code: 'SESSION_INVALID', message: 'Session inactive' },
-            });
+            return void unauthorized(reply, 'SESSION_INVALID', 'Session inactive');
         }
         if (new Date(session.expires_at) < new Date()) {
             log.warn({ reqId: request.id, sessionId: decoded.jti }, 'Session expired');
-            return reply.status(401).send({
-                error: { code: 'SESSION_EXPIRED', message: 'Session expired' },
-            });
+            return void unauthorized(reply, 'SESSION_EXPIRED', 'Session expired');
         }
-        // 🔥 IMPORTANT CHECK (you were missing earlier)
         if (session.user_id !== decoded.sub) {
             log.error({
                 reqId: request.id,
                 tokenUser: decoded.sub,
                 sessionUser: session.user_id,
             }, 'Session-user mismatch');
-            return reply.status(401).send({
-                error: { code: 'SESSION_MISMATCH', message: 'Invalid session mapping' },
-            });
+            return void unauthorized(reply, 'SESSION_MISMATCH', 'Invalid session mapping');
         }
-        // =========================
-        // 4. FETCH USER
-        // =========================
         const user = await findUserById(decoded.sub);
         if (!user || user.deleted_at) {
             log.warn({ reqId: request.id, userId: decoded.sub }, 'User not found or deleted');
-            return reply.status(401).send({
-                error: { code: 'USER_NOT_FOUND', message: 'User not found' },
-            });
+            return void unauthorized(reply, AuthErrorCodes.USER_NOT_FOUND, 'User not found');
         }
         if (user.status === 'suspended') {
             log.warn({ reqId: request.id, userId: user.id }, 'Suspended account access attempt');
-            return reply.status(403).send({
-                error: { code: 'ACCOUNT_SUSPENDED', message: 'Account suspended' },
-            });
+            return void unauthorized(reply, AuthErrorCodes.USER_SUSPENDED, 'Account suspended', 403);
         }
-        // =========================
-        // 5. ATTACH USER
-        // =========================
         request.user = {
             id: user.id,
             email: user.email,
-            isAdmin: Boolean(user.is_admin),
+            isAdmin: user.is_admin === true,
             sessionId: decoded.jti,
-            mfaVerified: decoded.mfa_verified ?? false,
+            mfaVerified: decoded.mfa_verified === true,
+            stepUpFresh: hasFreshStepUp(decoded.jti),
         };
-        log.info({ reqId: request.id, userId: user.id }, 'Authentication successful');
     }
     catch (error) {
-        request.log.error({ reqId: request.id, error }, 'Authentication failed unexpectedly');
-        return reply.status(401).send({
-            error: { code: 'UNAUTHORIZED', message: 'Authentication failed' },
+        log.error({ reqId: request.id, err: error }, 'Authentication failed unexpectedly');
+        return void unauthorized(reply, 'UNAUTHORIZED', 'Authentication failed');
+    }
+}
+/**
+ * Hard-checks the platform-admin flag derived from `users.is_admin`. This is
+ * a global flag and does NOT imply org-level admin rights. Org-level admin
+ * is enforced inside the organization module.
+ */
+export async function requireAdmin(request, reply) {
+    if (!request.user?.isAdmin) {
+        return void reply.status(403).send({
+            error: {
+                code: AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+                message: 'Admin access required',
+            },
         });
     }
 }
-export async function requireAdmin(request, reply) {
-    if (!request.user.isAdmin) {
-        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: 'Admin access required' } });
-    }
-}
+/**
+ * Reject requests where the access token's `mfa_verified` claim is false.
+ * Used by routes that need MFA at session level.
+ */
 export async function requireMFA(request, reply) {
-    if (!request.user.mfaVerified) {
-        return reply.status(403).send({
+    if (!request.user?.mfaVerified) {
+        return void reply.status(403).send({
             error: {
-                code: 'MFA_REQUIRED',
+                code: AuthErrorCodes.MFA_REQUIRED,
                 message: 'MFA verification required',
                 challenge_required: true,
-            }
+            },
+        });
+    }
+}
+/**
+ * Reject requests that have not completed a fresh step-up MFA challenge in
+ * the last STEP_UP_FRESHNESS_TTL_SECONDS. Used by sensitive in-session
+ * actions such as password change.
+ *
+ * This is independent from `requireMFA`: a session can be `mfaVerified=true`
+ * because MFA was performed at login, but step-up freshness is only set
+ * when the user proves possession of MFA AGAIN via /auth/mfa/verify.
+ */
+export async function requireStepUp(request, reply) {
+    if (!request.user?.stepUpFresh) {
+        return void reply.status(403).send({
+            error: {
+                code: AuthErrorCodes.STEP_UP_REQUIRED,
+                message: 'Step-up MFA verification required',
+                challenge_required: true,
+            },
         });
     }
 }

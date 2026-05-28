@@ -24,7 +24,7 @@
     "lint": "eslint src --ext .ts",
     "test": "vitest",
     "test:integration": "vitest --config vitest.integration.config.ts",
-    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate": "tsx scripts/setup-db.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:indexes": "tsx scripts/add-indexes.ts"
   },
@@ -33,9 +33,6 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@clerk/backend": "^3.2.4",
-    "@clerk/clerk-sdk-node": "^4.13.23",
-    "@clerk/fastify": "^3.1.6",
     "@clickhouse/client": "^1.18.2",
     "@fastify/compress": "^8.3.1",
     "@fastify/cookie": "^11.0.2",

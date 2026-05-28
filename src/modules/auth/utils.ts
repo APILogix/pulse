@@ -1,32 +1,118 @@
 /**
  * Auth utility functions.
  *
- * Flow:
- * - Token helpers sign short-lived access tokens and longer-lived refresh
- *   tokens with separate secrets.
- * - Cookie helpers keep refresh-token transport consistent across auth routes.
- * - Normalization/history helpers keep identity and password policy behavior
- *   centralized in one module.
+ * Responsibilities:
+ *   - Sign and verify access / refresh JWTs with separate secrets and claims.
+ *   - Provide cookie options for refresh-token transport.
+ *   - Hash tokens for at-rest storage (refresh-token hash, email-token hash).
+ *   - Provide a constant-time fake bcrypt verification used to equalize the
+ *     timing of failed-login responses to defeat enumeration via timing.
+ *   - Maintain password-reuse history.
+ *   - Compute application-driven exponential lockout durations.
+ *
+ * The secrets and TTLs in this file are intentionally centralized so service
+ * code does not duplicate JWT configuration.
  */
 import { createHash, randomBytes } from 'crypto';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 
 import { env } from '../../config/env.js';
 
+// ---------------------------------------------------------------------------
+// Token TTLs (seconds)
+// ---------------------------------------------------------------------------
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const ABSOLUTE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const MFA_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
+export const STEP_UP_CHALLENGE_TTL_SECONDS = 5 * 60;
+export const STEP_UP_FRESHNESS_TTL_SECONDS = 5 * 60;
 export const PASSWORD_RESET_TTL_SECONDS = 60 * 60;
+export const EMAIL_VERIFICATION_TTL_SECONDS = 24 * 60 * 60;
+export const MFA_DISABLE_TOKEN_TTL_SECONDS = 30 * 60; // 30 min; user must
+                                                      // confirm the email link
+                                                      // shortly after request.
 
+// Refresh-token rotation grace window. If a client retries a refresh within
+// this window with the previous (rotated) hash, we treat it as a network
+// retry rather than a token-theft replay. Outside the window, true reuse
+// detection kicks in and revokes the entire session family.
+export const REFRESH_GRACE_WINDOW_MS = 30 * 1000;
+
+// Refresh-token cookie name. The `__Host-` prefix forces the browser to
+// require Secure + Path=/ + no Domain attribute; sibling subdomains cannot
+// overwrite this cookie.
+export const REFRESH_COOKIE_NAME = '__Host-refresh_token';
+
+// ---------------------------------------------------------------------------
+// JWT issuer / audience claims (defense-in-depth against token confusion)
+// ---------------------------------------------------------------------------
+const JWT_ISSUER = 'api-monitoring-backend';
+const JWT_AUDIENCE = 'api-monitoring-clients';
+
+// ---------------------------------------------------------------------------
+// Cryptographic helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * SHA-256 hash a token for at-rest storage. Refresh tokens, email-flow tokens,
+ * and any other bearer credential MUST be stored as a hash so a database
+ * compromise does not yield usable credentials.
+ */
 export function hashToken(token: string): string {
-  // Persist token hashes instead of raw token values so database access cannot
-  // recover bearer credentials.
   return createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * Generate a cryptographically secure random token, hex-encoded.
+ * Default 32 bytes => 256 bits of entropy => collision-free for our scale.
+ */
 export function generateSecureToken(byteLength = 32): string {
   return randomBytes(byteLength).toString('hex');
+}
+
+/**
+ * Purpose-bind a hash for an email-flow token. Combining the purpose into
+ * the hash input prevents a token issued for one flow being replayed against
+ * another (verification token vs reset token vs MFA-disable token), even
+ * though all three flows share the same backing table.
+ */
+export type EmailFlowPurpose =
+  | 'email_verification'
+  | 'password_reset'
+  | 'mfa_disable';
+
+export function hashEmailFlowToken(
+  purpose: EmailFlowPurpose,
+  token: string,
+): string {
+  return hashToken(`${purpose}:${token}`);
+}
+
+// ---------------------------------------------------------------------------
+// Access / refresh token signing
+// ---------------------------------------------------------------------------
+
+export interface AccessTokenClaims {
+  sub: string;
+  jti: string;
+  mfa_verified: boolean;
+  type: 'access';
+  iss: string;
+  aud: string;
+  iat: number;
+  exp: number;
+}
+
+export interface RefreshTokenClaims {
+  sub: string;
+  jti: string;
+  type: 'refresh';
+  iss: string;
+  aud: string;
+  iat: number;
+  exp: number;
 }
 
 export function generateAccessToken(
@@ -45,14 +131,13 @@ export function generateAccessToken(
     {
       expiresIn: ACCESS_TOKEN_TTL_SECONDS,
       algorithm: 'HS256',
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
     },
   );
 }
 
-export function generateRefreshToken(
-  userId: string,
-  sessionId: string,
-): string {
+export function generateRefreshToken(userId: string, sessionId: string): string {
   return jwt.sign(
     {
       sub: userId,
@@ -63,39 +148,137 @@ export function generateRefreshToken(
     {
       expiresIn: REFRESH_TOKEN_TTL_SECONDS,
       algorithm: 'HS256',
+      issuer: JWT_ISSUER,
+      audience: JWT_AUDIENCE,
     },
   );
 }
 
+export function verifyAccessToken(token: string): AccessTokenClaims {
+  return jwt.verify(token, env.JWT_SECRET, {
+    algorithms: ['HS256'],
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  }) as AccessTokenClaims;
+}
+
+export function verifyRefreshToken(token: string): RefreshTokenClaims {
+  return jwt.verify(token, env.JWT_REFRESH_SECRET, {
+    algorithms: ['HS256'],
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  }) as RefreshTokenClaims;
+}
+
+// ---------------------------------------------------------------------------
+// Cookies
+// ---------------------------------------------------------------------------
+
+/**
+ * Refresh-token cookie configuration.
+ *
+ * The cookie name is `__Host-refresh_token` (returned by REFRESH_COOKIE_NAME),
+ * which the browser only accepts when:
+ *   - Secure is set
+ *   - Path is "/"
+ *   - Domain attribute is absent
+ *
+ * In development we relax `secure` so tests work over plain HTTP. In every
+ * other environment Secure is mandatory.
+ */
 export function getRefreshCookieOptions() {
-  // Refresh cookies are httpOnly and path-scoped to auth endpoints; production
-  // also requires secure transport.
   return {
     httpOnly: true,
-    secure: env.NODE_ENV === 'production',
+    secure: env.NODE_ENV !== 'development',
     sameSite: 'strict' as const,
     maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
-    path: '/auth',
+    path: '/',
+    signed: true,
   };
 }
 
+// ---------------------------------------------------------------------------
+// Password helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * A pre-computed bcrypt hash of an unguessable string. Used by the login
+ * service to run a fake bcrypt comparison when the requested email does not
+ * exist, equalizing the response timing with the legitimate-user code path.
+ *
+ * The hash is generated once at startup; bcrypt cost matches the production
+ * cost so timing is comparable.
+ */
+export const FAKE_BCRYPT_HASH = bcrypt.hashSync(
+  generateSecureToken(16),
+  12,
+);
+
+/**
+ * Constant-time-ish password verifier used during login to swallow whether or
+ * not the user actually exists. Always awaits a real bcrypt compare so the
+ * caller's response latency does not leak account existence.
+ */
+export async function timingSafeFakePasswordCompare(
+  candidate: string,
+): Promise<void> {
+  await bcrypt.compare(candidate, FAKE_BCRYPT_HASH);
+}
+
+/**
+ * Normalize an email for storage and lookup. Trims whitespace and lowercases
+ * the entire string. We do not strip plus-aliases because legitimate users
+ * intentionally use them, and stripping would weaken uniqueness guarantees.
+ */
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/**
+ * Build the password-history array.
+ *
+ * Stores the most recent 5 password hashes (current + 4 previous) so the
+ * service layer can refuse password reuse. De-duplicates by hash so the same
+ * hash cannot crowd out distinct older entries.
+ */
 export function buildPasswordHistory(
   currentHistory: unknown,
   currentPasswordHash: string | null,
 ): string[] {
-  // Keep only recent password hashes. The service uses password verification
-  // against these hashes to prevent password reuse.
   const history = Array.isArray(currentHistory)
     ? currentHistory.filter((entry): entry is string => typeof entry === 'string')
     : [];
 
-  const next = [currentPasswordHash, ...history].filter(
+  const ordered = [currentPasswordHash, ...history].filter(
     (entry): entry is string => Boolean(entry),
   );
 
-  return next.slice(0, 5);
+  // De-duplicate while preserving insertion order.
+  const seen = new Set<string>();
+  const uniq: string[] = [];
+  for (const h of ordered) {
+    if (!seen.has(h)) {
+      seen.add(h);
+      uniq.push(h);
+    }
+  }
+
+  return uniq.slice(0, 5);
+}
+
+/**
+ * Compute an exponential-backoff lockout duration in seconds based on the
+ * number of consecutive failed login attempts. Used in place of the previous
+ * trigger-based hard-suspension behavior.
+ *
+ * Returns 0 when no lockout is required. The same schedule is encoded in the
+ * `recordFailedLogin` SQL CASE so both the application and the database
+ * agree.
+ */
+export function lockoutDurationSeconds(failedAttempts: number): number {
+  if (failedAttempts < 5) return 0;
+  if (failedAttempts < 7) return 60; // 1 minute
+  if (failedAttempts < 9) return 5 * 60; // 5 minutes
+  if (failedAttempts < 11) return 15 * 60; // 15 minutes
+  return 60 * 60; // 1 hour cap
 }

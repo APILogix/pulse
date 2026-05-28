@@ -116,4 +116,25 @@ export function mfaStatusTemplate(input) {
         text: `${textGreeting(input.userName)}\n\nMulti-factor authentication was ${input.enabled ? "enabled for" : "disabled on"} your ${input.appName} account.`,
     };
 }
+/**
+ * Email sent when a user starts the MFA-disable flow. Contains a one-time
+ * confirmation link the user must click to actually disable MFA. Until the
+ * link is consumed, MFA remains in force, so a phished password + a stolen
+ * TOTP cannot disable MFA on its own.
+ */
+export function mfaDisableConfirmTemplate(input) {
+    const title = "Confirm disabling multi-factor authentication";
+    const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 22px;font-size:16px;line-height:1.7;">A request was made to disable multi-factor authentication on your ${escapeHtml(input.appName)} account. This will weaken your account security. The link below expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm and disable MFA")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+    <div style="margin-top:18px;border-left:4px solid ${theme.brand};background:${theme.warningBg};color:${theme.warningText};padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;">If you did not initiate this, do nothing — MFA stays enabled. Then change your password immediately.</div>
+  `;
+    return {
+        subject: `${input.appName}: confirm MFA disable`,
+        html: layout(input.appName, title, body),
+        text: `${textGreeting(input.userName)}\n\nA request was made to disable multi-factor authentication on your ${input.appName} account.\n\nConfirm: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes. If this was not you, do nothing — MFA stays enabled, then change your password.`,
+    };
+}
 //# sourceMappingURL=templates.js.map

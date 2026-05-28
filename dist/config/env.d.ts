@@ -20,6 +20,7 @@ declare const envSchema: z.ZodObject<{
     REDIS_URL: z.ZodString;
     JWT_SECRET: z.ZodString;
     JWT_REFRESH_SECRET: z.ZodString;
+    COOKIE_SECRET: z.ZodString;
     ENCRYPTION_KEY: z.ZodString;
     CORS_ORIGINS: z.ZodOptional<z.ZodString>;
     FRONTEND_URL: z.ZodOptional<z.ZodString>;
@@ -47,6 +48,7 @@ export declare const env: {
     REDIS_URL: string;
     JWT_SECRET: string;
     JWT_REFRESH_SECRET: string;
+    COOKIE_SECRET: string;
     ENCRYPTION_KEY: string;
     ALLOWED_ORIGINS: string;
     SMTP_PORT: number;

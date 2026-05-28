@@ -19,21 +19,29 @@ import registerOrganizationModule from './modules/organization/organization.modu
 import { registerProjectsModule } from './modules/projects/projects.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
-import { registerStressTestRoute } from './modules/stress-test/routes.js';
-import { registerBenchmarkRoutes } from './modules/benchmark/routes.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
-    if (env.NODE_ENV === 'production') {
-        const allowed = env.ALLOWED_ORIGINS
-            ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-            : [];
-        if (env.FRONTEND_URL)
-            allowed.push(env.FRONTEND_URL);
-        if (env.APP_URL)
-            allowed.push(env.APP_URL);
-        return allowed.length > 0 ? allowed : false;
+    // Prod and non-prod use the same explicit allowlist. Reflecting any origin
+    // with credentials=true (the previous dev behavior) lets a malicious local
+    // page exfiltrate the refresh cookie. We default to localhost dev origins
+    // when ALLOWED_ORIGINS is unset so engineers do not need to duplicate the
+    // list in their .env.
+    const allowed = env.ALLOWED_ORIGINS
+        ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+        : [];
+    if (env.FRONTEND_URL)
+        allowed.push(env.FRONTEND_URL);
+    if (env.APP_URL)
+        allowed.push(env.APP_URL);
+    if (env.NODE_ENV !== 'production' && allowed.length === 0) {
+        return [
+            'http://localhost:3000',
+            'http://localhost:5173',
+            'http://127.0.0.1:3000',
+            'http://127.0.0.1:5173',
+        ];
     }
-    return true;
+    return allowed.length > 0 ? allowed : false;
 }
 export async function buildApp() {
     const app = Fastify({
@@ -83,7 +91,9 @@ export async function buildApp() {
         threshold: 1024, // Only compress responses > 1KB
         encodings: ['br', 'gzip', 'deflate'], // Brotli first, then gzip
     });
-    await app.register(cookie, { secret: env.JWT_SECRET });
+    // Cookie plugin gets its OWN secret so a leak in JWT_SECRET cannot be used
+    // to forge signed cookies and vice versa.
+    await app.register(cookie, { secret: env.COOKIE_SECRET });
     await app.register(fastifyRawBody, {
         field: 'rawBody',
         global: false,
@@ -120,10 +130,6 @@ export async function buildApp() {
     await app.register(ingestionModule); // Must be before projects
     await app.register(registerProjectsModule); // Depends on ingestion.redisCache
     await app.register(registerAnalyticsModule);
-    // ── Stress Test Route (public, no auth) ──────────────────────────────
-    await app.register(registerStressTestRoute);
-    // ── Benchmark Routes (public, no auth) ───────────────────────────────
-    await app.register(registerBenchmarkRoutes);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {

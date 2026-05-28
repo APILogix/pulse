@@ -1,28 +1,12 @@
-/**
- * Auth Routes - Fastify route handlers
- * Enterprise security headers, rate limiting, validation
- *
- * Flow:
- * 1. Route handlers validate request payloads with auth schemas.
- * 2. Request metadata is extracted for security checks, session fingerprinting,
- *    and audit logging.
- * 3. Business decisions are delegated to service.ts.
- * 4. Access tokens are returned in the response body, while refresh tokens are
- *    stored as httpOnly cookies to reduce client-side exposure.
- */
-import * as service from './service.js';
-import * as repository from './repository.js';
-import { CreateUserSchema, LoginSchema, LoginMFAVerifySchema, UpdateUserSchema, DeleteUserSchema, ChangePasswordSchema, ForgotPasswordSchema, ResetPasswordSchema, ResendVerificationSchema, VerifyEmailQuerySchema, MFASetupSchema, MFAVerifySetupSchema, MFAVerifySchema, MFAToggleSchema, BackupCodeVerificationSchema, AuthError, AuthErrorCodes, EmptyBodySchema, } from './types.js';
-import { authenticate, requireAdmin, requireMFA } from '../../shared/middleware/auth.js';
-import { rateLimit } from '../../shared/middleware/rate-limit.js';
+import { authenticate, requireAdmin, requireStepUp, } from '../../shared/middleware/auth.js';
 import { getClientInfo } from '../../shared/utils/request.js';
-import { getRefreshCookieOptions } from './utils.js';
-// ============================================
+import * as service from './service.js';
+import { AuthError, AuthErrorCodes, BackupCodeLoginSchema, ChangePasswordSchema, CreateUserSchema, DeleteUserSchema, ForgotPasswordSchema, ListUsersQuerySchema, LoginMFAVerifySchema, LoginSchema, MFADeviceRemoveSchema, MFADisableConfirmSchema, MFADisableRequestSchema, MFASetupSchema, MFAToggleSchema, MFAVerifySchema, MFAVerifySetupSchema, RegenerateBackupCodesSchema, ResendVerificationSchema, ResetPasswordSchema, SuspendUserSchema, UpdateUserSchema, VerifyEmailQuerySchema, } from './types.js';
+import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from './utils.js';
+// ============================================================================
 // ERROR HANDLER
-// ============================================
+// ============================================================================
 function handleAuthError(error, reply, request) {
-    // AuthError is the domain error contract used by the service. Anything else
-    // is treated as unexpected and intentionally returns a generic response.
     if (error instanceof AuthError) {
         return reply.status(error.statusCode).send({
             error: {
@@ -32,9 +16,17 @@ function handleAuthError(error, reply, request) {
             },
         });
     }
-    // Log unexpected errors
-    const log = request?.log ?? reply.log;
-    log.error({ err: error }, 'Unexpected auth error');
+    const err = error;
+    if (err?.name === 'ZodError') {
+        return reply.status(400).send({
+            error: {
+                code: AuthErrorCodes.VALIDATION_ERROR,
+                message: 'Invalid request payload',
+                details: { issues: err.issues },
+            },
+        });
+    }
+    request.log.error({ err: error }, 'Unexpected auth error');
     return reply.status(500).send({
         error: {
             code: 'INTERNAL_ERROR',
@@ -43,11 +35,7 @@ function handleAuthError(error, reply, request) {
     });
 }
 function sendAuthSession(reply, payload) {
-    // Set refresh token as httpOnly secure cookie. The body receives only the
-    // short-lived access token so JavaScript clients never need to store refresh
-    // credentials directly.
-    reply.setCookie('refresh_token', payload.refresh_token, getRefreshCookieOptions());
-    // Send only access token in response body (never expose refresh token)
+    reply.setCookie(REFRESH_COOKIE_NAME, payload.refresh_token, getRefreshCookieOptions());
     return reply.send({
         data: {
             access_token: payload.access_token,
@@ -58,19 +46,16 @@ function sendAuthSession(reply, payload) {
         },
     });
 }
-// ============================================
+// ============================================================================
 // CREDENTIAL ROUTES
-// ============================================
+// ============================================================================
 async function credentialRoutes(fastify) {
-    // Credential routes cover password login, MFA completion, and password reset
-    // flows. They are rate-limited where brute-force or token guessing risk is
-    // highest.
-    // POST /auth/login - Password login
+    // POST /auth/login
     fastify.post('/login', async (request, reply) => {
         try {
             const body = LoginSchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            const result = await service.loginWithEmailPassword(body, clientInfo.ip, clientInfo.userAgent, clientInfo.device.type, request.id);
+            const ci = getClientInfo(request);
+            const result = await service.loginWithEmailPassword(body, ci.ip, ci.userAgent, ci.device.type, request.id);
             if (result.mfa_required) {
                 return reply.status(202).send({
                     data: {
@@ -85,259 +70,234 @@ async function credentialRoutes(fastify) {
             return sendAuthSession(reply, result);
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/login/mfa - Complete MFA challenge for login
-    fastify.post('/login/mfa', {
-    // preHandler: [],
-    }, async (request, reply) => {
+    // POST /auth/login/mfa
+    fastify.post('/login/mfa', async (request, reply) => {
         try {
             const body = LoginMFAVerifySchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            const result = await service.verifyLoginMFAChallenge(body, clientInfo.ip, clientInfo.userAgent, clientInfo.device.type, request.id);
+            const ci = getClientInfo(request);
+            const result = await service.verifyLoginMFAChallenge(body, ci.ip, ci.userAgent, ci.device.type, request.id);
             return sendAuthSession(reply, result);
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    const forgotPasswordHandler = async (request, reply) => {
+    // POST /auth/login/backup-code
+    fastify.post('/login/backup-code', async (request, reply) => {
         try {
-            const body = ForgotPasswordSchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            const result = await service.requestPasswordReset(body, clientInfo.ip, request.id);
-            return reply.send({ data: result });
+            const body = BackupCodeLoginSchema.parse(request.body);
+            const ci = getClientInfo(request);
+            const result = await service.verifyLoginBackupCode(body, ci.ip, ci.userAgent, ci.device.type, request.id);
+            return sendAuthSession(reply, result);
         }
         catch (error) {
-            return handleAuthError(error, reply);
-        }
-    };
-    const resetPasswordHandler = async (request, reply) => {
-        try {
-            const body = ResetPasswordSchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            await service.resetPasswordWithToken(body, clientInfo.ip, request.id);
-            return reply.send({ message: 'Password reset successfully' });
-        }
-        catch (error) {
-            return handleAuthError(error, reply);
-        }
-    };
-    // POST /auth/forgot-password - Request password reset
-    fastify.post('/forgot-password', {
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, forgotPasswordHandler);
-    // Backward-compatible alias for existing clients.
-    fastify.post('/password/forgot', {
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, forgotPasswordHandler);
-    // POST /auth/reset-password - Reset password using a token
-    fastify.post('/reset-password', {
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, resetPasswordHandler);
-    // Backward-compatible alias for existing clients.
-    fastify.post('/password/reset', {
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, resetPasswordHandler);
-    // POST /auth/resend-verification - Resend signup verification email
-    fastify.post('/resend-verification', {
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, async (request, reply) => {
-        try {
-            const body = ResendVerificationSchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            const result = await service.resendVerification(body, clientInfo.ip, request.id);
-            return reply.send({ data: result });
-        }
-        catch (error) {
-            return handleAuthError(error, reply);
-        }
-    });
-    // GET /auth/verify-email - Verify signup email token
-    fastify.get('/verify-email', {
-        preHandler: [rateLimit({ max: 10, window: 900 })],
-    }, async (request, reply) => {
-        try {
-            const query = VerifyEmailQuerySchema.parse(request.query);
-            const clientInfo = getClientInfo(request);
-            const result = await service.verifyEmail(query, clientInfo.ip, request.id);
-            return reply.send({ data: result });
-        }
-        catch (error) {
-            return handleAuthError(error, reply);
-        }
-    });
-    // POST /auth/password/change - Change current password
-    fastify.post('/password/change', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
-        try {
-            const body = ChangePasswordSchema.parse(request.body);
-            const clientInfo = getClientInfo(request);
-            await service.changePassword(request.user.id, body, request.user.mfaVerified, clientInfo.ip, request.id);
-            return reply.send({ message: 'Password changed successfully' });
-        }
-        catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
 }
-// ============================================
+// ============================================================================
+// PASSWORD / EMAIL ROUTES
+// ============================================================================
+async function passwordRoutes(fastify) {
+    const forgotPassword = async (request, reply) => {
+        try {
+            const body = ForgotPasswordSchema.parse(request.body);
+            const ci = getClientInfo(request);
+            const result = await service.requestPasswordReset(body, ci.ip, request.id);
+            return reply.send({ data: result });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    };
+    const resetPassword = async (request, reply) => {
+        try {
+            const body = ResetPasswordSchema.parse(request.body);
+            const ci = getClientInfo(request);
+            await service.resetPasswordWithToken(body, ci.ip, request.id);
+            return reply.send({ message: 'Password reset successfully' });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    };
+    fastify.post('/forgot-password', forgotPassword);
+    fastify.post('/password/forgot', forgotPassword);
+    fastify.post('/reset-password', resetPassword);
+    fastify.post('/password/reset', resetPassword);
+    // POST /auth/resend-verification
+    fastify.post('/resend-verification', async (request, reply) => {
+        try {
+            const body = ResendVerificationSchema.parse(request.body);
+            const ci = getClientInfo(request);
+            const result = await service.resendVerification(body, ci.ip, request.id);
+            return reply.send({ data: result });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
+    // GET /auth/verify-email
+    fastify.get('/verify-email', async (request, reply) => {
+        try {
+            const query = VerifyEmailQuerySchema.parse(request.query);
+            const ci = getClientInfo(request);
+            const result = await service.verifyEmail(query, ci.ip, request.id);
+            return reply.send({ data: result });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
+    // POST /auth/password/change
+    // Requires: authenticated session AND fresh step-up MFA challenge.
+    fastify.post('/password/change', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
+        try {
+            const r = request;
+            const body = ChangePasswordSchema.parse(r.body);
+            const ci = getClientInfo(r);
+            const session = await service.changePassword(r.user.id, r.user.sessionId, body, r.user.mfaVerified, ci.ip, ci.userAgent, r.id);
+            return sendAuthSession(reply, {
+                ...session,
+                token_type: 'Bearer',
+            });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
+}
+// ============================================================================
 // USER ROUTES
-// ============================================
+// ============================================================================
 async function userRoutes(fastify) {
-    // User routes expose self-service profile operations and admin-only account
-    // management. The service layer owns permission checks and audit logging.
-    const registerHandler = async (request, reply) => {
+    // POST /auth/register
+    // Always returns the same generic 201 message regardless of whether the
+    // email is already registered. The service silently no-ops on collisions
+    // and audits the probe.
+    const register = async (request, reply) => {
         try {
             const body = CreateUserSchema.parse(request.body);
             const { ip } = getClientInfo(request);
             await service.createUserFromEmail(body, ip, request.id);
             return reply.status(201).send({
-                message: 'Account created successfully. Check your email to verify your account.',
+                message: 'Account creation request received. If the email is unused, you will receive a verification email shortly.',
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     };
-    // POST /auth/register - Create user
-    fastify.post('/register', {
-        config: { rawBody: true },
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, registerHandler);
-    // POST /auth/users - Backward-compatible create user alias
-    fastify.post('/users', {
-        config: { rawBody: true }, // Need raw body for signature verification
-        preHandler: [rateLimit({ max: 5, window: 900 })],
-    }, registerHandler);
-    // GET /auth/users/me - Get current user
-    fastify.get('/users/me', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    fastify.post('/register', register);
+    fastify.post('/users', register);
+    // GET /auth/users/me
+    fastify.get('/users/me', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const profile = await service.getCurrentUser(request.user.id);
+            const r = request;
+            const profile = await service.getCurrentUser(r.user.id);
             return reply.send({ data: profile });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // PATCH /auth/users/me - Update current user
-    fastify.patch('/users/me', {
-        preHandler: [authenticate, rateLimit({ max: 10, window: 60 })],
-    }, async (request, reply) => {
+    // PATCH /auth/users/me
+    fastify.patch('/users/me', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = UpdateUserSchema.parse(request.body);
-            const profile = await service.updateCurrentUser(request.user.id, body);
+            const r = request;
+            const body = UpdateUserSchema.parse(r.body);
+            const profile = await service.updateCurrentUser(r.user.id, body);
             return reply.send({ data: profile });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // DELETE /auth/users/me - Soft delete current user
-    fastify.delete('/users/me', {
-        preHandler: [authenticate, rateLimit({ max: 3, window: 300 })], // Strict limit
-    }, async (request, reply) => {
+    // DELETE /auth/users/me
+    fastify.delete('/users/me', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = DeleteUserSchema.parse(request.body);
-            const { ip } = getClientInfo(request);
-            await service.deleteCurrentUser(request.user.id, body, ip, request.id);
+            const r = request;
+            const body = DeleteUserSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            await service.deleteCurrentUser(r.user.id, body, ip, r.id);
             return reply.status(204).send();
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // GET /auth/users/:id - Get user by ID (admin only)
-    fastify.get('/users/:id', {
-        preHandler: [authenticate, requireAdmin],
-    }, async (request, reply) => {
+    // GET /auth/users/:id (admin)
+    fastify.get('/users/:id', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
         try {
-            const params = request.params;
-            const profile = await service.getUserById(params.id, request.user.id, request.user.isAdmin);
+            const r = request;
+            const { id } = r.params;
+            const profile = await service.getUserById(id, r.user.id, r.user.isAdmin);
             return reply.send({ data: profile });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // GET /auth/users - List users (admin only)
-    fastify.get('/users', {
-        preHandler: [authenticate, requireAdmin],
-    }, async (request, reply) => {
+    // GET /auth/users (admin)
+    fastify.get('/users', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
         try {
-            const query = request.query;
-            const filters = {
-                status: query.status,
-                limit: Math.min(query.limit || 20, 100),
-                offset: query.offset || 0,
-            };
-            if (query.search !== undefined) {
-                filters.search = query.search;
-            }
-            const { users, total } = await service.listAllUsers(filters, request.user.isAdmin);
+            const r = request;
+            const filters = ListUsersQuerySchema.parse(r.query);
+            const { users, total } = await service.listAllUsers(filters, r.user.isAdmin);
             return reply.send({
                 data: users,
-                meta: {
-                    total,
-                    limit: query.limit || 20,
-                    offset: query.offset || 0,
-                },
+                meta: { total, limit: filters.limit, offset: filters.offset },
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/users/:id/restore - Restore deleted user
-    fastify.post('/users/:id/restore', {
-        preHandler: [authenticate, requireAdmin, rateLimit({ max: 20, window: 60 })],
-    }, async (request, reply) => {
+    // POST /auth/users/:id/restore (admin)
+    fastify.post('/users/:id/restore', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
         try {
-            const params = request.params;
-            const { ip } = getClientInfo(request);
-            const profile = await service.restoreDeletedUser(params.id, request.user.id, request.user.isAdmin, ip, request.id);
+            const r = request;
+            const { id } = r.params;
+            const { ip } = getClientInfo(r);
+            const profile = await service.restoreDeletedUser(id, r.user.id, r.user.isAdmin, ip, r.id);
             return reply.send({ data: profile });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/users/:id/suspend - Suspend user
-    fastify.post('/users/:id/suspend', {
-        preHandler: [authenticate, requireAdmin, rateLimit({ max: 20, window: 60 })],
-    }, async (request, reply) => {
+    // POST /auth/users/:id/suspend (admin)
+    fastify.post('/users/:id/suspend', { preHandler: [authenticate, requireAdmin] }, async (request, reply) => {
         try {
-            const params = request.params;
-            const body = request.body;
-            const { ip } = getClientInfo(request);
-            const profile = await service.suspendUser(params.id, body.reason, request.user.id, request.user.isAdmin, ip, request.id);
+            const r = request;
+            const { id } = r.params;
+            const body = SuspendUserSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            const profile = await service.suspendUser(id, body.reason, r.user.id, r.user.isAdmin, ip, r.id);
             return reply.send({ data: profile });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
 }
-// ============================================
+// ============================================================================
 // MFA ROUTES
-// ============================================
+// ============================================================================
 async function mfaRoutes(fastify) {
-    // MFA routes are split into setup, verification, challenge, device management,
-    // and backup-code flows. Sensitive verification endpoints are rate-limited.
-    // POST /auth/mfa/setup - Initialize MFA setup
-    fastify.post('/mfa/setup', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // POST /auth/mfa/setup
+    fastify.post('/mfa/setup', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = MFASetupSchema.parse(request.body);
-            const { ip } = getClientInfo(request);
-            const setup = await service.setupMFA(request.user.id, body, ip);
+            const r = request;
+            const body = MFASetupSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            const setup = await service.setupMFA(r.user.id, body, ip);
             return reply.status(201).send({
                 data: {
+                    device_id: setup.device_id,
                     secret: setup.secret,
                     qr_code_url: setup.qrCodeUrl,
                     backup_codes: setup.backupCodes,
@@ -346,28 +306,27 @@ async function mfaRoutes(fastify) {
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/verify-setup - Verify and activate MFA
-    fastify.post('/mfa/verify-setup', {
-        preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
-    }, async (request, reply) => {
+    // POST /auth/mfa/verify-setup
+    fastify.post('/mfa/verify-setup', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = MFAVerifySetupSchema.parse(request.body);
-            await service.verifyMFASetup(request.user.id, body);
+            const r = request;
+            const body = MFAVerifySetupSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            await service.verifyMFASetup(r.user.id, body, ip, r.id);
             return reply.send({ message: 'MFA enabled successfully' });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/challenge - Request MFA challenge
-    fastify.post('/mfa/challenge', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // POST /auth/mfa/challenge — request a step-up MFA challenge
+    fastify.post('/mfa/challenge', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const challenge = await service.createMFAChallenge(request.user.id);
+            const r = request;
+            const challenge = await service.createMFAChallenge(r.user.id);
             return reply.send({
                 data: {
                     challenge_id: challenge.challengeId,
@@ -378,36 +337,31 @@ async function mfaRoutes(fastify) {
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/verify - Verify MFA code
-    fastify.post('/mfa/verify', {
-        preHandler: [rateLimit({ max: 5, window: 300 })],
-    }, async (request, reply) => {
+    // POST /auth/mfa/verify — complete a step-up MFA challenge
+    fastify.post('/mfa/verify', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = MFAVerifySchema.parse(request.body);
-            const result = await service.verifyMFAChallenge(body.challenge_id, body);
-            // Issue tokens or complete login flow
+            const r = request;
+            const body = MFAVerifySchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            const result = await service.verifyMFAChallenge(body.challenge_id, body, r.user.sessionId, ip);
             return reply.send({
-                data: {
-                    user_id: result.userId,
-                    mfa_verified: true,
-                },
+                data: { user_id: result.userId, mfa_verified: true },
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // GET /auth/mfa/devices - List MFA devices
-    fastify.get('/mfa/devices', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // GET /auth/mfa/devices
+    fastify.get('/mfa/devices', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const devices = await service.listMFADevices(request.user.id);
+            const r = request;
+            const devices = await service.listMFADevices(r.user.id);
             return reply.send({
-                data: devices.map(d => ({
+                data: devices.map((d) => ({
                     id: d.id,
                     type: d.device_type,
                     name: d.device_name,
@@ -419,44 +373,41 @@ async function mfaRoutes(fastify) {
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // DELETE /auth/mfa/devices/:id - Remove MFA device
-    fastify.delete('/mfa/devices/:id', {
-        preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
-    }, async (request, reply) => {
+    // DELETE /auth/mfa/devices/:id — requires fresh step-up MFA
+    fastify.delete('/mfa/devices/:id', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
         try {
-            const params = request.params;
-            const body = (request.body || {});
-            const { ip } = getClientInfo(request);
-            await service.removeMFADevice(request.user.id, params.id, body.mfa_code, ip, request.id);
+            const r = request;
+            const { id } = r.params;
+            const body = MFADeviceRemoveSchema.parse(r.body || {});
+            const { ip } = getClientInfo(r);
+            await service.removeMFADevice(r.user.id, id, body.current_password, ip, r.id);
             return reply.status(204).send();
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // PATCH /auth/mfa/devices/:id/primary - Set primary device
-    fastify.patch('/mfa/devices/:id/primary', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // PATCH /auth/mfa/devices/:id/primary — requires fresh step-up MFA
+    fastify.patch('/mfa/devices/:id/primary', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
         try {
-            const params = request.params;
-            await service.setPrimaryMFADevice(request.user.id, params.id);
+            const r = request;
+            const { id } = r.params;
+            await service.setPrimaryMFADevice(r.user.id, id);
             return reply.send({ message: 'Primary device updated' });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/backup-codes - Generate new backup codes
-    fastify.post('/mfa/backup-codes', {
-        preHandler: [authenticate, rateLimit({ max: 3, window: 86400 })], // Once per day
-    }, async (request, reply) => {
+    // POST /auth/mfa/backup-codes — regenerate
+    fastify.post('/mfa/backup-codes', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = request.body;
-            const codes = await service.generateNewBackupCodes(request.user.id, body.mfa_code);
+            const r = request;
+            const body = RegenerateBackupCodesSchema.parse(r.body);
+            const codes = await service.generateNewBackupCodes(r.user.id, body);
             return reply.send({
                 data: {
                     backup_codes: codes,
@@ -465,153 +416,156 @@ async function mfaRoutes(fastify) {
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/backup-codes/verify - Verify backup code
-    fastify.post('/mfa/backup-codes/verify', {
-        preHandler: [rateLimit({ max: 5, window: 300 })],
-    }, async (request, reply) => {
+    // PATCH /auth/mfa/toggle — enabling only. Disabling uses the two-step
+    // /mfa/disable/request + /mfa/disable/confirm flow below.
+    fastify.patch('/mfa/toggle', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = BackupCodeVerificationSchema.parse(request.body);
-            const valid = await service.verifyBackupCode(body.user_id, body);
-            if (!valid) {
-                return reply.status(401).send({
-                    error: { code: 'INVALID_CODE', message: 'Invalid or used backup code' },
-                });
-            }
-            return reply.send({ valid: true });
+            const r = request;
+            const body = MFAToggleSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            const result = await service.toggleMFA(r.user.id, body, ip, r.id);
+            return reply.send({ data: { mfa_enabled: result.enabled } });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // PATCH /auth/mfa/toggle - Idempotently enable or disable MFA
-    fastify.patch('/mfa/toggle', {
-        preHandler: [authenticate, rateLimit({ max: 5, window: 300 })],
-    }, async (request, reply) => {
+    // POST /auth/mfa/disable/request — step 1 of MFA disable.
+    // Requires authenticated session + valid TOTP. Sends an email with a
+    // one-time confirmation link. MFA stays enabled until the link is used.
+    fastify.post('/mfa/disable/request', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const body = MFAToggleSchema.parse(request.body);
-            const { ip } = getClientInfo(request);
-            const result = await service.toggleMFA(request.user.id, body, ip, request.id);
-            return reply.send({
-                data: {
-                    mfa_enabled: result.enabled,
-                },
-            });
+            const r = request;
+            const body = MFADisableRequestSchema.parse(r.body);
+            const { ip } = getClientInfo(r);
+            const result = await service.requestMfaDisable(r.user.id, body, ip, r.id);
+            return reply.send({ data: result });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/mfa/disable - Disable MFA
-    fastify.post('/mfa/disable', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // POST /auth/mfa/disable/confirm — step 2 of MFA disable.
+    // Consumes the email-confirmation token and actually disables MFA.
+    fastify.post('/mfa/disable/confirm', async (request, reply) => {
         try {
-            const body = request.body;
-            const { ip } = getClientInfo(request);
-            await service.disableMFA(request.user.id, body.mfa_code, ip, request.id);
+            const body = MFADisableConfirmSchema.parse(request.body);
+            const ci = getClientInfo(request);
+            await service.confirmMfaDisable(body, ci.ip, request.id);
             return reply.send({ message: 'MFA disabled successfully' });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
 }
-// ============================================
+// ============================================================================
 // SESSION ROUTES
-// ============================================
+// ============================================================================
 async function sessionRoutes(fastify) {
-    // Session routes manage active refresh-token sessions. Refresh rotates the
-    // cookie token; logout and revocation invalidate persisted session state.
-    // GET /auth/sessions - List active sessions
-    fastify.get('/sessions', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // GET /auth/sessions
+    fastify.get('/sessions', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const sessions = await service.listUserSessions(request.user.id, request.user.sessionId);
+            const r = request;
+            const sessions = await service.listUserSessions(r.user.id, r.user.sessionId);
             return reply.send({ data: sessions });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // DELETE /auth/sessions/:id - Revoke specific session
-    fastify.delete('/sessions/:id', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // DELETE /auth/sessions/others — revoke every OTHER active session.
+    // (Listed BEFORE /sessions/:id so Fastify's matcher does not turn
+    // "others" into the :id parameter.)
+    fastify.delete('/sessions/others', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            const params = request.params;
-            await service.revokeSession(request.user.id, params.id, request.user.sessionId);
+            const r = request;
+            const count = await service.revokeAllOtherSessions(r.user.id, r.user.sessionId);
+            return reply.send({ data: { revoked: count } });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
+    // DELETE /auth/sessions/:id — revoke a specific (non-current) session.
+    fastify.delete('/sessions/:id', { preHandler: [authenticate] }, async (request, reply) => {
+        try {
+            const r = request;
+            const { id } = r.params;
+            await service.revokeSession(r.user.id, id, r.user.sessionId);
             return reply.status(204).send();
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
-    // DELETE /auth/sessions/others - Revoke all other sessions
-    fastify.delete('/sessions/others', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
-        try {
-            const count = await service.revokeAllOtherSessions(request.user.id, request.user.sessionId);
-            return reply.send({ message: `Revoked ${count} other sessions` });
-        }
-        catch (error) {
-            return handleAuthError(error, reply);
-        }
-    });
-    // POST /auth/sessions/refresh - Refresh access token
+    // POST /auth/sessions/refresh — rotate refresh token.
     fastify.post('/sessions/refresh', async (request, reply) => {
         try {
-            const { ip, userAgent } = getClientInfo(request);
-            // Read refresh token from httpOnly cookie
-            const refreshToken = request.cookies?.refresh_token;
-            if (!refreshToken) {
+            const ci = getClientInfo(request);
+            const raw = request.cookies?.[REFRESH_COOKIE_NAME];
+            if (!raw) {
                 return reply.status(401).send({
-                    error: { code: 'MISSING_REFRESH_TOKEN', message: 'Refresh token cookie not found' },
+                    error: {
+                        code: 'MISSING_REFRESH_TOKEN',
+                        message: 'Refresh token cookie not found',
+                    },
                 });
             }
-            const result = await service.refreshAccessToken(refreshToken, ip, userAgent);
-            // Set new refresh token cookie (token rotation)
-            reply.setCookie('refresh_token', result.refreshToken, getRefreshCookieOptions());
+            const unsigned = request.unsignCookie(raw);
+            if (!unsigned.valid || !unsigned.value) {
+                reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+                return reply.status(401).send({
+                    error: {
+                        code: 'INVALID_REFRESH_TOKEN',
+                        message: 'Refresh token signature invalid',
+                    },
+                });
+            }
+            const result = await service.refreshAccessToken(unsigned.value, ci.ip, ci.userAgent, request.id);
+            reply.setCookie(REFRESH_COOKIE_NAME, result.refreshToken, getRefreshCookieOptions());
             return reply.send({
                 data: {
                     access_token: result.accessToken,
                     expires_at: result.expiresAt,
+                    session_id: result.sessionId,
                     token_type: 'Bearer',
                 },
             });
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            if (error instanceof AuthError &&
+                (error.code === AuthErrorCodes.REFRESH_TOKEN_REUSED ||
+                    error.code === AuthErrorCodes.SESSION_EXPIRED ||
+                    error.code === AuthErrorCodes.SESSION_INVALID)) {
+                reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+            }
+            return handleAuthError(error, reply, request);
         }
     });
-    // POST /auth/logout - Logout current session
-    fastify.post('/logout', {
-        preHandler: [authenticate],
-    }, async (request, reply) => {
+    // POST /auth/logout
+    fastify.post('/logout', { preHandler: [authenticate] }, async (request, reply) => {
         try {
-            await service.logout(request.user.sessionId);
-            // Clear refresh token cookie
-            reply.clearCookie('refresh_token', getRefreshCookieOptions());
+            const r = request;
+            const { ip } = getClientInfo(r);
+            await service.logout(r.user.id, r.user.sessionId, ip, r.id);
+            reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
             return reply.status(204).send();
         }
         catch (error) {
-            return handleAuthError(error, reply);
+            return handleAuthError(error, reply, request);
         }
     });
 }
-// ============================================
+// ============================================================================
 // MAIN EXPORT
-// ============================================
+// ============================================================================
 export default async function authRoutes(fastify) {
-    // Register each auth sub-area under the same /auth prefix configured by the
-    // module loader.
-    // Health check for auth module
-    fastify.get('/health', async () => ({ status: 'ok', module: 'auth' }));
     await fastify.register(credentialRoutes, { prefix: '' });
+    await fastify.register(passwordRoutes, { prefix: '' });
     await fastify.register(userRoutes, { prefix: '' });
     await fastify.register(mfaRoutes, { prefix: '' });
     await fastify.register(sessionRoutes, { prefix: '' });

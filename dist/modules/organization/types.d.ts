@@ -24,12 +24,12 @@ export declare const MemberStatusSchema: z.ZodEnum<{
 }>;
 export declare const OrgRoleSchema: z.ZodEnum<{
     security: "security";
+    billing: "billing";
     owner: "owner";
     admin: "admin";
+    developer: "developer";
     member: "member";
     viewer: "viewer";
-    billing: "billing";
-    developer: "developer";
 }>;
 export declare const InvitationStatusSchema: z.ZodEnum<{
     expired: "expired";
@@ -182,11 +182,11 @@ export declare const UpdateSettingsSchema: z.ZodObject<{
 export declare const UpdateMemberRoleSchema: z.ZodObject<{
     role: z.ZodEnum<{
         security: "security";
+        billing: "billing";
         admin: "admin";
+        developer: "developer";
         member: "member";
         viewer: "viewer";
-        billing: "billing";
-        developer: "developer";
     }>;
 }, z.core.$strip>;
 export declare const MembersListQuerySchema: z.ZodObject<{
@@ -207,12 +207,12 @@ export declare const MembersListQuerySchema: z.ZodObject<{
     }>>;
     role: z.ZodOptional<z.ZodEnum<{
         security: "security";
+        billing: "billing";
         owner: "owner";
         admin: "admin";
+        developer: "developer";
         member: "member";
         viewer: "viewer";
-        billing: "billing";
-        developer: "developer";
     }>>;
 }, z.core.$strip>;
 export declare const SuspendMemberSchema: z.ZodObject<{
@@ -225,11 +225,11 @@ export declare const CreateInvitationSchema: z.ZodObject<{
     email: z.ZodString;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
+        billing: "billing";
         admin: "admin";
+        developer: "developer";
         member: "member";
         viewer: "viewer";
-        billing: "billing";
-        developer: "developer";
     }>>;
 }, z.core.$strip>;
 export declare const AcceptInvitationSchema: z.ZodObject<{
@@ -270,11 +270,11 @@ export declare const CreateApiKeySchema: z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
+        billing: "billing";
         admin: "admin";
+        developer: "developer";
         member: "member";
         viewer: "viewer";
-        billing: "billing";
-        developer: "developer";
     }>>;
     expiresInDays: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;

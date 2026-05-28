@@ -1,18 +1,15 @@
-/**
- * Auth Module — Registration and initialization.
- *
- * Wrapped in fastify-plugin so auth decorators (if added later) are visible
- * across the entire Fastify instance, not encapsulated within this plugin scope.
- *
- * Flow:
- * 1. Register all auth routes under /auth.
- * 2. Leave auth dependency construction to imported route/service modules.
- */
 import fp from 'fastify-plugin';
 import authRoutes from './routes.js';
 import { logger } from '../../config/logger.js';
 const authLogger = logger.child({ component: 'auth-module' });
 async function authModule(fastify) {
+    // Initialize request.user to null so a misconfigured handler that reads
+    // it before `authenticate` runs returns null (then crashes with a clear
+    // message) rather than throwing an opaque "Cannot read properties of
+    // undefined" deep in the codebase.
+    if (!fastify.hasRequestDecorator('user')) {
+        fastify.decorateRequest('user', null);
+    }
     await fastify.register(authRoutes, { prefix: '/auth' });
     fastify.addHook('onClose', async () => {
         authLogger.info('Auth module shutting down');

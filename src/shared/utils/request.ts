@@ -1,6 +1,21 @@
+/**
+ * Per-request client metadata helpers.
+ *
+ * Trust model for the IP:
+ *   - Fastify's `request.ip` is the only trusted source. App.ts configures
+ *     `trustProxy` so the framework already walks `X-Forwarded-For` correctly
+ *     and produces the IP of the closest *trusted* proxy or the client.
+ *   - We INTENTIONALLY do not re-read `X-Forwarded-For`, `X-Real-IP`, or
+ *     `CF-Connecting-IP` here. Re-reading those headers in application code
+ *     bypasses Fastify's trust-proxy chain and lets any client spoof their
+ *     own IP, which would break IP-based rate limiting, audit, security
+ *     events, and `users.last_login_ip`.
+ *
+ * If you ever need a tighter model, narrow `trustProxy` to a specific
+ * subnet in `app.ts` rather than re-implementing the chain here.
+ */
 import type { FastifyRequest } from 'fastify';
 
-// Augment Fastify request with properties used in this module
 declare module 'fastify' {
   interface FastifyRequest {
     routerPath?: string;
@@ -8,6 +23,7 @@ declare module 'fastify' {
     clientInfo: ClientInfo;
   }
 }
+
 // ============================================
 // TYPES
 // ============================================
@@ -16,7 +32,6 @@ export interface ClientInfo {
   ip: string;
   userAgent: string;
   device: DeviceInfo;
-  location: LocationInfo;
   requestId: string;
   timestamp: string;
   isMobile: boolean;
@@ -31,16 +46,6 @@ export interface DeviceInfo {
   osVersion: string;
 }
 
-export interface LocationInfo {
-  country?: string;
-  region?: string;
-  city?: string;
-  timezone?: string;
-  latitude?: number;
-  longitude?: number;
-}
-
-// Extended request type with user context
 export interface RequestWithUser extends FastifyRequest {
   user: {
     id: string;
@@ -48,6 +53,7 @@ export interface RequestWithUser extends FastifyRequest {
     isAdmin: boolean;
     sessionId: string;
     mfaVerified: boolean;
+    stepUpFresh: boolean;
   };
   clientInfo: ClientInfo;
   startTime: number;
@@ -62,11 +68,11 @@ const TABLET_REGEX = /Tablet|iPad|Android(?!.*Mobile)/i;
 const BOT_REGEX = /bot|crawler|spider|crawling|facebookexternalhit|googlebot|bingbot|yandex/i;
 
 const BROWSER_PATTERNS = [
+  { name: 'Edge', regex: /Edg\/([0-9.]+)/ },           // Must match before Chrome
+  { name: 'Opera', regex: /OPR\/([0-9.]+)|Opera\/([0-9.]+)/ },
   { name: 'Chrome', regex: /Chrome\/([0-9.]+)/ },
   { name: 'Firefox', regex: /Firefox\/([0-9.]+)/ },
-  { name: 'Safari', regex: /Safari\/([0-9.]+)/ },
-  { name: 'Edge', regex: /Edg\/([0-9.]+)/ },
-  { name: 'Opera', regex: /Opera\/([0-9.]+)|OPR\/([0-9.]+)/ },
+  { name: 'Safari', regex: /Version\/([0-9.]+).*Safari/ },
 ];
 
 const OS_PATTERNS = [
@@ -78,20 +84,20 @@ const OS_PATTERNS = [
 ];
 
 // ============================================
-// MAIN FUNCTION: getClientInfo
+// MAIN FUNCTION
 // ============================================
 
 export function getClientInfo(request: FastifyRequest): ClientInfo {
-  const userAgent = request.headers['user-agent'] || 'unknown';
-  const ip = extractIp(request);
-  const requestId = request.id as string;
-  
+  const userAgent =
+    typeof request.headers['user-agent'] === 'string'
+      ? request.headers['user-agent']
+      : 'unknown';
+
   return {
-    ip,
-    userAgent,
+    ip: normalizeIp(request.ip || 'unknown'),
+    userAgent: userAgent.slice(0, 1024), // bounded
     device: parseDeviceInfo(userAgent),
-    location: {}, // Populated async via geoIP if needed
-    requestId,
+    requestId: request.id as string,
     timestamp: new Date().toISOString(),
     isMobile: MOBILE_REGEX.test(userAgent),
     isBot: BOT_REGEX.test(userAgent),
@@ -99,39 +105,12 @@ export function getClientInfo(request: FastifyRequest): ClientInfo {
 }
 
 // ============================================
-// IP EXTRACTION
+// IP NORMALIZATION (no source rewriting; only normalize formatting)
 // ============================================
 
-function extractIp(request: FastifyRequest): string {
-  // Priority order for IP extraction
-  const candidates = [
-    request.headers['x-forwarded-for']?.toString().split(',')[0]?.trim(),
-    request.headers['x-real-ip']?.toString(),
-    request.headers['cf-connecting-ip']?.toString(), // Cloudflare
-    request.ip,
-    request.socket?.remoteAddress,
-  ];
-
-  for (const candidate of candidates) {
-    if (candidate && isValidIp(candidate)) {
-      return normalizeIp(candidate);
-    }
-  }
-
-  return 'unknown';
-}
-
-function isValidIp(ip: string): boolean {
-  // IPv4
-  const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
-  // IPv6
-  const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^::$/;
-  
-  return ipv4Regex.test(ip) || ipv6Regex.test(ip);
-}
-
 function normalizeIp(ip: string): string {
-  // Handle IPv6-mapped IPv4
+  // IPv6-mapped IPv4 → bare IPv4. INET columns accept both, but downstream
+  // tooling is happier with the canonical form.
   if (ip.startsWith('::ffff:')) {
     return ip.substring(7);
   }
@@ -143,16 +122,10 @@ function normalizeIp(ip: string): string {
 // ============================================
 
 function parseDeviceInfo(userAgent: string): DeviceInfo {
-  const type = detectDeviceType(userAgent);
-  const browser = parseBrowser(userAgent);
-  const os = parseOS(userAgent);
-
   return {
-    type,
-    browser: browser.name,
-    browserVersion: browser.version,
-    os: os.name,
-    osVersion: os.version,
+    type: detectDeviceType(userAgent),
+    ...parseBrowser(userAgent),
+    ...parseOS(userAgent),
   };
 }
 
@@ -160,135 +133,45 @@ function detectDeviceType(userAgent: string): DeviceInfo['type'] {
   if (BOT_REGEX.test(userAgent)) return 'bot';
   if (TABLET_REGEX.test(userAgent)) return 'tablet';
   if (MOBILE_REGEX.test(userAgent)) return 'mobile';
-  return 'desktop';
+  if (userAgent && userAgent !== 'unknown') return 'desktop';
+  return 'unknown';
 }
 
-function parseBrowser(userAgent: string): { name: string; version: string } {
+function parseBrowser(userAgent: string): { browser: string; browserVersion: string } {
   for (const pattern of BROWSER_PATTERNS) {
     const match = userAgent.match(pattern.regex);
     if (match) {
       return {
-        name: pattern.name,
-        version: match[1] || match[2] || 'unknown',
+        browser: pattern.name,
+        browserVersion: match[1] || match[2] || 'unknown',
       };
     }
   }
-  return { name: 'unknown', version: 'unknown' };
+  return { browser: 'unknown', browserVersion: 'unknown' };
 }
 
-function parseOS(userAgent: string): { name: string; version: string } {
+function parseOS(userAgent: string): { os: string; osVersion: string } {
   for (const pattern of OS_PATTERNS) {
     const match = userAgent.match(pattern.regex);
     if (match) {
       return {
-        name: pattern.name,
-        version: match[1]?.replace(/_/g, '.') || 'unknown',
+        os: pattern.name,
+        osVersion: (match[1] || match[2] || 'unknown').replace(/_/g, '.'),
       };
     }
   }
-  return { name: 'unknown', version: 'unknown' };
+  return { os: 'unknown', osVersion: 'unknown' };
 }
 
 // ============================================
-// ASYNC GEOLOCATION (Optional)
-// ============================================
-
-export async function enrichLocationInfo(clientInfo: ClientInfo): Promise<ClientInfo> {
-  // Use free geoip service or database
-  // Example: MaxMind GeoLite2, ipapi.co, or ipgeolocation.io
-  
-  try {
-    // Free tier: ipapi.co (45 requests/minute)
-    const response = await fetch(`https://ipapi.co/${clientInfo.ip}/json/`);
-    const data : any = await response.json();
-    
-    if (!data.error) {
-      clientInfo.location = {
-        country: data.country_name,
-        region: data.region,
-        city: data.city,
-        timezone: data.timezone,
-        latitude: data.latitude,
-        longitude: data.longitude,
-      };
-    }
-  } catch (err) {
-    // Silently fail - location is optional
-  }
-  
-  return clientInfo;
-}
-
-// ============================================
-// SECURITY HELPERS
-// ============================================
-
-export function isSuspiciousRequest(clientInfo: ClientInfo, userContext?: RequestWithUser['user']): boolean {
-  const checks = [
-    // Bot accessing authenticated endpoint
-    clientInfo.isBot && !!userContext,
-    
-    // Mobile device with desktop browser signature
-    clientInfo.device.type === 'mobile' && clientInfo.device.browser === 'Edge',
-    
-    // Missing user agent
-    clientInfo.userAgent === 'unknown',
-    
-    // Known datacenter IP (would need IP database)
-    // clientInfo.ip.startsWith('...')
-  ];
-  
-  return checks.some(Boolean);
-}
-
-export function generateRequestFingerprint(clientInfo: ClientInfo): string {
-  // Unique fingerprint for rate limiting / fraud detection
-  const components = [
-    clientInfo.ip,
-    clientInfo.device.browser,
-    clientInfo.device.os,
-    clientInfo.userAgent.slice(0, 50), // First 50 chars
-  ];
-  
-  return components.join('|');
-}
-
-// ============================================
-// LOGGING FORMATTER
-// ============================================
-
-export function formatRequestLog(request: FastifyRequest, clientInfo: ClientInfo, durationMs: number): object {
-  return {
-    requestId: clientInfo.requestId,
-    timestamp: clientInfo.timestamp,
-    method: request.method,
-    url: request.url,
-    route: request.routerPath,
-    statusCode: request.statusCode,
-    durationMs,
-    client: {
-      ip: clientInfo.ip,
-      device: clientInfo.device.type,
-      browser: clientInfo.device.browser,
-      os: clientInfo.device.os,
-      isMobile: clientInfo.isMobile,
-      isBot: clientInfo.isBot,
-      country: clientInfo.location.country,
-    },
-    user: (request as RequestWithUser).user?.id,
-    userAgent: clientInfo.userAgent.slice(0, 200), // Truncate
-  };
-}
-
-// ============================================
-// FASTIFY DECORATOR
+// FASTIFY DECORATOR (optional convenience plugin)
 // ============================================
 
 import fp from 'fastify-plugin';
 
 export const clientInfoPlugin = fp(async (fastify) => {
-  fastify.decorateRequest('clientInfo', null as any);
-  
+  fastify.decorateRequest('clientInfo', null as unknown as ClientInfo);
+
   fastify.addHook('onRequest', async (request) => {
     request.clientInfo = getClientInfo(request);
   });
