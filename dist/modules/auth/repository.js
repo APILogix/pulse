@@ -453,6 +453,51 @@ export async function deleteExpiredEmailTokens(client) {
     return result.rowCount ?? 0;
 }
 // ============================================================================
+// EMAIL MFA OTP QUERIES (email-based MFA device codes)
+// ============================================================================
+/**
+ * Insert a fresh email MFA OTP for a device. Any prior unconsumed OTP for the
+ * same device is invalidated first so only the newest code is valid.
+ *
+ * Only the SHA-256 hash of the 6-digit code is persisted; the plaintext is
+ * emailed to the user and never stored.
+ */
+export async function createEmailMfaOtp(userId, deviceId, codeHash, ttlSeconds, client) {
+    const db = client || pool;
+    // Invalidate any prior active OTP for this device.
+    await db.query(`UPDATE email_mfa_otps SET used_at = NOW()
+     WHERE device_id = $1 AND used_at IS NULL`, [deviceId]);
+    await db.query(`INSERT INTO email_mfa_otps (user_id, device_id, code_hash, expires_at)
+     VALUES ($1, $2, $3, NOW() + ($4 || ' seconds')::interval)`, [userId, deviceId, codeHash, ttlSeconds.toString()]);
+}
+/**
+ * Atomically consume an email MFA OTP. Returns true if the code matched a
+ * row that was not yet used and not expired. Concurrent callers see at most
+ * one success.
+ */
+export async function consumeEmailMfaOtp(deviceId, codeHash, client) {
+    const db = client || pool;
+    const result = await db.query(`UPDATE email_mfa_otps
+     SET used_at = NOW()
+     WHERE id = (
+       SELECT id FROM email_mfa_otps
+       WHERE device_id = $1
+         AND code_hash = $2
+         AND used_at IS NULL
+         AND expires_at > NOW()
+       ORDER BY created_at DESC
+       LIMIT 1
+     )
+     RETURNING id`, [deviceId, codeHash]);
+    return (result.rowCount ?? 0) === 1;
+}
+export async function deleteExpiredEmailMfaOtps(client) {
+    const db = client || pool;
+    const result = await db.query(`DELETE FROM email_mfa_otps
+     WHERE expires_at < NOW() - INTERVAL '1 day'`);
+    return result.rowCount ?? 0;
+}
+// ============================================================================
 // SESSION QUERIES
 // ============================================================================
 /**

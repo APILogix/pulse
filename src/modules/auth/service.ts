@@ -34,6 +34,7 @@ import { logger } from '../../config/logger.js';
 import { emailService } from '../../shared/email/email.service.js';
 import {
   emailVerificationTemplate,
+  mfaCodeTemplate,
   mfaDisableConfirmTemplate,
   mfaStatusTemplate,
   passwordResetTemplate,
@@ -65,6 +66,7 @@ import {
   type ChangePasswordInput,
   type CreateUserInput,
   type DeleteUserInput,
+  type EmailMFASetup,
   type ForgotPasswordInput,
   type ListUsersQueryInput,
   type LoginInput,
@@ -125,6 +127,10 @@ const TOTP_CONFIG = {
   period: 30,
   window: 1,
 };
+
+// Email OTP: 6-digit numeric code, 10-minute TTL.
+const EMAIL_MFA_OTP_TTL_SECONDS = 10 * 60;
+const EMAIL_MFA_OTP_DIGITS = 6;
 
 const GENERIC_PASSWORD_RESET_MESSAGE =
   'If the email exists, a password reset link has been sent';
@@ -241,6 +247,84 @@ async function sendMfaDisableConfirmEmail(
     logger.error({ err: error, to: user.email }, 'MFA disable email failed');
     throw new AuthError(
       'Unable to send MFA disable confirmation email',
+      AuthErrorCodes.EMAIL_DELIVERY_FAILED,
+      503,
+    );
+  }
+}
+
+// ============================================================================
+// EMAIL MFA OTP HELPERS
+// ============================================================================
+
+/**
+ * Generate a cryptographically random 6-digit numeric OTP.
+ * Uses rejection sampling to avoid modulo bias.
+ */
+async function generateEmailMfaOtp(): Promise<string> {
+  // 3 bytes = 24 bits; max value 16777215. We need 0-999999.
+  // Rejection threshold: floor(16777216 / 1000000) * 1000000 = 16000000.
+  // Values >= 16000000 are rejected to eliminate bias.
+  const REJECTION_THRESHOLD = 16_000_000;
+  const RANGE = 1_000_000;
+  while (true) {
+    const buf = await randomBytesAsync(3);
+    const val = (buf[0]! << 16) | (buf[1]! << 8) | buf[2]!;
+    if (val < REJECTION_THRESHOLD) {
+      return val.toString(10).padStart(EMAIL_MFA_OTP_DIGITS, '0');
+    }
+  }
+}
+
+function hashEmailMfaOtp(code: string): string {
+  return createHash('sha256').update(`email_mfa_otp:${code}`).digest('hex');
+}
+
+/**
+ * Persist an email MFA OTP. Any prior unconsumed OTP for the same device is
+ * invalidated first so only the newest code is valid.
+ */
+async function createEmailMfaOtp(
+  userId: string,
+  deviceId: string,
+  codeHash: string,
+): Promise<void> {
+  await repository.createEmailMfaOtp(userId, deviceId, codeHash, EMAIL_MFA_OTP_TTL_SECONDS);
+}
+
+/**
+ * Atomically consume an email MFA OTP. Returns true if the code matched and
+ * was not yet used/expired.
+ */
+async function consumeEmailMfaOtp(
+  deviceId: string,
+  codeHash: string,
+): Promise<boolean> {
+  return repository.consumeEmailMfaOtp(deviceId, codeHash);
+}
+
+async function sendEmailMfaOtpEmail(
+  user: Pick<User, 'email' | 'full_name'>,
+  code: string,
+  deviceName: string,
+  purpose: 'setup' | 'login' | 'challenge',
+): Promise<void> {
+  try {
+    await emailService.send({
+      to: user.email,
+      ...mfaCodeTemplate({
+        appName: config.APP_NAME,
+        userName: user.full_name,
+        code,
+        expiresInMinutes: toMinutes(EMAIL_MFA_OTP_TTL_SECONDS),
+        purpose,
+        deviceName,
+      }),
+    });
+  } catch (error) {
+    logger.error({ err: error, to: user.email }, 'Email MFA OTP send failed');
+    throw new AuthError(
+      'Unable to send MFA verification code',
       AuthErrorCodes.EMAIL_DELIVERY_FAILED,
       503,
     );
@@ -1064,6 +1148,14 @@ export async function loginWithEmailPassword(
     const primary =
       verifiedDevices.find((d) => d.is_primary) || verifiedDevices[0]!;
 
+    // For email MFA, generate and send an OTP before issuing the challenge.
+    if (primary.device_type === 'email') {
+      const otp = await generateEmailMfaOtp();
+      const otpHash = hashEmailMfaOtp(otp);
+      await createEmailMfaOtp(user.id, primary.id, otpHash);
+      await sendEmailMfaOtpEmail(user, otp, primary.device_name, 'login');
+    }
+
     const challenge = createLoginMFAChallenge({
       userId: user.id,
       device: primary,
@@ -1161,7 +1253,18 @@ export async function verifyLoginMFAChallenge(
     throw new AuthError('MFA device invalid', AuthErrorCodes.MFA_INVALID, 400);
   }
 
-  let verified = verifyTotpDeviceCode(device, input.code);
+  // Verify the code based on device type.
+  let verified = false;
+  if (device.device_type === 'email') {
+    // Email MFA: check the OTP stored in email_mfa_otps.
+    const codeHash = hashEmailMfaOtp(input.code);
+    verified = await consumeEmailMfaOtp(device.id, codeHash);
+  } else {
+    // TOTP: validate against the encrypted secret.
+    verified = verifyTotpDeviceCode(device, input.code);
+  }
+
+  // Backup codes are always accepted as a fallback regardless of device type.
   if (!verified && /^[a-fA-F0-9]{10}$/.test(input.code)) {
     verified = await consumeBackupCode(user.id, input.code);
   }
@@ -1667,13 +1770,82 @@ export async function setupMFA(
   userId: string,
   input: MFASetupInput,
   ipAddress: string,
-): Promise<TOTPSetup & { device_id: string }> {
+): Promise<(TOTPSetup | EmailMFASetup) & { device_id: string; device_type: string }> {
   const user = await repository.findUserById(userId);
   if (!user) {
     throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
   }
   assertUserUsable(user);
 
+  // ── Email MFA setup ──────────────────────────────────────────────────────
+  if (input.type === 'email') {
+    const existing = await repository.findAnyMFADeviceByType(userId, 'email');
+    if (existing && existing.is_active && existing.verified) {
+      throw new AuthError(
+        'Email MFA is already configured. Disable it first if you want to re-enroll.',
+        AuthErrorCodes.MFA_ALREADY_ENABLED,
+        409,
+      );
+    }
+
+    // A new device becomes primary only when the user has no other device
+    // currently flagged primary+active. This mirrors the DB partial unique
+    // index `one_primary_mfa (is_primary AND is_active)` exactly, so the
+    // INSERT/UPDATE can never violate it. Re-enrolling a device that was
+    // itself the primary keeps it primary.
+    const allDevices = await repository.findMFADevicesByUserId(userId);
+    const hasOtherPrimary = allDevices.some(
+      (d) => d.is_primary && d.is_active && d.id !== existing?.id,
+    );
+    const isPrimary = existing?.is_primary === true || !hasOtherPrimary;
+
+    let device: MFADevice;
+    if (existing) {
+      const reset = await repository.resetMFADeviceForReSetup(existing.id, {
+        device_name: input.device_name,
+        secret_encrypted: null, // email MFA has no stored secret
+        is_primary: isPrimary,
+        device_metadata: {
+          setup_ip: ipAddress,
+          re_enrolled_at: new Date().toISOString(),
+        },
+      });
+      if (!reset) {
+        throw new AuthError(
+          'Failed to reset MFA device',
+          AuthErrorCodes.MFA_DEVICE_NOT_FOUND,
+          500,
+        );
+      }
+      device = reset;
+    } else {
+      device = await repository.createMFADevice({
+        user_id: userId,
+        device_type: 'email',
+        device_name: input.device_name,
+        secret_encrypted: null,
+        is_primary: isPrimary,
+        device_metadata: { setup_ip: ipAddress },
+      });
+    }
+
+    // Generate and send a setup OTP to confirm the user controls this email.
+    const otp = await generateEmailMfaOtp();
+    const otpHash = hashEmailMfaOtp(otp);
+    await createEmailMfaOtp(userId, device.id, otpHash);
+    await sendEmailMfaOtpEmail(user, otp, input.device_name, 'setup');
+
+    const { plain: backupCodes, hashed } = await generateBackupCodes();
+    mfaBackupTempCache.set(device.id, hashed);
+
+    return {
+      device_id: device.id,
+      device_type: 'email',
+      backupCodes,
+    };
+  }
+
+  // ── TOTP setup ───────────────────────────────────────────────────────────
   // Look at any existing TOTP device so we can reactivate it.
   const existing = await repository.findAnyMFADeviceByType(userId, 'totp');
   if (existing && existing.is_active && existing.verified) {
@@ -1687,10 +1859,14 @@ export async function setupMFA(
   const secret = new OTPAuth.Secret({ size: 32 });
   const totp = buildTotp(secret.base32, user.email);
   const secretEncrypted = encrypt(secret.base32, config.ENCRYPTION_KEY);
-  const isPrimary =
-    !existing ||
-    existing.is_primary ||
-    (await repository.findMFADevicesByUserId(userId)).length === 0;
+  // A new device becomes primary only when the user has no other verified
+  // active device. Re-enrolling a device that was already primary keeps it
+  // primary. Adding TOTP alongside an existing primary must not demote it.
+  const allTotpDevices = await repository.findMFADevicesByUserId(userId);
+  const hasOtherPrimaryTotp = allTotpDevices.some(
+    (d) => d.is_primary && d.is_active && d.id !== existing?.id,
+  );
+  const isPrimary = existing?.is_primary === true || !hasOtherPrimaryTotp;
 
   let device: MFADevice;
   if (existing) {
@@ -1732,6 +1908,7 @@ export async function setupMFA(
   const qrCodeUrl = await QRCode.toDataURL(totp.toString());
   return {
     device_id: device.id,
+    device_type: 'totp',
     secret: secret.base32,
     qrCodeUrl,
     backupCodes,
@@ -1759,19 +1936,34 @@ export async function verifyMFASetup(
       409,
     );
   }
-  if (!device.secret_encrypted) {
-    throw new AuthError(
-      'Device has no secret to verify',
-      AuthErrorCodes.MFA_INVALID,
-      400,
-    );
-  }
-  if (!verifyTotpDeviceCode(device, input.code)) {
-    throw new AuthError(
-      'Invalid verification code',
-      AuthErrorCodes.MFA_INVALID,
-      400,
-    );
+
+  // Verify the code based on device type.
+  if (device.device_type === 'email') {
+    const codeHash = hashEmailMfaOtp(input.code);
+    const ok = await consumeEmailMfaOtp(device.id, codeHash);
+    if (!ok) {
+      throw new AuthError(
+        'Invalid or expired verification code',
+        AuthErrorCodes.MFA_INVALID,
+        400,
+      );
+    }
+  } else {
+    // TOTP
+    if (!device.secret_encrypted) {
+      throw new AuthError(
+        'Device has no secret to verify',
+        AuthErrorCodes.MFA_INVALID,
+        400,
+      );
+    }
+    if (!verifyTotpDeviceCode(device, input.code)) {
+      throw new AuthError(
+        'Invalid verification code',
+        AuthErrorCodes.MFA_INVALID,
+        400,
+      );
+    }
   }
 
   const backupCodesHash = mfaBackupTempCache.get(device.id) ?? [];
@@ -1813,6 +2005,17 @@ export async function createMFAChallenge(userId: string): Promise<MFAChallenge> 
     );
   }
   const primary = verified.find((d) => d.is_primary) || verified[0]!;
+
+  // For email MFA, generate and send an OTP before issuing the challenge.
+  if (primary.device_type === 'email') {
+    const user = await repository.findUserById(userId);
+    if (user) {
+      const otp = await generateEmailMfaOtp();
+      const otpHash = hashEmailMfaOtp(otp);
+      await createEmailMfaOtp(userId, primary.id, otpHash);
+      await sendEmailMfaOtpEmail(user, otp, primary.device_name, 'challenge');
+    }
+  }
 
   const challengeId = generateId();
   const challenge: StepUpChallenge = {
@@ -1867,7 +2070,16 @@ export async function verifyMFAChallenge(
     throw new AuthError('MFA device invalid', AuthErrorCodes.MFA_INVALID, 400);
   }
 
-  if (!verifyTotpDeviceCode(device, input.code)) {
+  // Verify the code based on device type.
+  let stepUpVerified = false;
+  if (device.device_type === 'email') {
+    const codeHash = hashEmailMfaOtp(input.code);
+    stepUpVerified = await consumeEmailMfaOtp(device.id, codeHash);
+  } else {
+    stepUpVerified = verifyTotpDeviceCode(device, input.code);
+  }
+
+  if (!stepUpVerified) {
     challenge.attempts += 1;
     stepUpChallengeCache.set(challengeId, challenge);
     throw new AuthError('Invalid code', AuthErrorCodes.MFA_INVALID, 400);
@@ -1885,6 +2097,43 @@ export async function verifyMFAChallenge(
 
 export async function listMFADevices(userId: string): Promise<MFADevice[]> {
   return repository.findMFADevicesByUserId(userId, true);
+}
+
+/**
+ * Resend an email MFA OTP for a given device. Used during setup (to resend
+ * the setup confirmation code) and during step-up challenges.
+ */
+export async function resendEmailMfaOtp(
+  userId: string,
+  deviceId: string,
+): Promise<void> {
+  const user = await repository.findUserById(userId);
+  if (!user) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+  assertUserUsable(user);
+
+  const device = await repository.findMFADeviceById(deviceId, userId);
+  if (!device || !device.is_active) {
+    throw new AuthError(
+      'MFA device not found',
+      AuthErrorCodes.MFA_DEVICE_NOT_FOUND,
+      404,
+    );
+  }
+  if (device.device_type !== 'email') {
+    throw new AuthError(
+      'Device is not an email MFA device',
+      AuthErrorCodes.INVALID_OPERATION,
+      400,
+    );
+  }
+
+  const otp = await generateEmailMfaOtp();
+  const otpHash = hashEmailMfaOtp(otp);
+  await createEmailMfaOtp(userId, device.id, otpHash);
+  const purpose = device.verified ? 'challenge' : 'setup';
+  await sendEmailMfaOtpEmail(user, otp, device.device_name, purpose);
 }
 
 export async function setPrimaryMFADevice(
@@ -2007,7 +2256,15 @@ export async function generateNewBackupCodes(
       400,
     );
   }
-  if (!verifyTotpDeviceCode(primary, input.mfa_code)) {
+  // Verify the code based on device type.
+  let codeValid = false;
+  if (primary.device_type === 'email') {
+    const codeHash = hashEmailMfaOtp(input.mfa_code);
+    codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
+  } else {
+    codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+  }
+  if (!codeValid) {
     throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
   }
 
@@ -2052,7 +2309,15 @@ export async function toggleMFA(
       400,
     );
   }
-  if (!verifyTotpDeviceCode(primary, input.mfa_code)) {
+  // Verify the code based on device type.
+  let codeValid = false;
+  if (primary.device_type === 'email') {
+    const codeHash = hashEmailMfaOtp(input.mfa_code);
+    codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
+  } else {
+    codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+  }
+  if (!codeValid) {
     throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
   }
 
@@ -2100,11 +2365,17 @@ export async function requestMfaDisable(
     throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
-  // Accept TOTP only at this stage. Backup codes intentionally cannot start
-  // a disable request, because a single phished backup code should not be
-  // the entire trust signal for tearing down MFA. Backup codes are still
-  // valid for login.
-  if (!verifyTotpDeviceCode(primary, input.mfa_code)) {
+  // Accept TOTP or email OTP at this stage. Backup codes intentionally cannot
+  // start a disable request, because a single phished backup code should not
+  // be the entire trust signal for tearing down MFA.
+  let codeValid = false;
+  if (primary.device_type === 'email') {
+    const codeHash = hashEmailMfaOtp(input.mfa_code);
+    codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
+  } else {
+    codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+  }
+  if (!codeValid) {
     throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
   }
 

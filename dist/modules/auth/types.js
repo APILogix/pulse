@@ -93,12 +93,12 @@ export const ResendVerificationSchema = z.object({
 export const VerifyEmailQuerySchema = z.object({
     token: z.string().min(32).max(256),
 });
-// MFA setup.
+// MFA setup — supports totp and email device types.
 export const MFASetupSchema = z.object({
-    type: z.enum(['totp']),
+    type: z.enum(['totp', 'email']),
     device_name: z.string().min(1).max(255),
 });
-// MFA verify-setup.
+// MFA verify-setup — 6-digit code for both TOTP and email OTP.
 export const MFAVerifySetupSchema = z.object({
     device_id: z.string().uuid(),
     code: z.string().length(6).regex(/^\d{6}$/),
@@ -118,8 +118,8 @@ export const BackupCodeLoginSchema = z.object({
 // MFA disable now uses a two-step email-confirmation flow.
 //   POST /auth/mfa/disable/request  → emails the user a one-time link.
 //   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
-// The TOTP code is still required at request-time so a stolen access token
-// alone cannot initiate the disable.
+// The MFA code (TOTP or email OTP) is still required at request-time so a
+// stolen access token alone cannot initiate the disable.
 export const MFADisableRequestSchema = z.object({
     mfa_code: z.string().length(6).regex(/^\d{6}$/),
 });

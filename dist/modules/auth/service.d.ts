@@ -1,4 +1,4 @@
-import { type BackupCodeLoginInput, type ChangePasswordInput, type CreateUserInput, type DeleteUserInput, type ForgotPasswordInput, type ListUsersQueryInput, type LoginInput, type LoginMFAVerifyInput, type MFAChallenge, type MFADevice, type MFADisableConfirmInput, type MFADisableRequestInput, type MFASetupInput, type MFAToggleInput, type MFAVerifyInput, type MFAVerifySetupInput, type RegenerateBackupCodesInput, type ResendVerificationInput, type ResetPasswordInput, type SessionInfo, type TOTPSetup, type UpdateUserInput, type UserProfile, type VerifyEmailQueryInput } from './types.js';
+import { type BackupCodeLoginInput, type ChangePasswordInput, type CreateUserInput, type DeleteUserInput, type EmailMFASetup, type ForgotPasswordInput, type ListUsersQueryInput, type LoginInput, type LoginMFAVerifyInput, type MFAChallenge, type MFADevice, type MFADisableConfirmInput, type MFADisableRequestInput, type MFASetupInput, type MFAToggleInput, type MFAVerifyInput, type MFAVerifySetupInput, type RegenerateBackupCodesInput, type ResendVerificationInput, type ResetPasswordInput, type SessionInfo, type TOTPSetup, type UpdateUserInput, type UserProfile, type VerifyEmailQueryInput } from './types.js';
 /**
  * Register a user. To prevent email-existence enumeration, the route always
  * returns a generic 201 message regardless of whether the email is already
@@ -81,8 +81,9 @@ export declare function changePassword(userId: string, currentSessionId: string,
     token_type: 'Bearer';
     session_id: string;
 }>;
-export declare function setupMFA(userId: string, input: MFASetupInput, ipAddress: string): Promise<TOTPSetup & {
+export declare function setupMFA(userId: string, input: MFASetupInput, ipAddress: string): Promise<(TOTPSetup | EmailMFASetup) & {
     device_id: string;
+    device_type: string;
 }>;
 export declare function verifyMFASetup(userId: string, input: MFAVerifySetupInput, ipAddress: string, requestId: string): Promise<void>;
 export declare function createMFAChallenge(userId: string): Promise<MFAChallenge>;
@@ -96,6 +97,11 @@ export declare function verifyMFAChallenge(challengeId: string, input: MFAVerify
     deviceId: string;
 }>;
 export declare function listMFADevices(userId: string): Promise<MFADevice[]>;
+/**
+ * Resend an email MFA OTP for a given device. Used during setup (to resend
+ * the setup confirmation code) and during step-up challenges.
+ */
+export declare function resendEmailMfaOtp(userId: string, deviceId: string): Promise<void>;
 export declare function setPrimaryMFADevice(userId: string, deviceId: string): Promise<void>;
 /**
  * Remove an MFA device.

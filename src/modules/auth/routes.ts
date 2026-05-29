@@ -487,11 +487,27 @@ async function mfaRoutes(fastify: FastifyInstance) {
         const body = MFASetupSchema.parse(r.body);
         const { ip } = getClientInfo(r);
         const setup = await service.setupMFA(r.user.id, body, ip);
+
+        if (setup.device_type === 'email') {
+          // Email MFA: no QR code or secret — just backup codes and a
+          // "check your email" prompt. The OTP was already sent by the service.
+          return reply.status(201).send({
+            data: {
+              device_id: setup.device_id,
+              device_type: 'email',
+              backup_codes: setup.backupCodes,
+              warning: 'Save these backup codes - they will only be shown once!',
+            },
+          });
+        }
+
+        // TOTP
         return reply.status(201).send({
           data: {
             device_id: setup.device_id,
-            secret: setup.secret,
-            qr_code_url: setup.qrCodeUrl,
+            device_type: 'totp',
+            secret: (setup as { secret: string }).secret,
+            qr_code_url: (setup as { qrCodeUrl: string }).qrCodeUrl,
             backup_codes: setup.backupCodes,
             warning: 'Save these backup codes - they will only be shown once!',
           },
@@ -559,6 +575,28 @@ async function mfaRoutes(fastify: FastifyInstance) {
         return reply.send({
           data: { user_id: result.userId, mfa_verified: true },
         });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // POST /auth/mfa/email/resend — resend email OTP for setup or step-up.
+  // Authenticated users only. Generates a fresh OTP and emails it.
+  fastify.post(
+    '/mfa/email/resend',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { device_id } = (r.body as { device_id?: string }) || {};
+        if (!device_id) {
+          return reply.status(400).send({
+            error: { code: 'VALIDATION_ERROR', message: 'device_id is required' },
+          });
+        }
+        await service.resendEmailMfaOtp(r.user.id, device_id);
+        return reply.send({ data: { message: 'Verification code sent' } });
       } catch (error) {
         return handleAuthError(error, reply, request);
       }

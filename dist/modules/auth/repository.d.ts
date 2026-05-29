@@ -146,6 +146,21 @@ export declare function invalidateAllUserTokens(userId: string, client?: PoolCli
 export declare function markEmailAsVerified(userId: string, client?: PoolClient): Promise<void>;
 export declare function deleteExpiredEmailTokens(client?: PoolClient): Promise<number>;
 /**
+ * Insert a fresh email MFA OTP for a device. Any prior unconsumed OTP for the
+ * same device is invalidated first so only the newest code is valid.
+ *
+ * Only the SHA-256 hash of the 6-digit code is persisted; the plaintext is
+ * emailed to the user and never stored.
+ */
+export declare function createEmailMfaOtp(userId: string, deviceId: string, codeHash: string, ttlSeconds: number, client?: PoolClient): Promise<void>;
+/**
+ * Atomically consume an email MFA OTP. Returns true if the code matched a
+ * row that was not yet used and not expired. Concurrent callers see at most
+ * one success.
+ */
+export declare function consumeEmailMfaOtp(deviceId: string, codeHash: string, client?: PoolClient): Promise<boolean>;
+export declare function deleteExpiredEmailMfaOtps(client?: PoolClient): Promise<number>;
+/**
  * Insert a new session row. Callers MUST pre-allocate the session UUID and
  * the SHA-256 of the issued refresh JWT so the row is created in a single
  * INSERT with no placeholder/race window.

@@ -110,6 +110,9 @@ export interface TOTPSetup {
     qrCodeUrl: string;
     backupCodes: string[];
 }
+export interface EmailMFASetup {
+    backupCodes: string[];
+}
 export interface MFAChallenge {
     challengeId: string;
     deviceId: string;
@@ -227,6 +230,7 @@ export type VerifyEmailQueryInput = z.infer<typeof VerifyEmailQuerySchema>;
 export declare const MFASetupSchema: z.ZodObject<{
     type: z.ZodEnum<{
         totp: "totp";
+        email: "email";
     }>;
     device_name: z.ZodString;
 }, z.core.$strip>;
