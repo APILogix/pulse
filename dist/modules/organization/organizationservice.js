@@ -1,5 +1,10 @@
 import { OrganizationRepository } from "./repository.js";
 import { generateToken, hashToken } from "./utils.js";
+import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
+import { apiKeyCache } from "../../config/lrucashe.js";
+import { env } from "../../config/env.js";
+import { emailService } from "../../shared/email/email.service.js";
+import { orgInvitationTemplate } from "../../shared/email/templates.js";
 import { hasMinRole, canManageRole, isMutableOrg, OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError, } from "./types.js";
 // ── DTO Mappers ─────────────────────────────────
 function toOrgDto(r) {
@@ -13,6 +18,33 @@ function toMemberDto(r) {
 }
 function toInviteDto(r) {
     return { id: r.id, email: r.email, role: r.role, status: r.status, expiresAt: r.expires_at, invitedAt: r.created_at, invitedBy: { id: r.invited_by, email: r.invited_by_email ?? null, name: r.invited_by_name ?? null } };
+}
+// ── Invitation helpers ──────────────────────────
+const INVITE_EXPIRY_DAYS = 7;
+const ROLE_LABELS = {
+    owner: "Owner",
+    admin: "Admin",
+    developer: "Developer",
+    billing: "Billing",
+    security: "Security",
+    member: "Member",
+    viewer: "Viewer",
+};
+function roleLabel(role) {
+    return ROLE_LABELS[role] ?? role;
+}
+/**
+ * Build the frontend invite-accept URL. `accountExists` lets the frontend
+ * decide which screen to show: sign-in (existing user) vs. create-account
+ * (brand-new invitee). The base is FRONTEND_URL, falling back to APP_URL.
+ */
+function buildInviteUrl(token, accountExists) {
+    const base = (env.FRONTEND_URL || env.APP_URL || "").replace(/\/+$/, "");
+    const params = new URLSearchParams({
+        token,
+        accountExists: accountExists ? "true" : "false",
+    });
+    return `${base}/invite?${params.toString()}`;
 }
 export class OrganizationService {
     repo;
@@ -31,6 +63,23 @@ export class OrganizationService {
         catch (e) {
             this.log.error({ err: e }, "Audit log write failed");
         }
+    }
+    /** Send the organization-invitation email. Throws on SMTP failure so callers
+     *  can decide whether the failure is fatal (resend) or best-effort (invite). */
+    async sendInvitationEmail(opts) {
+        await emailService.send({
+            to: opts.toEmail,
+            ...orgInvitationTemplate({
+                appName: env.APP_NAME,
+                userName: opts.toName,
+                orgName: opts.orgName,
+                inviterName: opts.inviterName,
+                roleLabel: roleLabel(opts.role),
+                actionUrl: opts.inviteUrl,
+                expiresInDays: INVITE_EXPIRY_DAYS,
+                accountExists: opts.accountExists,
+            }),
+        });
     }
     async requireMember(orgId, userId, minRole = "viewer") {
         const member = await this.repo.findActiveMember(orgId, userId);
@@ -78,8 +127,18 @@ export class OrganizationService {
     }
     async deleteOrganization(meta, orgId) {
         await this.requireMutableOrg(orgId);
-        const m = await this.requireMember(orgId, meta.actorUserId, "owner");
+        await this.requireMember(orgId, meta.actorUserId, "owner");
+        // Capture key hashes before the cascade so we can purge the ingestion cache.
+        const keyHashes = await this.repo.listOrgApiKeyHashes(orgId);
         await this.repo.softDeleteOrg(orgId);
+        // Evict every project API key of this org from the in-process ingestion
+        // cache so a deleted org stops ingesting immediately (not after TTL).
+        for (const hash of keyHashes) {
+            try {
+                apiKeyCache.delete(hash);
+            }
+            catch { /* best-effort */ }
+        }
         await this.audit(meta, { orgId, action: "org.deleted", entityType: "organization", entityId: orgId, isSensitive: true });
     }
     async archiveOrganization(meta, orgId) {
@@ -163,6 +222,7 @@ export class OrganizationService {
                 throw new ForbiddenError("Cannot remove the last owner");
         }
         await this.repo.removeMember(orgId, targetUserId, meta.actorUserId);
+        invalidateMembershipCache(orgId, targetUserId);
         await this.audit(meta, { orgId, action: "member.removed", entityType: "member", entityId: targetUserId, isSensitive: true });
     }
     async suspendMember(meta, orgId, targetUserId) {
@@ -174,34 +234,89 @@ export class OrganizationService {
         if (!canManageRole(actor.role, target.role))
             throw new ForbiddenError("Cannot suspend this user");
         await this.repo.suspendMember(orgId, targetUserId, meta.actorUserId);
+        invalidateMembershipCache(orgId, targetUserId);
         await this.audit(meta, { orgId, action: "member.suspended", entityType: "member", entityId: targetUserId });
     }
     async reactivateMember(meta, orgId, targetUserId) {
         await this.requireMutableOrg(orgId);
         await this.requireMember(orgId, meta.actorUserId, "admin");
         await this.repo.reactivateMember(orgId, targetUserId);
+        invalidateMembershipCache(orgId, targetUserId);
         await this.audit(meta, { orgId, action: "member.reactivated", entityType: "member", entityId: targetUserId });
     }
     // ── Invitations ───────────────────────────────
     async inviteMember(meta, orgId, email, role) {
-        await this.requireMutableOrg(orgId);
+        const org = await this.requireMutableOrg(orgId);
         await this.requireMember(orgId, meta.actorUserId, "admin");
         const token = generateToken();
         const tokenHash = hashToken(token);
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
         const inv = await this.repo.createInvitation(orgId, meta.actorUserId, email, role, tokenHash, expiresAt);
-        await this.audit(meta, { orgId, action: "member.invited", entityType: "invitation", entityId: inv.id, newValues: { email, role } });
-        return { ...toInviteDto(inv), token };
+        // Does the invitee already have an account? Drives both the email copy and
+        // the accountExists flag in the invite URL so the frontend can route them
+        // to sign-in vs. create-account.
+        const existingUser = await this.repo.findUserByEmail(email);
+        const accountExists = !!existingUser;
+        const inviteUrl = buildInviteUrl(token, accountExists);
+        // Send the invitation email. Email delivery is best-effort: a transient
+        // SMTP failure must NOT roll back the invitation (it can be resent), but we
+        // surface the failure in logs and the audit metadata.
+        let emailSent = true;
+        try {
+            await this.sendInvitationEmail({
+                toEmail: email,
+                toName: existingUser?.full_name,
+                orgName: org.name,
+                inviterName: meta.actorEmail,
+                role,
+                inviteUrl,
+                accountExists,
+            });
+        }
+        catch (err) {
+            emailSent = false;
+            this.log.error({ err, orgId, email }, "Invitation email failed to send");
+        }
+        await this.audit(meta, {
+            orgId,
+            action: "member.invited",
+            entityType: "invitation",
+            entityId: inv.id,
+            newValues: { email, role, accountExists, emailSent },
+        });
+        return { ...toInviteDto(inv), token, inviteUrl, accountExists, emailSent };
     }
     async resendInvitation(meta, orgId, invitationId) {
+        const org = await this.requireMutableOrg(orgId);
         await this.requireMember(orgId, meta.actorUserId, "admin");
         const inv = await this.repo.findInvitationById(invitationId);
         if (!inv || inv.org_id !== orgId)
             throw new NotFoundError("Invitation");
         if (inv.status !== "pending")
             throw new ValidationError("Invitation is not pending");
+        if (inv.expires_at && new Date(inv.expires_at).getTime() <= Date.now()) {
+            throw new ValidationError("Invitation has expired. Create a new one.");
+        }
+        // We never store the plaintext token, so resending issues a fresh token
+        // (and rotates the stored hash) so the emailed link is always valid.
+        const token = generateToken();
+        const tokenHash = hashToken(token);
+        await this.repo.rotateInvitationToken(invitationId, tokenHash);
         await this.repo.incrementResentCount(invitationId);
+        const existingUser = await this.repo.findUserByEmail(inv.email);
+        const accountExists = !!existingUser;
+        const inviteUrl = buildInviteUrl(token, accountExists);
+        await this.sendInvitationEmail({
+            toEmail: inv.email,
+            toName: existingUser?.full_name,
+            orgName: org.name,
+            inviterName: meta.actorEmail,
+            role: inv.role,
+            inviteUrl,
+            accountExists,
+        });
         await this.audit(meta, { orgId, action: "invitation.resent", entityType: "invitation", entityId: invitationId });
+        return { inviteUrl, accountExists };
     }
     async revokeInvitation(meta, orgId, invitationId) {
         await this.requireMember(orgId, meta.actorUserId, "admin");
@@ -216,6 +331,17 @@ export class OrganizationService {
         const inv = await this.repo.findInvitationByTokenHash(tokenHash);
         if (!inv)
             throw new NotFoundError("Invitation");
+        // Bind the invitation to the invited identity. Without this check ANY
+        // authenticated user who obtains the token could redeem it and join the
+        // org at the invited role (invite theft / privilege escalation).
+        const invitedEmail = inv.email.trim().toLowerCase();
+        const actorEmail = (meta.actorEmail ?? "").trim().toLowerCase();
+        if (!actorEmail || actorEmail !== invitedEmail) {
+            throw new ForbiddenError("This invitation was issued to a different email address");
+        }
+        if (inv.expires_at && new Date(inv.expires_at).getTime() <= Date.now()) {
+            throw new ValidationError("Invitation has expired");
+        }
         await this.repo.acceptInvitation(tokenHash, meta.actorUserId);
         await this.repo.addMember(inv.org_id, meta.actorUserId, inv.role, inv.invited_by, "invite");
         await this.audit(meta, { orgId: inv.org_id, action: "invitation.accepted", entityType: "invitation", entityId: inv.id });
@@ -360,6 +486,9 @@ export class OrganizationService {
         if (!inv)
             throw new NotFoundError("Invitation");
         const org = await this.repo.findOrgById(inv.org_id);
+        // Tell the frontend whether the invitee already has an account so it can
+        // render sign-in vs. create-account when the link is opened directly.
+        const existingUser = await this.repo.findUserByEmail(inv.email);
         return {
             valid: true,
             email: inv.email,
@@ -367,6 +496,7 @@ export class OrganizationService {
             orgName: org?.name ?? null,
             orgSlug: org?.slug ?? null,
             expiresAt: inv.expires_at,
+            accountExists: !!existingUser,
         };
     }
     // ── Slug Availability ─────────────────────────
@@ -403,6 +533,7 @@ export class OrganizationService {
                 throw new ForbiddenError("Cannot leave as the last owner. Transfer ownership first.");
         }
         await this.repo.removeMember(orgId, meta.actorUserId, meta.actorUserId, "self-leave");
+        invalidateMembershipCache(orgId, meta.actorUserId);
         await this.audit(meta, { orgId, action: "member.left", entityType: "member", entityId: meta.actorUserId });
     }
     // ── List SSO Providers ────────────────────────

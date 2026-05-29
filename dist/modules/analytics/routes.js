@@ -1,7 +1,8 @@
 import { authenticate } from "../../shared/middleware/auth.js";
+import { requireProjectMembership } from "../../shared/middleware/tenant.js";
 const DEFAULT_CACHE_WINDOW_MS = 2 * 60 * 1_000;
 export async function analyticsRoutes(fastify, _options) {
-    fastify.get("/:projectId/events", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/events", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId } = request.params;
         const query = request.query;
         const eventQuery = parseEventListQuery(query);
@@ -19,7 +20,7 @@ export async function analyticsRoutes(fastify, _options) {
             data: result.data,
         });
     });
-    fastify.get("/:projectId/events/:eventId", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/events/:eventId", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId, eventId } = request.params;
         const result = await fastify.analytics.service.getEventDetails(projectId, eventId);
         if (!result) {
@@ -35,7 +36,7 @@ export async function analyticsRoutes(fastify, _options) {
             data: result.data,
         });
     });
-    fastify.get("/:projectId/requests/overview", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/requests/overview", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId } = request.params;
         const range = parseTimeRange(request.query, 24 * 60 * 60 * 1_000);
         const result = await fastify.analytics.service.getRequestOverview(projectId, range);
@@ -49,7 +50,7 @@ export async function analyticsRoutes(fastify, _options) {
             data: result.data,
         });
     });
-    fastify.get("/:projectId/dashboard", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/dashboard", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId } = request.params;
         const range = parseTimeRange(request.query, 24 * 60 * 60 * 1_000);
         const result = await fastify.analytics.service.getDashboard(projectId, range);
@@ -64,7 +65,7 @@ export async function analyticsRoutes(fastify, _options) {
             data: result.data,
         });
     });
-    fastify.get("/:projectId/error-groups", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/error-groups", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId } = request.params;
         const query = request.query;
         const errorGroupQuery = {
@@ -92,7 +93,7 @@ export async function analyticsRoutes(fastify, _options) {
             data: result.data,
         });
     });
-    fastify.patch("/:projectId/error-groups/:fingerprint", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.patch("/:projectId/error-groups/:fingerprint", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId, fingerprint } = request.params;
         const body = request.body;
         const update = {};
@@ -117,7 +118,7 @@ export async function analyticsRoutes(fastify, _options) {
         }
         return reply.send({ meta: { projectId, fingerprint }, data: result });
     });
-    fastify.post("/:projectId/error-groups/:fingerprint/resolve", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.post("/:projectId/error-groups/:fingerprint/resolve", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId, fingerprint } = request.params;
         const body = (request.body ?? {});
         const result = await fastify.analytics.service.resolveErrorGroup(projectId, fingerprint, body.resolvedBy ?? body.resolved_by);
@@ -126,7 +127,7 @@ export async function analyticsRoutes(fastify, _options) {
         }
         return reply.send({ meta: { projectId, fingerprint, resolvedAt: new Date().toISOString() }, data: result });
     });
-    fastify.get("/:projectId/health", { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.get("/:projectId/health", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
         const { projectId } = request.params;
         const result = await fastify.analytics.service.getHealth(projectId);
         return reply.status(result.status === "healthy" ? 200 : 503).send({ data: result });

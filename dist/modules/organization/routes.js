@@ -1,4 +1,3 @@
-import { env } from '../../config/env.js';
 import { authenticate } from '../../shared/middleware/auth.js';
 import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
 function handleOrganizationError(error, reply) {
@@ -115,6 +114,14 @@ export async function organizationRoutes(fastify, _options) {
         const result = await svc.listMembers(orgId, asAuth(request).user.id, pagination, strip({ status, role }));
         return reply.send({ success: true, ...result });
     }));
+    // Caller's own membership in the org (role/status). Used by dashboards to
+    // decide which actions to surface without leaking the full member list.
+    fastify.get('/:orgId/members/me', auth, withErrorHandling(async (request, reply) => {
+        const { orgId } = OrgIdParamsSchema.parse(request.params);
+        const userId = asAuth(request).user.id;
+        const result = await svc.getMember(orgId, userId, userId);
+        return reply.send({ success: true, data: result });
+    }));
     fastify.get('/:orgId/members/:userId', auth, withErrorHandling(async (request, reply) => {
         const { orgId, userId } = MemberParamsSchema.parse(request.params);
         const result = await svc.getMember(orgId, asAuth(request).user.id, userId);
@@ -163,13 +170,19 @@ export async function organizationRoutes(fastify, _options) {
         const result = await svc.inviteMember(buildMeta(request), orgId, body.email, body.role);
         return reply.code(201).send({
             success: true,
-            data: { invitation: result, token: result.token, inviteUrl: `${env.FRONTEND_URL ?? ''}/invite?token=${result.token}` }
+            data: {
+                invitation: result,
+                token: result.token,
+                inviteUrl: result.inviteUrl,
+                accountExists: result.accountExists,
+                emailSent: result.emailSent,
+            },
         });
     }));
     fastify.post('/:orgId/invitations/:invitationId/resend', auth, withErrorHandling(async (request, reply) => {
         const { orgId, invitationId } = request.params;
-        await svc.resendInvitation(buildMeta(request), orgId, invitationId);
-        return reply.send({ success: true });
+        const result = await svc.resendInvitation(buildMeta(request), orgId, invitationId);
+        return reply.send({ success: true, data: result });
     }));
     fastify.delete('/:orgId/invitations/:invitationId', auth, withErrorHandling(async (request, reply) => {
         const { orgId, invitationId } = request.params;
@@ -335,6 +348,13 @@ export async function organizationRoutes(fastify, _options) {
     fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {
         const { slug } = SlugParamsSchema.parse(request.params);
         const result = await svc.checkSlugAvailability(slug);
+        return reply.send({ success: true, data: result });
+    }));
+    // Resolve an organization the caller belongs to by slug. Returns 404 for
+    // non-members too (do not leak which slugs exist across tenants).
+    fastify.get('/by-slug/:slug', auth, withErrorHandling(async (request, reply) => {
+        const { slug } = SlugParamsSchema.parse(request.params);
+        const result = await svc.getOrganizationBySlug(slug, asAuth(request).user.id);
         return reply.send({ success: true, data: result });
     }));
 }

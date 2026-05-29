@@ -115,8 +115,10 @@ export class ProjectsRepository {
     client?: PoolClient,
   ): Promise<OrganizationMembership | null> {
     const db = client ?? this.db;
+    // NOTE: organization_members has a `status member_status` column, NOT an
+    // `is_active` boolean. We derive isActive from status = 'active'.
     const result = await db.query<MembershipRow>(
-      `SELECT org_id, user_id, role, is_active
+      `SELECT org_id, user_id, role, (status = 'active') AS is_active
        FROM organization_members
        WHERE org_id = $1 AND user_id = $2
        LIMIT 1`,
@@ -653,6 +655,23 @@ export class ProjectsRepository {
        WHERE id = $1`,
       [apiKeyId],
     );
+  }
+
+  /**
+   * Return the key hashes for every API key of a project. Used by the service
+   * to evict the in-process ingestion cache when a project is paused, archived,
+   * or deleted so stale keys stop resolving as active.
+   */
+  async listApiKeyHashesByProject(
+    projectId: string,
+    client?: PoolClient,
+  ): Promise<string[]> {
+    const db = client ?? this.db;
+    const result = await db.query<{ key_hash: string }>(
+      `SELECT key_hash FROM project_api_keys WHERE project_id = $1`,
+      [projectId],
+    );
+    return result.rows.map((row) => row.key_hash);
   }
 
   async findActiveApiKeyCandidatesByPrefix(

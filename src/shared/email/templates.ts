@@ -1,6 +1,6 @@
 type TemplateInput = {
   appName: string;
-  userName?: string;
+  userName?: string | undefined;
 };
 
 type ActionTemplateInput = TemplateInput & {
@@ -175,5 +175,42 @@ export function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemp
     subject: `${input.appName}: confirm MFA disable`,
     html: layout(input.appName, title, body),
     text: `${textGreeting(input.userName)}\n\nA request was made to disable multi-factor authentication on your ${input.appName} account.\n\nConfirm: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes. If this was not you, do nothing — MFA stays enabled, then change your password.`,
+  };
+}
+
+type OrgInvitationTemplateInput = TemplateInput & {
+  actionUrl: string;
+  orgName: string;
+  inviterName?: string | undefined;
+  roleLabel: string;
+  expiresInDays: number;
+  /** Whether the invited email already has an account on the platform. */
+  accountExists: boolean;
+};
+
+/**
+ * Organization invitation email. The CTA points at the frontend invite page
+ * with the one-time token. When the invitee has no account yet, the copy nudges
+ * them to create one first; the frontend uses the accountExists flag in the URL
+ * to render the right screen (sign-in vs. create-account).
+ */
+export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailTemplate {
+  const title = `You're invited to ${input.orgName}`;
+  const inviter = input.inviterName ? `${escapeHtml(input.inviterName)} invited you` : "You have been invited";
+  const nextStep = input.accountExists
+    ? "Sign in to accept the invitation."
+    : "Create your account to accept the invitation.";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${inviter} to join <strong>${escapeHtml(input.orgName)}</strong> on ${escapeHtml(input.appName)} as <strong>${escapeHtml(input.roleLabel)}</strong>.</p>
+    <p style="margin:0 0 22px;font-size:15px;line-height:1.7;color:${theme.muted};">${escapeHtml(nextStep)} This invitation expires in ${input.expiresInDays} days.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Accept invitation")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+
+  return {
+    subject: `${input.appName}: invitation to join ${input.orgName}`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\n${input.inviterName ? `${input.inviterName} invited you` : "You have been invited"} to join ${input.orgName} on ${input.appName} as ${input.roleLabel}.\n\n${nextStep}\n\nAccept: ${input.actionUrl}\n\nThis invitation expires in ${input.expiresInDays} days.`,
   };
 }

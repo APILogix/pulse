@@ -8,7 +8,6 @@
  */
 import fp from 'fastify-plugin';
 import { pool } from '../../config/database.js';
-import { redis } from '../../config/redis.js';
 import { logger } from '../../config/logger.js';
 import { AnalyticsCache } from './cache.js';
 import { AnalyticsRepository } from './repository.js';
@@ -17,7 +16,8 @@ import { AnalyticsService } from './service.js';
 const analyticsLogger = logger.child({ component: 'analytics-module' });
 async function analyticsModule(fastify, _options) {
     const repository = new AnalyticsRepository(pool);
-    const cache = new AnalyticsCache(redis);
+    // In-process LRU cache only (no Redis dependency).
+    const cache = new AnalyticsCache();
     const service = new AnalyticsService(repository, cache);
     fastify.decorate('analytics', {
         cache,

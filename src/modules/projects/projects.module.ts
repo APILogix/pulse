@@ -32,9 +32,10 @@ async function projectsModule(
 ): Promise<void> {
   const repository = new ProjectsRepository();
 
-  // fastify.redisCache is decorated by the ingestion module, which is
-  // registered before this module in app.ts — so it is always available here.
-  const service = new ProjectsService(repository, fastify.log, fastify.redisCache);
+  // Caching is in-process LRU only (no Redis dependency). The ingestion module
+  // still owns its own caches; the projects service only warms/evicts the
+  // shared apiKeyCache LRU used for API-key resolution.
+  const service = new ProjectsService(repository, fastify.log);
 
   fastify.decorate('projects', {
     repository,
@@ -54,7 +55,6 @@ async function projectsModule(
 
 export const registerProjectsModule = fp(projectsModule, {
   name: 'projects-module',
-  dependencies: ['ingestion-module'], // Explicit dependency on ingestion for redisCache
 });
 
 export default registerProjectsModule;

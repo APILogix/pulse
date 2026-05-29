@@ -13,7 +13,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import { ProjectsRepository } from "./repository.js";
 import type { ApiKeyUsage, CreateApiKeyBody, CreateApiKeyResponse, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, Project, ProjectApiKey, ProjectApiKeyRecord, ProjectListItem, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateProjectBody } from "./types.js";
-import type { RedisCache } from "../../db/redis/cache.js";
 type RequestMeta = {
     requestId: string;
     ipAddress: string;
@@ -22,8 +21,7 @@ type RequestMeta = {
 export declare class ProjectsService {
     private readonly repository;
     private readonly logger;
-    private readonly redisCache;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, redisCache: RedisCache);
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;
@@ -59,6 +57,22 @@ export declare class ProjectsService {
     private generateUniqueSlug;
     private assertFutureExpiry;
     private publicApiKey;
+    /**
+     * Warm the in-process LRU cache used by ingestion to resolve an API key to
+     * its project config without a Postgres round trip. LRU-only (no Redis).
+     */
+    private cacheApiKeyConfig;
+    /**
+     * Evict a single API key from the ingestion cache. Called on revoke, rotate,
+     * disable, and delete so a revoked secret cannot keep ingesting for the
+     * remainder of the LRU TTL window.
+     */
+    private evictApiKeyConfig;
+    /**
+     * Evict every cached API key belonging to a project. Called when a project
+     * is paused, archived, or deleted so its keys stop resolving as active.
+     */
+    private evictProjectApiKeys;
     private audit;
 }
 export {};

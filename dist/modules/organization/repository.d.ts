@@ -15,6 +15,9 @@ export declare class OrganizationRepository {
     findOrgBySlug(slug: string): Promise<OrganizationRow | null>;
     updateOrg(id: string, data: Record<string, unknown>): Promise<OrganizationRow>;
     softDeleteOrg(id: string): Promise<void>;
+    /** Collect every project API-key hash for an org so the service can evict the
+     *  ingestion cache after delete/suspend. Returns hashes regardless of state. */
+    listOrgApiKeyHashes(orgId: string): Promise<string[]>;
     archiveOrg(id: string): Promise<void>;
     restoreOrg(id: string): Promise<OrganizationRow>;
     transferOwnership(orgId: string, fromId: string, toId: string): Promise<void>;
@@ -33,6 +36,17 @@ export declare class OrganizationRepository {
     reactivateMember(orgId: string, userId: string): Promise<void>;
     updateMemberRole(orgId: string, userId: string, role: string): Promise<void>;
     countOwners(orgId: string): Promise<number>;
+    /**
+     * Look up a (non-deleted) user by email for invitation flows. Returns the
+     * minimal identity needed to (a) decide whether the invitee already has an
+     * account and (b) personalize the invite email. Email match is
+     * case-insensitive to align with how the auth module normalizes emails.
+     */
+    findUserByEmail(email: string): Promise<{
+        id: string;
+        email: string;
+        full_name: string;
+    } | null>;
     createAuditLog(entry: CreateAuditLogRecord): Promise<void>;
     listAuditLogs(orgId: string, q: CursorPaginationQuery, filters?: {
         action?: string;
@@ -49,6 +63,12 @@ export declare class OrganizationRepository {
     declineInvitation(id: string): Promise<void>;
     revokeInvitation(id: string, by: string): Promise<void>;
     incrementResentCount(id: string): Promise<void>;
+    /**
+     * Replace the token hash for a pending invitation. Used by resend, since the
+     * plaintext token is never stored — a resend must issue a fresh token so the
+     * emailed link is valid.
+     */
+    rotateInvitationToken(id: string, tokenHash: string): Promise<void>;
     createEnvironment(orgId: string, name: string, desc: string | null, isProd: boolean, createdBy: string): Promise<OrgEnvironmentRow>;
     updateEnvironment(orgId: string, envId: string, data: Record<string, unknown>): Promise<OrgEnvironmentRow>;
     listEnvironments(orgId: string): Promise<OrgEnvironmentRow[]>;
