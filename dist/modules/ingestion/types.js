@@ -1,30 +1,23 @@
-import { SDK_EVENT_TYPES } from './pipeline/event-normalizer.js';
 /** Fastify Validation Schemas */
-const sdkTypeEnum = [...SDK_EVENT_TYPES];
 export const IngestSchema = {
     body: {
         type: 'object',
-        required: ['events'],
+        required: ['apiKey', 'events'],
         properties: {
             apiKey: { type: 'string', minLength: 32, maxLength: 128 },
             events: {
                 type: 'array',
-                minItems: 1,
-                maxItems: 10000,
+                maxItems: 1000,
                 items: {
                     type: 'object',
-                    required: ['type'],
+                    required: ['type', 'timestamp'],
                     properties: {
                         type: {
                             type: 'string',
-                            enum: sdkTypeEnum,
+                            enum: ['request', 'error', 'log', 'metric', 'custom']
                         },
                         timestamp: { type: 'number' },
-                        eventId: { type: 'string', maxLength: 128 },
-                        requestId: { type: 'string', maxLength: 128 },
-                        metricName: { type: 'string' },
-                        name: { type: 'string' },
-                        metricType: { type: 'string', enum: ['counter', 'gauge', 'histogram'] },
+                        requestId: { type: 'string', format: 'uuid' },
                         url: { type: 'string' },
                         method: {
                             type: 'string',
@@ -39,6 +32,7 @@ export const IngestSchema = {
                         stack: { type: 'array', items: { type: 'string' } },
                         context: { type: 'object' },
                         level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
+                        name: { type: 'string' },
                         headers: { type: 'object' },
                         query: { type: 'object' },
                     }
@@ -51,10 +45,11 @@ export const IngestSchema = {
 export const InitSchema = {
     body: {
         type: 'object',
+        required: ['apiKey'],
         properties: {
-            apiKey: { type: 'string', minLength: 32, maxLength: 128 },
-        },
-    },
+            apiKey: { type: 'string', minLength: 32 }
+        }
+    }
 };
 export const ReplaySchema = {
     body: {
@@ -66,7 +61,7 @@ export const ReplaySchema = {
             endTime: { type: 'string', format: 'date-time' },
             eventTypes: {
                 type: 'array',
-                items: { type: 'string', enum: sdkTypeEnum },
+                items: { type: 'string', enum: ['request', 'error', 'log', 'metric', 'custom'] }
             },
             targetQueue: { type: 'string', default: 'ingestion' }
         }

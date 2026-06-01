@@ -1,39 +1,38 @@
-import { randomUUID } from 'crypto';
+/**
+ * Worker registry and lifecycle wiring.
+ *
+ * Flow:
+ * 1. Receive already-constructed infrastructure dependencies from a bootstrap
+ *    entrypoint.
+ * 2. Create the ingestion worker, which is the only active worker today.
+ * 3. Keep future worker registration centralized here so one process can own
+ *    multiple BullMQ workers.
+ * 4. Handle SIGTERM/SIGINT by closing workers first, then optional external
+ *    infrastructure such as Redis and Postgres.
+ */
+import { Redis } from 'ioredis';
+import { createIngestionWorker } from './ingestion.processor.js';
+import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { logger } from '../config/logger.js';
-import { PgQueue } from '../modules/ingestion/queue/pg-queue.js';
-import { PgQueueWorker } from '../modules/ingestion/queue/pg-queue-worker.js';
-import { TelemetryWriter } from '../modules/ingestion/pipeline/telemetry-writer.js';
-import { createIngestionJobHandler } from '../modules/ingestion/pipeline/ingestion-job-handler.js';
 const workerLogger = logger.child({ component: 'worker-registry' });
-export function initializeWorkers(deps) {
-    const queue = new PgQueue(deps.pool, { queue: 'ingestion' });
-    const writer = new TelemetryWriter(deps.pool);
-    const handler = createIngestionJobHandler(writer);
-    const concurrency = deps.concurrency ?? 4;
-    const workers = [];
-    for (let i = 0; i < concurrency; i++) {
-        const w = new PgQueueWorker(queue, handler, workerLogger, {
-            workerId: `ingest-${process.pid}-${i}-${randomUUID().slice(0, 8)}`,
-            batchSize: 50,
-            busyPollMs: 25,
-            idlePollMs: 500,
-        });
-        w.start();
-        workers.push(w);
-    }
-    workerLogger.info({ concurrency }, 'Ingestion PgQueue workers started');
-    const stop = async () => {
-        await Promise.all(workers.map((w) => w.stop()));
-        if (deps.shutdown)
-            await deps.shutdown();
-    };
+export function initializeWorkers(redis, deps) {
+    // Ingestion Worker (primary)
+    const ingestionWorker = createIngestionWorker(redis, deps.writer, deps.cache);
+    // Future: Additional specialized workers can be registered here
+    // const analysisWorker = createAnalysisWorker(...);
+    // const billingWorker = createBillingWorker(...);
     const gracefulShutdown = async (signal) => {
-        workerLogger.info({ signal }, 'Shutdown signal received — draining workers');
-        await stop();
+        workerLogger.info({ signal }, 'Shutdown signal received');
+        await ingestionWorker.close();
+        if (deps.shutdown) {
+            await deps.shutdown();
+        }
         process.exit(0);
     };
-    process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
-    return { workers, queue, stop };
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    return {
+        ingestionWorker,
+    };
 }
 //# sourceMappingURL=index.js.map

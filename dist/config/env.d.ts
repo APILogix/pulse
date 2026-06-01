@@ -33,15 +33,6 @@ declare const envSchema: z.ZodObject<{
     SMTP_FROM_EMAIL: z.ZodDefault<z.ZodString>;
     SMTP_FROM_NAME: z.ZodDefault<z.ZodString>;
     OPENAI_API_KEY: z.ZodOptional<z.ZodString>;
-    INGESTION_MAX_BATCH_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_DEFAULT_RATE_PER_SECOND: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_DEFAULT_RATE_PER_MINUTE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_BACKPRESSURE_HIGH_WATER: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_BACKPRESSURE_CRITICAL_WATER: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_REPLAY_MAX_EVENTS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_RATE_BUCKET_TTL_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_RATE_BUCKET_SWEEP_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    INGESTION_ENDPOINT: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const env: {
     NODE_ENV: "development" | "staging" | "production";
@@ -64,14 +55,6 @@ export declare const env: {
     SMTP_SECURE: boolean;
     SMTP_FROM_EMAIL: string;
     SMTP_FROM_NAME: string;
-    INGESTION_MAX_BATCH_SIZE: number;
-    INGESTION_DEFAULT_RATE_PER_SECOND: number;
-    INGESTION_DEFAULT_RATE_PER_MINUTE: number;
-    INGESTION_BACKPRESSURE_HIGH_WATER: number;
-    INGESTION_BACKPRESSURE_CRITICAL_WATER: number;
-    INGESTION_REPLAY_MAX_EVENTS: number;
-    INGESTION_RATE_BUCKET_TTL_MS: number;
-    INGESTION_RATE_BUCKET_SWEEP_MS: number;
     LOG_DB_PRIMARY?: string | undefined;
     LOG_DB_REPLICA?: string | undefined;
     CLICKHOUSE_URL?: string | undefined;
@@ -81,7 +64,6 @@ export declare const env: {
     SMTP_USER?: string | undefined;
     SMTP_PASS?: string | undefined;
     OPENAI_API_KEY?: string | undefined;
-    INGESTION_ENDPOINT?: string | undefined;
 };
 export type Env = z.infer<typeof envSchema>;
 export {};

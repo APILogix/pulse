@@ -25,11 +25,12 @@
  *   later in one place.
  */
 import type { FastifyReply, FastifyRequest } from "fastify";
+/**
+ * Require the authenticated caller to be an active member of the organization
+ * that owns the `:projectId` in the route. Use as a preHandler AFTER
+ * `authenticate`.
+ */
 export declare function requireProjectMembership(request: FastifyRequest, reply: FastifyReply): Promise<void>;
-/** Use when projectId is supplied via query string (ingestion read APIs). */
-export declare function requireProjectMembershipFromQuery(request: FastifyRequest, reply: FastifyReply): Promise<void>;
-/** Use when projectId is in the JSON body (e.g. replay). */
-export declare function requireProjectMembershipFromBody(request: FastifyRequest, reply: FastifyReply): Promise<void>;
 /**
  * Require the authenticated caller to be an active member of `:orgId`.
  * Use as a preHandler AFTER `authenticate`.
