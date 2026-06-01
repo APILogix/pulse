@@ -9,13 +9,72 @@
  *
  * The controller intentionally stays thin: it owns protocol concerns such as
  * status codes and response shape, while the service owns business rules.
+ *
+ * Hardening choices (vs the original):
+ *   - Bodies are typed/validated at the route layer (JSON Schema). The
+ *     controller still re-shapes input but no longer relies on `as any` casts
+ *     for runtime safety.
+ *   - Comments accurately describe the Postgres-backed queue (no stale BullMQ
+ *     references).
+ *   - All error paths log the reqId so a 500 in production is traceable.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { IngestionService } from './service.js';
-import type { ErrorEventListQuery } from './types.js';
+import type {
+  ErrorEventListQuery,
+  IngestRequest,
+  ReplayRequest,
+} from './types.js';
+import { resolveApiKey } from './utils/api-key.js';
+
+interface InitBody {
+  apiKey: string;
+}
+
+interface DLQQuery {
+  offset?: number;
+  limit?: number;
+}
+
+interface ReprocessParams {
+  jobId: string;
+}
+
+interface ReprocessAllBody {
+  batchSize?: number;
+}
+
+interface ErrorByIdParams {
+  errorId: string;
+}
+
+interface ErrorByIdQuery {
+  projectId: string;
+}
+
+interface DebugParams {
+  id: string;
+}
+
+interface DebugQuery {
+  projectId: string;
+}
+
+const ERROR_MAP: Record<string, { status: number; message: string }> = {
+  INVALID_REQUEST: { status: 400, message: 'Invalid request body' },
+  INVALID_API_KEY: { status: 401, message: 'Invalid API key' },
+  PROJECT_INACTIVE: { status: 403, message: 'Project inactive' },
+  RATE_LIMIT_EXCEEDED: { status: 429, message: 'Rate limit exceeded' },
+  EMPTY_BATCH: { status: 400, message: 'No events provided' },
+  BATCH_TOO_LARGE: { status: 413, message: 'Batch exceeds maximum size' },
+  CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
+  INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
+  INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
+  JOB_NOT_FOUND: { status: 404, message: 'Job not found' },
+};
 
 export class IngestionController {
-  constructor(private service: IngestionService) {}
+  constructor(private readonly service: IngestionService) {}
 
   /**
    * SDK bootstrap endpoint.
@@ -24,14 +83,14 @@ export class IngestionController {
    */
   async init(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { apiKey } = request.body as { apiKey: string };
-      if(!apiKey){
-        throw new Error("key not found")
+      const apiKey = resolveApiKey(request, (request.body ?? {}) as InitBody);
+      if (!apiKey) {
+        throw new Error('INVALID_API_KEY');
       }
       const result = await this.service.initializeSdk(apiKey);
       return reply.send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
@@ -42,10 +101,13 @@ export class IngestionController {
    */
   async ingest(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.ingestBatch(request.body as any);
+      const body = request.body as IngestRequest;
+      const apiKey = resolveApiKey(request, body);
+      if (!apiKey) throw new Error('INVALID_API_KEY');
+      const result = await this.service.ingestBatch(body, apiKey);
       return reply.status(202).send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
@@ -55,56 +117,70 @@ export class IngestionController {
    */
   async ingestRequests(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.ingestRequests(request.body as any);
+      const body = request.body as IngestRequest;
+      const apiKey = resolveApiKey(request, body);
+      if (!apiKey) throw new Error('INVALID_API_KEY');
+      const result = await this.service.ingestRequests(body, apiKey);
       return reply.status(202).send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
   /** Typed error-event endpoint for SDK exceptions and crash payloads. */
   async ingestErrors(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.ingestErrors(request.body as any);
+      const body = request.body as IngestRequest;
+      const apiKey = resolveApiKey(request, body);
+      if (!apiKey) throw new Error('INVALID_API_KEY');
+      const result = await this.service.ingestErrors(body, apiKey);
       return reply.status(202).send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
   /** Typed log-event endpoint for application log records. */
   async ingestLogs(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.ingestLogs(request.body as any);
+      const body = request.body as IngestRequest;
+      const apiKey = resolveApiKey(request, body);
+      if (!apiKey) throw new Error('INVALID_API_KEY');
+      const result = await this.service.ingestLogs(body, apiKey);
       return reply.status(202).send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
   /** Typed metric-event endpoint for numeric telemetry samples. */
   async ingestMetrics(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.ingestMetrics(request.body as any);
+      const body = request.body as IngestRequest;
+      const apiKey = resolveApiKey(request, body);
+      if (!apiKey) throw new Error('INVALID_API_KEY');
+      const result = await this.service.ingestMetrics(body, apiKey);
       return reply.status(202).send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
   /**
-   * Public health check. Returns 200 only when Redis, Postgres, and queue
-   * connectivity are all healthy; degraded dependencies return 503.
+   * Public health check. Returns 200 only when Postgres + queue are healthy;
+   * any degraded dependency returns 503. This module does not depend on Redis,
+   * so the response always reports `redis: false` honestly.
    */
   async getHealth(request: FastifyRequest, reply: FastifyReply) {
     try {
       const result = await this.service.getHealth();
       const statusCode = result.status === 'healthy' ? 200 : 503;
       return reply.status(statusCode).send(result);
-    } catch {
-      return reply.status(503).send({ 
-        status: 'unhealthy', 
-        timestamp: new Date().toISOString() 
+    } catch (err) {
+      request.log.error({ err }, 'Public health check failed');
+      return reply.status(503).send({
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
       });
     }
   }
@@ -114,19 +190,9 @@ export class IngestionController {
     try {
       const result = await this.service.getIngestionHealth();
       return reply.send(result);
-    } catch {
+    } catch (err) {
+      request.log.error({ err }, 'Ingestion operational health check failed');
       return reply.status(503).send({ status: 'unhealthy' });
-    }
-  }
-
-  /** Returns the rate-limit and batch-size policy resolved from an API key. */
-  async getLimits(request: FastifyRequest, reply: FastifyReply) {
-    try {
-      const { apiKey } = request.query as { apiKey: string };
-      const result = await this.service.getLimits(apiKey);
-      return reply.send(result);
-    } catch (err: any) {
-      return this.handleError(err, reply);
     }
   }
 
@@ -147,16 +213,16 @@ export class IngestionController {
           hasMore: result.hasMore,
         },
       });
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
   /** Fetches one persisted error event by error_events.id or events.id. */
   async getErrorById(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { errorId } = request.params as { errorId: string };
-      const { projectId } = request.query as { projectId: string };
+      const { errorId } = request.params as ErrorByIdParams;
+      const { projectId } = request.query as ErrorByIdQuery;
       const result = await this.service.getErrorById(errorId, projectId);
 
       if (!result) {
@@ -167,43 +233,38 @@ export class IngestionController {
       }
 
       return reply.send({ success: true, data: result });
-    } catch (err: any) {
-      return this.handleError(err, reply);
+    } catch (err) {
+      return this.handleError(err, request, reply);
     }
   }
 
-  /** Lists failed BullMQ jobs so operators can inspect dead-letter payloads. */
+  /**
+   * Lists dead-lettered ingestion jobs (Postgres) for operator inspection.
+   * Pagination is offset/limit; bounds are enforced both at the route schema
+   * and again in the service for defense in depth.
+   */
   async getDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { start = 0, end = 100 } = request.query as any;
-      const jobs = await this.service.getDLQJobs(Number(start), Number(end));
-      return reply.send({
-        count: jobs.length,
-        jobs: jobs.map((j) => ({
-          id: j.id,
-          name: j.name,
-          failedReason: j.failedReason,
-          stacktrace: j.stacktrace,
-          timestamp: j.timestamp,
-          attemptsMade: j.attemptsMade,
-          data: j.data,
-        })),
-      });
-    } catch {
+      const { offset = 0, limit = 100 } = (request.query ?? {}) as DLQQuery;
+      const jobs = await this.service.getDLQJobs(Number(offset), Number(limit));
+      return reply.send({ count: jobs.length, jobs });
+    } catch (err) {
+      request.log.error({ err }, 'Failed to fetch DLQ');
       return reply.status(500).send({ error: 'Failed to fetch DLQ' });
     }
   }
 
-  /** Requeues one failed BullMQ job after an operator chooses to retry it. */
+  /** Requeues one failed ingestion job from the Postgres dead-letter table. */
   async reprocessDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { jobId } = request.params as { jobId: string };
+      const { jobId } = request.params as ReprocessParams;
       await this.service.reprocessDLQJob(jobId);
       return reply.send({ success: true, message: 'Job requeued' });
-    } catch (err: any) {
-      if (err.message === 'JOB_NOT_FOUND') {
+    } catch (err) {
+      if (err instanceof Error && err.message === 'JOB_NOT_FOUND') {
         return reply.status(404).send({ error: 'Job not found' });
       }
+      request.log.error({ err }, 'Failed to reprocess DLQ job');
       return reply.status(500).send({ error: 'Reprocess failed' });
     }
   }
@@ -211,9 +272,13 @@ export class IngestionController {
   /** Requeues a bounded batch of failed jobs for bulk recovery operations. */
   async reprocessAllDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const count = await this.service.reprocessAllDLQ();
+      const body = (request.body ?? {}) as ReprocessAllBody;
+      const count = await this.service.reprocessAllDLQ(
+        typeof body.batchSize === 'number' ? body.batchSize : 100,
+      );
       return reply.send({ success: true, reprocessed: count });
-    } catch {
+    } catch (err) {
+      request.log.error({ err }, 'Failed to bulk reprocess DLQ');
       return reply.status(500).send({ error: 'Bulk reprocess failed' });
     }
   }
@@ -224,9 +289,10 @@ export class IngestionController {
    */
   async replay(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const result = await this.service.replayEvents(request.body as any);
+      const result = await this.service.replayEvents(request.body as ReplayRequest);
       return reply.status(202).send(result);
-    } catch {
+    } catch (err) {
+      request.log.error({ err }, 'Replay failed');
       return reply.status(500).send({ error: 'Replay failed' });
     }
   }
@@ -234,12 +300,13 @@ export class IngestionController {
   /** Fetches the raw event plus type-specific child table details for debugging. */
   async debugEvent(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { id } = request.params as { id: string };
-      const { projectId } = request.query as { projectId: string };
+      const { id } = request.params as DebugParams;
+      const { projectId } = request.query as DebugQuery;
       const result = await this.service.getDebugEvent(id, projectId);
       if (!result) return reply.status(404).send({ error: 'Event not found' });
       return reply.send(result);
-    } catch {
+    } catch (err) {
+      request.log.error({ err }, 'Debug lookup failed');
       return reply.status(500).send({ error: 'Debug lookup failed' });
     }
   }
@@ -250,108 +317,67 @@ export class IngestionController {
     };
 
     const limit = this.optionalNumber(raw.limit);
-    if (limit !== undefined) {
-      query.limit = limit;
-    }
+    if (limit !== undefined) query.limit = limit;
 
     const offset = this.optionalNumber(raw.offset);
-    if (offset !== undefined) {
-      query.offset = offset;
-    }
+    if (offset !== undefined) query.offset = offset;
 
     const from = this.optionalString(raw.from);
-    if (from !== undefined) {
-      query.from = from;
-    }
+    if (from !== undefined) query.from = from;
 
     const to = this.optionalString(raw.to);
-    if (to !== undefined) {
-      query.to = to;
-    }
+    if (to !== undefined) query.to = to;
 
     const fingerprint = this.optionalString(raw.fingerprint);
-    if (fingerprint !== undefined) {
-      query.fingerprint = fingerprint;
-    }
+    if (fingerprint !== undefined) query.fingerprint = fingerprint;
 
     const errorType = this.optionalString(raw.errorType);
-    if (errorType !== undefined) {
-      query.errorType = errorType;
-    }
+    if (errorType !== undefined) query.errorType = errorType;
 
     const resolved = this.optionalBoolean(raw.resolved);
-    if (resolved !== undefined) {
-      query.resolved = resolved;
-    }
+    if (resolved !== undefined) query.resolved = resolved;
 
     return query;
   }
 
   private optionalString(value: unknown): string | undefined {
-    if (typeof value !== 'string') {
-      return undefined;
-    }
-
+    if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : undefined;
   }
 
   private optionalNumber(value: unknown): number | undefined {
-    if (typeof value === 'number') {
-      return value;
-    }
-
-    if (typeof value !== 'string' || value.trim().length === 0) {
-      return undefined;
-    }
-
+    if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+    if (typeof value !== 'string' || value.trim().length === 0) return undefined;
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
   }
 
   private optionalBoolean(value: unknown): boolean | undefined {
-    if (typeof value === 'boolean') {
-      return value;
-    }
-
-    if (value === 'true') {
-      return true;
-    }
-    if (value === 'false') {
-      return false;
-    }
-
+    if (typeof value === 'boolean') return value;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
     return undefined;
   }
 
   /**
    * Converts domain error codes thrown by the service into SDK-safe HTTP
-   * responses. Unknown errors remain generic to avoid leaking internals.
+   * responses. Unknown errors are logged and remain generic to avoid leaking
+   * internals to callers.
    */
-  private handleError(err: Error, reply: FastifyReply) {
-    const code = err.message;
-    const errorMap: Record<string, { status: number; message: string }> = {
-      INVALID_API_KEY: { status: 401, message: 'Invalid API key' },
-      PROJECT_INACTIVE: { status: 403, message: 'Project inactive' },
-      RATE_LIMIT_EXCEEDED: { status: 429, message: 'Rate limit exceeded' },
-      EMPTY_BATCH: { status: 400, message: 'No events provided' },
-      BATCH_TOO_LARGE: { status: 413, message: 'Batch exceeds maximum size' },
-      CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
-      INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
-      INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
-    };
-
-    const mapped = errorMap[code];
+  private handleError(err: unknown, request: FastifyRequest, reply: FastifyReply) {
+    const code = err instanceof Error ? err.message : 'INTERNAL_ERROR';
+    const mapped = ERROR_MAP[code];
     if (mapped) {
-      return reply.status(mapped.status).send({ 
-        error: mapped.message, 
-        code 
+      return reply.status(mapped.status).send({
+        error: mapped.message,
+        code,
       });
     }
-
-    return reply.status(500).send({ 
-      error: 'Internal server error', 
-      code: 'INTERNAL_ERROR' 
+    request.log.error({ err, reqId: request.id }, 'Unhandled ingestion error');
+    return reply.status(500).send({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR',
     });
   }
 }

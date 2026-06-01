@@ -9,11 +9,19 @@
  *
  * The controller intentionally stays thin: it owns protocol concerns such as
  * status codes and response shape, while the service owns business rules.
+ *
+ * Hardening choices (vs the original):
+ *   - Bodies are typed/validated at the route layer (JSON Schema). The
+ *     controller still re-shapes input but no longer relies on `as any` casts
+ *     for runtime safety.
+ *   - Comments accurately describe the Postgres-backed queue (no stale BullMQ
+ *     references).
+ *   - All error paths log the reqId so a 500 in production is traceable.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { IngestionService } from './service.js';
 export declare class IngestionController {
-    private service;
+    private readonly service;
     constructor(service: IngestionService);
     /**
      * SDK bootstrap endpoint.
@@ -39,21 +47,24 @@ export declare class IngestionController {
     /** Typed metric-event endpoint for numeric telemetry samples. */
     ingestMetrics(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /**
-     * Public health check. Returns 200 only when Redis, Postgres, and queue
-     * connectivity are all healthy; degraded dependencies return 503.
+     * Public health check. Returns 200 only when Postgres + queue are healthy;
+     * any degraded dependency returns 503. This module does not depend on Redis,
+     * so the response always reports `redis: false` honestly.
      */
     getHealth(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Authenticated operational health endpoint for queue and buffer metrics. */
     getIngestionHealth(request: FastifyRequest, reply: FastifyReply): Promise<never>;
-    /** Returns the rate-limit and batch-size policy resolved from an API key. */
-    getLimits(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Lists persisted error events for one project. */
     listErrors(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Fetches one persisted error event by error_events.id or events.id. */
     getErrorById(request: FastifyRequest, reply: FastifyReply): Promise<never>;
-    /** Lists failed BullMQ jobs so operators can inspect dead-letter payloads. */
+    /**
+     * Lists dead-lettered ingestion jobs (Postgres) for operator inspection.
+     * Pagination is offset/limit; bounds are enforced both at the route schema
+     * and again in the service for defense in depth.
+     */
     getDLQ(request: FastifyRequest, reply: FastifyReply): Promise<never>;
-    /** Requeues one failed BullMQ job after an operator chooses to retry it. */
+    /** Requeues one failed ingestion job from the Postgres dead-letter table. */
     reprocessDLQ(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Requeues a bounded batch of failed jobs for bulk recovery operations. */
     reprocessAllDLQ(request: FastifyRequest, reply: FastifyReply): Promise<never>;
@@ -70,7 +81,8 @@ export declare class IngestionController {
     private optionalBoolean;
     /**
      * Converts domain error codes thrown by the service into SDK-safe HTTP
-     * responses. Unknown errors remain generic to avoid leaking internals.
+     * responses. Unknown errors are logged and remain generic to avoid leaking
+     * internals to callers.
      */
     private handleError;
 }

@@ -1,6 +1,7 @@
 import type { FastifySchema } from 'fastify';
-/** SDK Event Types - Matches exactly what SDK sends */
-export type EventType = 'request' | 'error' | 'log' | 'metric' | 'custom';
+import { type SdkEventType } from './pipeline/event-normalizer.js';
+/** Canonical SDK event types (10 signals). */
+export type EventType = SdkEventType;
 /** SDK Request Event Payload */
 export interface SDKRequestEvent {
     type: 'request';
@@ -163,7 +164,6 @@ export interface HealthStatus {
     };
     timestamp: string;
 }
-/** Fastify Validation Schemas */
 export declare const IngestSchema: FastifySchema;
 export declare const InitSchema: FastifySchema;
 export declare const ReplaySchema: FastifySchema;

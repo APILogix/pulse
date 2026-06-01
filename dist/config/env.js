@@ -46,6 +46,19 @@ const envSchema = z.object({
     SMTP_FROM_NAME: z.string().default('API Monitoring Security'),
     // AI
     OPENAI_API_KEY: z.string().optional(),
+    // ── Ingestion pipeline tunables ────────────────────────────────────────
+    // These are intentionally env-driven: production tuning of batch caps,
+    // backpressure thresholds, and rate-limit defaults must NOT require code
+    // changes. All defaults are conservative and safe.
+    INGESTION_MAX_BATCH_SIZE: z.coerce.number().int().min(1).max(10_000).default(1000),
+    INGESTION_DEFAULT_RATE_PER_SECOND: z.coerce.number().int().min(1).default(1000),
+    INGESTION_DEFAULT_RATE_PER_MINUTE: z.coerce.number().int().min(1).default(10_000),
+    INGESTION_BACKPRESSURE_HIGH_WATER: z.coerce.number().int().min(1000).default(100_000),
+    INGESTION_BACKPRESSURE_CRITICAL_WATER: z.coerce.number().int().min(1000).default(250_000),
+    INGESTION_REPLAY_MAX_EVENTS: z.coerce.number().int().min(1).max(100_000).default(10_000),
+    INGESTION_RATE_BUCKET_TTL_MS: z.coerce.number().int().min(60_000).default(300_000), // 5m
+    INGESTION_RATE_BUCKET_SWEEP_MS: z.coerce.number().int().min(5_000).default(60_000), // 1m
+    INGESTION_ENDPOINT: z.string().url().optional(),
 });
 export const env = envSchema.parse(process.env);
 // Defense-in-depth: refuse to boot if any two crypto secrets are identical.

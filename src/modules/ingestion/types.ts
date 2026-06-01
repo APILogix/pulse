@@ -1,7 +1,8 @@
-import  type { FastifySchema } from 'fastify';
+import type { FastifySchema } from 'fastify';
+import { SDK_EVENT_TYPES, type SdkEventType } from './pipeline/event-normalizer.js';
 
-/** SDK Event Types - Matches exactly what SDK sends */
-export type EventType = 'request' | 'error' | 'log' | 'metric' | 'custom';
+/** Canonical SDK event types (10 signals). */
+export type EventType = SdkEventType;
 
 /** SDK Request Event Payload */
 export interface SDKRequestEvent {
@@ -178,25 +179,32 @@ export interface HealthStatus {
 }
 
 /** Fastify Validation Schemas */
+const sdkTypeEnum = [...SDK_EVENT_TYPES];
+
 export const IngestSchema: FastifySchema = {
   body: {
     type: 'object',
-    required: ['apiKey', 'events'],
+    required: ['events'],
     properties: {
       apiKey: { type: 'string', minLength: 32, maxLength: 128 },
       events: {
         type: 'array',
-        maxItems: 1000,
+        minItems: 1,
+        maxItems: 10000,
         items: {
           type: 'object',
-          required: ['type', 'timestamp'],
+          required: ['type'],
           properties: {
-            type: { 
-              type: 'string', 
-              enum: ['request', 'error', 'log', 'metric', 'custom'] 
+            type: {
+              type: 'string',
+              enum: sdkTypeEnum,
             },
             timestamp: { type: 'number' },
-            requestId: { type: 'string', format: 'uuid' },
+            eventId: { type: 'string', maxLength: 128 },
+            requestId: { type: 'string', maxLength: 128 },
+            metricName: { type: 'string' },
+            name: { type: 'string' },
+            metricType: { type: 'string', enum: ['counter', 'gauge', 'histogram'] },
             url: { type: 'string' },
             method: { 
               type: 'string', 
@@ -211,7 +219,6 @@ export const IngestSchema: FastifySchema = {
             stack: { type: 'array', items: { type: 'string' } },
             context: { type: 'object' },
             level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
-            name: { type: 'string' },
             headers: { type: 'object' },
             query: { type: 'object' },
           }
@@ -225,11 +232,10 @@ export const IngestSchema: FastifySchema = {
 export const InitSchema: FastifySchema = {
   body: {
     type: 'object',
-    required: ['apiKey'],
     properties: {
-      apiKey: { type: 'string', minLength: 32 }
-    }
-  }
+      apiKey: { type: 'string', minLength: 32, maxLength: 128 },
+    },
+  },
 };
 
 export const ReplaySchema: FastifySchema = {
@@ -240,9 +246,9 @@ export const ReplaySchema: FastifySchema = {
       projectId: { type: 'string', format: 'uuid' },
       startTime: { type: 'string', format: 'date-time' },
       endTime: { type: 'string', format: 'date-time' },
-      eventTypes: { 
-        type: 'array', 
-        items: { type: 'string', enum: ['request', 'error', 'log', 'metric', 'custom'] }
+      eventTypes: {
+        type: 'array',
+        items: { type: 'string', enum: sdkTypeEnum },
       },
       targetQueue: { type: 'string', default: 'ingestion' }
     }

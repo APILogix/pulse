@@ -28,6 +28,22 @@ function getParam(request, ...names) {
     }
     return null;
 }
+function getQueryParam(request, ...names) {
+    const query = (request.query ?? {});
+    for (const name of names) {
+        const value = query[name];
+        if (typeof value === "string" && value.length > 0)
+            return value;
+    }
+    return null;
+}
+function getBodyProjectId(request) {
+    const body = request.body;
+    if (!body || typeof body !== "object")
+        return null;
+    const projectId = body.projectId;
+    return typeof projectId === "string" && projectId.length > 0 ? projectId : null;
+}
 async function resolveProjectOrg(projectId) {
     const cached = projectOrgCache.get(projectId);
     if (cached !== undefined)
@@ -55,24 +71,43 @@ async function isActiveMember(orgId, userId) {
  * that owns the `:projectId` in the route. Use as a preHandler AFTER
  * `authenticate`.
  */
-export async function requireProjectMembership(request, reply) {
+async function assertProjectMembership(request, reply, projectId) {
     const userId = request.user?.id;
-    const projectId = getParam(request, "projectId", "project_id");
     if (!userId) {
-        return void unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
+        unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
+        return false;
     }
     if (!projectId) {
-        return void unauthorized(reply, "VALIDATION_ERROR", "Project context is required", 400);
+        unauthorized(reply, "VALIDATION_ERROR", "Project context is required", 400);
+        return false;
     }
     const orgId = await resolveProjectOrg(projectId);
     if (!orgId) {
-        // Do not distinguish "not found" from "forbidden" to avoid leaking which
-        // project UUIDs exist across tenants.
-        return void unauthorized(reply, "PROJECT_NOT_FOUND", "Project not found", 404);
+        unauthorized(reply, "PROJECT_NOT_FOUND", "Project not found", 404);
+        return false;
     }
     if (!(await isActiveMember(orgId, userId))) {
-        return void unauthorized(reply, "INSUFFICIENT_PERMISSIONS", "You do not have access to this project", 403);
+        unauthorized(reply, "INSUFFICIENT_PERMISSIONS", "You do not have access to this project", 403);
+        return false;
     }
+    return true;
+}
+export async function requireProjectMembership(request, reply) {
+    const projectId = getParam(request, "projectId", "project_id");
+    if (!(await assertProjectMembership(request, reply, projectId)))
+        return;
+}
+/** Use when projectId is supplied via query string (ingestion read APIs). */
+export async function requireProjectMembershipFromQuery(request, reply) {
+    const projectId = getQueryParam(request, "projectId", "project_id");
+    if (!(await assertProjectMembership(request, reply, projectId)))
+        return;
+}
+/** Use when projectId is in the JSON body (e.g. replay). */
+export async function requireProjectMembershipFromBody(request, reply) {
+    const projectId = getBodyProjectId(request);
+    if (!(await assertProjectMembership(request, reply, projectId)))
+        return;
 }
 /**
  * Require the authenticated caller to be an active member of `:orgId`.

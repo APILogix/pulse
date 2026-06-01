@@ -1,70 +1,83 @@
-/**
- * Ingestion business service.
- *
- * End-to-end flow:
- * 1. Hash the SDK API key and resolve the owning project from Redis first, then
- *    Postgres on cache miss.
- * 2. Enforce project status and per-project rate limits before accepting data.
- * 3. Validate batch size and event type permissions.
- * 4. Apply idempotency per event id to avoid duplicate queue work.
- * 5. Enrich accepted events with project/org/batch metadata and push them into
- *    the in-memory buffer for BullMQ delivery.
- *
- * This class owns ingestion policy, but it does not write events directly; the
- * worker side persists queued events through PostgresWriter.
- */
-import { Queue, Job } from 'bullmq';
-import { RedisCache } from '../../db/redis/cache.js';
+import type { Pool } from 'pg';
 import { PostgresWriter } from './postgress.writter.js';
 import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus, SDKInitResponse } from './types.js';
+interface BackpressureConfig {
+    readonly highWater: number;
+    readonly criticalWater: number;
+    readonly shedLowPriorityAt: number;
+    readonly shedNormalPriorityAt: number;
+}
+interface ServiceConfig {
+    maxBatchSize: number;
+    defaultRateLimitPerSecond: number;
+    defaultRateLimitPerMinute: number;
+    /** Override defaults via env without touching code. */
+    backpressure?: BackpressureConfig;
+    replayMaxEvents?: number;
+}
 export declare class IngestionService {
-    private queue;
-    private cache;
-    private writer;
-    private config;
-    private buffer;
-    private readonly circuitThreshold;
-    constructor(queue: Queue, cache: RedisCache, writer: PostgresWriter, config: {
-        maxBatchSize: number;
-        defaultRateLimitPerSecond: number;
-        defaultRateLimitPerMinute: number;
-    });
-    /**
-     * Resolve project by API key.
-     * Redis cache first -> Postgres fallback -> Cache fill
-     */
+    private readonly pool;
+    private readonly writer;
+    private readonly queue;
+    private readonly rateLimiter;
+    private readonly backpressure;
+    private readonly replayMaxEvents;
+    private readonly maxBatchSize;
+    private readonly defaultRatePerSecond;
+    private readonly defaultRatePerMinute;
+    private cachedDepth;
+    private cachedDepthAt;
+    constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig);
     private resolveProject;
-    /** Initialize SDK — Returns exact contract your SDK expects */
+    /** Cached pending-depth probe (refreshed at most every 2s). */
+    private pendingDepth;
+    /** Decide whether to shed an event given current queue pressure. */
+    private shouldShed;
     initializeSdk(apiKey: string): Promise<SDKInitResponse>;
-    /** Main batch ingestion */
-    ingestBatch(req: IngestRequest): Promise<IngestResponse>;
-    /** Typed endpoints */
-    ingestRequests(req: IngestRequest): Promise<IngestResponse>;
-    ingestErrors(req: IngestRequest): Promise<IngestResponse>;
-    ingestLogs(req: IngestRequest): Promise<IngestResponse>;
-    ingestMetrics(req: IngestRequest): Promise<IngestResponse>;
-    /** Central processing pipeline */
+    ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    ingestMetrics(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    /**
+     * Central pipeline. `expectedType` (when set) enforces a typed route — every
+     * event must match it or be rejected.
+     */
     private processIngest;
+    /** Best-effort stable id for a single event in a batch. */
+    private extractEventId;
     getHealth(): Promise<HealthStatus>;
-    getIngestionHealth(): Promise<any>;
+    getIngestionHealth(): Promise<unknown>;
     getLimits(apiKey: string): Promise<{
         perSecond: number;
         perMinute: number;
         maxBatchSize: number;
     }>;
-    getDLQJobs(start?: number, end?: number): Promise<Job[]>;
+    /**
+     * Paginated listing of dead-lettered jobs. Uses bounded offset/limit with
+     * defensive validation: callers may pass arbitrary integers; we clamp them
+     * before they touch the SQL.
+     */
+    getDLQJobs(offset?: number, limit?: number): Promise<unknown[]>;
     reprocessDLQJob(jobId: string): Promise<void>;
     reprocessAllDLQ(batchSize?: number): Promise<number>;
+    /**
+     * Replay historical telemetry by re-enqueuing it through the standard worker
+     * path. Capped by INGESTION_REPLAY_MAX_EVENTS to prevent operator typos from
+     * flooding the queue.
+     */
     replayEvents(req: ReplayRequest): Promise<{
         replayId: string;
         queued: number;
     }>;
     listErrors(query: ErrorEventListQuery): Promise<ErrorEventListResult>;
     getErrorById(errorId: string, projectId: string): Promise<ErrorEventRecord | null>;
-    getDebugEvent(eventId: string, projectId: string): Promise<any>;
+    getDebugEvent(eventId: string, projectId: string): Promise<unknown>;
+    /** Drain in-process state. The queue is durable in Postgres. */
     shutdown(): Promise<void>;
     private normalizeErrorEventListQuery;
     private parseOptionalDate;
     private normalizeInteger;
 }
+export {};
 //# sourceMappingURL=service.d.ts.map
