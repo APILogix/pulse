@@ -1,4 +1,31 @@
-import { type BackupCodeLoginInput, type ChangePasswordInput, type CreateUserInput, type DeleteUserInput, type EmailMFASetup, type ForgotPasswordInput, type ListUsersQueryInput, type LoginInput, type LoginMFAVerifyInput, type MFAChallenge, type MFADevice, type MFADisableConfirmInput, type MFADisableRequestInput, type MFASetupInput, type MFAToggleInput, type MFAVerifyInput, type MFAVerifySetupInput, type RegenerateBackupCodesInput, type ResendVerificationInput, type ResetPasswordInput, type SessionInfo, type TOTPSetup, type UpdateUserInput, type UserProfile, type VerifyEmailQueryInput } from './types.js';
+import { type BackupCodeLoginInput, type ChangePasswordInput, type CreateUserInput, type DeleteUserInput, type EmailMFASetup, type ForgotPasswordInput, type ListUsersQueryInput, type LoginInput, type LoginMFAVerifyInput, type MFAChallenge, type MFADevice, type MFADisableConfirmInput, type MFADisableRequestInput, type MFASetupInput, type MFAToggleInput, type MFAVerifyInput, type MFAVerifySetupInput, type RegenerateBackupCodesInput, type ResendVerificationInput, type ResetPasswordInput, type SessionInfo, type TOTPSetup, type AdminLockUserInput, type UpdateUserInput, type User, type UserProfile, type UserSecuritySummary, type VerifyEmailQueryInput } from './types.js';
+export interface IssuedSession {
+    accessToken: string;
+    refreshToken: string;
+    expiresAt: Date;
+    sessionId: string;
+}
+/**
+ * Single-INSERT session creation. We pre-allocate the session UUID and sign
+ * both JWTs with it before writing any row, so there is no placeholder hash
+ * window. The refresh JWT is hashed and persisted in the same INSERT.
+ */
+export interface SessionSsoContext {
+    providerId?: string;
+    loginMethod?: string;
+    samlNameId?: string;
+    samlSessionIndex?: string;
+}
+export declare function issueSessionForUser(options: {
+    user: User;
+    ipAddress: string;
+    userAgent: string;
+    deviceName: string | undefined;
+    deviceType: string | undefined;
+    mfaVerified: boolean;
+    rememberMe?: boolean;
+    ssoContext?: SessionSsoContext;
+}): Promise<IssuedSession>;
 /**
  * Register a user. To prevent email-existence enumeration, the route always
  * returns a generic 201 message regardless of whether the email is already
@@ -16,12 +43,21 @@ export declare function listAllUsers(options: ListUsersQueryInput, isAdmin: bool
 }>;
 export declare function restoreDeletedUser(targetUserId: string, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<UserProfile>;
 export declare function suspendUser(targetUserId: string, reason: string, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<UserProfile>;
+export declare function unsuspendUser(targetUserId: string, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<UserProfile>;
+export declare function adminLockUserAccount(targetUserId: string, input: AdminLockUserInput, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<UserProfile>;
+export declare function adminUnlockUserAccount(targetUserId: string, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<UserProfile>;
+/**
+ * Revoke every active session for a target user (platform admin support).
+ */
+export declare function adminRevokeAllUserSessions(targetUserId: string, adminId: string, isAdmin: boolean, ipAddress: string, requestId: string): Promise<{
+    revoked: number;
+}>;
+export declare function getUserSecuritySummary(userId: string): Promise<UserSecuritySummary>;
 export declare function loginWithEmailPassword(input: LoginInput, ipAddress: string, userAgent: string, clientDeviceType: string, requestId: string): Promise<{
     mfa_required: true;
     challenge_id: string;
     expires_at: Date;
     device_type: string;
-    user_id: string;
 } | {
     mfa_required: false;
     access_token: string;
@@ -97,6 +133,17 @@ export declare function verifyMFAChallenge(challengeId: string, input: MFAVerify
     deviceId: string;
 }>;
 export declare function listMFADevices(userId: string): Promise<MFADevice[]>;
+export declare function renameMFADevice(userId: string, deviceId: string, input: {
+    device_name: string;
+}): Promise<void>;
+/**
+ * Admin-initiated password reset email. Revokes all active sessions first.
+ */
+export declare function adminForcePasswordReset(targetUserId: string, adminId: string, isAdmin: boolean, input: {
+    reason?: string;
+}, ipAddress: string, requestId: string): Promise<{
+    message: string;
+}>;
 /**
  * Resend an email MFA OTP for a given device. Used during setup (to resend
  * the setup confirmation code) and during step-up challenges.
@@ -163,5 +210,20 @@ export declare function refreshAccessToken(refreshToken: string, ipAddress: stri
     expiresAt: Date;
     sessionId: string;
 }>;
-export declare function logout(userId: string, sessionId: string, ipAddress: string, requestId: string): Promise<void>;
+export declare function logout(userId: string, sessionId: string, ipAddress: string, requestId: string): Promise<{
+    saml_logout_url: string | null;
+}>;
+export declare function getUserSessionDetail(userId: string, sessionId: string, currentSessionId: string): Promise<{
+    id: string;
+    device_name: string;
+    device_type: string;
+    ip_address: string;
+    ip_geo_country: string | null;
+    last_active_at: Date;
+    created_at: Date;
+    expires_at: Date;
+    login_method: string | null;
+    is_current: boolean;
+}>;
+export declare function revokeAllSessionsForUser(userId: string, currentSessionId: string): Promise<number>;
 //# sourceMappingURL=service.d.ts.map

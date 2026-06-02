@@ -1,10 +1,11 @@
 /**
  * In-process LRU caches for the auth module.
  *
- * The auth module is intentionally Redis-free per project decision. Every
- * piece of short-lived auth state (login MFA challenges, step-up challenges,
- * temporary backup-code blobs during MFA setup, access-token blacklist,
- * user-wide revocation cutoffs, and step-up freshness) lives in-process.
+ * The auth module is intentionally Redis-free per project decision (bootstrap
+ * mode). Every piece of short-lived auth state (login MFA challenges, step-up
+ * challenges, temporary backup-code blobs during MFA setup, access-token
+ * blacklist, user-wide revocation cutoffs, step-up freshness, and per-route
+ * rate-limit counters via lru-rate-limit.ts) lives in-process.
  *
  * Tradeoffs you MUST understand:
  *   - State is per-process. With multiple Node instances behind a load
@@ -61,6 +62,8 @@ export interface LoginMFAChallenge {
     ipAddress: string;
     userAgent: string;
     attempts: number;
+    /** Mirrors login `remember_me` so MFA completion issues the same session TTL. */
+    rememberMe: boolean;
 }
 export declare const loginMfaChallengeCache: LRUCache<string, LoginMFAChallenge, unknown>;
 /**
@@ -98,6 +101,70 @@ export declare const stepUpFreshnessCache: LRUCache<string, number, unknown>;
  *         abandoning the user's backup codes)
  */
 export declare const mfaBackupTempCache: LRUCache<string, string[], unknown>;
+/**
+ * OIDC authorization flow state (PKCE verifier + client metadata).
+ * TTL: 10 minutes.
+ */
+export interface OidcLoginState {
+    providerId: string;
+    orgId: string;
+    codeVerifier: string;
+    redirectUri: string;
+    rememberMe: boolean;
+    ipAddress: string;
+    userAgent: string;
+    deviceName?: string;
+    clientDeviceType?: string;
+}
+export declare const oidcLoginStateCache: LRUCache<string, OidcLoginState, unknown>;
+/**
+ * SAML SP-initiated login flow state (RelayState key).
+ * TTL: 10 minutes.
+ */
+export interface SamlLoginState {
+    providerId: string;
+    orgId: string;
+    rememberMe: boolean;
+    ipAddress: string;
+    userAgent: string;
+    deviceName?: string;
+    clientDeviceType?: string;
+}
+export declare const samlLoginStateCache: LRUCache<string, SamlLoginState, unknown>;
+/**
+ * OAuth account-linking flow (authenticated user binding a social IdP).
+ */
+export interface IdentityLinkState {
+    userId: string;
+    provider: 'google' | 'github' | 'microsoft';
+    codeVerifier: string;
+    redirectUri: string;
+}
+export declare const identityLinkStateCache: LRUCache<string, IdentityLinkState, unknown>;
+/** Passwordless social login OAuth state (public login, not account linking). */
+export interface SocialLoginState {
+    provider: 'google' | 'github' | 'microsoft';
+    codeVerifier: string;
+    redirectUri: string;
+    rememberMe: boolean;
+    ipAddress: string;
+    userAgent: string;
+    deviceName?: string;
+    clientDeviceType?: string;
+}
+export declare const socialLoginStateCache: LRUCache<string, SocialLoginState, unknown>;
+/**
+ * WebAuthn ceremony challenges (registration, authentication, login MFA).
+ * key = challengeId, value = { userId, type, ... }
+ */
+export interface WebAuthnChallengeState {
+    userId: string;
+    type: 'registration' | 'authentication' | 'login_mfa' | 'step_up';
+    loginMfaChallengeId?: string;
+    stepUpChallengeId?: string;
+    deviceId?: string;
+}
+export declare const webauthnChallengeCache: LRUCache<string, WebAuthnChallengeState, unknown>;
 export declare function blacklistAccessToken(sessionId: string): void;
 export declare function isAccessTokenBlacklisted(sessionId: string): boolean;
 export declare function revokeAllUserTokens(userId: string): void;

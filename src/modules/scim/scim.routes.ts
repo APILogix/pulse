@@ -1,0 +1,121 @@
+/**
+ * SCIM 2.0 route registration (shared by /scim/v2 and /auth/scim/v2 mounts).
+ */
+import type { FastifyInstance } from 'fastify';
+
+import { authenticateScim } from './scim.middleware.js';
+import * as scim from './scim.service.js';
+
+const scimOpts = { preHandler: [authenticateScim] };
+
+export async function registerScimRoutes(fastify: FastifyInstance): Promise<void> {
+  fastify.get('/:orgId/ServiceProviderConfig', scimOpts, async (_request, reply) => {
+    return reply.send(scim.serviceProviderConfig());
+  });
+
+  fastify.get('/:orgId/ResourceTypes', scimOpts, async (_request, reply) => {
+    return reply.send(scim.resourceTypes());
+  });
+
+  fastify.get('/:orgId/Schemas', scimOpts, async (_request, reply) => {
+    return reply.send(scim.schemas());
+  });
+
+  fastify.get('/:orgId/Users', scimOpts, async (request, reply) => {
+    try {
+      const { orgId } = request.params as { orgId: string };
+      const query = request.query as {
+        startIndex?: string;
+        count?: string;
+        filter?: string;
+      };
+      const list = await scim.listUsers(orgId, {
+        startIndex: query.startIndex ? parseInt(query.startIndex, 10) : 1,
+        count: query.count ? parseInt(query.count, 10) : 100,
+        ...(query.filter !== undefined ? { filter: query.filter } : {}),
+      });
+      return reply.send(list);
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.get('/:orgId/Users/:id', scimOpts, async (request, reply) => {
+    try {
+      const { orgId, id } = request.params as { orgId: string; id: string };
+      const user = await scim.getUser(orgId, id);
+      return reply.send(user);
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.post('/:orgId/Users', scimOpts, async (request, reply) => {
+    try {
+      const { orgId } = request.params as { orgId: string };
+      const created = await scim.createUser(
+        orgId,
+        request.body as Record<string, unknown>,
+      );
+      return reply.status(201).send(created);
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.put('/:orgId/Users/:id', scimOpts, async (request, reply) => {
+    try {
+      const { orgId, id } = request.params as { orgId: string; id: string };
+      const updated = await scim.replaceUser(
+        orgId,
+        id,
+        request.body as Record<string, unknown>,
+      );
+      return reply.send(updated);
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.patch('/:orgId/Users/:id', scimOpts, async (request, reply) => {
+    try {
+      const { orgId, id } = request.params as { orgId: string; id: string };
+      const updated = await scim.patchUser(
+        orgId,
+        id,
+        request.body as Record<string, unknown>,
+      );
+      return reply.send(updated);
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.delete('/:orgId/Users/:id', scimOpts, async (request, reply) => {
+    try {
+      const { orgId, id } = request.params as { orgId: string; id: string };
+      await scim.deleteUser(orgId, id);
+      return reply.status(204).send();
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.get('/:orgId/Groups', scimOpts, async (request, reply) => {
+    try {
+      const { orgId } = request.params as { orgId: string };
+      return reply.send(await scim.listGroups(orgId));
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+
+  fastify.get('/:orgId/Groups/:id', scimOpts, async (request, reply) => {
+    try {
+      const { orgId, id } = request.params as { orgId: string; id: string };
+      return reply.send(await scim.getGroup(orgId, id));
+    } catch (error) {
+      return scim.handleScimError(error, reply);
+    }
+  });
+}

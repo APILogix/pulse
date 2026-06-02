@@ -1,10 +1,11 @@
 /**
  * In-process LRU caches for the auth module.
  *
- * The auth module is intentionally Redis-free per project decision. Every
- * piece of short-lived auth state (login MFA challenges, step-up challenges,
- * temporary backup-code blobs during MFA setup, access-token blacklist,
- * user-wide revocation cutoffs, and step-up freshness) lives in-process.
+ * The auth module is intentionally Redis-free per project decision (bootstrap
+ * mode). Every piece of short-lived auth state (login MFA challenges, step-up
+ * challenges, temporary backup-code blobs during MFA setup, access-token
+ * blacklist, user-wide revocation cutoffs, step-up freshness, and per-route
+ * rate-limit counters via lru-rate-limit.ts) lives in-process.
  *
  * Tradeoffs you MUST understand:
  *   - State is per-process. With multiple Node instances behind a load
@@ -90,6 +91,31 @@ export const stepUpFreshnessCache = new LRUCache({
 export const mfaBackupTempCache = new LRUCache({
     max: 10_000,
     ttl: 24 * 60 * 60 * 1000,
+    ttlAutopurge: true,
+});
+export const oidcLoginStateCache = new LRUCache({
+    max: 10_000,
+    ttl: 10 * 60 * 1000,
+    ttlAutopurge: true,
+});
+export const samlLoginStateCache = new LRUCache({
+    max: 10_000,
+    ttl: 10 * 60 * 1000,
+    ttlAutopurge: true,
+});
+export const identityLinkStateCache = new LRUCache({
+    max: 10_000,
+    ttl: 10 * 60 * 1000,
+    ttlAutopurge: true,
+});
+export const socialLoginStateCache = new LRUCache({
+    max: 10_000,
+    ttl: 10 * 60 * 1000,
+    ttlAutopurge: true,
+});
+export const webauthnChallengeCache = new LRUCache({
+    max: 20_000,
+    ttl: 5 * 60 * 1000,
     ttlAutopurge: true,
 });
 // ---------------------------------------------------------------------------

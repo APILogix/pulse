@@ -15,10 +15,8 @@
  *     overwrite attacks.
  *
  * Rate limiting:
- *   - Per-route rate limiting has been removed at the team's direction. The
- *     global Fastify rate limiter (configured in app.ts) still applies. If
- *     you reintroduce per-route limits, do it via a preHandler shared with
- *     the rest of the platform.
+ *   - Scoped in-process LRU limits (rate-limits.ts) on sensitive auth routes.
+ *   - Global Fastify rate limiter (app.ts) still applies as a backstop.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
@@ -32,6 +30,7 @@ import { getClientInfo } from '../../shared/utils/request.js';
 import * as service from './service.js';
 import {
   AuthError,
+  AdminLockUserSchema,
   AuthErrorCodes,
   BackupCodeLoginSchema,
   ChangePasswordSchema,
@@ -48,6 +47,7 @@ import {
   MFAToggleSchema,
   MFAVerifySchema,
   MFAVerifySetupSchema,
+  EmailMfaResendSchema,
   RegenerateBackupCodesSchema,
   ResendVerificationSchema,
   ResetPasswordSchema,
@@ -55,6 +55,23 @@ import {
   UpdateUserSchema,
   VerifyEmailQuerySchema,
 } from './types.js';
+import identityRoutes from './identity.routes.js';
+import ssoOidcRoutes from './sso-oidc.routes.js';
+import accountAdministrationRoutes from './account-administration.routes.js';
+import samlIdentityRoutes from './saml-identity.routes.js';
+import provisioningRoutes from './provisioning.routes.js';
+import {
+  forgotPasswordRateLimit,
+  loginMfaRateLimit,
+  loginRateLimit,
+  mfaEmailResendRateLimit,
+  refreshSessionRateLimit,
+  registerRateLimit,
+  resendVerificationRateLimit,
+  resetPasswordRateLimit,
+  tokenConfirmRateLimit,
+  verifyEmailRateLimit,
+} from './rate-limits.js';
 import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from './utils.js';
 
 interface RequestWithUser extends FastifyRequest {
@@ -72,7 +89,7 @@ interface RequestWithUser extends FastifyRequest {
 // ERROR HANDLER
 // ============================================================================
 
-function handleAuthError(
+export function handleAuthError(
   error: unknown,
   reply: FastifyReply,
   request: FastifyRequest,
@@ -118,10 +135,14 @@ function sendAuthSession(
     user_id?: string;
   },
 ): FastifyReply {
+  const maxAgeSeconds = Math.max(
+    0,
+    Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000),
+  );
   reply.setCookie(
     REFRESH_COOKIE_NAME,
     payload.refresh_token,
-    getRefreshCookieOptions(),
+    getRefreshCookieOptions(maxAgeSeconds),
   );
   return reply.send({
     data: {
@@ -140,7 +161,7 @@ function sendAuthSession(
 
 async function credentialRoutes(fastify: FastifyInstance) {
   // POST /auth/login
-  fastify.post('/login', async (request, reply) => {
+  fastify.post('/login', { preHandler: [loginRateLimit] }, async (request, reply) => {
     try {
       const body = LoginSchema.parse(request.body);
       const ci = getClientInfo(request);
@@ -159,7 +180,6 @@ async function credentialRoutes(fastify: FastifyInstance) {
             challenge_id: result.challenge_id,
             expires_at: result.expires_at,
             device_type: result.device_type,
-            user_id: result.user_id,
           },
         });
       }
@@ -171,7 +191,7 @@ async function credentialRoutes(fastify: FastifyInstance) {
   });
 
   // POST /auth/login/mfa
-  fastify.post('/login/mfa', async (request, reply) => {
+  fastify.post('/login/mfa', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
     try {
       const body = LoginMFAVerifySchema.parse(request.body);
       const ci = getClientInfo(request);
@@ -189,7 +209,10 @@ async function credentialRoutes(fastify: FastifyInstance) {
   });
 
   // POST /auth/login/backup-code
-  fastify.post('/login/backup-code', async (request, reply) => {
+  fastify.post(
+    '/login/backup-code',
+    { preHandler: [loginMfaRateLimit] },
+    async (request, reply) => {
     try {
       const body = BackupCodeLoginSchema.parse(request.body);
       const ci = getClientInfo(request);
@@ -204,7 +227,8 @@ async function credentialRoutes(fastify: FastifyInstance) {
     } catch (error) {
       return handleAuthError(error, reply, request);
     }
-  });
+  },
+  );
 }
 
 // ============================================================================
@@ -244,13 +268,13 @@ async function passwordRoutes(fastify: FastifyInstance) {
     }
   };
 
-  fastify.post('/forgot-password', forgotPassword);
-  fastify.post('/password/forgot', forgotPassword);
-  fastify.post('/reset-password', resetPassword);
-  fastify.post('/password/reset', resetPassword);
+  fastify.post('/forgot-password', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
+  fastify.post('/password/forgot', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
+  fastify.post('/reset-password', { preHandler: [resetPasswordRateLimit] }, resetPassword);
+  fastify.post('/password/reset', { preHandler: [resetPasswordRateLimit] }, resetPassword);
 
   // POST /auth/resend-verification
-  fastify.post('/resend-verification', async (request, reply) => {
+  fastify.post('/resend-verification', { preHandler: [resendVerificationRateLimit] }, async (request, reply) => {
     try {
       const body = ResendVerificationSchema.parse(request.body);
       const ci = getClientInfo(request);
@@ -266,7 +290,7 @@ async function passwordRoutes(fastify: FastifyInstance) {
   });
 
   // GET /auth/verify-email
-  fastify.get('/verify-email', async (request, reply) => {
+  fastify.get('/verify-email', { preHandler: [verifyEmailRateLimit] }, async (request, reply) => {
     try {
       const query = VerifyEmailQuerySchema.parse(request.query);
       const ci = getClientInfo(request);
@@ -330,8 +354,8 @@ async function userRoutes(fastify: FastifyInstance) {
     }
   };
 
-  fastify.post('/register', register);
-  fastify.post('/users', register);
+  fastify.post('/register', { preHandler: [registerRateLimit] }, register);
+  fastify.post('/users', { preHandler: [registerRateLimit] }, register);
 
   // GET /auth/users/me
   fastify.get(
@@ -342,6 +366,21 @@ async function userRoutes(fastify: FastifyInstance) {
         const r = request as RequestWithUser;
         const profile = await service.getCurrentUser(r.user.id);
         return reply.send({ data: profile });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // GET /auth/users/me/security-summary
+  fastify.get(
+    '/users/me/security-summary',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const summary = await service.getUserSecuritySummary(r.user.id);
+        return reply.send({ data: summary });
       } catch (error) {
         return handleAuthError(error, reply, request);
       }
@@ -367,7 +406,7 @@ async function userRoutes(fastify: FastifyInstance) {
   // DELETE /auth/users/me
   fastify.delete(
     '/users/me',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, requireStepUp] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
@@ -465,6 +504,100 @@ async function userRoutes(fastify: FastifyInstance) {
           r.id,
         );
         return reply.send({ data: profile });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // POST /auth/users/:id/unsuspend (admin)
+  fastify.post(
+    '/users/:id/unsuspend',
+    { preHandler: [authenticate, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { id } = r.params as { id: string };
+        const { ip } = getClientInfo(r);
+        const profile = await service.unsuspendUser(
+          id,
+          r.user.id,
+          r.user.isAdmin,
+          ip,
+          r.id,
+        );
+        return reply.send({ data: profile });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // POST /auth/users/:id/lock (admin)
+  fastify.post(
+    '/users/:id/lock',
+    { preHandler: [authenticate, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { id } = r.params as { id: string };
+        const body = AdminLockUserSchema.parse(r.body);
+        const { ip } = getClientInfo(r);
+        const profile = await service.adminLockUserAccount(
+          id,
+          body,
+          r.user.id,
+          r.user.isAdmin,
+          ip,
+          r.id,
+        );
+        return reply.send({ data: profile });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // POST /auth/users/:id/unlock (admin)
+  fastify.post(
+    '/users/:id/unlock',
+    { preHandler: [authenticate, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { id } = r.params as { id: string };
+        const { ip } = getClientInfo(r);
+        const profile = await service.adminUnlockUserAccount(
+          id,
+          r.user.id,
+          r.user.isAdmin,
+          ip,
+          r.id,
+        );
+        return reply.send({ data: profile });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  // DELETE /auth/users/:id/sessions (admin) — revoke all sessions for target user
+  fastify.delete(
+    '/users/:id/sessions',
+    { preHandler: [authenticate, requireAdmin] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { id } = r.params as { id: string };
+        const { ip } = getClientInfo(r);
+        const result = await service.adminRevokeAllUserSessions(
+          id,
+          r.user.id,
+          r.user.isAdmin,
+          ip,
+          r.id,
+        );
+        return reply.send({ data: result });
       } catch (error) {
         return handleAuthError(error, reply, request);
       }
@@ -585,17 +718,12 @@ async function mfaRoutes(fastify: FastifyInstance) {
   // Authenticated users only. Generates a fresh OTP and emails it.
   fastify.post(
     '/mfa/email/resend',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, mfaEmailResendRateLimit] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
-        const { device_id } = (r.body as { device_id?: string }) || {};
-        if (!device_id) {
-          return reply.status(400).send({
-            error: { code: 'VALIDATION_ERROR', message: 'device_id is required' },
-          });
-        }
-        await service.resendEmailMfaOtp(r.user.id, device_id);
+        const body = EmailMfaResendSchema.parse(r.body);
+        await service.resendEmailMfaOtp(r.user.id, body.device_id);
         return reply.send({ data: { message: 'Verification code sent' } });
       } catch (error) {
         return handleAuthError(error, reply, request);
@@ -671,7 +799,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   // POST /auth/mfa/backup-codes — regenerate
   fastify.post(
     '/mfa/backup-codes',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, requireStepUp] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
@@ -712,7 +840,7 @@ async function mfaRoutes(fastify: FastifyInstance) {
   // one-time confirmation link. MFA stays enabled until the link is used.
   fastify.post(
     '/mfa/disable/request',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, requireStepUp] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
@@ -733,7 +861,10 @@ async function mfaRoutes(fastify: FastifyInstance) {
 
   // POST /auth/mfa/disable/confirm — step 2 of MFA disable.
   // Consumes the email-confirmation token and actually disables MFA.
-  fastify.post('/mfa/disable/confirm', async (request, reply) => {
+  fastify.post(
+    '/mfa/disable/confirm',
+    { preHandler: [tokenConfirmRateLimit] },
+    async (request, reply) => {
     try {
       const body = MFADisableConfirmSchema.parse(request.body);
       const ci = getClientInfo(request);
@@ -742,7 +873,8 @@ async function mfaRoutes(fastify: FastifyInstance) {
     } catch (error) {
       return handleAuthError(error, reply, request);
     }
-  });
+  },
+  );
 }
 
 // ============================================================================
@@ -750,6 +882,11 @@ async function mfaRoutes(fastify: FastifyInstance) {
 // ============================================================================
 
 async function sessionRoutes(fastify: FastifyInstance) {
+  // Route safety:
+  // - Keep static segments above param routes.
+  // - Constrain :id to UUID so it can never match `others` or other keywords.
+  const UUID_PATH_SEGMENT = ':id([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})';
+
   // GET /auth/sessions
   fastify.get(
     '/sessions',
@@ -768,9 +905,46 @@ async function sessionRoutes(fastify: FastifyInstance) {
     },
   );
 
+  // GET /auth/sessions/:id — session detail
+  fastify.get(
+    `/sessions/${UUID_PATH_SEGMENT}`,
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const { id } = request.params as { id: string };
+        const session = await service.getUserSessionDetail(
+          r.user.id,
+          id,
+          r.user.sessionId,
+        );
+        return reply.send({ data: session });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  fastify.delete(
+    '/sessions',
+    { preHandler: [authenticate] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const count = await service.revokeAllSessionsForUser(
+          r.user.id,
+          r.user.sessionId,
+        );
+        reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+        return reply.send({ data: { revoked: count } });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
   // DELETE /auth/sessions/others — revoke every OTHER active session.
-  // (Listed BEFORE /sessions/:id so Fastify's matcher does not turn
-  // "others" into the :id parameter.)
+  // Keep this static route above `/sessions/:id` deletes.
   fastify.delete(
     '/sessions/others',
     { preHandler: [authenticate] },
@@ -790,7 +964,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
 
   // DELETE /auth/sessions/:id — revoke a specific (non-current) session.
   fastify.delete(
-    '/sessions/:id',
+    `/sessions/${UUID_PATH_SEGMENT}`,
     { preHandler: [authenticate] },
     async (request, reply) => {
       try {
@@ -805,7 +979,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
   );
 
   // POST /auth/sessions/refresh — rotate refresh token.
-  fastify.post('/sessions/refresh', async (request, reply) => {
+  fastify.post('/sessions/refresh', { preHandler: [refreshSessionRateLimit] }, async (request, reply) => {
     try {
       const ci = getClientInfo(request);
 
@@ -836,10 +1010,14 @@ async function sessionRoutes(fastify: FastifyInstance) {
         request.id,
       );
 
+      const refreshMaxAgeSeconds = Math.max(
+        0,
+        Math.ceil((result.expiresAt.getTime() - Date.now()) / 1000),
+      );
       reply.setCookie(
         REFRESH_COOKIE_NAME,
         result.refreshToken,
-        getRefreshCookieOptions(),
+        getRefreshCookieOptions(refreshMaxAgeSeconds),
       );
       return reply.send({
         data: {
@@ -870,9 +1048,14 @@ async function sessionRoutes(fastify: FastifyInstance) {
       try {
         const r = request as RequestWithUser;
         const { ip } = getClientInfo(r);
-        await service.logout(r.user.id, r.user.sessionId, ip, r.id);
+        const result = await service.logout(
+          r.user.id,
+          r.user.sessionId,
+          ip,
+          r.id,
+        );
         reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
-        return reply.status(204).send();
+        return reply.send({ data: result });
       } catch (error) {
         return handleAuthError(error, reply, request);
       }
@@ -885,8 +1068,24 @@ async function sessionRoutes(fastify: FastifyInstance) {
 // ============================================================================
 
 export default async function authRoutes(fastify: FastifyInstance) {
+  fastify.get('/health', async (_request, reply) => {
+    return reply.send({
+      data: {
+        status: 'ok',
+        module: 'auth',
+        timestamp: new Date().toISOString(),
+      },
+    });
+  });
+
   await fastify.register(credentialRoutes, { prefix: '' });
   await fastify.register(passwordRoutes, { prefix: '' });
+  // Identity routes include /users/me/* paths — register before parametric /users/:id.
+  await fastify.register(identityRoutes, { prefix: '' });
+  await fastify.register(ssoOidcRoutes, { prefix: '' });
+  await fastify.register(accountAdministrationRoutes, { prefix: '' });
+  await fastify.register(samlIdentityRoutes, { prefix: '' });
+  await fastify.register(provisioningRoutes, { prefix: '' });
   await fastify.register(userRoutes, { prefix: '' });
   await fastify.register(mfaRoutes, { prefix: '' });
   await fastify.register(sessionRoutes, { prefix: '' });

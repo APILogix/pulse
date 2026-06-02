@@ -22,7 +22,10 @@ import { env } from '../../config/env.js';
 // ---------------------------------------------------------------------------
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+/** Extended refresh sliding window when the user opts in at login. */
+export const REMEMBER_ME_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const ABSOLUTE_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export { BACKUP_CODE_HEX_LENGTH, BACKUP_CODE_HEX_REGEX, } from './constants.js';
 export const MFA_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const STEP_UP_CHALLENGE_TTL_SECONDS = 5 * 60;
 export const STEP_UP_FRESHNESS_TTL_SECONDS = 5 * 60;
@@ -63,6 +66,11 @@ export function hashToken(token) {
 export function generateSecureToken(byteLength = 32) {
     return randomBytes(byteLength).toString('hex');
 }
+/** TTLs for additional email-bound flows (seconds). */
+export const EMAIL_CHANGE_TTL_SECONDS = 60 * 60;
+export const ACCOUNT_UNLOCK_TTL_SECONDS = 60 * 60;
+export const ACCOUNT_DELETION_GRACE_SECONDS = 7 * 24 * 60 * 60;
+export const ACCOUNT_DELETION_TOKEN_TTL_SECONDS = 60 * 60;
 export function hashEmailFlowToken(purpose, token) {
     return hashToken(`${purpose}:${token}`);
 }
@@ -79,13 +87,13 @@ export function generateAccessToken(userId, sessionId, mfaVerified) {
         audience: JWT_AUDIENCE,
     });
 }
-export function generateRefreshToken(userId, sessionId) {
+export function generateRefreshToken(userId, sessionId, expiresInSeconds = REFRESH_TOKEN_TTL_SECONDS) {
     return jwt.sign({
         sub: userId,
         jti: sessionId,
         type: 'refresh',
     }, env.JWT_REFRESH_SECRET, {
-        expiresIn: REFRESH_TOKEN_TTL_SECONDS,
+        expiresIn: expiresInSeconds,
         algorithm: 'HS256',
         issuer: JWT_ISSUER,
         audience: JWT_AUDIENCE,
@@ -120,12 +128,13 @@ export function verifyRefreshToken(token) {
  * In development we relax `secure` so tests work over plain HTTP. In every
  * other environment Secure is mandatory.
  */
-export function getRefreshCookieOptions() {
+export function getRefreshCookieOptions(maxAgeSeconds) {
+    const maxAge = (maxAgeSeconds ?? REFRESH_TOKEN_TTL_SECONDS) * 1000;
     return {
         httpOnly: true,
         secure: env.NODE_ENV !== 'development',
         sameSite: 'strict',
-        maxAge: REFRESH_TOKEN_TTL_SECONDS * 1000,
+        maxAge,
         path: '/',
         signed: true,
     };
@@ -155,6 +164,13 @@ export async function timingSafeFakePasswordCompare(candidate) {
  * the entire string. We do not strip plus-aliases because legitimate users
  * intentionally use them, and stripping would weaken uniqueness guarantees.
  */
+/** Stable device fingerprint for trusted-device and session rows. */
+export function buildDeviceFingerprint(ip, userAgent) {
+    return createHash('sha256')
+        .update(`${ip}:${userAgent}`)
+        .digest('hex')
+        .substring(0, 32);
+}
 export function normalizeEmail(email) {
     return email.trim().toLowerCase();
 }

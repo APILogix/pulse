@@ -29,6 +29,13 @@ export declare function mfaStatusTemplate(input: TemplateInput & {
  * link is consumed, MFA remains in force, so a phished password + a stolen
  * TOTP cannot disable MFA on its own.
  */
+export declare function emailChangeConfirmTemplate(input: ActionTemplateInput & {
+    newEmail: string;
+}): EmailTemplate;
+export declare function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate;
+export declare function accountDeletionConfirmTemplate(input: ActionTemplateInput & {
+    scheduledFor: string;
+}): EmailTemplate;
 export declare function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemplate;
 export {};
 //# sourceMappingURL=templates.d.ts.map

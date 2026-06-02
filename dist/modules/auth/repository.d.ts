@@ -36,6 +36,19 @@ export declare function restoreUser(id: string, client?: PoolClient): Promise<Us
  */
 export declare function suspendUser(id: string, reason: string, suspendedBy: string, client?: PoolClient): Promise<User | null>;
 /**
+ * Restore a suspended user to active status. Does not revive soft-deleted users.
+ */
+export declare function unsuspendUser(id: string, client?: PoolClient): Promise<User | null>;
+/**
+ * Admin-initiated account lock (distinct from brute-force lockout).
+ * Sets `locked_until` far in the future until explicitly unlocked.
+ */
+export declare function adminLockUser(id: string, reason: string, lockedBy: string, client?: PoolClient): Promise<User | null>;
+/**
+ * Clear admin/brute-force lock state and failed-login counters.
+ */
+export declare function adminUnlockUser(id: string, client?: PoolClient): Promise<User | null>;
+/**
  * Cursor-paginated user list for the admin endpoint. Cursor is a tuple of
  * (created_at, id) so it is stable when many rows share a created_at.
  */
@@ -66,7 +79,7 @@ export declare function recordFailedLogin(id: string, ip: string, client?: PoolC
 }>;
 export declare function recordLogin(id: string, ip: string, userAgent: string, client?: PoolClient): Promise<void>;
 export declare function updateUserPassword(id: string, passwordHash: string, passwordHistory: string[], client?: PoolClient): Promise<User | null>;
-export type SecurityEventType = 'brute_force_attempt' | 'suspicious_ip' | 'impossible_travel' | 'credential_stuffing' | 'account_takeover' | 'privilege_escalation' | 'mfa_disable_requested' | 'refresh_token_reuse';
+export type SecurityEventType = 'brute_force_attempt' | 'suspicious_ip' | 'impossible_travel' | 'credential_stuffing' | 'account_takeover' | 'privilege_escalation' | 'mfa_disable_requested' | 'mfa_recovery_requested' | 'refresh_token_reuse';
 export declare function recordSecurityEvent(data: {
     event_type: SecurityEventType;
     severity: number;
@@ -113,7 +126,7 @@ export declare function updateBackupCodesGenerated(userId: string, client?: Pool
 export declare function updateMFADeviceBackupCodes(deviceId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<void>;
 export declare function setBackupCodesForAllUserDevices(userId: string, backupCodesHash: string[], client?: PoolClient): Promise<void>;
 export declare function updateMFADeviceLastUsed(deviceId: string, ipAddress: string, client?: PoolClient): Promise<void>;
-export type EmailTokenPurpose = 'email_verification' | 'password_reset' | 'mfa_disable';
+export type EmailTokenPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'email_change' | 'account_unlock' | 'account_deletion';
 export type EmailVerificationRecord = {
     id: string;
     user_id: string;
@@ -179,6 +192,10 @@ export declare function createSession(data: {
     absolute_expires_at: Date;
     mfa_verified_at?: Date | null;
     mfa_expires_at?: Date | null;
+    sso_provider_id?: string | null;
+    login_method?: string | null;
+    saml_name_id?: string | null;
+    saml_session_index?: string | null;
 }, client?: PoolClient): Promise<UserSession>;
 /**
  * Look up a session whose current OR previous refresh-token hash matches the
@@ -205,6 +222,7 @@ export declare function revokeAllUserSessions(userId: string, reason: string, cl
  * and by the password-change flow.
  */
 export declare function revokeAllOtherSessions(userId: string, currentSessionId: string, reason: string, client?: PoolClient): Promise<number>;
+export declare function revokeAllSessionsForUser(userId: string, reason: string, client?: PoolClient): Promise<number>;
 /**
  * Atomic refresh-token rotation.
  *
@@ -221,5 +239,166 @@ export declare function rotateRefreshToken(sessionId: string, oldHash: string, n
 export declare function touchSessionActivity(sessionId: string, client?: PoolClient): Promise<void>;
 export declare function cleanupExpiredSessions(client?: PoolClient): Promise<number>;
 export declare function purgeOldRevokedSessions(olderThanDays?: number, client?: PoolClient): Promise<number>;
+export declare function updateUserEmail(userId: string, email: string, emailHash: string, client?: PoolClient): Promise<User | null>;
+export declare function scheduleAccountDeletion(userId: string, scheduledAt: Date, client?: PoolClient): Promise<User | null>;
+export declare function clearScheduledAccountDeletion(userId: string, client?: PoolClient): Promise<User | null>;
+export declare function listUsersDueForDeletion(client?: PoolClient): Promise<User[]>;
+export interface OrgAuthPolicyRow {
+    org_id: string;
+    org_name: string;
+    enforce_sso: boolean;
+    enforce_mfa: boolean;
+    session_timeout_minutes: number | null;
+}
+export declare function listOrgAuthPoliciesForUser(userId: string, client?: PoolClient): Promise<OrgAuthPolicyRow[]>;
+export interface SsoDiscoveryRow {
+    org_id: string;
+    org_name: string;
+    provider_id: string;
+    provider_type: string;
+    provider_name: string;
+}
+export declare function findSsoProvidersByEmailDomain(domain: string, client?: PoolClient): Promise<SsoDiscoveryRow[]>;
+export interface OidcProviderRow {
+    id: string;
+    org_id: string;
+    provider_name: string;
+    provider_type: string;
+    domain: string | null;
+    oidc_issuer: string;
+    oidc_client_id: string;
+    oidc_client_secret_encrypted: string;
+    oidc_scopes: string | null;
+    oidc_jit_provision: boolean;
+    oidc_jit_default_role: string;
+}
+export interface SamlProviderRow {
+    id: string;
+    org_id: string;
+    provider_name: string;
+    provider_type: string;
+    domain: string | null;
+    entity_id: string;
+    sso_url: string;
+    x509_certificate: string;
+    oidc_jit_provision: boolean;
+    oidc_jit_default_role: string;
+}
+export interface SsoProviderRef {
+    id: string;
+    org_id: string;
+    provider_type: string;
+}
+export declare function findSsoProviderRef(providerId: string, client?: PoolClient): Promise<SsoProviderRef | null>;
+export declare function findSamlProviderById(providerId: string, client?: PoolClient): Promise<SamlProviderRow | null>;
+export declare function findSamlProviderByEntityId(idpEntityId: string, client?: PoolClient): Promise<SamlProviderRow | null>;
+export declare function findSamlProviderForEmailDomain(domain: string, client?: PoolClient): Promise<SamlProviderRow | null>;
+export declare function findOidcProviderById(providerId: string, client?: PoolClient): Promise<OidcProviderRow | null>;
+export declare function findOidcProviderForEmailDomain(domain: string, client?: PoolClient): Promise<OidcProviderRow | null>;
+/** SSO JIT: passwordless user with verified email from IdP. */
+export declare function createSsoJitUser(data: {
+    id: string;
+    email: string;
+    full_name: string;
+}, client?: PoolClient): Promise<User>;
+export declare function addOrgMemberSsoProvision(orgId: string, userId: string, role: string, client?: PoolClient): Promise<void>;
+export declare function updateMFADeviceName(deviceId: string, userId: string, deviceName: string, client?: PoolClient): Promise<MFADevice | null>;
+export declare function findWebAuthnDeviceByCredentialId(credentialId: string, client?: PoolClient): Promise<MFADevice | null>;
+export declare function createWebAuthnDevice(data: {
+    user_id: string;
+    device_name: string;
+    credential_id: string;
+    public_key: string;
+    sign_count: number;
+    is_primary: boolean;
+}, client?: PoolClient): Promise<MFADevice>;
+export declare function updateWebAuthnSignCount(deviceId: string, signCount: number, ipAddress: string, client?: PoolClient): Promise<void>;
+export declare function upsertTrustedDevice(userId: string, fingerprint: string, data: {
+    device_name?: string;
+    ip_address: string;
+    user_agent: string;
+    expires_at: Date;
+}, client?: PoolClient): Promise<void>;
+export declare function isTrustedDevice(userId: string, fingerprint: string, client?: PoolClient): Promise<boolean>;
+export declare function listTrustedDevices(userId: string, client?: PoolClient): Promise<Array<{
+    id: string;
+    device_name: string | null;
+    device_fingerprint: string;
+    trusted_at: Date;
+    expires_at: Date;
+    last_seen_at: Date;
+}>>;
+export type LinkedIdentityProvider = 'google' | 'github' | 'microsoft';
+export interface LinkedIdentityRow {
+    id: string;
+    user_id: string;
+    provider: LinkedIdentityProvider;
+    provider_subject: string;
+    provider_email: string | null;
+    linked_at: Date;
+    last_used_at: Date | null;
+}
+export declare function listLinkedIdentities(userId: string, client?: PoolClient): Promise<LinkedIdentityRow[]>;
+export declare function findLinkedIdentityByProviderSubject(provider: LinkedIdentityProvider, providerSubject: string, client?: PoolClient): Promise<LinkedIdentityRow | null>;
+export declare function findLinkedIdentityByUserProvider(userId: string, provider: LinkedIdentityProvider, client?: PoolClient): Promise<LinkedIdentityRow | null>;
+export declare function createLinkedIdentity(data: {
+    user_id: string;
+    provider: LinkedIdentityProvider;
+    provider_subject: string;
+    provider_email: string | null;
+    profile_metadata?: Record<string, unknown>;
+}, client?: PoolClient): Promise<LinkedIdentityRow>;
+export declare function findScimTokenByHash(tokenHash: string, orgId: string, client?: PoolClient): Promise<{
+    id: string;
+    org_id: string;
+} | null>;
+export declare function touchScimToken(tokenId: string, client?: PoolClient): Promise<void>;
+export declare function upsertScimUserMapping(orgId: string, userId: string, externalId: string, client?: PoolClient): Promise<void>;
+export declare function findScimMappingByExternalId(orgId: string, externalId: string, client?: PoolClient): Promise<{
+    user_id: string;
+} | null>;
+export declare function findScimMappingByUserId(orgId: string, userId: string, client?: PoolClient): Promise<{
+    external_id: string;
+} | null>;
+export declare function deleteScimUserMapping(orgId: string, externalId: string, client?: PoolClient): Promise<void>;
+export declare function listScimMappingsForOrg(orgId: string, startIndex: number, count: number, client?: PoolClient): Promise<{
+    rows: Array<{
+        external_id: string;
+        user_id: string;
+    }>;
+    total: number;
+}>;
+export declare function listOrgMembersForScim(orgId: string, client?: PoolClient): Promise<Array<{
+    user_id: string;
+    role: string;
+    status: string;
+}>>;
+export declare function updateOrgMemberRole(orgId: string, userId: string, role: string, client?: PoolClient): Promise<void>;
+export declare function deactivateOrgMemberScim(orgId: string, userId: string, client?: PoolClient): Promise<void>;
+export declare function listOrgMemberScimIdsByRole(orgId: string, role: string, client?: PoolClient): Promise<string[]>;
+export declare function findActiveOrgMember(orgId: string, userId: string, client?: PoolClient): Promise<{
+    user_id: string;
+    role: string;
+} | null>;
+export declare function updateLinkedIdentityLastUsed(linkId: string, client?: PoolClient): Promise<void>;
+export declare function findActiveSessionBySamlNameId(nameId: string, client?: PoolClient): Promise<UserSession | null>;
+export declare function revokeLinkedIdentity(userId: string, linkId: string, client?: PoolClient): Promise<boolean>;
+export declare function revokeTrustedDevice(userId: string, deviceId: string, client?: PoolClient): Promise<boolean>;
+export declare function listAuditLogsForUser(userId: string, options: {
+    limit?: number;
+    offset?: number;
+}, client?: PoolClient): Promise<{
+    rows: Array<{
+        id: string;
+        action: string;
+        resource_type: string;
+        resource_id: string | null;
+        org_id: string | null;
+        ip_address: string | null;
+        created_at: Date;
+        metadata: Record<string, unknown> | null;
+    }>;
+    total: number;
+}>;
 export declare function withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
 //# sourceMappingURL=repository.d.ts.map

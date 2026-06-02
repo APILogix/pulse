@@ -162,7 +162,7 @@ export declare class OrganizationService {
     validateInvitationToken(token: string): Promise<{
         valid: boolean;
         email: string;
-        role: "security" | "billing" | "owner" | "admin" | "developer" | "member" | "viewer";
+        role: "security" | "member" | "admin" | "owner" | "billing" | "developer" | "viewer";
         orgName: string | null;
         orgSlug: string | null;
         expiresAt: Date;

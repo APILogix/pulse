@@ -10,6 +10,7 @@
  * schema that the routes layer parses on the wire.
  */
 import { z } from 'zod';
+import { BACKUP_CODE_HEX_LENGTH, BACKUP_CODE_HEX_REGEX, } from './constants.js';
 // ============================================
 // USER TYPES
 // ============================================
@@ -54,13 +55,24 @@ export const LoginSchema = z.object({
     password: z.string().min(1).max(256),
     device_name: z.string().min(1).max(255).optional(),
     remember_me: z.boolean().optional(),
+    trust_device: z.boolean().optional(),
 });
-// Login MFA verification — accepts 6-digit TOTP OR 10-hex backup code.
+// Login MFA verification — TOTP or email OTP only (6 digits).
+// Backup codes use POST /auth/login/backup-code.
 export const LoginMFAVerifySchema = z.object({
+    challenge_id: z.string().min(1).max(64),
+    code: z.string().length(6).regex(/^\d{6}$/, 'Code must be 6 digits'),
+});
+/** Backup-code login during an active server-issued MFA challenge. */
+export const BackupCodeLoginSchema = z.object({
     challenge_id: z.string().min(1).max(64),
     code: z
         .string()
-        .regex(/^(\d{6}|[a-fA-F0-9]{10})$/, 'Code must be 6 digits or 10 hex chars'),
+        .length(BACKUP_CODE_HEX_LENGTH)
+        .regex(BACKUP_CODE_HEX_REGEX, `Code must be ${BACKUP_CODE_HEX_LENGTH} hex characters`),
+});
+export const EmailMfaResendSchema = z.object({
+    device_id: z.string().uuid(),
 });
 // Profile update — null allowed for clearing avatar.
 export const UpdateUserSchema = z.object({
@@ -108,13 +120,6 @@ export const MFAVerifySchema = z.object({
     challenge_id: z.string().min(1).max(64),
     code: z.string().length(6).regex(/^\d{6}$/),
 });
-// Backup-code login during a server-issued login challenge. Hex codes are
-// case-insensitive on the wire; the service normalizes to lowercase before
-// hashing.
-export const BackupCodeLoginSchema = z.object({
-    challenge_id: z.string().min(1).max(64),
-    code: z.string().length(10).regex(/^[a-fA-F0-9]{10}$/),
-});
 // MFA disable now uses a two-step email-confirmation flow.
 //   POST /auth/mfa/disable/request  → emails the user a one-time link.
 //   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
@@ -139,6 +144,9 @@ export const MFADeviceRemoveSchema = z.object({
     current_password: z.string().min(1).max(256).optional(),
 });
 export const SuspendUserSchema = z.object({
+    reason: z.string().min(10).max(500),
+});
+export const AdminLockUserSchema = z.object({
     reason: z.string().min(10).max(500),
 });
 export const ListUsersQuerySchema = z.object({
@@ -196,5 +204,105 @@ export const AuthErrorCodes = {
     EMAIL_DELIVERY_FAILED: 'EMAIL_DELIVERY_FAILED',
     VALIDATION_ERROR: 'VALIDATION_ERROR',
     INVALID_OPERATION: 'INVALID_OPERATION',
+    SSO_REQUIRED: 'SSO_REQUIRED',
+    EMAIL_IN_USE: 'EMAIL_IN_USE',
+    DELETION_ALREADY_SCHEDULED: 'DELETION_ALREADY_SCHEDULED',
+    OIDC_NOT_CONFIGURED: 'OIDC_NOT_CONFIGURED',
+    OIDC_CALLBACK_INVALID: 'OIDC_CALLBACK_INVALID',
+    WEBAUTHN_CHALLENGE_INVALID: 'WEBAUTHN_CHALLENGE_INVALID',
+    JIT_PROVISIONING_DISABLED: 'JIT_PROVISIONING_DISABLED',
+    SSO_DOMAIN_MISMATCH: 'SSO_DOMAIN_MISMATCH',
+    SSO_NOT_CONFIGURED: 'SSO_NOT_CONFIGURED',
+    SAML_NOT_CONFIGURED: 'SAML_NOT_CONFIGURED',
+    SAML_RESPONSE_INVALID: 'SAML_RESPONSE_INVALID',
+    IDENTITY_PROVIDER_NOT_CONFIGURED: 'IDENTITY_PROVIDER_NOT_CONFIGURED',
+    IDENTITY_ALREADY_LINKED: 'IDENTITY_ALREADY_LINKED',
+    IDENTITY_LINK_FAILED: 'IDENTITY_LINK_FAILED',
+    SOCIAL_LOGIN_FAILED: 'SOCIAL_LOGIN_FAILED',
+    SCIM_UNAUTHORIZED: 'SCIM_UNAUTHORIZED',
+    SCIM_NOT_FOUND: 'SCIM_NOT_FOUND',
+    SCIM_CONFLICT: 'SCIM_CONFLICT',
 };
+export const SocialLoginSchema = z.object({
+    remember_me: z.boolean().optional(),
+    device_name: z.string().max(255).optional(),
+    device_type: z.string().max(50).optional(),
+});
+export const EmailChangeRequestSchema = z.object({
+    new_email: z.string().email().max(255),
+    current_password: z.string().min(1).max(256),
+});
+export const EmailChangeConfirmSchema = z.object({
+    token: z.string().min(32).max(256),
+});
+export const AccountUnlockRequestSchema = z.object({
+    email: z.string().email(),
+});
+export const AccountUnlockConfirmSchema = z.object({
+    token: z.string().min(32).max(256),
+});
+export const AccountDeletionRequestSchema = z.object({
+    reason: z.string().max(500).optional(),
+});
+export const AccountDeletionConfirmSchema = z.object({
+    token: z.string().min(32).max(256),
+});
+export const SsoDiscoveryQuerySchema = z.object({
+    email: z.string().email(),
+});
+export const AdminAuditLogsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    offset: z.coerce.number().int().min(0).default(0),
+});
+export const MfaRecoveryRequestSchema = z.object({
+    reason: z.string().min(20).max(1000),
+});
+export const SsoLoginSchema = z.object({
+    email: z.string().email().optional(),
+    provider_id: z.string().uuid().optional(),
+    remember_me: z.boolean().optional(),
+    device_name: z.string().max(255).optional(),
+    device_type: z.string().max(50).optional(),
+}).refine((d) => d.email || d.provider_id, {
+    message: 'email or provider_id is required',
+});
+export const SsoCallbackQuerySchema = z.object({
+    code: z.string().optional(),
+    state: z.string().optional(),
+    error: z.string().optional(),
+    error_description: z.string().optional(),
+});
+export const WebAuthnRegisterOptionsSchema = z.object({
+    device_name: z.string().min(1).max(255),
+});
+export const WebAuthnRegisterVerifySchema = z.object({
+    device_name: z.string().min(1).max(255),
+    challenge: z.string().min(1),
+    response: z.unknown(),
+});
+export const WebAuthnLoginMfaOptionsSchema = z.object({
+    challenge_id: z.string().min(1),
+});
+export const WebAuthnLoginMfaVerifySchema = z.object({
+    challenge_id: z.string().min(1),
+    challenge: z.string().min(1),
+    response: z.unknown(),
+});
+export const TrustDeviceSchema = z.object({
+    device_name: z.string().max(255).optional(),
+});
+export const WebAuthnStepUpOptionsSchema = z.object({
+    challenge_id: z.string().min(1),
+});
+export const WebAuthnStepUpVerifySchema = z.object({
+    challenge_id: z.string().min(1),
+    challenge: z.string().min(1),
+    response: z.unknown(),
+});
+export const MFADeviceRenameSchema = z.object({
+    device_name: z.string().min(1).max(255),
+});
+export const AdminForcePasswordResetSchema = z.object({
+    reason: z.string().max(500).optional(),
+});
 //# sourceMappingURL=types.js.map

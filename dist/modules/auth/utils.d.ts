@@ -1,6 +1,9 @@
 export declare const ACCESS_TOKEN_TTL_SECONDS: number;
 export declare const REFRESH_TOKEN_TTL_SECONDS: number;
+/** Extended refresh sliding window when the user opts in at login. */
+export declare const REMEMBER_ME_REFRESH_TTL_SECONDS: number;
 export declare const ABSOLUTE_SESSION_TTL_SECONDS: number;
+export { BACKUP_CODE_HEX_LENGTH, BACKUP_CODE_HEX_REGEX, } from './constants.js';
 export declare const MFA_LOGIN_CHALLENGE_TTL_SECONDS: number;
 export declare const STEP_UP_CHALLENGE_TTL_SECONDS: number;
 export declare const STEP_UP_FRESHNESS_TTL_SECONDS: number;
@@ -26,7 +29,12 @@ export declare function generateSecureToken(byteLength?: number): string;
  * another (verification token vs reset token vs MFA-disable token), even
  * though all three flows share the same backing table.
  */
-export type EmailFlowPurpose = 'email_verification' | 'password_reset' | 'mfa_disable';
+export type EmailFlowPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'email_change' | 'account_unlock' | 'account_deletion';
+/** TTLs for additional email-bound flows (seconds). */
+export declare const EMAIL_CHANGE_TTL_SECONDS: number;
+export declare const ACCOUNT_UNLOCK_TTL_SECONDS: number;
+export declare const ACCOUNT_DELETION_GRACE_SECONDS: number;
+export declare const ACCOUNT_DELETION_TOKEN_TTL_SECONDS: number;
 export declare function hashEmailFlowToken(purpose: EmailFlowPurpose, token: string): string;
 export interface AccessTokenClaims {
     sub: string;
@@ -48,7 +56,7 @@ export interface RefreshTokenClaims {
     exp: number;
 }
 export declare function generateAccessToken(userId: string, sessionId: string, mfaVerified: boolean): string;
-export declare function generateRefreshToken(userId: string, sessionId: string): string;
+export declare function generateRefreshToken(userId: string, sessionId: string, expiresInSeconds?: number): string;
 export declare function verifyAccessToken(token: string): AccessTokenClaims;
 export declare function verifyRefreshToken(token: string): RefreshTokenClaims;
 /**
@@ -63,7 +71,7 @@ export declare function verifyRefreshToken(token: string): RefreshTokenClaims;
  * In development we relax `secure` so tests work over plain HTTP. In every
  * other environment Secure is mandatory.
  */
-export declare function getRefreshCookieOptions(): {
+export declare function getRefreshCookieOptions(maxAgeSeconds?: number): {
     httpOnly: boolean;
     secure: boolean;
     sameSite: "strict";
@@ -91,6 +99,8 @@ export declare function timingSafeFakePasswordCompare(candidate: string): Promis
  * the entire string. We do not strip plus-aliases because legitimate users
  * intentionally use them, and stripping would weaken uniqueness guarantees.
  */
+/** Stable device fingerprint for trusted-device and session rows. */
+export declare function buildDeviceFingerprint(ip: string, userAgent: string): string;
 export declare function normalizeEmail(email: string): string;
 /**
  * Build the password-history array.

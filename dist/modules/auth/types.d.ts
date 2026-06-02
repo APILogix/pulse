@@ -64,6 +64,7 @@ export interface User {
     deleted_at: Date | null;
     deleted_by: string | null;
     deletion_reason: string | null;
+    deletion_scheduled_at: Date | null;
     created_at: Date;
     updated_at: Date;
     created_by: string | null;
@@ -150,6 +151,10 @@ export interface UserSession {
     termination_reason: string | null;
     mfa_verified_at: Date | null;
     mfa_expires_at: Date | null;
+    sso_provider_id: string | null;
+    login_method: string | null;
+    saml_name_id: string | null;
+    saml_session_index: string | null;
 }
 export interface SessionInfo {
     id: string;
@@ -179,6 +184,7 @@ export declare const LoginSchema: z.ZodObject<{
     password: z.ZodString;
     device_name: z.ZodOptional<z.ZodString>;
     remember_me: z.ZodOptional<z.ZodBoolean>;
+    trust_device: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export declare const LoginMFAVerifySchema: z.ZodObject<{
@@ -186,6 +192,16 @@ export declare const LoginMFAVerifySchema: z.ZodObject<{
     code: z.ZodString;
 }, z.core.$strip>;
 export type LoginMFAVerifyInput = z.infer<typeof LoginMFAVerifySchema>;
+/** Backup-code login during an active server-issued MFA challenge. */
+export declare const BackupCodeLoginSchema: z.ZodObject<{
+    challenge_id: z.ZodString;
+    code: z.ZodString;
+}, z.core.$strip>;
+export type BackupCodeLoginInput = z.infer<typeof BackupCodeLoginSchema>;
+export declare const EmailMfaResendSchema: z.ZodObject<{
+    device_id: z.ZodString;
+}, z.core.$strip>;
+export type EmailMfaResendInput = z.infer<typeof EmailMfaResendSchema>;
 export declare const UpdateUserSchema: z.ZodObject<{
     full_name: z.ZodOptional<z.ZodString>;
     avatar_url: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNull]>>;
@@ -245,11 +261,6 @@ export declare const MFAVerifySchema: z.ZodObject<{
     code: z.ZodString;
 }, z.core.$strip>;
 export type MFAVerifyInput = z.infer<typeof MFAVerifySchema>;
-export declare const BackupCodeLoginSchema: z.ZodObject<{
-    challenge_id: z.ZodString;
-    code: z.ZodString;
-}, z.core.$strip>;
-export type BackupCodeLoginInput = z.infer<typeof BackupCodeLoginSchema>;
 export declare const MFADisableRequestSchema: z.ZodObject<{
     mfa_code: z.ZodString;
 }, z.core.$strip>;
@@ -271,6 +282,22 @@ export declare const SuspendUserSchema: z.ZodObject<{
     reason: z.ZodString;
 }, z.core.$strip>;
 export type SuspendUserInput = z.infer<typeof SuspendUserSchema>;
+export declare const AdminLockUserSchema: z.ZodObject<{
+    reason: z.ZodString;
+}, z.core.$strip>;
+export type AdminLockUserInput = z.infer<typeof AdminLockUserSchema>;
+/** Public security posture for the authenticated user (settings UI). */
+export interface UserSecuritySummary {
+    email_verified: boolean;
+    mfa_enabled: boolean;
+    active_session_count: number;
+    verified_mfa_device_count: number;
+    last_login_at: Date | null;
+    last_password_change: Date | null;
+    account_locked: boolean;
+    locked_until: Date | null;
+    status: UserStatus;
+}
 export declare const ListUsersQuerySchema: z.ZodObject<{
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
@@ -324,5 +351,164 @@ export declare const AuthErrorCodes: {
     readonly EMAIL_DELIVERY_FAILED: "EMAIL_DELIVERY_FAILED";
     readonly VALIDATION_ERROR: "VALIDATION_ERROR";
     readonly INVALID_OPERATION: "INVALID_OPERATION";
+    readonly SSO_REQUIRED: "SSO_REQUIRED";
+    readonly EMAIL_IN_USE: "EMAIL_IN_USE";
+    readonly DELETION_ALREADY_SCHEDULED: "DELETION_ALREADY_SCHEDULED";
+    readonly OIDC_NOT_CONFIGURED: "OIDC_NOT_CONFIGURED";
+    readonly OIDC_CALLBACK_INVALID: "OIDC_CALLBACK_INVALID";
+    readonly WEBAUTHN_CHALLENGE_INVALID: "WEBAUTHN_CHALLENGE_INVALID";
+    readonly JIT_PROVISIONING_DISABLED: "JIT_PROVISIONING_DISABLED";
+    readonly SSO_DOMAIN_MISMATCH: "SSO_DOMAIN_MISMATCH";
+    readonly SSO_NOT_CONFIGURED: "SSO_NOT_CONFIGURED";
+    readonly SAML_NOT_CONFIGURED: "SAML_NOT_CONFIGURED";
+    readonly SAML_RESPONSE_INVALID: "SAML_RESPONSE_INVALID";
+    readonly IDENTITY_PROVIDER_NOT_CONFIGURED: "IDENTITY_PROVIDER_NOT_CONFIGURED";
+    readonly IDENTITY_ALREADY_LINKED: "IDENTITY_ALREADY_LINKED";
+    readonly IDENTITY_LINK_FAILED: "IDENTITY_LINK_FAILED";
+    readonly SOCIAL_LOGIN_FAILED: "SOCIAL_LOGIN_FAILED";
+    readonly SCIM_UNAUTHORIZED: "SCIM_UNAUTHORIZED";
+    readonly SCIM_NOT_FOUND: "SCIM_NOT_FOUND";
+    readonly SCIM_CONFLICT: "SCIM_CONFLICT";
 };
+export declare const SocialLoginSchema: z.ZodObject<{
+    remember_me: z.ZodOptional<z.ZodBoolean>;
+    device_name: z.ZodOptional<z.ZodString>;
+    device_type: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type SocialLoginInput = z.infer<typeof SocialLoginSchema>;
+export declare const EmailChangeRequestSchema: z.ZodObject<{
+    new_email: z.ZodString;
+    current_password: z.ZodString;
+}, z.core.$strip>;
+export type EmailChangeRequestInput = z.infer<typeof EmailChangeRequestSchema>;
+export declare const EmailChangeConfirmSchema: z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>;
+export type EmailChangeConfirmInput = z.infer<typeof EmailChangeConfirmSchema>;
+export declare const AccountUnlockRequestSchema: z.ZodObject<{
+    email: z.ZodString;
+}, z.core.$strip>;
+export type AccountUnlockRequestInput = z.infer<typeof AccountUnlockRequestSchema>;
+export declare const AccountUnlockConfirmSchema: z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>;
+export type AccountUnlockConfirmInput = z.infer<typeof AccountUnlockConfirmSchema>;
+export declare const AccountDeletionRequestSchema: z.ZodObject<{
+    reason: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type AccountDeletionRequestInput = z.infer<typeof AccountDeletionRequestSchema>;
+export declare const AccountDeletionConfirmSchema: z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>;
+export type AccountDeletionConfirmInput = z.infer<typeof AccountDeletionConfirmSchema>;
+export declare const SsoDiscoveryQuerySchema: z.ZodObject<{
+    email: z.ZodString;
+}, z.core.$strip>;
+export type SsoDiscoveryQueryInput = z.infer<typeof SsoDiscoveryQuerySchema>;
+export declare const AdminAuditLogsQuerySchema: z.ZodObject<{
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strip>;
+export type AdminAuditLogsQueryInput = z.infer<typeof AdminAuditLogsQuerySchema>;
+export declare const MfaRecoveryRequestSchema: z.ZodObject<{
+    reason: z.ZodString;
+}, z.core.$strip>;
+export type MfaRecoveryRequestInput = z.infer<typeof MfaRecoveryRequestSchema>;
+export interface AuditLogEntryPublic {
+    id: string;
+    action: string;
+    resource_type: string;
+    resource_id: string | null;
+    org_id: string | null;
+    ip_address: string | null;
+    created_at: Date;
+    metadata: Record<string, unknown> | null;
+}
+export interface SsoDiscoveryResult {
+    domain: string;
+    sso_available: boolean;
+    providers: Array<{
+        org_id: string;
+        org_name: string;
+        provider_id: string;
+        provider_type: string;
+        provider_name: string;
+    }>;
+    oidc_login_ready: boolean;
+    saml_login_ready: boolean;
+    configured_link_providers: Array<'google' | 'github' | 'microsoft'>;
+    /** Deployment has OAuth clients configured for passwordless social login. */
+    social_login_ready: boolean;
+    /** When email is supplied: providers the user has already linked (subset of configured). */
+    linked_social_providers: Array<'google' | 'github' | 'microsoft'>;
+}
+export declare const SsoLoginSchema: z.ZodObject<{
+    email: z.ZodOptional<z.ZodString>;
+    provider_id: z.ZodOptional<z.ZodString>;
+    remember_me: z.ZodOptional<z.ZodBoolean>;
+    device_name: z.ZodOptional<z.ZodString>;
+    device_type: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type SsoLoginInput = z.infer<typeof SsoLoginSchema>;
+export declare const SsoCallbackQuerySchema: z.ZodObject<{
+    code: z.ZodOptional<z.ZodString>;
+    state: z.ZodOptional<z.ZodString>;
+    error: z.ZodOptional<z.ZodString>;
+    error_description: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const WebAuthnRegisterOptionsSchema: z.ZodObject<{
+    device_name: z.ZodString;
+}, z.core.$strip>;
+export type WebAuthnRegisterOptionsInput = z.infer<typeof WebAuthnRegisterOptionsSchema>;
+export declare const WebAuthnRegisterVerifySchema: z.ZodObject<{
+    device_name: z.ZodString;
+    challenge: z.ZodString;
+    response: z.ZodUnknown;
+}, z.core.$strip>;
+export type WebAuthnRegisterVerifyInput = z.infer<typeof WebAuthnRegisterVerifySchema>;
+export declare const WebAuthnLoginMfaOptionsSchema: z.ZodObject<{
+    challenge_id: z.ZodString;
+}, z.core.$strip>;
+export type WebAuthnLoginMfaOptionsInput = z.infer<typeof WebAuthnLoginMfaOptionsSchema>;
+export declare const WebAuthnLoginMfaVerifySchema: z.ZodObject<{
+    challenge_id: z.ZodString;
+    challenge: z.ZodString;
+    response: z.ZodUnknown;
+}, z.core.$strip>;
+export type WebAuthnLoginMfaVerifyInput = z.infer<typeof WebAuthnLoginMfaVerifySchema>;
+export declare const TrustDeviceSchema: z.ZodObject<{
+    device_name: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type TrustDeviceInput = z.infer<typeof TrustDeviceSchema>;
+export declare const WebAuthnStepUpOptionsSchema: z.ZodObject<{
+    challenge_id: z.ZodString;
+}, z.core.$strip>;
+export type WebAuthnStepUpOptionsInput = z.infer<typeof WebAuthnStepUpOptionsSchema>;
+export declare const WebAuthnStepUpVerifySchema: z.ZodObject<{
+    challenge_id: z.ZodString;
+    challenge: z.ZodString;
+    response: z.ZodUnknown;
+}, z.core.$strip>;
+export type WebAuthnStepUpVerifyInput = z.infer<typeof WebAuthnStepUpVerifySchema>;
+export declare const MFADeviceRenameSchema: z.ZodObject<{
+    device_name: z.ZodString;
+}, z.core.$strip>;
+export type MFADeviceRenameInput = z.infer<typeof MFADeviceRenameSchema>;
+export declare const AdminForcePasswordResetSchema: z.ZodObject<{
+    reason: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type AdminForcePasswordResetInput = z.infer<typeof AdminForcePasswordResetSchema>;
+export interface UserDataExport {
+    exported_at: string;
+    user: UserProfile;
+    mfa_devices: Array<{
+        id: string;
+        type: string;
+        name: string;
+        verified: boolean;
+        is_primary: boolean;
+        last_used_at: Date | null;
+    }>;
+    sessions: SessionInfo[];
+}
 //# sourceMappingURL=types.d.ts.map
