@@ -8,7 +8,6 @@
  * - withErrorHandling for consistent error mapping
  */
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
-import { env } from '../../config/env.js';
 import { authenticate } from '../../shared/middleware/auth.js';
 import {
   AcceptInvitationSchema,
@@ -177,6 +176,15 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     return reply.send({ success: true, ...result });
   }));
 
+  // Caller's own membership in the org (role/status). Used by dashboards to
+  // decide which actions to surface without leaking the full member list.
+  fastify.get('/:orgId/members/me', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const userId = asAuth(request).user.id;
+    const result = await svc.getMember(orgId, userId, userId);
+    return reply.send({ success: true, data: result });
+  }));
+
   fastify.get('/:orgId/members/:userId', auth, withErrorHandling(async (request, reply) => {
     const { orgId, userId } = MemberParamsSchema.parse(request.params);
     const result = await svc.getMember(orgId, asAuth(request).user.id, userId);
@@ -233,14 +241,20 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     const result = await svc.inviteMember(buildMeta(request), orgId, body.email, body.role);
     return reply.code(201).send({
       success: true,
-      data: { invitation: result, token: result.token, inviteUrl: `${env.FRONTEND_URL ?? ''}/invite?token=${result.token}` }
+      data: {
+        invitation: result,
+        token: result.token,
+        inviteUrl: result.inviteUrl,
+        accountExists: result.accountExists,
+        emailSent: result.emailSent,
+      },
     });
   }));
 
   fastify.post('/:orgId/invitations/:invitationId/resend', auth, withErrorHandling(async (request, reply) => {
     const { orgId, invitationId } = (request.params as { orgId: string; invitationId: string });
-    await svc.resendInvitation(buildMeta(request), orgId, invitationId);
-    return reply.send({ success: true });
+    const result = await svc.resendInvitation(buildMeta(request), orgId, invitationId);
+    return reply.send({ success: true, data: result });
   }));
 
   fastify.delete('/:orgId/invitations/:invitationId', auth, withErrorHandling(async (request, reply) => {
@@ -439,6 +453,14 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {
     const { slug } = SlugParamsSchema.parse(request.params);
     const result = await svc.checkSlugAvailability(slug);
+    return reply.send({ success: true, data: result });
+  }));
+
+  // Resolve an organization the caller belongs to by slug. Returns 404 for
+  // non-members too (do not leak which slugs exist across tenants).
+  fastify.get('/by-slug/:slug', auth, withErrorHandling(async (request, reply) => {
+    const { slug } = SlugParamsSchema.parse(request.params);
+    const result = await svc.getOrganizationBySlug(slug, asAuth(request).user.id);
     return reply.send({ success: true, data: result });
   }));
 }

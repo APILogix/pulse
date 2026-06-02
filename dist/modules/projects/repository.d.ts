@@ -67,6 +67,12 @@ export declare class ProjectsRepository {
     setApiKeyActiveState(projectId: string, apiKeyId: string, isActive: boolean, client?: PoolClient): Promise<ProjectApiKey>;
     deleteApiKey(projectId: string, apiKeyId: string, client?: PoolClient): Promise<void>;
     touchApiKeyLastUsed(apiKeyId: string, client?: PoolClient): Promise<void>;
+    /**
+     * Return the key hashes for every API key of a project. Used by the service
+     * to evict the in-process ingestion cache when a project is paused, archived,
+     * or deleted so stale keys stop resolving as active.
+     */
+    listApiKeyHashesByProject(projectId: string, client?: PoolClient): Promise<string[]>;
     findActiveApiKeyCandidatesByPrefix(keyPrefix: string, client?: PoolClient): Promise<Array<{
         apiKey: ProjectApiKeyRecord;
         project: Project;

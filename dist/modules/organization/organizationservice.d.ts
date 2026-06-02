@@ -5,6 +5,9 @@ export declare class OrganizationService {
     private emitEvent;
     constructor(deps: OrganizationServiceDependencies);
     private audit;
+    /** Send the organization-invitation email. Throws on SMTP failure so callers
+     *  can decide whether the failure is fatal (resend) or best-effort (invite). */
+    private sendInvitationEmail;
     private requireMember;
     private requireMutableOrg;
     createOrganization(meta: RequestMeta, data: {
@@ -43,6 +46,9 @@ export declare class OrganizationService {
     reactivateMember(meta: RequestMeta, orgId: string, targetUserId: string): Promise<void>;
     inviteMember(meta: RequestMeta, orgId: string, email: string, role: OrgRole): Promise<{
         token: string;
+        inviteUrl: string;
+        accountExists: boolean;
+        emailSent: boolean;
         id: string;
         email: string;
         role: OrgRole;
@@ -55,7 +61,10 @@ export declare class OrganizationService {
             name: string | null;
         };
     }>;
-    resendInvitation(meta: RequestMeta, orgId: string, invitationId: string): Promise<void>;
+    resendInvitation(meta: RequestMeta, orgId: string, invitationId: string): Promise<{
+        inviteUrl: string;
+        accountExists: boolean;
+    }>;
     revokeInvitation(meta: RequestMeta, orgId: string, invitationId: string): Promise<void>;
     acceptInvitation(meta: RequestMeta, token: string): Promise<void>;
     declineInvitation(meta: RequestMeta, invitationId: string): Promise<void>;
@@ -166,6 +175,7 @@ export declare class OrganizationService {
         orgName: string | null;
         orgSlug: string | null;
         expiresAt: Date;
+        accountExists: boolean;
     }>;
     checkSlugAvailability(slug: string): Promise<{
         slug: string;

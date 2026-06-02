@@ -25,7 +25,9 @@ export class ProjectsRepository {
     }
     async findOrganizationMembership(orgId, userId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`SELECT org_id, user_id, role, is_active
+        // NOTE: organization_members has a `status member_status` column, NOT an
+        // `is_active` boolean. We derive isActive from status = 'active'.
+        const result = await db.query(`SELECT org_id, user_id, role, (status = 'active') AS is_active
        FROM organization_members
        WHERE org_id = $1 AND user_id = $2
        LIMIT 1`, [orgId, userId]);
@@ -346,6 +348,16 @@ export class ProjectsRepository {
         await db.query(`UPDATE project_api_keys
        SET last_used_at = NOW()
        WHERE id = $1`, [apiKeyId]);
+    }
+    /**
+     * Return the key hashes for every API key of a project. Used by the service
+     * to evict the in-process ingestion cache when a project is paused, archived,
+     * or deleted so stale keys stop resolving as active.
+     */
+    async listApiKeyHashesByProject(projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT key_hash FROM project_api_keys WHERE project_id = $1`, [projectId]);
+        return result.rows.map((row) => row.key_hash);
     }
     async findActiveApiKeyCandidatesByPrefix(keyPrefix, client) {
         // The prefix lookup limits candidate keys before the service performs

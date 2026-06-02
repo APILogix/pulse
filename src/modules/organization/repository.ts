@@ -132,10 +132,37 @@ export class OrganizationRepository {
   }
 
   async softDeleteOrg(id: string): Promise<void> {
-    const r = await this.db.query(
-      `UPDATE organizations SET deleted_at=NOW(),status='archived' WHERE id=$1 AND deleted_at IS NULL`, [id]
+    return this.withTransaction(async (client) => {
+      const r = await client.query(
+        `UPDATE organizations SET deleted_at=NOW(),status='archived' WHERE id=$1 AND deleted_at IS NULL`, [id]
+      );
+      if (r.rowCount === 0) throw new NotFoundError("Organization");
+      // Cascade: revoke all project API keys and pause projects so a deleted
+      // org cannot keep ingesting or be operated on. Tables FK ON DELETE
+      // CASCADE only fires on hard delete, which we never do (soft delete only).
+      await client.query(
+        `UPDATE project_api_keys k
+         SET is_active=FALSE, revoked_at=NOW(), revoked_reason='org_deleted'
+         FROM projects p
+         WHERE k.project_id=p.id AND p.org_id=$1 AND k.is_active=TRUE`, [id]
+      );
+      await client.query(
+        `UPDATE projects SET status='archived', is_active=FALSE
+         WHERE org_id=$1 AND deleted_at IS NULL AND status<>'archived'`, [id]
+      );
+    });
+  }
+
+  /** Collect every project API-key hash for an org so the service can evict the
+   *  ingestion cache after delete/suspend. Returns hashes regardless of state. */
+  async listOrgApiKeyHashes(orgId: string): Promise<string[]> {
+    const r = await this.db.query<{ key_hash: string }>(
+      `SELECT k.key_hash
+       FROM project_api_keys k
+       JOIN projects p ON p.id=k.project_id
+       WHERE p.org_id=$1`, [orgId]
     );
-    if (r.rowCount === 0) throw new NotFoundError("Organization");
+    return r.rows.map((row) => row.key_hash);
   }
 
   async archiveOrg(id: string): Promise<void> {
@@ -292,10 +319,31 @@ export class OrganizationRepository {
     return parseInt(r.rows[0]?.c ?? '0', 10);
   }
 
+  /**
+   * Look up a (non-deleted) user by email for invitation flows. Returns the
+   * minimal identity needed to (a) decide whether the invitee already has an
+   * account and (b) personalize the invite email. Email match is
+   * case-insensitive to align with how the auth module normalizes emails.
+   */
+  async findUserByEmail(
+    email: string,
+  ): Promise<{ id: string; email: string; full_name: string } | null> {
+    const r = await this.db.query<{ id: string; email: string; full_name: string }>(
+      `SELECT id, email, full_name
+       FROM users
+       WHERE lower(email) = lower($1) AND deleted_at IS NULL
+       LIMIT 1`,
+      [email],
+    );
+    return r.rows[0] ?? null;
+  }
+
   // ── Audit Logs ────────────────────────────────────
+  // Writes to organization_audit_logs (dedicated org audit table, distinct from
+  // the auth module's audit_logs which has a different column shape).
   async createAuditLog(entry: CreateAuditLogRecord): Promise<void> {
     await this.db.query(
-      `INSERT INTO audit_logs (org_id,actor_user_id,actor_email,actor_ip,actor_user_agent,actor_session_id,action,entity_type,entity_id,entity_name,request_id,http_method,endpoint,old_values,new_values,changed_fields,status,failure_reason,is_sensitive,metadata)
+      `INSERT INTO organization_audit_logs (org_id,actor_user_id,actor_email,actor_ip,actor_user_agent,actor_session_id,action,entity_type,entity_id,entity_name,request_id,http_method,endpoint,old_values,new_values,changed_fields,status,failure_reason,is_sensitive,metadata)
        VALUES ($1,$2,$3,$4::inet,$5,$6::uuid,$7,$8,$9::uuid,$10,$11::uuid,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [entry.orgId, entry.actorUserId, entry.actorEmail??null, entry.actorIp??null, entry.actorUserAgent??null, entry.actorSessionId??null,
        entry.action, entry.entityType, entry.entityId??null, entry.entityName??null, entry.requestId??null, entry.httpMethod??null,
@@ -315,7 +363,7 @@ export class OrganizationRepository {
     params.push(q.limit + 1);
     const r = await this.db.query<AuditLogRow>(
       `SELECT id,org_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
-       FROM audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
+       FROM organization_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
     );
     return cursorPage(r.rows, q.limit);
   }
@@ -380,6 +428,19 @@ export class OrganizationRepository {
 
   async incrementResentCount(id: string): Promise<void> {
     await this.db.query(`UPDATE organization_invitations SET resent_count=resent_count+1,last_resent_at=NOW() WHERE id=$1`, [id]);
+  }
+
+  /**
+   * Replace the token hash for a pending invitation. Used by resend, since the
+   * plaintext token is never stored — a resend must issue a fresh token so the
+   * emailed link is valid.
+   */
+  async rotateInvitationToken(id: string, tokenHash: string): Promise<void> {
+    const r = await this.db.query(
+      `UPDATE organization_invitations SET token_hash=$1 WHERE id=$2 AND status='pending'`,
+      [tokenHash, id],
+    );
+    if (r.rowCount === 0) throw new NotFoundError("Invitation");
   }
 
   // ── Environments ──────────────────────────────
@@ -582,7 +643,7 @@ export class OrganizationRepository {
     params.push(10000); // hard cap
     const r = await this.db.query<AuditLogRow>(
       `SELECT id,org_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
-       FROM audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
+       FROM organization_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
     );
     return r.rows;
   }
