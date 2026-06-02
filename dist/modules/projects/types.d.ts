@@ -9,10 +9,10 @@ export declare const ProjectEnvironmentSchema: z.ZodEnum<{
     production: "production";
 }>;
 export declare const OrgRoleSchema: z.ZodEnum<{
-    billing: "billing";
-    owner: "owner";
-    admin: "admin";
     member: "member";
+    admin: "admin";
+    owner: "owner";
+    billing: "billing";
     viewer: "viewer";
 }>;
 export declare const OrgIdParamsSchema: z.ZodObject<{

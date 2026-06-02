@@ -24,11 +24,11 @@ export declare const MemberStatusSchema: z.ZodEnum<{
 }>;
 export declare const OrgRoleSchema: z.ZodEnum<{
     security: "security";
-    billing: "billing";
-    owner: "owner";
-    admin: "admin";
-    developer: "developer";
     member: "member";
+    admin: "admin";
+    owner: "owner";
+    billing: "billing";
+    developer: "developer";
     viewer: "viewer";
 }>;
 export declare const InvitationStatusSchema: z.ZodEnum<{
@@ -39,10 +39,10 @@ export declare const InvitationStatusSchema: z.ZodEnum<{
     declined: "declined";
 }>;
 export declare const JoinMethodSchema: z.ZodEnum<{
+    scim: "scim";
     invite: "invite";
     admin_add: "admin_add";
     sso_auto_provision: "sso_auto_provision";
-    scim: "scim";
 }>;
 export declare const QuotaRequestStatusSchema: z.ZodEnum<{
     pending: "pending";
@@ -51,11 +51,11 @@ export declare const QuotaRequestStatusSchema: z.ZodEnum<{
     cancelled: "cancelled";
 }>;
 export declare const QuotaTypeSchema: z.ZodEnum<{
+    events: "events";
+    members: "members";
     api_requests: "api_requests";
     projects: "projects";
-    events: "events";
     storage: "storage";
-    members: "members";
     alerts: "alerts";
 }>;
 export declare const SecurityEventSeveritySchema: z.ZodEnum<{
@@ -182,10 +182,10 @@ export declare const UpdateSettingsSchema: z.ZodObject<{
 export declare const UpdateMemberRoleSchema: z.ZodObject<{
     role: z.ZodEnum<{
         security: "security";
-        billing: "billing";
-        admin: "admin";
-        developer: "developer";
         member: "member";
+        admin: "admin";
+        billing: "billing";
+        developer: "developer";
         viewer: "viewer";
     }>;
 }, z.core.$strip>;
@@ -207,11 +207,11 @@ export declare const MembersListQuerySchema: z.ZodObject<{
     }>>;
     role: z.ZodOptional<z.ZodEnum<{
         security: "security";
-        billing: "billing";
-        owner: "owner";
-        admin: "admin";
-        developer: "developer";
         member: "member";
+        admin: "admin";
+        owner: "owner";
+        billing: "billing";
+        developer: "developer";
         viewer: "viewer";
     }>>;
 }, z.core.$strip>;
@@ -225,10 +225,10 @@ export declare const CreateInvitationSchema: z.ZodObject<{
     email: z.ZodString;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
-        billing: "billing";
-        admin: "admin";
-        developer: "developer";
         member: "member";
+        admin: "admin";
+        billing: "billing";
+        developer: "developer";
         viewer: "viewer";
     }>>;
 }, z.core.$strip>;
@@ -270,10 +270,10 @@ export declare const CreateApiKeySchema: z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
-        billing: "billing";
-        admin: "admin";
-        developer: "developer";
         member: "member";
+        admin: "admin";
+        billing: "billing";
+        developer: "developer";
         viewer: "viewer";
     }>>;
     expiresInDays: z.ZodOptional<z.ZodNumber>;
@@ -281,8 +281,8 @@ export declare const CreateApiKeySchema: z.ZodObject<{
 export declare const CreateSsoProviderSchema: z.ZodObject<{
     providerName: z.ZodString;
     providerType: z.ZodEnum<{
-        saml: "saml";
         oidc: "oidc";
+        saml: "saml";
     }>;
     entityId: z.ZodOptional<z.ZodString>;
     ssoUrl: z.ZodOptional<z.ZodString>;

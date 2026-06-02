@@ -15,11 +15,10 @@
  *     overwrite attacks.
  *
  * Rate limiting:
- *   - Per-route rate limiting has been removed at the team's direction. The
- *     global Fastify rate limiter (configured in app.ts) still applies. If
- *     you reintroduce per-route limits, do it via a preHandler shared with
- *     the rest of the platform.
+ *   - Scoped in-process LRU limits (rate-limits.ts) on sensitive auth routes.
+ *   - Global Fastify rate limiter (app.ts) still applies as a backstop.
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+export declare function handleAuthError(error: unknown, reply: FastifyReply, request: FastifyRequest): FastifyReply;
 export default function authRoutes(fastify: FastifyInstance): Promise<void>;
 //# sourceMappingURL=routes.d.ts.map

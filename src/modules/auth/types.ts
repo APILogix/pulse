@@ -12,6 +12,11 @@
 
 import { z } from 'zod';
 
+import {
+  BACKUP_CODE_HEX_LENGTH,
+  BACKUP_CODE_HEX_REGEX,
+} from './constants.js';
+
 // ============================================
 // USER TYPES
 // ============================================
@@ -62,6 +67,7 @@ export interface User {
   deleted_at: Date | null;
   deleted_by: string | null;
   deletion_reason: string | null;
+  deletion_scheduled_at: Date | null;
   created_at: Date;
   updated_at: Date;
   created_by: string | null;
@@ -159,6 +165,10 @@ export interface UserSession {
   termination_reason: string | null;
   mfa_verified_at: Date | null;
   mfa_expires_at: Date | null;
+  sso_provider_id: string | null;
+  login_method: string | null;
+  saml_name_id: string | null;
+  saml_session_index: string | null;
 }
 
 export interface SessionInfo {
@@ -211,17 +221,32 @@ export const LoginSchema = z.object({
   password: z.string().min(1).max(256),
   device_name: z.string().min(1).max(255).optional(),
   remember_me: z.boolean().optional(),
+  trust_device: z.boolean().optional(),
 });
 export type LoginInput = z.infer<typeof LoginSchema>;
 
-// Login MFA verification — accepts 6-digit TOTP OR 10-hex backup code.
+// Login MFA verification — TOTP or email OTP only (6 digits).
+// Backup codes use POST /auth/login/backup-code.
 export const LoginMFAVerifySchema = z.object({
+  challenge_id: z.string().min(1).max(64),
+  code: z.string().length(6).regex(/^\d{6}$/, 'Code must be 6 digits'),
+});
+export type LoginMFAVerifyInput = z.infer<typeof LoginMFAVerifySchema>;
+
+/** Backup-code login during an active server-issued MFA challenge. */
+export const BackupCodeLoginSchema = z.object({
   challenge_id: z.string().min(1).max(64),
   code: z
     .string()
-    .regex(/^(\d{6}|[a-fA-F0-9]{10})$/, 'Code must be 6 digits or 10 hex chars'),
+    .length(BACKUP_CODE_HEX_LENGTH)
+    .regex(BACKUP_CODE_HEX_REGEX, `Code must be ${BACKUP_CODE_HEX_LENGTH} hex characters`),
 });
-export type LoginMFAVerifyInput = z.infer<typeof LoginMFAVerifySchema>;
+export type BackupCodeLoginInput = z.infer<typeof BackupCodeLoginSchema>;
+
+export const EmailMfaResendSchema = z.object({
+  device_id: z.string().uuid(),
+});
+export type EmailMfaResendInput = z.infer<typeof EmailMfaResendSchema>;
 
 // Profile update — null allowed for clearing avatar.
 export const UpdateUserSchema = z.object({
@@ -289,15 +314,6 @@ export const MFAVerifySchema = z.object({
 });
 export type MFAVerifyInput = z.infer<typeof MFAVerifySchema>;
 
-// Backup-code login during a server-issued login challenge. Hex codes are
-// case-insensitive on the wire; the service normalizes to lowercase before
-// hashing.
-export const BackupCodeLoginSchema = z.object({
-  challenge_id: z.string().min(1).max(64),
-  code: z.string().length(10).regex(/^[a-fA-F0-9]{10}$/),
-});
-export type BackupCodeLoginInput = z.infer<typeof BackupCodeLoginSchema>;
-
 // MFA disable now uses a two-step email-confirmation flow.
 //   POST /auth/mfa/disable/request  → emails the user a one-time link.
 //   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
@@ -333,6 +349,24 @@ export const SuspendUserSchema = z.object({
   reason: z.string().min(10).max(500),
 });
 export type SuspendUserInput = z.infer<typeof SuspendUserSchema>;
+
+export const AdminLockUserSchema = z.object({
+  reason: z.string().min(10).max(500),
+});
+export type AdminLockUserInput = z.infer<typeof AdminLockUserSchema>;
+
+/** Public security posture for the authenticated user (settings UI). */
+export interface UserSecuritySummary {
+  email_verified: boolean;
+  mfa_enabled: boolean;
+  active_session_count: number;
+  verified_mfa_device_count: number;
+  last_login_at: Date | null;
+  last_password_change: Date | null;
+  account_locked: boolean;
+  locked_until: Date | null;
+  status: UserStatus;
+}
 
 export const ListUsersQuerySchema = z.object({
   status: UserStatus.optional(),
@@ -394,4 +428,203 @@ export const AuthErrorCodes = {
   EMAIL_DELIVERY_FAILED: 'EMAIL_DELIVERY_FAILED',
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   INVALID_OPERATION: 'INVALID_OPERATION',
+  SSO_REQUIRED: 'SSO_REQUIRED',
+  EMAIL_IN_USE: 'EMAIL_IN_USE',
+  DELETION_ALREADY_SCHEDULED: 'DELETION_ALREADY_SCHEDULED',
+  OIDC_NOT_CONFIGURED: 'OIDC_NOT_CONFIGURED',
+  OIDC_CALLBACK_INVALID: 'OIDC_CALLBACK_INVALID',
+  WEBAUTHN_CHALLENGE_INVALID: 'WEBAUTHN_CHALLENGE_INVALID',
+  JIT_PROVISIONING_DISABLED: 'JIT_PROVISIONING_DISABLED',
+  SSO_DOMAIN_MISMATCH: 'SSO_DOMAIN_MISMATCH',
+  SSO_NOT_CONFIGURED: 'SSO_NOT_CONFIGURED',
+  SAML_NOT_CONFIGURED: 'SAML_NOT_CONFIGURED',
+  SAML_RESPONSE_INVALID: 'SAML_RESPONSE_INVALID',
+  IDENTITY_PROVIDER_NOT_CONFIGURED: 'IDENTITY_PROVIDER_NOT_CONFIGURED',
+  IDENTITY_ALREADY_LINKED: 'IDENTITY_ALREADY_LINKED',
+  IDENTITY_LINK_FAILED: 'IDENTITY_LINK_FAILED',
+  SOCIAL_LOGIN_FAILED: 'SOCIAL_LOGIN_FAILED',
+  SCIM_UNAUTHORIZED: 'SCIM_UNAUTHORIZED',
+  SCIM_NOT_FOUND: 'SCIM_NOT_FOUND',
+  SCIM_CONFLICT: 'SCIM_CONFLICT',
 } as const;
+
+export const SocialLoginSchema = z.object({
+  remember_me: z.boolean().optional(),
+  device_name: z.string().max(255).optional(),
+  device_type: z.string().max(50).optional(),
+});
+export type SocialLoginInput = z.infer<typeof SocialLoginSchema>;
+
+export const EmailChangeRequestSchema = z.object({
+  new_email: z.string().email().max(255),
+  current_password: z.string().min(1).max(256),
+});
+export type EmailChangeRequestInput = z.infer<typeof EmailChangeRequestSchema>;
+
+export const EmailChangeConfirmSchema = z.object({
+  token: z.string().min(32).max(256),
+});
+export type EmailChangeConfirmInput = z.infer<typeof EmailChangeConfirmSchema>;
+
+export const AccountUnlockRequestSchema = z.object({
+  email: z.string().email(),
+});
+export type AccountUnlockRequestInput = z.infer<typeof AccountUnlockRequestSchema>;
+
+export const AccountUnlockConfirmSchema = z.object({
+  token: z.string().min(32).max(256),
+});
+export type AccountUnlockConfirmInput = z.infer<typeof AccountUnlockConfirmSchema>;
+
+export const AccountDeletionRequestSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+export type AccountDeletionRequestInput = z.infer<
+  typeof AccountDeletionRequestSchema
+>;
+
+export const AccountDeletionConfirmSchema = z.object({
+  token: z.string().min(32).max(256),
+});
+export type AccountDeletionConfirmInput = z.infer<
+  typeof AccountDeletionConfirmSchema
+>;
+
+export const SsoDiscoveryQuerySchema = z.object({
+  email: z.string().email(),
+});
+export type SsoDiscoveryQueryInput = z.infer<typeof SsoDiscoveryQuerySchema>;
+
+export const AdminAuditLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type AdminAuditLogsQueryInput = z.infer<typeof AdminAuditLogsQuerySchema>;
+
+export const MfaRecoveryRequestSchema = z.object({
+  reason: z.string().min(20).max(1000),
+});
+export type MfaRecoveryRequestInput = z.infer<typeof MfaRecoveryRequestSchema>;
+
+export interface AuditLogEntryPublic {
+  id: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  org_id: string | null;
+  ip_address: string | null;
+  created_at: Date;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface SsoDiscoveryResult {
+  domain: string;
+  sso_available: boolean;
+  providers: Array<{
+    org_id: string;
+    org_name: string;
+    provider_id: string;
+    provider_type: string;
+    provider_name: string;
+  }>;
+  oidc_login_ready: boolean;
+  saml_login_ready: boolean;
+  configured_link_providers: Array<'google' | 'github' | 'microsoft'>;
+  /** Deployment has OAuth clients configured for passwordless social login. */
+  social_login_ready: boolean;
+  /** When email is supplied: providers the user has already linked (subset of configured). */
+  linked_social_providers: Array<'google' | 'github' | 'microsoft'>;
+}
+
+export const SsoLoginSchema = z.object({
+  email: z.string().email().optional(),
+  provider_id: z.string().uuid().optional(),
+  remember_me: z.boolean().optional(),
+  device_name: z.string().max(255).optional(),
+  device_type: z.string().max(50).optional(),
+}).refine((d) => d.email || d.provider_id, {
+  message: 'email or provider_id is required',
+});
+export type SsoLoginInput = z.infer<typeof SsoLoginSchema>;
+
+export const SsoCallbackQuerySchema = z.object({
+  code: z.string().optional(),
+  state: z.string().optional(),
+  error: z.string().optional(),
+  error_description: z.string().optional(),
+});
+
+export const WebAuthnRegisterOptionsSchema = z.object({
+  device_name: z.string().min(1).max(255),
+});
+export type WebAuthnRegisterOptionsInput = z.infer<
+  typeof WebAuthnRegisterOptionsSchema
+>;
+
+export const WebAuthnRegisterVerifySchema = z.object({
+  device_name: z.string().min(1).max(255),
+  challenge: z.string().min(1),
+  response: z.unknown(),
+});
+export type WebAuthnRegisterVerifyInput = z.infer<
+  typeof WebAuthnRegisterVerifySchema
+>;
+
+export const WebAuthnLoginMfaOptionsSchema = z.object({
+  challenge_id: z.string().min(1),
+});
+export type WebAuthnLoginMfaOptionsInput = z.infer<
+  typeof WebAuthnLoginMfaOptionsSchema
+>;
+
+export const WebAuthnLoginMfaVerifySchema = z.object({
+  challenge_id: z.string().min(1),
+  challenge: z.string().min(1),
+  response: z.unknown(),
+});
+export type WebAuthnLoginMfaVerifyInput = z.infer<
+  typeof WebAuthnLoginMfaVerifySchema
+>;
+
+export const TrustDeviceSchema = z.object({
+  device_name: z.string().max(255).optional(),
+});
+export type TrustDeviceInput = z.infer<typeof TrustDeviceSchema>;
+
+export const WebAuthnStepUpOptionsSchema = z.object({
+  challenge_id: z.string().min(1),
+});
+export type WebAuthnStepUpOptionsInput = z.infer<typeof WebAuthnStepUpOptionsSchema>;
+
+export const WebAuthnStepUpVerifySchema = z.object({
+  challenge_id: z.string().min(1),
+  challenge: z.string().min(1),
+  response: z.unknown(),
+});
+export type WebAuthnStepUpVerifyInput = z.infer<typeof WebAuthnStepUpVerifySchema>;
+
+export const MFADeviceRenameSchema = z.object({
+  device_name: z.string().min(1).max(255),
+});
+export type MFADeviceRenameInput = z.infer<typeof MFADeviceRenameSchema>;
+
+export const AdminForcePasswordResetSchema = z.object({
+  reason: z.string().max(500).optional(),
+});
+export type AdminForcePasswordResetInput = z.infer<
+  typeof AdminForcePasswordResetSchema
+>;
+
+export interface UserDataExport {
+  exported_at: string;
+  user: UserProfile;
+  mfa_devices: Array<{
+    id: string;
+    type: string;
+    name: string;
+    verified: boolean;
+    is_primary: boolean;
+    last_used_at: Date | null;
+  }>;
+  sessions: SessionInfo[];
+}

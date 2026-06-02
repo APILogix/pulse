@@ -15,8 +15,11 @@
  * housekeeping. If we later want distributed coordination, we can add a
  * Redis lock around runOnce.
  */
+import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
+import { processDueAccountDeletions } from '../modules/auth/identity.service.js';
 import {
   cleanupExpiredSessions,
+  deleteExpiredEmailMfaOtps,
   deleteExpiredEmailTokens,
   purgeOldRevokedSessions,
 } from '../modules/auth/repository.js';
@@ -35,8 +38,19 @@ export async function runOnce(): Promise<void> {
     const expired = await cleanupExpiredSessions();
     const purged = await purgeOldRevokedSessions(SESSION_RETENTION_DAYS);
     const tokens = await deleteExpiredEmailTokens();
+    const emailMfaOtps = await deleteExpiredEmailMfaOtps();
+    const scheduledDeletions = await processDueAccountDeletions();
+    const emailsSent = await processAuthEmailOutbox();
     log.info(
-      { expired, purged, tokens, durationMs: Date.now() - start },
+      {
+        expired,
+        purged,
+        tokens,
+        emailMfaOtps,
+        scheduledDeletions,
+        emailsSent,
+        durationMs: Date.now() - start,
+      },
       'Auth cleanup pass complete',
     );
   } catch (err) {

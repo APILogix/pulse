@@ -20,7 +20,7 @@
  *   - Auth runs Redis-free; revocation/challenge state lives in an
  *     in-process LRU (see `cache.ts`). DB-level state (sessions, users,
  *     email tokens) is the cross-process source of truth.
- *   - Email is sent inline via `await emailService.send(...)`. No queue.
+ *   - Email via authEmail (sync SMTP or Postgres outbox when AUTH_EMAIL_ASYNC=true).
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
@@ -31,7 +31,8 @@ import QRCode from 'qrcode';
 
 import { env as config } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import { emailService } from '../../shared/email/email.service.js';
+import { authEmail } from './auth-email.js';
+import { isLoginTrustedDevice, trustCurrentDevice } from './trusted-device.service.js';
 import {
   emailVerificationTemplate,
   mfaCodeTemplate,
@@ -58,6 +59,10 @@ import {
   type LoginMFAChallenge,
   type StepUpChallenge,
 } from './cache.js';
+import {
+  assertLoginAllowedByOrgPolicy,
+  assertRefreshAllowedByOrgPolicy,
+} from './policy.service.js';
 import * as repository from './repository.js';
 import {
   AuthError,
@@ -84,14 +89,17 @@ import {
   type ResetPasswordInput,
   type SessionInfo,
   type TOTPSetup,
+  type AdminLockUserInput,
   type UpdateUserInput,
   type User,
   type UserProfile,
+  type UserSecuritySummary,
   type VerifyEmailQueryInput,
 } from './types.js';
 import {
   ABSOLUTE_SESSION_TTL_SECONDS,
   ACCESS_TOKEN_TTL_SECONDS,
+  buildDeviceFingerprint,
   buildPasswordHistory,
   EMAIL_VERIFICATION_TTL_SECONDS,
   generateAccessToken,
@@ -105,6 +113,7 @@ import {
   PASSWORD_RESET_TTL_SECONDS,
   REFRESH_GRACE_WINDOW_MS,
   REFRESH_TOKEN_TTL_SECONDS,
+  REMEMBER_ME_REFRESH_TTL_SECONDS,
   STEP_UP_CHALLENGE_TTL_SECONDS,
   timingSafeFakePasswordCompare,
   verifyRefreshToken,
@@ -150,7 +159,8 @@ function getBaseUrl(value: string | undefined, fallback: string): string {
 }
 
 function buildVerifyEmailUrl(token: string): string {
-  return `${getBaseUrl(config.APP_URL, 'http://localhost:3000')}/auth/verify-email?token=${encodeURIComponent(token)}`;
+  // Verification links open in the SPA (same as password reset / MFA disable).
+  return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/verify-email?token=${encodeURIComponent(token)}`;
 }
 
 function buildResetPasswordUrl(token: string): string {
@@ -170,7 +180,7 @@ async function sendVerificationEmail(
   token: string,
 ): Promise<void> {
   try {
-    await emailService.send({
+    await authEmail.send({
       to: user.email,
       ...emailVerificationTemplate({
         appName: config.APP_NAME,
@@ -194,7 +204,7 @@ async function sendPasswordResetEmail(
   token: string,
 ): Promise<void> {
   try {
-    await emailService.send({
+    await authEmail.send({
       to: user.email,
       ...passwordResetTemplate({
         appName: config.APP_NAME,
@@ -215,7 +225,7 @@ async function sendMFAStatusEmail(
   enabled: boolean,
 ): Promise<void> {
   try {
-    await emailService.send({
+    await authEmail.send({
       to: user.email,
       ...mfaStatusTemplate({
         appName: config.APP_NAME,
@@ -234,7 +244,7 @@ async function sendMfaDisableConfirmEmail(
   token: string,
 ): Promise<void> {
   try {
-    await emailService.send({
+    await authEmail.send({
       to: user.email,
       ...mfaDisableConfirmTemplate({
         appName: config.APP_NAME,
@@ -310,7 +320,7 @@ async function sendEmailMfaOtpEmail(
   purpose: 'setup' | 'login' | 'challenge',
 ): Promise<void> {
   try {
-    await emailService.send({
+    await authEmail.send({
       to: user.email,
       ...mfaCodeTemplate({
         appName: config.APP_NAME,
@@ -367,12 +377,6 @@ function verifyBackupCodeHash(plain: string, hashed: string): boolean {
   }
 }
 
-function getDeviceFingerprint(ip: string, userAgent: string): string {
-  return createHash('sha256')
-    .update(`${ip}:${userAgent}`)
-    .digest('hex')
-    .substring(0, 32);
-}
 
 function emailToHash(email: string): string {
   return createHash('sha256').update(normalizeEmail(email)).digest('hex');
@@ -550,7 +554,7 @@ async function consumeBackupCode(
 // SESSION ISSUANCE
 // ============================================================================
 
-interface IssuedSession {
+export interface IssuedSession {
   accessToken: string;
   refreshToken: string;
   expiresAt: Date;
@@ -562,14 +566,26 @@ interface IssuedSession {
  * both JWTs with it before writing any row, so there is no placeholder hash
  * window. The refresh JWT is hashed and persisted in the same INSERT.
  */
-async function issueSessionForUser(options: {
+export interface SessionSsoContext {
+  providerId?: string;
+  loginMethod?: string;
+  samlNameId?: string;
+  samlSessionIndex?: string;
+}
+
+export async function issueSessionForUser(options: {
   user: User;
   ipAddress: string;
   userAgent: string;
   deviceName: string | undefined;
   deviceType: string | undefined;
   mfaVerified: boolean;
+  rememberMe?: boolean;
+  ssoContext?: SessionSsoContext;
 }): Promise<IssuedSession> {
+  const refreshTtlSeconds = options.rememberMe
+    ? REMEMBER_ME_REFRESH_TTL_SECONDS
+    : REFRESH_TOKEN_TTL_SECONDS;
   // Enforce session quota BEFORE the new INSERT.
   const activeCount = await repository.countActiveSessionsByUser(
     options.user.id,
@@ -583,10 +599,14 @@ async function issueSessionForUser(options: {
 
   const now = Date.now();
   const sessionId = randomUUID();
-  const expiresAt = new Date(now + REFRESH_TOKEN_TTL_SECONDS * 1000);
+  const expiresAt = new Date(now + refreshTtlSeconds * 1000);
   const absoluteExpiresAt = new Date(now + ABSOLUTE_SESSION_TTL_SECONDS * 1000);
 
-  const refreshToken = generateRefreshToken(options.user.id, sessionId);
+  const refreshToken = generateRefreshToken(
+    options.user.id,
+    sessionId,
+    refreshTtlSeconds,
+  );
   const refreshTokenHash = hashAuthToken(refreshToken);
   const accessToken = generateAccessToken(
     options.user.id,
@@ -594,12 +614,13 @@ async function issueSessionForUser(options: {
     options.mfaVerified,
   );
 
+  const sso = options.ssoContext;
   await repository.createSession({
     id: sessionId,
     user_id: options.user.id,
     refresh_token_hash: refreshTokenHash,
     access_token_jti: sessionId,
-    device_fingerprint: getDeviceFingerprint(options.ipAddress, options.userAgent),
+    device_fingerprint: buildDeviceFingerprint(options.ipAddress, options.userAgent),
     device_name: options.deviceName || options.userAgent.slice(0, 255),
     device_type: options.deviceType || 'web',
     ip_address: options.ipAddress,
@@ -610,6 +631,12 @@ async function issueSessionForUser(options: {
     mfa_expires_at: options.mfaVerified
       ? new Date(now + ACCESS_TOKEN_TTL_SECONDS * 1000)
       : null,
+    ...(sso?.providerId !== undefined ? { sso_provider_id: sso.providerId } : {}),
+    ...(sso?.loginMethod !== undefined ? { login_method: sso.loginMethod } : {}),
+    ...(sso?.samlNameId !== undefined ? { saml_name_id: sso.samlNameId } : {}),
+    ...(sso?.samlSessionIndex !== undefined
+      ? { saml_session_index: sso.samlSessionIndex }
+      : {}),
   });
 
   return { accessToken, refreshToken, expiresAt, sessionId };
@@ -622,6 +649,7 @@ function createLoginMFAChallenge(options: {
   userAgent: string;
   deviceName: string | undefined;
   clientDeviceType: string | undefined;
+  rememberMe: boolean;
 }): { challengeId: string; expiresAt: Date; deviceType: string } {
   const challengeId = generateId();
   const expiresAt = new Date(
@@ -637,6 +665,7 @@ function createLoginMFAChallenge(options: {
     ipAddress: options.ipAddress,
     userAgent: options.userAgent,
     attempts: 0,
+    rememberMe: options.rememberMe,
   };
 
   loginMfaChallengeCache.set(challengeId, challenge);
@@ -972,6 +1001,212 @@ export async function suspendUser(
   return toUserProfile(suspended);
 }
 
+export async function unsuspendUser(
+  targetUserId: string,
+  adminId: string,
+  isAdmin: boolean,
+  ipAddress: string,
+  requestId: string,
+): Promise<UserProfile> {
+  if (!isAdmin) {
+    throw new AuthError(
+      'Admin access required',
+      AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+      403,
+    );
+  }
+
+  const unsuspended = await repository.unsuspendUser(targetUserId);
+  if (!unsuspended) {
+    throw new AuthError(
+      'User not found or not suspended',
+      AuthErrorCodes.USER_NOT_FOUND,
+      404,
+    );
+  }
+
+  logAudit({
+    user_id: adminId,
+    org_id: null,
+    action: 'user.unsuspended',
+    resource_type: 'user',
+    resource_id: targetUserId,
+    ip_address: ipAddress,
+    request_id: requestId,
+  });
+
+  return toUserProfile(unsuspended);
+}
+
+export async function adminLockUserAccount(
+  targetUserId: string,
+  input: AdminLockUserInput,
+  adminId: string,
+  isAdmin: boolean,
+  ipAddress: string,
+  requestId: string,
+): Promise<UserProfile> {
+  if (!isAdmin) {
+    throw new AuthError(
+      'Admin access required',
+      AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+      403,
+    );
+  }
+  if (targetUserId === adminId) {
+    throw new AuthError(
+      'Admins cannot lock their own account',
+      AuthErrorCodes.INVALID_OPERATION,
+      400,
+    );
+  }
+
+  const locked = await repository.withTransaction(async (client) => {
+    const updated = await repository.adminLockUser(
+      targetUserId,
+      input.reason,
+      adminId,
+      client,
+    );
+    if (!updated) return null;
+
+    await client.query(
+      `UPDATE user_sessions
+         SET status = 'terminated_by_admin',
+             terminated_at = NOW(),
+             terminated_by = $2,
+             termination_reason = $3
+       WHERE user_id = $1 AND status = 'active'`,
+      [targetUserId, adminId, `Admin lock: ${input.reason}`],
+    );
+    return updated;
+  });
+
+  if (!locked) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
+  markAllUserTokensRevoked(targetUserId);
+
+  logAudit({
+    user_id: adminId,
+    org_id: null,
+    action: 'user.admin_locked',
+    resource_type: 'user',
+    resource_id: targetUserId,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { reason: input.reason },
+  });
+
+  return toUserProfile(locked);
+}
+
+export async function adminUnlockUserAccount(
+  targetUserId: string,
+  adminId: string,
+  isAdmin: boolean,
+  ipAddress: string,
+  requestId: string,
+): Promise<UserProfile> {
+  if (!isAdmin) {
+    throw new AuthError(
+      'Admin access required',
+      AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+      403,
+    );
+  }
+
+  const unlocked = await repository.adminUnlockUser(targetUserId);
+  if (!unlocked) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
+  logAudit({
+    user_id: adminId,
+    org_id: null,
+    action: 'user.admin_unlocked',
+    resource_type: 'user',
+    resource_id: targetUserId,
+    ip_address: ipAddress,
+    request_id: requestId,
+  });
+
+  return toUserProfile(unlocked);
+}
+
+/**
+ * Revoke every active session for a target user (platform admin support).
+ */
+export async function adminRevokeAllUserSessions(
+  targetUserId: string,
+  adminId: string,
+  isAdmin: boolean,
+  ipAddress: string,
+  requestId: string,
+): Promise<{ revoked: number }> {
+  if (!isAdmin) {
+    throw new AuthError(
+      'Admin access required',
+      AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+      403,
+    );
+  }
+
+  const user = await repository.findUserById(targetUserId);
+  if (!user || user.deleted_at) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
+  const revoked = await revokeAllSessionsAndTokens(
+    targetUserId,
+    'Admin revoked all sessions',
+  );
+
+  logAudit({
+    user_id: adminId,
+    org_id: null,
+    action: 'user.sessions_revoked_by_admin',
+    resource_type: 'user',
+    resource_id: targetUserId,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { revoked },
+  });
+
+  return { revoked };
+}
+
+export async function getUserSecuritySummary(
+  userId: string,
+): Promise<UserSecuritySummary> {
+  const user = await repository.findUserById(userId);
+  if (!user) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
+  const [sessions, devices] = await Promise.all([
+    repository.listActiveSessionsByUser(userId),
+    repository.findMFADevicesByUserId(userId, true),
+  ]);
+
+  const verifiedDevices = devices.filter((d) => d.verified && d.is_active);
+  const locked =
+    Boolean(user.locked_until) && user.locked_until! > new Date();
+
+  return {
+    email_verified: user.email_verified,
+    mfa_enabled: user.mfa_enabled,
+    active_session_count: sessions.length,
+    verified_mfa_device_count: verifiedDevices.length,
+    last_login_at: user.last_login_at,
+    last_password_change: user.last_password_change,
+    account_locked: locked,
+    locked_until: user.locked_until,
+    status: user.status,
+  };
+}
+
 // ============================================================================
 // LOGIN
 // ============================================================================
@@ -988,7 +1223,6 @@ export async function loginWithEmailPassword(
       challenge_id: string;
       expires_at: Date;
       device_type: string;
-      user_id: string;
     }
   | {
       mfa_required: false;
@@ -1129,6 +1363,58 @@ export async function loginWithEmailPassword(
     );
   }
 
+  await assertLoginAllowedByOrgPolicy(user);
+
+  // Trusted device: skip MFA when fingerprint is registered and valid.
+  if (user.mfa_enabled) {
+    const trusted = await isLoginTrustedDevice(user.id, ipAddress, userAgent);
+    if (trusted) {
+      const session = await issueSessionForUser({
+        user,
+        ipAddress,
+        userAgent,
+        deviceName: input.device_name,
+        deviceType: clientDeviceType,
+        mfaVerified: true,
+        rememberMe: input.remember_me === true,
+      });
+      await repository.recordLogin(user.id, ipAddress, userAgent);
+      if (input.trust_device) {
+        await trustCurrentDevice(
+          user.id,
+          ipAddress,
+          userAgent,
+          input.device_name,
+          requestId,
+        ).catch(() => undefined);
+      }
+      logAudit({
+        user_id: user.id,
+        org_id: null,
+        action: 'user.login',
+        resource_type: 'user',
+        resource_id: user.id,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        request_id: requestId,
+        metadata: {
+          session_id: session.sessionId,
+          mfa_required: false,
+          trusted_device: true,
+        },
+      });
+      return {
+        mfa_required: false,
+        access_token: session.accessToken,
+        refresh_token: session.refreshToken,
+        expires_at: session.expiresAt,
+        token_type: 'Bearer',
+        session_id: session.sessionId,
+        user_id: user.id,
+      };
+    }
+  }
+
   // MFA branch: issue a challenge but do NOT issue tokens.
   if (user.mfa_enabled) {
     const devices = await repository.findMFADevicesByUserId(user.id);
@@ -1149,6 +1435,7 @@ export async function loginWithEmailPassword(
       verifiedDevices.find((d) => d.is_primary) || verifiedDevices[0]!;
 
     // For email MFA, generate and send an OTP before issuing the challenge.
+    // hardware_key uses POST /auth/login/mfa/webauthn/* — no OTP email.
     if (primary.device_type === 'email') {
       const otp = await generateEmailMfaOtp();
       const otpHash = hashEmailMfaOtp(otp);
@@ -1163,6 +1450,7 @@ export async function loginWithEmailPassword(
       userAgent,
       deviceName: input.device_name,
       clientDeviceType,
+      rememberMe: input.remember_me === true,
     });
 
     return {
@@ -1170,7 +1458,6 @@ export async function loginWithEmailPassword(
       challenge_id: challenge.challengeId,
       expires_at: challenge.expiresAt,
       device_type: challenge.deviceType,
-      user_id: user.id,
     };
   }
 
@@ -1182,6 +1469,7 @@ export async function loginWithEmailPassword(
     deviceName: input.device_name,
     deviceType: clientDeviceType,
     mfaVerified: true, // No MFA configured -> requirement satisfied.
+    rememberMe: input.remember_me === true,
   });
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
@@ -1255,6 +1543,14 @@ export async function verifyLoginMFAChallenge(
 
   // Verify the code based on device type.
   let verified = false;
+  if (device.device_type === 'hardware_key') {
+    throw new AuthError(
+      'Use POST /auth/login/mfa/webauthn/options and /verify for passkey MFA',
+      AuthErrorCodes.MFA_INVALID,
+      400,
+      { device_type: 'hardware_key' },
+    );
+  }
   if (device.device_type === 'email') {
     // Email MFA: check the OTP stored in email_mfa_otps.
     const codeHash = hashEmailMfaOtp(input.code);
@@ -1262,11 +1558,6 @@ export async function verifyLoginMFAChallenge(
   } else {
     // TOTP: validate against the encrypted secret.
     verified = verifyTotpDeviceCode(device, input.code);
-  }
-
-  // Backup codes are always accepted as a fallback regardless of device type.
-  if (!verified && /^[a-fA-F0-9]{10}$/.test(input.code)) {
-    verified = await consumeBackupCode(user.id, input.code);
   }
 
   if (!verified) {
@@ -1278,6 +1569,8 @@ export async function verifyLoginMFAChallenge(
   loginMfaChallengeCache.delete(input.challenge_id);
   await repository.updateMFADeviceLastUsed(device.id, ipAddress);
 
+  await assertLoginAllowedByOrgPolicy(user);
+
   const session = await issueSessionForUser({
     user,
     ipAddress,
@@ -1285,6 +1578,7 @@ export async function verifyLoginMFAChallenge(
     deviceName: challenge.deviceName,
     deviceType: challenge.clientDeviceType || clientDeviceType,
     mfaVerified: true,
+    rememberMe: challenge.rememberMe,
   });
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
@@ -1361,6 +1655,8 @@ export async function verifyLoginBackupCode(
 
   loginMfaChallengeCache.delete(input.challenge_id);
 
+  await assertLoginAllowedByOrgPolicy(user);
+
   const session = await issueSessionForUser({
     user,
     ipAddress,
@@ -1368,6 +1664,7 @@ export async function verifyLoginBackupCode(
     deviceName: challenge.deviceName,
     deviceType: challenge.clientDeviceType || clientDeviceType,
     mfaVerified: true,
+    rememberMe: challenge.rememberMe,
   });
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
@@ -2072,6 +2369,14 @@ export async function verifyMFAChallenge(
 
   // Verify the code based on device type.
   let stepUpVerified = false;
+  if (device.device_type === 'hardware_key') {
+    throw new AuthError(
+      'Use POST /auth/mfa/step-up/webauthn/options and /verify for passkey step-up',
+      AuthErrorCodes.MFA_INVALID,
+      400,
+      { device_type: 'hardware_key' },
+    );
+  }
   if (device.device_type === 'email') {
     const codeHash = hashEmailMfaOtp(input.code);
     stepUpVerified = await consumeEmailMfaOtp(device.id, codeHash);
@@ -2097,6 +2402,104 @@ export async function verifyMFAChallenge(
 
 export async function listMFADevices(userId: string): Promise<MFADevice[]> {
   return repository.findMFADevicesByUserId(userId, true);
+}
+
+export async function renameMFADevice(
+  userId: string,
+  deviceId: string,
+  input: { device_name: string },
+): Promise<void> {
+  const updated = await repository.updateMFADeviceName(
+    deviceId,
+    userId,
+    input.device_name,
+  );
+  if (!updated) {
+    throw new AuthError(
+      'MFA device not found',
+      AuthErrorCodes.MFA_DEVICE_NOT_FOUND,
+      404,
+    );
+  }
+}
+
+/**
+ * Admin-initiated password reset email. Revokes all active sessions first.
+ */
+export async function adminForcePasswordReset(
+  targetUserId: string,
+  adminId: string,
+  isAdmin: boolean,
+  input: { reason?: string },
+  ipAddress: string,
+  requestId: string,
+): Promise<{ message: string }> {
+  if (!isAdmin) {
+    throw new AuthError(
+      'Admin access required',
+      AuthErrorCodes.INSUFFICIENT_PERMISSIONS,
+      403,
+    );
+  }
+  if (targetUserId === adminId) {
+    throw new AuthError(
+      'Use change-password for your own account',
+      AuthErrorCodes.INVALID_OPERATION,
+      400,
+    );
+  }
+
+  const user = await repository.findUserById(targetUserId);
+  if (!user || user.deleted_at) {
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+  }
+
+  await repository.withTransaction(async (client) => {
+    await client.query(
+      `UPDATE user_sessions
+         SET status = 'terminated_by_admin',
+             terminated_at = NOW(),
+             terminated_by = $2,
+             termination_reason = $3
+       WHERE user_id = $1 AND status = 'active'`,
+      [
+        targetUserId,
+        adminId,
+        input.reason
+          ? `Admin password reset: ${input.reason}`
+          : 'Admin password reset',
+      ],
+    );
+  });
+
+  markAllUserTokensRevoked(targetUserId);
+
+  const resetToken = generateSecureToken();
+  const resetTokenHash = hashEmailFlowToken('password_reset', resetToken);
+  await repository.createEmailVerification({
+    user_id: user.id,
+    email: normalizeEmail(user.email),
+    token_hash: resetTokenHash,
+    purpose: 'password_reset',
+    expires_at: new Date(Date.now() + PASSWORD_RESET_TTL_SECONDS * 1000),
+  });
+  await sendPasswordResetEmail(user, resetToken);
+
+  logAudit({
+    user_id: adminId,
+    org_id: null,
+    action: 'user.admin_password_reset',
+    resource_type: 'user',
+    resource_id: targetUserId,
+    ip_address: ipAddress,
+    request_id: requestId,
+    metadata: { reason: input.reason ?? null },
+  });
+
+  return {
+    message:
+      'Password reset email sent and all sessions revoked for this user.',
+  };
 }
 
 /**
@@ -2716,6 +3119,14 @@ export async function refreshAccessToken(
     throw new AuthError('User inactive', AuthErrorCodes.USER_SUSPENDED, 401);
   }
 
+  try {
+    await assertRefreshAllowedByOrgPolicy(user, session.last_active_at);
+  } catch (policyErr) {
+    await repository.revokeSession(session.id, 'Organization policy violation');
+    markAllUserTokensRevoked(user.id);
+    throw policyErr;
+  }
+
   // CAS rotation
   const newRefreshToken = generateRefreshToken(session.user_id, session.id);
   const newRefreshHash = hashAuthToken(newRefreshToken);
@@ -2767,7 +3178,19 @@ export async function logout(
   sessionId: string,
   ipAddress: string,
   requestId: string,
-): Promise<void> {
+): Promise<{ saml_logout_url: string | null }> {
+  const session = await repository.findSessionById(sessionId, userId);
+  if (session?.saml_name_id && session.sso_provider_id) {
+    const { completeSamlLogoutForUser } = await import('./saml-slo.service.js');
+    const result = await completeSamlLogoutForUser(
+      userId,
+      sessionId,
+      ipAddress,
+      requestId,
+    );
+    return { saml_logout_url: result.logout_url };
+  }
+
   await repository.revokeSession(sessionId, 'User logout');
   blacklistAccessToken(sessionId);
 
@@ -2780,4 +3203,56 @@ export async function logout(
     ip_address: ipAddress,
     request_id: requestId,
   });
+
+  return { saml_logout_url: null };
+}
+
+export async function getUserSessionDetail(
+  userId: string,
+  sessionId: string,
+  currentSessionId: string,
+): Promise<{
+  id: string;
+  device_name: string;
+  device_type: string;
+  ip_address: string;
+  ip_geo_country: string | null;
+  last_active_at: Date;
+  created_at: Date;
+  expires_at: Date;
+  login_method: string | null;
+  is_current: boolean;
+}> {
+  const session = await repository.findSessionById(sessionId, userId);
+  if (!session || session.status !== 'active') {
+    throw new AuthError(
+      'Session not found',
+      AuthErrorCodes.SESSION_INVALID,
+      404,
+    );
+  }
+  return {
+    id: session.id,
+    device_name: session.device_name ?? 'Unknown device',
+    device_type: session.device_type ?? 'web',
+    ip_address: session.ip_address,
+    ip_geo_country: session.ip_geo_country,
+    last_active_at: session.last_active_at,
+    created_at: session.created_at,
+    expires_at: session.expires_at,
+    login_method: session.login_method,
+    is_current: session.id === currentSessionId,
+  };
+}
+
+export async function revokeAllSessionsForUser(
+  userId: string,
+  currentSessionId: string,
+): Promise<number> {
+  const sessions = await repository.listActiveSessionsByUser(userId);
+  for (const s of sessions) {
+    blacklistAccessToken(s.id);
+  }
+  await repository.revokeAllSessionsForUser(userId, 'User revoked all sessions');
+  return sessions.length;
 }

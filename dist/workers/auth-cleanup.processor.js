@@ -15,7 +15,9 @@
  * housekeeping. If we later want distributed coordination, we can add a
  * Redis lock around runOnce.
  */
-import { cleanupExpiredSessions, deleteExpiredEmailTokens, purgeOldRevokedSessions, } from '../modules/auth/repository.js';
+import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
+import { processDueAccountDeletions } from '../modules/auth/identity.service.js';
+import { cleanupExpiredSessions, deleteExpiredEmailMfaOtps, deleteExpiredEmailTokens, purgeOldRevokedSessions, } from '../modules/auth/repository.js';
 import { logger } from '../config/logger.js';
 const log = logger.child({ component: 'auth-cleanup' });
 const INTERVAL_MS = 60 * 60 * 1000; // hourly
@@ -27,7 +29,18 @@ export async function runOnce() {
         const expired = await cleanupExpiredSessions();
         const purged = await purgeOldRevokedSessions(SESSION_RETENTION_DAYS);
         const tokens = await deleteExpiredEmailTokens();
-        log.info({ expired, purged, tokens, durationMs: Date.now() - start }, 'Auth cleanup pass complete');
+        const emailMfaOtps = await deleteExpiredEmailMfaOtps();
+        const scheduledDeletions = await processDueAccountDeletions();
+        const emailsSent = await processAuthEmailOutbox();
+        log.info({
+            expired,
+            purged,
+            tokens,
+            emailMfaOtps,
+            scheduledDeletions,
+            emailsSent,
+            durationMs: Date.now() - start,
+        }, 'Auth cleanup pass complete');
     }
     catch (err) {
         log.error({ err }, 'Auth cleanup pass failed');

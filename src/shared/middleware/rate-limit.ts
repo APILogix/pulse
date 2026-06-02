@@ -56,7 +56,7 @@ export function rateLimit(options: RouteRateLimitOptions): preHandlerHookHandler
 
     if (current > max) {
       const ttl = await safeTtl(redisKey);
-      void reply
+      return reply
         .header('Retry-After', String(ttl > 0 ? ttl : window))
         .status(429)
         .send({

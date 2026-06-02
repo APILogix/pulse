@@ -122,6 +122,48 @@ export function mfaStatusTemplate(input) {
  * link is consumed, MFA remains in force, so a phished password + a stolen
  * TOTP cannot disable MFA on its own.
  */
+export function emailChangeConfirmTemplate(input) {
+    const title = "Confirm your new email address";
+    const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">Confirm <strong>${escapeHtml(input.newEmail)}</strong> as the new sign-in email for ${escapeHtml(input.appName)}. This link expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm new email")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+    return {
+        subject: `${input.appName}: confirm your new email`,
+        html: layout(input.appName, title, body),
+        text: `${textGreeting(input.userName)}\n\nConfirm ${input.newEmail} as your new email: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
+    };
+}
+export function accountUnlockTemplate(input) {
+    const title = "Unlock your account";
+    const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 22px;font-size:16px;line-height:1.7;">Use the link below to unlock your account after too many failed sign-in attempts. It expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Unlock account")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+    return {
+        subject: `${input.appName}: unlock your account`,
+        html: layout(input.appName, title, body),
+        text: `${textGreeting(input.userName)}\n\nUnlock your account: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
+    };
+}
+export function accountDeletionConfirmTemplate(input) {
+    const title = "Confirm account deletion";
+    const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">You requested to delete your ${escapeHtml(input.appName)} account. If you confirm, deletion is scheduled for <strong>${escapeHtml(input.scheduledFor)}</strong>.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm deletion request")}</p>
+    <div style="border-left:4px solid ${theme.brand};background:${theme.warningBg};color:${theme.warningText};padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;">This action cannot be undone after the scheduled date.</div>
+  `;
+    return {
+        subject: `${input.appName}: confirm account deletion`,
+        html: layout(input.appName, title, body),
+        text: `${textGreeting(input.userName)}\n\nConfirm deletion (scheduled ${input.scheduledFor}): ${input.actionUrl}`,
+    };
+}
 export function mfaDisableConfirmTemplate(input) {
     const title = "Confirm disabling multi-factor authentication";
     const body = `
