@@ -14,16 +14,19 @@ import { Redis } from 'ioredis';
 import { createIngestionWorker } from './ingestion.processor.js';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { logger } from '../config/logger.js';
+import { startBillingWorker, stopBillingWorker } from './billing.processor.js';
+import { BillingRepository } from '../modules/billing/repository.js';
 const workerLogger = logger.child({ component: 'worker-registry' });
 export function initializeWorkers(redis, deps) {
     // Ingestion Worker (primary)
-    const ingestionWorker = createIngestionWorker(redis, deps.writer, deps.cache);
+    const ingestionWorker = createIngestionWorker(redis, deps.writer, deps.cache, deps.billingRepository);
     // Future: Additional specialized workers can be registered here
     // const analysisWorker = createAnalysisWorker(...);
-    // const billingWorker = createBillingWorker(...);
+    startBillingWorker(deps.pgPool);
     const gracefulShutdown = async (signal) => {
         workerLogger.info({ signal }, 'Shutdown signal received');
         await ingestionWorker.close();
+        stopBillingWorker();
         if (deps.shutdown) {
             await deps.shutdown();
         }

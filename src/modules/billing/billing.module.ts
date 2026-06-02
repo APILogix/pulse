@@ -38,18 +38,15 @@ async function billingModule(
   const service = new BillingService(repository);
   const quotaService = new QuotaService(repository);
 
+  await repository.assertSchemaReady();
+  await repository.seedDefaultPlans();
+  logger.info('Billing schema verified and plans seeded');
+
   fastify.decorate('billing', {
     repository,
     service,
     quotaService
   });
-
-  // try {
-  //   await repository.seedDefaultPlans();
-  //   logger.info('Billing module initialized and plans seeded');
-  // } catch (error) {
-  //   logger.error('Failed to seed default plans', error);
-  // }
 
   await fastify.register(billingRoutes, { prefix: '/billing' });
 

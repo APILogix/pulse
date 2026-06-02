@@ -328,7 +328,7 @@ export class IngestionController {
    * Converts domain error codes thrown by the service into SDK-safe HTTP
    * responses. Unknown errors remain generic to avoid leaking internals.
    */
-  private handleError(err: Error, reply: FastifyReply) {
+  private handleError(err: Error & { details?: Record<string, unknown> }, reply: FastifyReply) {
     const code = err.message;
     const errorMap: Record<string, { status: number; message: string }> = {
       INVALID_API_KEY: { status: 401, message: 'Invalid API key' },
@@ -339,13 +339,17 @@ export class IngestionController {
       CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
       INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
       INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
+      QUOTA_EXCEEDED: { status: 402, message: 'Billing quota exceeded' },
+      SUBSCRIPTION_INACTIVE: { status: 402, message: 'Subscription inactive' },
+      GRACE_PERIOD_EXPIRED: { status: 402, message: 'Billing grace period expired' },
     };
 
     const mapped = errorMap[code];
     if (mapped) {
-      return reply.status(mapped.status).send({ 
+      return reply.status(mapped.status).send({
         error: mapped.message, 
-        code 
+        code,
+        ...(err.details ? { details: err.details } : {})
       });
     }
 

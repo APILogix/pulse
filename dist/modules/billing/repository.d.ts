@@ -46,6 +46,7 @@ export declare class BillingRepository {
         billingAddress?: Record<string, any> | null;
     }, client?: PoolClient): Promise<void>;
     seedDefaultPlans(): Promise<void>;
+    assertSchemaReady(): Promise<void>;
     private mapPlanFromDb;
     getOrganizationBilling(orgId: string): Promise<OrganizationBilling | null>;
     createOrganizationBilling(billing: Partial<OrganizationBilling>, client?: PoolClient): Promise<OrganizationBilling>;

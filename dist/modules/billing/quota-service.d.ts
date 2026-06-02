@@ -20,6 +20,14 @@ export declare class QuotaService {
         limit: number | null;
         remaining: number;
     }>>;
+    checkIngestionQuota(orgId: string, requestedApiRequests: number): Promise<ServiceResponse<{
+        allowed: boolean;
+        current: number;
+        limit: number | null;
+        remaining: number;
+        subscriptionStatus: string;
+        reason?: string;
+    }>>;
     incrementUsage(orgId: string, metricType: UsageMetricType, amount?: number): Promise<ServiceResponse<{
         newTotal: number;
     }>>;

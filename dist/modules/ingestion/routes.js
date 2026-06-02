@@ -47,7 +47,8 @@ export async function ingestionRoutes(fastify) {
     const ingestionQueue = requireFastifyDecorator(fastify, "ingestionQueue");
     const redisCache = requireFastifyDecorator(fastify, "redisCache");
     const postgresWriter = requireFastifyDecorator(fastify, "postgresWriter");
-    const service = new IngestionService(ingestionQueue, redisCache, postgresWriter, {
+    const quotaService = fastify.billing?.quotaService;
+    const service = new IngestionService(ingestionQueue, redisCache, postgresWriter, quotaService, {
         maxBatchSize: 1000,
         defaultRateLimitPerSecond: 1000,
         defaultRateLimitPerMinute: 10000,

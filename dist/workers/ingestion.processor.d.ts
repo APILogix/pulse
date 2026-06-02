@@ -16,5 +16,6 @@ import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { RedisCache } from '../db/redis/cache.js';
-export declare function createIngestionWorker(connection: Redis, writer: PostgresWriter, cache: RedisCache): Worker;
+import { BillingRepository } from '../modules/billing/repository.js';
+export declare function createIngestionWorker(connection: Redis, writer: PostgresWriter, cache: RedisCache, billingRepository: BillingRepository): Worker;
 //# sourceMappingURL=ingestion.processor.d.ts.map

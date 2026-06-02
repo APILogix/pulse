@@ -17,8 +17,9 @@ import { Redis } from 'ioredis';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import { RedisCache } from '../db/redis/cache.js';
 import { logger } from '../config/logger.js';
+import { BillingRepository } from '../modules/billing/repository.js';
 const workerLogger = logger.child({ component: 'ingestion-worker' });
-export function createIngestionWorker(connection, writer, cache) {
+export function createIngestionWorker(connection, writer, cache, billingRepository) {
     // One BullMQ worker instance can process many jobs concurrently; concurrency
     // and limiter settings should stay aligned with Postgres pool capacity.
     const worker = new Worker('ingestion', async (job) => {
@@ -34,6 +35,10 @@ export function createIngestionWorker(connection, writer, cache) {
             switch (event.type) {
                 case 'request': {
                     await writer.writeRequestEvents([event]);
+                    await Promise.all([
+                        billingRepository.incrementUsageCounter(event.orgId, 'apiRequestsThisPeriod', 1),
+                        billingRepository.incrementUsageCounter(event.orgId, 'totalApiRequestsAllTime', 1)
+                    ]);
                     break;
                 }
                 case 'error': {
@@ -44,6 +49,12 @@ export function createIngestionWorker(connection, writer, cache) {
                 case 'metric':
                 case 'custom': {
                     await writer.writeEvents([event]);
+                    if (event.type === 'metric') {
+                        await Promise.all([
+                            billingRepository.incrementUsageCounter(event.orgId, 'metricsIngestedThisPeriod', 1),
+                            billingRepository.incrementUsageCounter(event.orgId, 'totalMetricsIngestedAllTime', 1)
+                        ]);
+                    }
                     break;
                 }
                 default: {

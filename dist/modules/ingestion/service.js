@@ -18,6 +18,7 @@ import { RedisCache } from '../../db/redis/cache.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionBuffer } from './buffer.js';
 import { processInBatches } from '../../lib/concurrency/batching.js';
+import { UsageMetricType } from '../billing/types.js';
 import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 function hashApiKey(apiKey) {
@@ -25,17 +26,26 @@ function hashApiKey(apiKey) {
     // in project_api_keys and used as the cache key.
     return createHash('sha256').update(apiKey).digest('hex');
 }
+function createServiceError(code, details) {
+    const error = new Error(code);
+    if (details) {
+        error.details = details;
+    }
+    return error;
+}
 export class IngestionService {
     queue;
     cache;
     writer;
+    quotaService;
     config;
     buffer;
     circuitThreshold = 10;
-    constructor(queue, cache, writer, config) {
+    constructor(queue, cache, writer, quotaService, config) {
         this.queue = queue;
         this.cache = cache;
         this.writer = writer;
+        this.quotaService = quotaService;
         this.config = config;
         this.buffer = new IngestionBuffer(queue, {
             maxSize: 100,
@@ -157,6 +167,25 @@ export class IngestionService {
             throw new Error('EMPTY_BATCH');
         if (events.length > this.config.maxBatchSize)
             throw new Error('BATCH_TOO_LARGE');
+        // 4b. Enforce plan quota before enqueue. This guards ingestion admission
+        // using billing counters so over-limit organizations are blocked early.
+        if (this.quotaService) {
+            const requestEventsCount = events.reduce((count, event) => (event.type === 'request' ? count + 1 : count), 0);
+            if (requestEventsCount > 0) {
+                const quota = await this.quotaService.checkIngestionQuota(project.orgId, requestEventsCount);
+                if (!quota.data?.allowed) {
+                    throw createServiceError('QUOTA_EXCEEDED', {
+                        orgId: project.orgId,
+                        requested: requestEventsCount,
+                        current: quota.data?.current ?? 0,
+                        limit: quota.data?.limit ?? null,
+                        remaining: quota.data?.remaining ?? 0,
+                        subscriptionStatus: quota.data?.subscriptionStatus ?? 'unknown',
+                        reason: quota.data?.reason ?? 'quota_exceeded'
+                    });
+                }
+            }
+        }
         // 5. Circuit breaker check stops acceptance when a dependency is already
         // marked unhealthy. This prevents the buffer from hiding a persistent outage.
         if (await this.cache.isCircuitOpen('database')) {

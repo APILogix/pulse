@@ -11,11 +11,15 @@
  *    infrastructure such as Redis and Postgres.
  */
 import { Redis } from 'ioredis';
+import type { Pool } from 'pg';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import type { RedisCache } from '../db/redis/cache.js';
+import { BillingRepository } from '../modules/billing/repository.js';
 export interface WorkerDependencies {
     writer: PostgresWriter;
     cache: RedisCache;
+    pgPool: Pool;
+    billingRepository: BillingRepository;
     shutdown?: () => Promise<void>;
 }
 export declare function initializeWorkers(redis: Redis, deps: WorkerDependencies): {

@@ -11,31 +11,37 @@
  *    infrastructure such as Redis and Postgres.
  */
 import { Redis } from 'ioredis';
+import type { Pool } from 'pg';
 import { createIngestionWorker } from './ingestion.processor.js';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
 import type { RedisCache } from '../db/redis/cache.js';
 import { logger } from '../config/logger.js';
+import { startBillingWorker, stopBillingWorker } from './billing.processor.js';
+import { BillingRepository } from '../modules/billing/repository.js';
 
 const workerLogger = logger.child({ component: 'worker-registry' });
 
 export interface WorkerDependencies {
   writer: PostgresWriter;
   cache: RedisCache;
+  pgPool: Pool;
+  billingRepository: BillingRepository;
   shutdown?: () => Promise<void>;
 }
 
 export function initializeWorkers(redis: Redis, deps: WorkerDependencies) {
   // Ingestion Worker (primary)
-  const ingestionWorker = createIngestionWorker(redis, deps.writer, deps.cache);
+  const ingestionWorker = createIngestionWorker(redis, deps.writer, deps.cache, deps.billingRepository);
 
   // Future: Additional specialized workers can be registered here
   // const analysisWorker = createAnalysisWorker(...);
-  // const billingWorker = createBillingWorker(...);
+  startBillingWorker(deps.pgPool);
 
   const gracefulShutdown = async (signal: string) => {
     workerLogger.info({ signal }, 'Shutdown signal received');
 
     await ingestionWorker.close();
+    stopBillingWorker();
     if (deps.shutdown) {
       await deps.shutdown();
     }

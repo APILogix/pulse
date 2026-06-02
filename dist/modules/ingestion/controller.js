@@ -307,12 +307,16 @@ export class IngestionController {
             CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
             INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
             INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
+            QUOTA_EXCEEDED: { status: 402, message: 'Billing quota exceeded' },
+            SUBSCRIPTION_INACTIVE: { status: 402, message: 'Subscription inactive' },
+            GRACE_PERIOD_EXPIRED: { status: 402, message: 'Billing grace period expired' },
         };
         const mapped = errorMap[code];
         if (mapped) {
             return reply.status(mapped.status).send({
                 error: mapped.message,
-                code
+                code,
+                ...(err.details ? { details: err.details } : {})
             });
         }
         return reply.status(500).send({

@@ -14,6 +14,7 @@ import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { RedisCache } from '../db/redis/cache.js';
 import { PostgresWriter } from '../modules/ingestion/postgress.writter.js';
+import { BillingRepository } from '../modules/billing/repository.js';
 import { initializeWorkers } from './index.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 const workerLogger = logger.child({ component: 'workers' });
@@ -34,9 +35,12 @@ async function bootstrapWorkers() {
     await pgPool.query('SELECT 1');
     const cache = new RedisCache(redis);
     const writer = new PostgresWriter(pgPool);
+    const billingRepository = new BillingRepository(pgPool);
     initializeWorkers(redis, {
         writer,
         cache,
+        pgPool,
+        billingRepository,
         shutdown: async () => {
             stopAuthCleanupWorker();
             await redis.quit();
@@ -46,7 +50,7 @@ async function bootstrapWorkers() {
     // Auth housekeeping (expired sessions, stale email tokens). Runs hourly.
     startAuthCleanupWorker();
     workerLogger.info('Worker process started');
-    workerLogger.info('Active workers: ingestion, auth-cleanup');
+    workerLogger.info('Active workers: ingestion, billing-scheduler, auth-cleanup');
 }
 bootstrapWorkers().catch((error) => {
     workerLogger.fatal({ error }, 'Failed to start worker process');

@@ -1,9 +1,13 @@
-export {};
 /**
- * Billing worker placeholder.
+ * Billing background scheduler.
  *
- * No BullMQ processor is implemented here yet. Future billing jobs could handle
- * invoice generation, plan sync, quota review, webhook reconciliation, or other
- * asynchronous billing side effects.
+ * Runs lightweight interval jobs for:
+ * - invoice cycle generation
+ * - overdue invoice dunning transitions
+ * - usage rollup snapshots
+ * - webhook reconciliation retries
  */
+import type { Pool } from 'pg';
+export declare function startBillingWorker(pool: Pool): void;
+export declare function stopBillingWorker(): void;
 //# sourceMappingURL=billing.processor.d.ts.map

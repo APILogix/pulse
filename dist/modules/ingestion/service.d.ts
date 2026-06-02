@@ -16,15 +16,17 @@
 import { Queue, Job } from 'bullmq';
 import { RedisCache } from '../../db/redis/cache.js';
 import { PostgresWriter } from './postgress.writter.js';
+import type { QuotaService } from '../billing/quota-service.js';
 import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus, SDKInitResponse } from './types.js';
 export declare class IngestionService {
     private queue;
     private cache;
     private writer;
+    private quotaService;
     private config;
     private buffer;
     private readonly circuitThreshold;
-    constructor(queue: Queue, cache: RedisCache, writer: PostgresWriter, config: {
+    constructor(queue: Queue, cache: RedisCache, writer: PostgresWriter, quotaService: QuotaService | undefined, config: {
         maxBatchSize: number;
         defaultRateLimitPerSecond: number;
         defaultRateLimitPerMinute: number;

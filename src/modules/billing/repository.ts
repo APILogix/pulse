@@ -345,6 +345,41 @@ export class BillingRepository {
     logger.info('Default plans seeded successfully');
   }
 
+  async assertSchemaReady(): Promise<void> {
+    // Billing depends on migration-managed tables. Fail fast at startup when any
+    // required table is missing so environments cannot run with partial schema.
+    const requiredTables = [
+      'billing_plans',
+      'organization_billing',
+      'organization_payment_methods',
+      'organization_invoices',
+      'organization_usage',
+      'organization_usage_counters',
+      'coupons',
+      'quota_requests',
+      'billing_webhook_events',
+      'billing_job_runs'
+    ];
+
+    const result = await this.pool.query<{ table_name: string; table_exists: string | null }>(
+      `SELECT table_name, to_regclass(table_name) AS table_exists
+       FROM unnest($1::text[]) AS table_name`,
+      [requiredTables]
+    );
+
+    const missingTables = result.rows
+      .filter((row) => !row.table_exists)
+      .map((row) => row.table_name);
+
+    if (missingTables.length > 0) {
+      throw new BillingError(
+        BillingErrorCodes.BILLING_ERROR,
+        `Billing schema is incomplete. Missing tables: ${missingTables.join(', ')}`,
+        500
+      );
+    }
+  }
+
   private mapPlanFromDb(row: any): BillingPlan {
     return {
       id: row.id,

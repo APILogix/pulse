@@ -64,6 +64,47 @@ export class QuotaService {
             throw new BillingError(BillingErrorCodes.BILLING_ERROR, 'Failed to check quota', 500);
         }
     }
+    async checkIngestionQuota(orgId, requestedApiRequests) {
+        const billing = await this.repository.getOrganizationBilling(orgId);
+        if (!billing) {
+            throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
+        }
+        const now = new Date();
+        if (billing.status === 'canceled' || billing.status === 'unpaid') {
+            return {
+                success: true,
+                data: {
+                    allowed: false,
+                    current: 0,
+                    limit: null,
+                    remaining: 0,
+                    subscriptionStatus: billing.status,
+                    reason: 'subscription_inactive'
+                }
+            };
+        }
+        if (billing.status === 'past_due' && billing.gracePeriodEnd && now > billing.gracePeriodEnd) {
+            return {
+                success: true,
+                data: {
+                    allowed: false,
+                    current: 0,
+                    limit: null,
+                    remaining: 0,
+                    subscriptionStatus: billing.status,
+                    reason: 'grace_period_expired'
+                }
+            };
+        }
+        const quota = await this.checkQuota(orgId, UsageMetricType.API_REQUESTS, requestedApiRequests);
+        return {
+            success: true,
+            data: {
+                ...(quota.data ?? { allowed: true, current: 0, limit: null, remaining: 0 }),
+                subscriptionStatus: billing.status
+            }
+        };
+    }
     async incrementUsage(orgId, metricType, amount = 1) {
         // This method calculates the expected new total for the caller. Persistence
         // can be added through BillingRepository.incrementUsageCounter when metering
