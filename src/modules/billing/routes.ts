@@ -686,7 +686,7 @@ function handleBillingError(error: any, reply: FastifyReply) {
     });
   }
   
-  console.error('Unexpected billing error:', error);
+  reply.log.error({ err: error }, 'Unexpected billing error');
   return reply.code(500).send({
     success: false,
     error: {

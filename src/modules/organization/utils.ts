@@ -1,64 +1,105 @@
 /**
  * Organization utility functions.
  *
- * Flow:
- * - Token and hash helpers support invitation security.
+ * - Token and hash helpers for invitation / API key / SCIM security.
  * - Slug generation creates stable URL-safe organization identifiers.
- * - Billing address sanitization protects repository code from malformed JSON.
- * - Logger factory gives module-scoped diagnostics without coupling services to
- *   a concrete logging implementation.
+ * - Logger factory for module-scoped diagnostics.
  */
-import { createHash, randomBytes } from 'crypto';
-import type { BillingAddress } from './types.js';
-import { BillingAddressSchema } from './types.js';
+import { createHash, randomBytes } from "crypto";
 
-export function generateInvitationToken(): string {
-  // Invitation tokens are high-entropy plaintext values returned once; the
-  // repository stores only their hash.
-  return randomBytes(32).toString('hex');
+/** Generate a 64-character hex token for invitations, API keys, SCIM etc. */
+export function generateToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
+/** Alias preserved for backward compatibility. */
+export const generateInvitationToken = generateToken;
+
+/** SHA-256 hash a plaintext token for secure storage. */
 export function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash("sha256").update(token).digest("hex");
 }
 
+/** Generate a URL-safe slug from an organization name. */
 export function generateSlug(name: string): string {
   const base = name
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
     .substring(0, 50);
 
-  return base || `org-${randomBytes(3).toString('hex')}`;
+  return base || `org-${randomBytes(3).toString("hex")}`;
 }
 
-export function sanitizeBillingAddress(value: unknown): BillingAddress | null {
-  // Use the shared schema to reject malformed billing contact data instead of
-  // trusting JSON stored in billing notes.
-  const parsed = BillingAddressSchema.safeParse(value);
-  if (!parsed.success) {
-    return null;
-  }
+/**
+ * Generate a prefixed API key.
+ * Returns { rawKey, keyPrefix, hashedKey }.
+ * The raw key is returned to the caller ONCE; only the hash is stored.
+ */
+export function generateApiKey(orgSlug: string): {
+  rawKey: string;
+  keyPrefix: string;
+  hashedKey: string;
+} {
+  const prefix = `smk_${orgSlug.substring(0, 8)}_`;
+  const secret = randomBytes(24).toString("base64url");
+  const rawKey = `${prefix}${secret}`;
+  const hashedKey = hashToken(rawKey);
 
-  return parsed.data;
+  return { rawKey, keyPrefix: prefix, hashedKey };
+}
+
+/** Generate a SCIM bearer token. Returns { rawToken, hashedToken }. */
+export function generateScimToken(): {
+  rawToken: string;
+  hashedToken: string;
+} {
+  const rawToken = `scim_${randomBytes(32).toString("base64url")}`;
+  const hashedToken = hashToken(rawToken);
+  return { rawToken, hashedToken };
+}
+
+/** Generate a slug from a name for environments. */
+export function generateEnvSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .substring(0, 100);
+}
+
+/** Compute changed fields between two objects for audit trail. */
+export function computeChangedFields(
+  oldValues: Record<string, unknown>,
+  newValues: Record<string, unknown>
+): string[] {
+  const changed: string[] = [];
+  for (const key of new Set([...Object.keys(oldValues), ...Object.keys(newValues)])) {
+    if (oldValues[key] !== newValues[key]) {
+      changed.push(key);
+    }
+  }
+  return changed;
 }
 
 export function createOrganizationLogger(context: string) {
   return {
-    info: (message: string, meta?: any) => {
-      console.log(`[ORGANIZATION:${context}] ${message}`, meta ? JSON.stringify(meta) : '');
+    info: (message: string, meta?: unknown) => {
+      console.log(
+        `[ORGANIZATION:${context}] ${message}`,
+        meta ? JSON.stringify(meta) : "",
+      );
     },
-    error: (message: string, error?: any) => {
+    error: (message: string, error?: unknown) => {
       console.error(`[ORGANIZATION:${context}:ERROR] ${message}`, error);
     },
-    warn: (message: string, meta?: any) => {
-      console.warn(`[ORGANIZATION:${context}:WARN] ${message}`, meta ? JSON.stringify(meta) : '');
+    warn: (message: string, meta?: unknown) => {
+      console.warn(
+        `[ORGANIZATION:${context}:WARN] ${message}`,
+        meta ? JSON.stringify(meta) : "",
+      );
     },
-    debug: (message: string, meta?: any) => {
-      if (process.env.DEBUG_BILLING === 'true') {
-        console.log(`[ORGANIZATION:${context}:DEBUG] ${message}`, meta ? JSON.stringify(meta) : '');
-      }
-    }
   };
 }

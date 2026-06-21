@@ -82,7 +82,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
-      console.log("request.body", request.body,request.params);
+
       const body = CreateProjectBodySchema.parse(request.body);
       const project = await service.createProject(
         orgId,
@@ -248,7 +248,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-      console.log("apikey", request.body,request.params);
+
       const body = CreateApiKeyBodySchema.parse(request.body);
       // API keys return the full secret exactly once. Later reads expose only
       // metadata and prefix, so clients must store this response securely.

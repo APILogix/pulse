@@ -1,6 +1,6 @@
 type TemplateInput = {
   appName: string;
-  userName?: string;
+  userName?: string | undefined;
 };
 
 type ActionTemplateInput = TemplateInput & {
@@ -151,5 +151,118 @@ export function mfaStatusTemplate(input: TemplateInput & { enabled: boolean }): 
     subject: `${input.appName}: ${title}`,
     html: layout(input.appName, title, body),
     text: `${textGreeting(input.userName)}\n\nMulti-factor authentication was ${input.enabled ? "enabled for" : "disabled on"} your ${input.appName} account.`,
+  };
+}
+
+
+/**
+ * Email sent when a user starts the MFA-disable flow. Contains a one-time
+ * confirmation link the user must click to actually disable MFA. Until the
+ * link is consumed, MFA remains in force, so a phished password + a stolen
+ * TOTP cannot disable MFA on its own.
+ */
+export function emailChangeConfirmTemplate(
+  input: ActionTemplateInput & { newEmail: string },
+): EmailTemplate {
+  const title = "Confirm your new email address";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">Confirm <strong>${escapeHtml(input.newEmail)}</strong> as the new sign-in email for ${escapeHtml(input.appName)}. This link expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm new email")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+
+  return {
+    subject: `${input.appName}: confirm your new email`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\nConfirm ${input.newEmail} as your new email: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
+  };
+}
+
+export function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate {
+  const title = "Unlock your account";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 22px;font-size:16px;line-height:1.7;">Use the link below to unlock your account after too many failed sign-in attempts. It expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Unlock account")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+
+  return {
+    subject: `${input.appName}: unlock your account`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\nUnlock your account: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
+  };
+}
+
+export function accountDeletionConfirmTemplate(
+  input: ActionTemplateInput & { scheduledFor: string },
+): EmailTemplate {
+  const title = "Confirm account deletion";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">You requested to delete your ${escapeHtml(input.appName)} account. If you confirm, deletion is scheduled for <strong>${escapeHtml(input.scheduledFor)}</strong>.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm deletion request")}</p>
+    <div style="border-left:4px solid ${theme.brand};background:${theme.warningBg};color:${theme.warningText};padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;">This action cannot be undone after the scheduled date.</div>
+  `;
+
+  return {
+    subject: `${input.appName}: confirm account deletion`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\nConfirm deletion (scheduled ${input.scheduledFor}): ${input.actionUrl}`,
+  };
+}
+
+export function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemplate {
+  const title = "Confirm disabling multi-factor authentication";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 22px;font-size:16px;line-height:1.7;">A request was made to disable multi-factor authentication on your ${escapeHtml(input.appName)} account. This will weaken your account security. The link below expires in ${input.expiresInMinutes} minutes.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm and disable MFA")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+    <div style="margin-top:18px;border-left:4px solid ${theme.brand};background:${theme.warningBg};color:${theme.warningText};padding:12px 14px;border-radius:10px;font-size:14px;line-height:1.5;">If you did not initiate this, do nothing — MFA stays enabled. Then change your password immediately.</div>
+  `;
+
+  return {
+    subject: `${input.appName}: confirm MFA disable`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\nA request was made to disable multi-factor authentication on your ${input.appName} account.\n\nConfirm: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes. If this was not you, do nothing — MFA stays enabled, then change your password.`,
+  };
+}
+
+type OrgInvitationTemplateInput = TemplateInput & {
+  actionUrl: string;
+  orgName: string;
+  inviterName?: string | undefined;
+  roleLabel: string;
+  expiresInDays: number;
+  /** Whether the invited email already has an account on the platform. */
+  accountExists: boolean;
+};
+
+/**
+ * Organization invitation email. The CTA points at the frontend invite page
+ * with the one-time token. When the invitee has no account yet, the copy nudges
+ * them to create one first; the frontend uses the accountExists flag in the URL
+ * to render the right screen (sign-in vs. create-account).
+ */
+export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailTemplate {
+  const title = `You're invited to ${input.orgName}`;
+  const inviter = input.inviterName ? `${escapeHtml(input.inviterName)} invited you` : "You have been invited";
+  const nextStep = input.accountExists
+    ? "Sign in to accept the invitation."
+    : "Create your account to accept the invitation.";
+  const body = `
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${escapeHtml(textGreeting(input.userName))}</p>
+    <p style="margin:0 0 16px;font-size:16px;line-height:1.7;">${inviter} to join <strong>${escapeHtml(input.orgName)}</strong> on ${escapeHtml(input.appName)} as <strong>${escapeHtml(input.roleLabel)}</strong>.</p>
+    <p style="margin:0 0 22px;font-size:15px;line-height:1.7;color:${theme.muted};">${escapeHtml(nextStep)} This invitation expires in ${input.expiresInDays} days.</p>
+    <p style="margin:0 0 24px;">${button(input.actionUrl, "Accept invitation")}</p>
+    <div style="border:1px solid ${theme.border};border-radius:12px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};">${escapeHtml(input.actionUrl)}</div>
+  `;
+
+  return {
+    subject: `${input.appName}: invitation to join ${input.orgName}`,
+    html: layout(input.appName, title, body),
+    text: `${textGreeting(input.userName)}\n\n${input.inviterName ? `${input.inviterName} invited you` : "You have been invited"} to join ${input.orgName} on ${input.appName} as ${input.roleLabel}.\n\n${nextStep}\n\nAccept: ${input.actionUrl}\n\nThis invitation expires in ${input.expiresInDays} days.`,
   };
 }

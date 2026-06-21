@@ -3,16 +3,31 @@
  *
  * Flow:
  * 1. Read infrastructure dependencies that were attached to the Fastify instance
- *    during application boot: BullMQ ingestion queue, Redis cache, and Postgres writer.
+ *    during application boot: shared Postgres pool and writer.
  * 2. Construct the service once for this route scope so every handler shares the
  *    same buffer, queue, cache, and persistence objects.
- * 3. Bind controller methods explicitly because Fastify calls handlers without the
- *    class instance context.
- * 4. Attach shutdown cleanup so buffered ingestion events are flushed before the
- *    Fastify process closes.
+ * 3. Bind controller methods explicitly because Fastify calls handlers without
+ *    the class instance context.
+ * 4. Attach shutdown cleanup so process-local state (rate buckets) is released
+ *    before the Fastify process closes.
+ *
+ * Hardening choices:
+ *   - All ingestion endpoints carry strict JSON-Schema validation so malformed
+ *     bodies are rejected at the framework boundary, before any handler logic.
+ *   - The /v1/limits endpoint uses the Authorization header as the API-key
+ *     channel (NOT a query string) to avoid leaking the secret into access
+ *     logs, browser history, and CDN/proxy logs.
+ *   - Routes that operate on dead-lettered jobs require platform-admin so a
+ *     compromised user account cannot retrigger every failed job in the system.
  */
-import type { FastifyInstance } from "fastify";
-import { authenticate } from "../../shared/middleware/auth.js";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { authenticate, requireAdmin } from "../../shared/middleware/auth.js";
+import {
+  requireProjectMembershipFromBody,
+  requireProjectMembershipFromQuery,
+} from "../../shared/middleware/tenant.js";
+import { extractApiKeyFromRequest } from "./utils/api-key.js";
+import { env } from "../../config/env.js";
 import { IngestionController } from "./controller.js";
 import { IngestionService } from "./service.js";
 import {
@@ -23,10 +38,7 @@ import {
   ReplaySchema,
 } from "./types.js";
 
-type FastifyDecoratorName =
-  | "ingestionQueue"
-  | "redisCache"
-  | "postgresWriter";
+type FastifyDecoratorName = "postgresWriter";
 
 type ControllerMethodName =
   | "init"
@@ -37,7 +49,6 @@ type ControllerMethodName =
   | "ingestMetrics"
   | "getHealth"
   | "getIngestionHealth"
-  | "getLimits"
   | "listErrors"
   | "getErrorById"
   | "getDLQ"
@@ -76,7 +87,6 @@ function assertControllerMethods(controller: IngestionController): void {
     "ingestMetrics",
     "getHealth",
     "getIngestionHealth",
-    "getLimits",
     "listErrors",
     "getErrorById",
     "getDLQ",
@@ -94,32 +104,17 @@ function assertControllerMethods(controller: IngestionController): void {
 }
 
 export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
-  // Dependencies are owned by application bootstrapping; this module only
-  // composes them into the ingestion use case.
-  const ingestionQueue = requireFastifyDecorator<
-    FastifyInstance["ingestionQueue"]
-  >(fastify, "ingestionQueue");
-  const redisCache = requireFastifyDecorator<FastifyInstance["redisCache"]>(
-    fastify,
-    "redisCache",
-  );
   const postgresWriter = requireFastifyDecorator<
     FastifyInstance["postgresWriter"]
   >(fastify, "postgresWriter");
 
-  console.log({
-  ingestionQueue: fastify.ingestionQueue,
-  redisCache: fastify.redisCache,
-  postgresWriter: fastify.postgresWriter,
-});
   const service = new IngestionService(
-    ingestionQueue,
-    redisCache,
+    postgresWriter.pool,
     postgresWriter,
     {
-      maxBatchSize: 1000,
-      defaultRateLimitPerSecond: 1000,
-      defaultRateLimitPerMinute: 10000,
+      maxBatchSize: env.INGESTION_MAX_BATCH_SIZE,
+      defaultRateLimitPerSecond: env.INGESTION_DEFAULT_RATE_PER_SECOND,
+      defaultRateLimitPerMinute: env.INGESTION_DEFAULT_RATE_PER_MINUTE,
     },
   );
 
@@ -128,15 +123,20 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.addHook("onClose", async () => service.shutdown());
 
+  // ── SDK ingestion endpoints ─────────────────────────────────────────────
+  // All ingestion endpoints validate their bodies via JSON Schema. The schema
+  // is the only line of defense against malformed input reaching handlers,
+  // so we deliberately apply it everywhere, including the previously-unguarded
+  // /v1/init and /v1/ingest routes.
   fastify.post(
     "/v1/init",
-    // { schema: InitSchema },
+    { schema: InitSchema },
     controller.init.bind(controller),
   );
 
   fastify.post(
     "/v1/ingest",
-    // { schema: IngestSchema },
+    { schema: IngestSchema },
     controller.ingest.bind(controller),
   );
 
@@ -164,6 +164,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
     controller.ingestMetrics.bind(controller),
   );
 
+  // ── Health & observability ──────────────────────────────────────────────
   fastify.get("/v1/health", controller.getHealth.bind(controller));
 
   fastify.get(
@@ -172,27 +173,48 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
     controller.getIngestionHealth.bind(controller),
   );
 
+  // ── Tenant-scoped limits lookup ─────────────────────────────────────────
+  // The API key is read from a request header, NOT from the query string.
+  // Putting a secret in a URL leaks it into:
+  //   * server access logs (Fastify, ALB, NGINX)
+  //   * browser history & referer headers
+  //   * upstream proxy/CDN logs
+  // Header-based extraction (Authorization: Bearer <key> or X-API-Key) keeps
+  // the secret out of every shared log surface.
   fastify.get(
     "/v1/limits",
-    {
-      preHandler: [authenticate],
-      schema: {
-        querystring: {
-          type: "object",
-          required: ["apiKey"],
-          properties: {
-            apiKey: { type: "string" },
-          },
-        },
-      },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const apiKey = extractApiKeyFromRequest(request);
+      if (!apiKey) {
+        return reply.status(401).send({
+          error: "Missing API key",
+          code: "INVALID_API_KEY",
+        });
+      }
+      try {
+        const result = await service.getLimits(apiKey);
+        return reply.send(result);
+      } catch (err) {
+        if (err instanceof Error && err.message === "INVALID_API_KEY") {
+          return reply.status(401).send({
+            error: "Invalid API key",
+            code: "INVALID_API_KEY",
+          });
+        }
+        request.log.error({ err }, "Failed to resolve ingestion limits");
+        return reply.status(500).send({
+          error: "Failed to resolve limits",
+          code: "INTERNAL_ERROR",
+        });
+      }
     },
-    controller.getLimits.bind(controller),
   );
 
+  // ── Error event lookups ─────────────────────────────────────────────────
   fastify.get(
     "/v1/errors",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireProjectMembershipFromQuery],
       schema: ErrorListSchema,
     },
     controller.listErrors.bind(controller),
@@ -201,23 +223,28 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get(
     "/v1/errors/:errorId",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireProjectMembershipFromQuery],
       schema: ErrorByIdSchema,
     },
     controller.getErrorById.bind(controller),
   );
 
+  // ── DLQ admin endpoints ─────────────────────────────────────────────────
+  // DLQ operations can replay arbitrary historical traffic onto the live
+  // queue. They MUST require platform-admin: a regular user has no business
+  // poking at the dead-letter table.
   fastify.get(
     "/v1/dlq",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireAdmin],
       schema: {
         querystring: {
           type: "object",
           properties: {
-            start: { type: "integer", default: 0 },
-            end: { type: "integer", default: 100 },
+            offset: { type: "integer", minimum: 0, default: 0 },
+            limit: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
           },
+          additionalProperties: false,
         },
       },
     },
@@ -227,14 +254,15 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.post(
     "/v1/dlq/reprocess/:jobId",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireAdmin],
       schema: {
         params: {
           type: "object",
           required: ["jobId"],
           properties: {
-            jobId: { type: "string" },
+            jobId: { type: "string", format: "uuid" },
           },
+          additionalProperties: false,
         },
       },
     },
@@ -243,14 +271,26 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.post(
     "/v1/dlq/reprocess-all",
-    { preHandler: [authenticate] },
+    {
+      preHandler: [authenticate, requireAdmin],
+      schema: {
+        body: {
+          type: "object",
+          properties: {
+            batchSize: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
     controller.reprocessAllDLQ.bind(controller),
   );
 
+  // ── Replay & debug ──────────────────────────────────────────────────────
   fastify.post(
     "/v1/replay",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireAdmin, requireProjectMembershipFromBody],
       schema: ReplaySchema,
     },
     controller.replay.bind(controller),
@@ -259,7 +299,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get(
     "/v1/debug/events/:id",
     {
-      preHandler: [authenticate],
+      preHandler: [authenticate, requireProjectMembershipFromQuery],
       schema: {
         params: {
           type: "object",
@@ -267,6 +307,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
           properties: {
             id: { type: "string", format: "uuid" },
           },
+          additionalProperties: false,
         },
         querystring: {
           type: "object",
@@ -274,6 +315,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
           properties: {
             projectId: { type: "string", format: "uuid" },
           },
+          additionalProperties: false,
         },
       },
     },

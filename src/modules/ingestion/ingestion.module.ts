@@ -1,83 +1,42 @@
 /**
- * Ingestion module for Fastify.
+ * Ingestion module for Fastify (PostgreSQL-queue cutover — no BullMQ/Redis).
  *
  * Flow:
- * 1. Open Redis for cache and BullMQ queue operations.
- * 2. Create the ingestion queue with retry/backoff and dead-letter retention.
- * 3. Create RedisCache and PostgresWriter infrastructure objects.
- * 4. Decorate Fastify so routes can compose the controller/service.
- * 5. Register ingestion routes under /api and close external connections during
- *    Fastify shutdown.
+ * 1. Reuse the shared Postgres pool from config/database.ts.
+ * 2. Create the PostgresWriter (project auth + read endpoints).
+ * 3. Decorate Fastify so routes can construct the IngestionService, which now
+ *    enqueues into the Postgres-native queue (PgQueue) instead of BullMQ.
+ * 4. Register ingestion routes under /api.
+ *
+ * The queue is durable in Postgres. There is no in-memory buffer and no Redis
+ * queue. Persistence happens asynchronously in the PgQueueWorker (worker
+ * process), not in this module.
  */
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
-import { Queue } from 'bullmq';
-import { Redis } from "ioredis";
-import { Pool } from 'pg';
+import { pool } from '../../config/database.js';
+import { logger } from '../../config/logger.js';
 import { ingestionRoutes } from './routes.js';
-import { RedisCache } from '../../db/redis/cache.js';
-
 import { PostgresWriter } from './postgress.writter.js';
-// Extend Fastify instance for type safety
+
+const ingestionLogger = logger.child({ component: 'ingestion-module' });
+
 declare module 'fastify' {
   interface FastifyInstance {
-    ingestionQueue: Queue;
-    redisCache: RedisCache;
     postgresWriter: PostgresWriter;
   }
 }
 
-export const ingestionModule = fp(async function (fastify: FastifyInstance) {
-  // 1. Redis connection shared by RedisCache and BullMQ.
-  const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    retryStrategy: (times: number) => Math.min(times * 50, 2000),
-  });
+export const ingestionModule = fp(
+  async function ingestionPlugin(fastify: FastifyInstance) {
+    const postgresWriter = new PostgresWriter(pool);
+    fastify.decorate('postgresWriter', postgresWriter);
 
-  // 2. BullMQ queue with retry/backoff and failed-job retention for DLQ tooling.
-  const ingestionQueue = new Queue('ingestion', {
-    connection: redis,
-    defaultJobOptions: {
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 1000 },
-      removeOnComplete: { count: 5000, age: 3600 },
-      removeOnFail: { count: 10000, age: 86400 * 7 },
-    }
-  });
+    await fastify.register(ingestionRoutes, { prefix: '/api' });
 
-  // 3. Cache layer for API-key/project lookup, rate limiting, idempotency, and
-  // ingestion counters.
-  const redisCache = new RedisCache(redis);
-
-  // 4. Database writer pool dedicated to ingestion lookups and worker writes.
-  const pgPool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
-    application_name: 'ingestion_api',
-  });
-
-  // Verify DB connection during boot so the API fails fast if persistence is
-  // unavailable.
-  await pgPool.query('SELECT 1');
-
-  const postgresWriter = new PostgresWriter(pgPool);
-
-  // 5. Decorate Fastify with concrete dependencies consumed by routes.ts.
-  fastify.decorate('ingestionQueue', ingestionQueue);
-  fastify.decorate('redisCache', redisCache);
-  fastify.decorate('postgresWriter', postgresWriter);
-
-  // 6. Register HTTP routes under /api.
-  await fastify.register(ingestionRoutes, { prefix: '/api' });
-
-  // 7. Graceful shutdown closes queue, Redis, and database pool in order.
-  fastify.addHook('onClose', async () => {
-    fastify.log.info('Closing ingestion module...');
-    await ingestionQueue.close();
-    await redis.quit();
-    await pgPool.end();
-  });
-});
+    ingestionLogger.info('Ingestion module registered (pg-queue)');
+  },
+  {
+    name: 'ingestion-module',
+  },
+);

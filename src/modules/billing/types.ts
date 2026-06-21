@@ -419,6 +419,7 @@ export interface AuthenticatedRequest extends FastifyRequest {
     isAdmin: boolean;
     sessionId: string;
     mfaVerified: boolean;
+    stepUpFresh: boolean;
     orgId?: string;
   };
 }

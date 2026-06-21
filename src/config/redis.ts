@@ -1,39 +1,81 @@
-import Redis from "ioredis";
-import { logger } from "./logger.js";
-import { log } from "node:console";
+import { Redis } from 'ioredis';
+import type { RedisOptions } from 'ioredis';
+import { env } from './env.js';
+import { logger } from './logger.js';
 
-// 👉 Hardcode for now (don’t over-engineer env yet)
-const REDIS_URL = "redis://localhost:6379";
+const redisLogger = logger.child({ component: 'redis' });
 
-export const redis = new Redis(REDIS_URL, {
-  lazyConnect: true, // we control when to connect
-});
-
-// 🔌 Connect function
-export const connectRedis = async () => {
-  try {
-    await redis.connect();
-   logger.info(" Connected to Redis");
-  } catch (err) {
-    logger.error({ err }, " Failed to connect to Redis");
-    process.exit(1);
-  }
+/**
+ * Shared Redis connection for the application layer (sessions, caching, etc.).
+ *
+ * The ingestion module maintains its own dedicated Redis connection because
+ * BullMQ requires `maxRetriesPerRequest: null` which is incompatible with
+ * normal Redis usage. This separation is intentional.
+ */
+const redisOptions: RedisOptions = {
+  lazyConnect: true,
+  maxRetriesPerRequest: 3,
+  retryStrategy: (times: number) => {
+    if (times > 10) {
+      redisLogger.fatal({ attempts: times }, 'Redis retry limit exceeded — giving up');
+      return null; // stop retrying
+    }
+    const delay = Math.min(times * 200, 5000);
+    redisLogger.warn({ attempt: times, nextRetryMs: delay }, 'Redis connection retry');
+    return delay;
+  },
+  reconnectOnError: (err: Error) => {
+    const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
+    return targetErrors.some((e) => err.message.includes(e));
+  },
 };
 
-// 🧪 Health check (PING)
-export const checkRedis = async () => {
+export const redis = new Redis(env.REDIS_URL, redisOptions);
+
+// Lifecycle events
+redis.on('connect', () => {
+  redisLogger.info('Redis connection established');
+});
+
+redis.on('ready', () => {
+  redisLogger.info('Redis ready to accept commands');
+});
+
+redis.on('error', (err: Error) => {
+  redisLogger.error({ err }, 'Redis connection error');
+});
+
+redis.on('close', () => {
+  redisLogger.warn('Redis connection closed');
+});
+
+/**
+ * Connect to Redis — should be called during bootstrap BEFORE app.listen().
+ */
+export const connectRedis = async (): Promise<void> => {
+  await redis.connect();
+  redisLogger.info({ url: env.REDIS_URL.replace(/\/\/.*@/, '//***@') }, 'Redis connected');
+};
+
+/**
+ * Health check — returns true if Redis responds to PING.
+ */
+export const checkRedis = async (): Promise<boolean> => {
   try {
     const res = await redis.ping();
-    console.log("📡 Redis ping:", res); // should be PONG
-    return res === "PONG";
+    redisLogger.debug({ response: res }, 'Redis health check passed');
+    return res === 'PONG';
   } catch (err) {
-    console.error("❌ Redis ping failed:", err);
+    redisLogger.error({ err }, 'Redis health check failed');
     return false;
   }
 };
 
-// 🔌 Close connection
-export const closeRedis = async () => {
+/**
+ * Graceful shutdown — sends QUIT and waits for pending commands to flush.
+ */
+export const closeRedis = async (): Promise<void> => {
+  redisLogger.info('Closing Redis connection');
   await redis.quit();
-  console.log("🛑 Redis connection closed");
+  redisLogger.info('Redis connection closed');
 };

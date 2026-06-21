@@ -5,32 +5,34 @@
 ### TOTP MFA
 
 1. The authenticated user calls `POST /auth/mfa/setup` with `type: "totp"` and a device name.
-2. The API creates an unverified MFA device, generates a TOTP secret, creates one-time backup codes, and returns the QR code data URL.
+2. The API creates an unverified MFA device, generates a TOTP secret, creates one-time backup codes (20 hex characters each), and returns the QR code data URL.
 3. The user scans the QR code in an authenticator app.
 4. The user calls `POST /auth/mfa/verify-setup` with the device id and current 6-digit TOTP code.
 5. The API validates the TOTP code, marks the device verified, stores hashed backup codes, enables MFA, and sends an MFA-enabled security email.
-6. Future logins return `mfa_required: true` with a login challenge id. The user completes `POST /auth/login/mfa` with the TOTP code.
+6. Future logins return `mfa_required: true` with a `challenge_id`. The user completes `POST /auth/login/mfa` with a 6-digit code, or `POST /auth/login/backup-code` with a 20-character hex backup code.
 
 ### Email MFA
 
 1. The authenticated user calls `POST /auth/mfa/setup` with `type: "email"` and a device name.
-2. The API creates an unverified email MFA device for the user's account email only.
-3. The API generates a 6-digit one-time code, stores only its SHA-256 hash in Redis for 10 minutes, and sends the code by SMTP.
-4. The user calls `POST /auth/mfa/verify-setup` with the device id and emailed code.
-5. The API validates the Redis-backed code, marks the device verified, stores hashed backup codes, enables MFA, and sends an MFA-enabled security email.
-6. Future logins using an email primary MFA device send a new one-time code during challenge creation. The code is verified by `POST /auth/login/mfa`.
+2. The API emails a 6-digit OTP (10-minute TTL, stored hashed in `email_mfa_otps`).
+3. The user calls `POST /auth/mfa/verify-setup` with the device id and OTP.
+4. Login and step-up challenges email a fresh OTP automatically. Use `POST /auth/mfa/email/resend` to request another code (rate limited: 3 per 15 minutes per device).
 
 ### Step-Up MFA
 
 1. The authenticated user calls `POST /auth/mfa/challenge`.
-2. The API selects the primary verified MFA device.
-3. If the device is TOTP, the user enters the current authenticator code.
-4. If the device is email, the API sends a fresh 6-digit SMTP code and stores only its hash in Redis.
-5. The user calls `POST /auth/mfa/verify` with the challenge id and code.
+2. The API selects the primary verified MFA device (email devices trigger an OTP email).
+3. The user calls `POST /auth/mfa/verify` with the challenge id and 6-digit code.
+4. Sensitive routes (`POST /auth/password/change`, `DELETE /auth/users/me`, MFA device removal, backup-code regeneration, MFA disable request) require fresh step-up via `requireStepUp`.
+
+### MFA Disable (two-step)
+
+1. `POST /auth/mfa/disable/request` — requires step-up freshness and a valid TOTP/email OTP; sends a confirmation link.
+2. `POST /auth/mfa/disable/confirm` — consumes the email token and disables MFA.
 
 ### Backup Codes
 
-Backup codes are generated during MFA setup and shown once. They are stored only as SHA-256 hashes. A valid backup code is consumed on use.
+Backup codes are 20 hex characters (80 bits). They are generated during MFA setup and shown once. Only SHA-256 hashes are stored. Use `POST /auth/login/backup-code` during an active login MFA challenge.
 
 ## SMTP Configuration
 
@@ -50,22 +52,40 @@ SMTP_FROM_EMAIL=security@example.com
 SMTP_FROM_NAME=API Monitoring Security
 ```
 
-Use `SMTP_SECURE=true` for implicit TLS providers, usually port `465`. Use `SMTP_SECURE=false` for STARTTLS providers, usually port `587`.
+Email links (verification, password reset, MFA disable) use `FRONTEND_URL` so they open in the SPA.
+
+## Auth Rate Limits (in-process LRU)
+
+Per-route limits are defined in `src/modules/auth/rate-limits.ts` using `lru-rate-limit.ts` (no Redis). Counters are per Node process; the global limiter in `app.ts` still applies at the IP level.
+
+| Scope | Max | Window |
+| --- | --- | --- |
+| login | 10 | 15 min (per IP + email hash) |
+| login-mfa / backup-code | 15 | 15 min |
+| register | 5 | 1 hour |
+| forgot-password / resend-verification | 5 | 1 hour |
+| mfa-email-resend | 3 | 15 min (per user + device) |
+| sessions/refresh | 60 | 15 min |
+
+## Unified Email Token Table
+
+All email-link flows use `email_verifications`:
+
+- Signup email verification
+- Password reset
+- MFA disable confirmation
+
+Raw tokens are never stored. Purpose-bound SHA-256 hashes prevent cross-flow replay.
 
 ## Email Templates
 
-Templates live in `src/shared/email/templates.ts`. The current templates cover:
-
-- Email verification
-- Password reset
-- MFA setup/login/step-up codes
-- MFA enabled/disabled security notifications
+Templates live in `src/shared/email/templates.ts`.
 
 ## Routes That Send Email
 
-- `POST /auth/users`: sends email verification.
-- `POST /auth/password/forgot`: sends password reset.
-- `POST /auth/mfa/setup` with `type: "email"`: sends setup code.
-- `POST /auth/login`: sends login code when primary MFA device is email.
-- `POST /auth/mfa/challenge`: sends step-up code when primary MFA device is email.
-- `POST /auth/mfa/disable`: sends MFA disabled notification.
+- `POST /auth/register`, `POST /auth/resend-verification`
+- `POST /auth/forgot-password` (and `/password/forgot` alias)
+- Login for unverified users (silent re-send)
+- Email MFA setup, login, step-up, and `POST /auth/mfa/email/resend`
+- `POST /auth/mfa/disable/request`
+- MFA enabled/disabled notifications

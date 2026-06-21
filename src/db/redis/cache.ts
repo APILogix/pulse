@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import { RedisKeys, RedisTTL } from './keys.js';
 
 
@@ -126,13 +126,13 @@ export class RedisCache {
   }
 
   async incrementIngestCounter(projectId: string, eventType: string): Promise<void> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = new Date().toISOString().split('T')[0]!;
     await this.redis.hincrby(
       RedisKeys.metricsCounter(projectId, date, eventType),
       'count',
       1
     );
-    await this.redis.expire(RedisKeys.metricsCounter(projectId, date, eventType), 86400 * 7);
+    await this.redis.expire(RedisKeys.metricsCounter(projectId, date!, eventType), 86400 * 7);
   }
 
   async recordLastIngest(projectId: string): Promise<void> {

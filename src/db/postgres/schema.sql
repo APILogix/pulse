@@ -10,7 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TYPE user_status AS ENUM ('active', 'inactive', 'suspended', 'deleted');
 CREATE TYPE mfa_type AS ENUM ('totp', 'sms', 'email', 'hardware_key', 'backup_codes');
 CREATE TYPE org_role AS ENUM ('owner', 'admin', 'member', 'viewer', 'billing');
-CREATE TYPE org_status AS ENUM ('active', 'suspended', 'cancelled', 'trial_expired');
+CREATE TYPE org_status AS ENUM ('active', 'suspended', 'cancelled', 'trial_expired' ,"pending_verification","archived","locked","unpaid","trialing");
 CREATE TYPE audit_action AS ENUM (
     'user.created', 'user.updated', 'user.deleted', 'user.login', 'user.logout', 'user.password_changed', 'user.mfa_enabled', 'user.mfa_disabled',
     'org.created', 'org.updated', 'org.deleted', 'org.member_invited', 'org.member_joined', 'org.member_removed', 'org.role_changed',
@@ -29,12 +29,12 @@ CREATE TYPE security_event_type AS ENUM ('brute_force_attempt', 'suspicious_ip',
 -- CORE AUTH: users TABLE
 -- ============================================
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
     -- Profile (PII - encrypted at application layer)
     email VARCHAR(255) NOT NULL,
     email_hash VARCHAR(64) GENERATED ALWAYS AS (encode(digest(lower(email), 'sha256'), 'hex')) STORED,
-    email_verified BOOLEAN DEFAULT TRUE,
+    email_verified BOOLEAN DEFAULT FALSE,
     email_verified_at TIMESTAMPTZ,
     
     full_name VARCHAR(255) NOT NULL,
@@ -98,7 +98,7 @@ WHERE deleted_at IS NULL AND status = 'active';
 -- MFA DEVICES: user_mfa_devices TABLE
 -- ============================================
 CREATE TABLE user_mfa_devices (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
     device_type mfa_type NOT NULL,
@@ -146,24 +146,24 @@ CREATE INDEX idx_mfa_devices_verified ON user_mfa_devices(verified) WHERE verifi
 -- ORGANIZATIONS: organizations TABLE
 -- ============================================
 CREATE TABLE organizations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Identity
     name VARCHAR(255) NOT NULL,
-    slug VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255)  NOT NULL,
     description TEXT,
     logo_url TEXT,
     website_url TEXT,
 
     -- Ownership
     owner_user_id UUID NOT NULL REFERENCES users(id),
-
     -- Status
     status org_status DEFAULT 'active',
 
     -- Soft delete
     deleted_at TIMESTAMPTZ,
 
+created_by UUID REFERENCES users(id)
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -191,7 +191,7 @@ CREATE TABLE organization_settings (
 -- MEMBERSHIP: organization_members TABLE
 -- ============================================
 CREATE TABLE organization_members (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
@@ -231,7 +231,7 @@ CREATE INDEX idx_members_user_orgs ON organization_members(user_id, org_id)
 -- INVITATIONS: organization_invitations TABLE
 -- ============================================
 CREATE TABLE organization_invitations (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     
     -- Inviter
@@ -281,7 +281,7 @@ CREATE INDEX idx_invitations_expires ON organization_invitations(expires_at)
 -- SESSIONS: user_sessions TABLE (Enterprise-grade session management)
 -- ============================================
 CREATE TABLE user_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
     -- Session tokens (hashed)
@@ -332,7 +332,7 @@ CREATE INDEX idx_sessions_user_exclude ON user_sessions(user_id, id)
 -- AUDIT LOGS: audit_logs TABLE (Immutable, partitioned)
 -- ============================================
 CREATE TABLE audit_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
     -- Actor (who did it)
     user_id UUID REFERENCES users(id), -- Nullable for system actions
@@ -388,7 +388,7 @@ CREATE INDEX idx_audit_metadata ON audit_logs USING GIN(metadata);
 -- SECURITY EVENTS: security_events TABLE (Real-time threat detection)
 -- ============================================
 CREATE TABLE security_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
     -- Classification
     event_type security_event_type NOT NULL,
@@ -440,31 +440,12 @@ CREATE INDEX idx_security_blocked ON security_events(blocked_until)
     WHERE blocked_until > NOW();
 
 -- ============================================
--- PASSWORD RESETS: password_resets TABLE
--- ============================================
-CREATE TABLE password_resets (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    
-    token_hash VARCHAR(64) NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    
-    used_at TIMESTAMPTZ,
-    used_ip INET,
-    
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    
-    UNIQUE(user_id, token_hash)
-);
-
-CREATE INDEX idx_password_resets_token ON password_resets(token_hash) WHERE used_at IS NULL;
-CREATE INDEX idx_password_resets_user ON password_resets(user_id, created_at DESC);
-
--- ============================================
--- EMAIL VERIFICATION: email_verifications TABLE
+-- EMAIL TOKEN VERIFICATION: email_verifications TABLE
+-- Shared source of truth for email verification, password reset, and future
+-- email token flows. The application purpose-binds token hashes.
 -- ============================================
 CREATE TABLE email_verifications (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
     email VARCHAR(255) NOT NULL,
@@ -479,12 +460,13 @@ CREATE TABLE email_verifications (
 );
 
 CREATE INDEX idx_email_verifications_token ON email_verifications(token_hash) WHERE verified_at IS NULL;
+CREATE UNIQUE INDEX idx_email_verifications_active_token_unique ON email_verifications(token_hash) WHERE verified_at IS NULL;
 
 -- ============================================
 -- API KEY ACCESS LOGS: api_key_access_logs TABLE (For security auditing)
 -- ============================================
 CREATE TABLE api_key_access_logs (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
     -- Key info (denormalized for performance)
     api_key_id UUID, -- May be NULL if key invalid

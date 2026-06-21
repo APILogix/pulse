@@ -1,119 +1,187 @@
-import { Pool, type PoolClient, type QueryResult } from 'pg';
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
 
+const dbLogger = logger.child({ component: 'log-database' });
+
+/**
+ * LogDatabaseManager — enterprise-grade dual-pool manager for the log database.
+ *
+ * Architecture:
+ * - Primary pool: handles all writes (INSERT, UPDATE, DELETE) and DDL
+ * - Replica pool: handles read-heavy queries (SELECT) to offload the primary
+ * - Falls back to primary for reads when no replica is configured
+ *
+ * Features:
+ * - Retry with exponential backoff (skips non-retryable errors like constraint violations)
+ * - Slow query detection and logging
+ * - Batch insert for high-throughput event ingestion
+ * - Health check for load-balancer probes
+ */
 class LogDatabaseManager {
   private primaryPool: Pool;
+  private replicaPool: Pool | null = null;
   private isShuttingDown = false;
 
   constructor() {
-    // Single pool for development (will split later for replica)
-    this.primaryPool = new Pool({
-      connectionString: env.LOG_DB_PRIMARY,
-      max: parseInt(env.LOG_POOL_MAX || '20'),
-      min: parseInt(env.LOG_POOL_MIN || '5'),
+    if (!env.LOG_DB_PRIMARY) {
+      dbLogger.warn('LOG_DB_PRIMARY is not configured — log database features will be unavailable');
+      // Create a pool with the main DATABASE_URL as fallback
+      this.primaryPool = this.createPool(env.DATABASE_URL, 'log_primary');
+    } else {
+      this.primaryPool = this.createPool(env.LOG_DB_PRIMARY, 'log_primary');
+    }
+
+    // Set up replica pool if a separate replica URL is provided
+    if (env.LOG_DB_REPLICA && env.LOG_DB_REPLICA !== env.LOG_DB_PRIMARY) {
+      dbLogger.info('Replica pool configured — read queries will be routed to replica');
+      this.replicaPool = this.createPool(env.LOG_DB_REPLICA, 'log_replica');
+    }
+  }
+
+  /**
+   * Creates a configured connection pool with monitoring.
+   */
+  private createPool(connectionString: string, appName: string): Pool {
+    const pool = new Pool({
+      connectionString,
+      max: env.LOG_POOL_MAX,
+      min: env.LOG_POOL_MIN,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 5000,
-      statement_timeout: 30000,
-      query_timeout: 30000,
-      application_name: 'log_ingestion_dev',
+      statement_timeout: env.LOG_QUERY_TIMEOUT,
+      query_timeout: env.LOG_QUERY_TIMEOUT,
+      application_name: `${appName}_${env.NODE_ENV}`,
       ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : false,
     });
 
-    this.setupPoolMonitoring(this.primaryPool);
+    this.setupPoolMonitoring(pool, appName);
+    return pool;
   }
 
   /**
-   * Test connection on startup (FAIL FAST)
+   * Test connections on startup (fail-fast pattern).
+   * Verifies both primary and replica (if configured) are reachable.
    */
-  async connect(): Promise<{ primary: Date }> {
-    logger.info('Testing log database connection...');
-    
+  async connect(): Promise<{ primary: Date; replica?: Date }> {
+    dbLogger.info('Testing log database connections');
+
+    // Test primary
+    const primaryClient = await this.primaryPool.connect();
     try {
-      const client = await this.primaryPool.connect();
-      const res = await client.query('SELECT NOW() as time, current_database() as db');
-      const primaryTime = res.rows[0].time;
-      
-      logger.info({
-        db: res.rows[0].db,
-        time: primaryTime,
-      }, '✅ Log DB connected');
-      
-      client.release();
-      return { primary: primaryTime };
-    } catch (err) {
-      logger.error({ err }, '❌ Failed to connect to Log DB');
-      process.exit(1);
+      const res = await primaryClient.query('SELECT NOW() AS time, current_database() AS db');
+      const primaryTime = res.rows[0]?.time;
+      dbLogger.info({ db: res.rows[0]?.db, time: primaryTime }, 'Log DB primary connected');
+
+      // Test replica if configured
+      let replicaTime: Date | undefined;
+      if (this.replicaPool) {
+        const replicaClient = await this.replicaPool.connect();
+        try {
+          const replicaRes = await replicaClient.query('SELECT NOW() AS time, current_database() AS db');
+          replicaTime = replicaRes.rows[0]?.time;
+          dbLogger.info({ db: replicaRes.rows[0]?.db, time: replicaTime }, 'Log DB replica connected');
+        } finally {
+          replicaClient.release();
+        }
+      }
+
+      return { primary: primaryTime, ...(replicaTime ? { replica: replicaTime } : {}) };
+    } finally {
+      primaryClient.release();
     }
   }
 
-  private setupPoolMonitoring(pool: Pool) {
+  private setupPoolMonitoring(pool: Pool, name: string) {
     pool.on('connect', () => {
-      logger.debug('New DB connection established');
+      dbLogger.debug({ pool: name }, 'New connection added to pool');
     });
 
     pool.on('error', (err) => {
-      logger.error({ err }, 'Unexpected pool error');
+      dbLogger.error({ err, pool: name }, 'Unexpected pool error');
     });
   }
 
   /**
-   * Get connection (simplified - always returns primary)
-   * When you add replica later, add 'operation' param here
+   * Get a connection from the appropriate pool.
+   *
+   * @param operation - 'read' routes to replica (if available), 'write' always uses primary.
+   * @param projectId - Optional project ID to set as a session variable for RLS.
    */
-  async getConnection(options?: { projectId?: string }): Promise<PoolClient> {
-    const client = await this.primaryPool.connect();
-    
+  async getConnection(options?: {
+    operation?: 'read' | 'write';
+    projectId?: string | undefined;
+  }): Promise<PoolClient> {
+    if (this.isShuttingDown) {
+      throw new Error('Log database is shutting down — refusing new connections');
+    }
+
+    const useReplica = options?.operation === 'read' && this.replicaPool !== null;
+    const pool = useReplica ? this.replicaPool! : this.primaryPool;
+    const client = await pool.connect();
+
     if (options?.projectId) {
       await client.query('SET app.current_project_id = $1', [options.projectId]);
     }
-    
+
     return client;
   }
 
   /**
-   * Execute with retry logic
+   * Execute a query with retry logic and exponential backoff.
+   *
+   * Non-retryable errors (constraint violations, permission denied, syntax errors)
+   * are thrown immediately without retry.
    */
-  async queryWithRetry<T = any>(
+  async queryWithRetry<T extends QueryResultRow = any>(
     sql: string,
     params?: any[],
     options: {
       maxRetries?: number;
-      projectId?: string;
+      operation?: 'read' | 'write';
+      projectId?: string | undefined;
       timeout?: number;
     } = {}
   ): Promise<QueryResult<T>> {
-    const { maxRetries = 3, projectId, timeout } = options;
+    const { maxRetries = env.LOG_RETRIES, operation = 'read', projectId, timeout } = options;
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const client = await this.getConnection({ projectId });
-      
+      const client = await this.getConnection({ operation, ...(projectId !== undefined ? { projectId } : {}) });
+
       try {
         if (timeout) {
           await client.query(`SET statement_timeout = ${timeout}`);
         }
 
         const start = Date.now();
-        const result = await client.query<T>(sql, params);
+        const result = await client.query(sql, params) as QueryResult<T>;
         const duration = Date.now() - start;
 
         if (duration > 1000) {
-          logger.warn({ query: sql.slice(0, 100), duration }, 'Slow query detected');
+          dbLogger.warn(
+            { query: sql.slice(0, 120), duration, rows: result.rowCount },
+            'Slow log query detected',
+          );
         }
 
         return result;
       } catch (err: any) {
         lastError = err;
-        
-        // Don't retry on constraint violations or syntax errors
-        if (err.code === '23505' || err.code === '42501' || err.code === '42601') {
+
+        // Non-retryable PG error codes:
+        // 23505 = unique_violation, 42501 = insufficient_privilege, 42601 = syntax_error
+        const NON_RETRYABLE = ['23505', '42501', '42601', '42P01', '23503'];
+        if (NON_RETRYABLE.includes(err.code)) {
           throw err;
         }
 
         if (attempt < maxRetries - 1) {
           const delay = Math.min(1000 * (2 ** attempt), 5000);
-          logger.warn({ error: err.message, attempt: attempt + 1 }, 'Query failed, retrying...');
+          dbLogger.warn(
+            { error: err.message, attempt: attempt + 1, nextRetryMs: delay },
+            'Log query failed — retrying',
+          );
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       } finally {
@@ -125,7 +193,8 @@ class LogDatabaseManager {
   }
 
   /**
-   * Batch insert (simplified without COPY protocol)
+   * Batch insert events using multi-row INSERT.
+   * Suitable for batches up to ~1000 rows. For larger batches, consider COPY protocol.
    */
   async batchInsertEvents(events: Array<{
     project_id: string;
@@ -135,11 +204,10 @@ class LogDatabaseManager {
   }>): Promise<void> {
     if (events.length === 0) return;
 
-    const client = await this.getConnection();
-    
+    const client = await this.getConnection({ operation: 'write' });
+
     try {
-      // Use regular multi-row insert (good for < 1000 rows)
-      const values = events.map((_, i) => 
+      const values = events.map((_, i) =>
         `($${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4})`
       ).join(',');
 
@@ -172,16 +240,16 @@ class LogDatabaseManager {
   }
 
   private async insertRequests(client: PoolClient, requests: any[]) {
-    const values = requests.map((r, i) => 
+    const values = requests.map((r, i) =>
       `($${i * 6 + 1}, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6})`
     ).join(',');
-    
+
     const params = requests.flatMap(r => [
-      r.project_id, 
-      r.payload.request_id, 
-      r.payload.url, 
-      r.payload.method, 
-      r.payload.status_code, 
+      r.project_id,
+      r.payload.request_id,
+      r.payload.url,
+      r.payload.method,
+      r.payload.status_code,
       r.timestamp
     ]);
 
@@ -193,7 +261,7 @@ class LogDatabaseManager {
 
   private async insertErrors(client: PoolClient, errors: any[]) {
     const crypto = await import('crypto');
-    
+
     for (const error of errors) {
       const fingerprint = crypto
         .createHash('sha256')
@@ -217,22 +285,53 @@ class LogDatabaseManager {
   }
 
   /**
-   * Simple health check
+   * Health check — verifies primary (and optionally replica) connectivity.
    */
-  async healthCheck(): Promise<{ healthy: boolean; timestamp?: Date }> {
+  async healthCheck(): Promise<{ healthy: boolean; primary?: Date; replica?: Date }> {
     try {
-      const res = await this.primaryPool.query('SELECT NOW() as time');
-      return { healthy: true, timestamp: res.rows[0].time };
-    } catch (e) {
-      logger.error('Health check failed');
+      const primaryRes = await this.primaryPool.query('SELECT NOW() AS time');
+      const result: { healthy: boolean; primary?: Date; replica?: Date } = {
+        healthy: true,
+        primary: primaryRes.rows[0]?.time,
+      };
+
+      if (this.replicaPool) {
+        try {
+          const replicaRes = await this.replicaPool.query('SELECT NOW() AS time');
+          result.replica = replicaRes.rows[0]?.time;
+        } catch {
+          dbLogger.warn('Replica health check failed — reads will fall back to primary');
+        }
+      }
+
+      return result;
+    } catch {
+      dbLogger.error('Log database primary health check failed');
       return { healthy: false };
     }
   }
 
-  async close() {
+  /**
+   * Returns true if a replica pool is configured and available.
+   */
+  get hasReplica(): boolean {
+    return this.replicaPool !== null;
+  }
+
+  /**
+   * Graceful shutdown — drains both pools.
+   */
+  async close(): Promise<void> {
     this.isShuttingDown = true;
-    logger.info('Closing log database pool...');
+    dbLogger.info('Closing log database pools');
+
     await this.primaryPool.end();
+    dbLogger.info('Log DB primary pool closed');
+
+    if (this.replicaPool) {
+      await this.replicaPool.end();
+      dbLogger.info('Log DB replica pool closed');
+    }
   }
 }
 
@@ -240,9 +339,9 @@ class LogDatabaseManager {
 export const logDB = new LogDatabaseManager();
 
 // Convenience helpers
-export const logQuery = <T = any>(
-  sql: string, 
-  params?: any[], 
+export const logQuery = <T extends QueryResultRow = any>(
+  sql: string,
+  params?: any[],
   options?: Parameters<typeof logDB['queryWithRetry']>[2]
 ) => logDB.queryWithRetry<T>(sql, params, options);
 

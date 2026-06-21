@@ -39,7 +39,7 @@ export function handleProjectError(
   // The routes call this from a shared wrapper so every project endpoint returns
   // the same error envelope for domain, validation, and unexpected failures.
   if (error instanceof ProjectError) {
-    console.log("ProjectError:", { error});
+
     return reply.code(error.statusCode).send({
       success: false,
       error: {
