@@ -49,6 +49,7 @@ function buildCorsOrigin() {
   if (env.NODE_ENV !== 'production' && allowed.length === 0) {
     return [
       'http://localhost:3000',
+      'http://localhost:4000',
       'http://localhost:5173',
       'http://127.0.0.1:3000',
       'http://127.0.0.1:5173',
@@ -100,7 +101,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    origin: buildCorsOrigin(),
+    // origin: buildCorsOrigin(),
+    origin:true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],

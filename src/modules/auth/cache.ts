@@ -142,6 +142,7 @@ export interface OidcLoginState {
   providerId: string;
   orgId: string;
   codeVerifier: string;
+  nonce: string;
   redirectUri: string;
   rememberMe: boolean;
   ipAddress: string;
@@ -184,6 +185,7 @@ export interface IdentityLinkState {
   provider: 'google' | 'github' | 'microsoft';
   codeVerifier: string;
   redirectUri: string;
+  nonce?: string;
 }
 
 export const identityLinkStateCache = new LRUCache<string, IdentityLinkState>({
@@ -197,6 +199,7 @@ export interface SocialLoginState {
   provider: 'google' | 'github' | 'microsoft';
   codeVerifier: string;
   redirectUri: string;
+  nonce?: string;
   rememberMe: boolean;
   ipAddress: string;
   userAgent: string;

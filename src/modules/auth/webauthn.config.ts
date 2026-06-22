@@ -9,8 +9,8 @@ function resolveOrigin(): string {
 }
 
 function resolveRpId(): string {
-  if (process.env.WEBAUTHN_RP_ID) {
-    return process.env.WEBAUTHN_RP_ID;
+  if (env.WEBAUTHN_RP_ID) {
+    return env.WEBAUTHN_RP_ID;
   }
   try {
     return new URL(resolveOrigin()).hostname;
@@ -20,7 +20,7 @@ function resolveRpId(): string {
 }
 
 export const webauthnConfig = {
-  rpName: process.env.WEBAUTHN_RP_NAME || env.APP_NAME,
+  rpName: env.WEBAUTHN_RP_NAME || env.APP_NAME,
   rpID: resolveRpId(),
   origin: resolveOrigin(),
 };

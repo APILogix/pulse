@@ -99,12 +99,21 @@ export const EMAIL_CHANGE_TTL_SECONDS = 60 * 60;
 export const ACCOUNT_UNLOCK_TTL_SECONDS = 60 * 60;
 export const ACCOUNT_DELETION_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const ACCOUNT_DELETION_TOKEN_TTL_SECONDS = 60 * 60;
+export const EMAIL_FLOW_TOKEN_BYTES = 48;
 
 export function hashEmailFlowToken(
   purpose: EmailFlowPurpose,
   token: string,
 ): string {
   return hashToken(`${purpose}:${token}`);
+}
+
+/**
+ * Email-flow bearer links use extra entropy because the token may spend time
+ * in inboxes, browsers, and link scanners before redemption.
+ */
+export function generateEmailFlowToken(): string {
+  return generateSecureToken(EMAIL_FLOW_TOKEN_BYTES);
 }
 
 // ---------------------------------------------------------------------------

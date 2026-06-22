@@ -186,6 +186,10 @@ export interface SessionInfo {
 // API REQUEST/RESPONSE SCHEMAS
 // ============================================
 
+const MagicLinkTokenSchema = z
+  .string()
+  .regex(/^[A-Fa-f0-9]{64,128}$/, 'Invalid token format');
+
 export const StrongPasswordSchema = z
   .string()
   .min(8, 'Password must be at least 8 characters')
@@ -278,7 +282,7 @@ export const ForgotPasswordSchema = z.object({
 export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
 
 export const ResetPasswordSchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
   new_password: StrongPasswordSchema,
 });
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;
@@ -289,9 +293,14 @@ export const ResendVerificationSchema = z.object({
 export type ResendVerificationInput = z.infer<typeof ResendVerificationSchema>;
 
 export const VerifyEmailQuerySchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
 });
 export type VerifyEmailQueryInput = z.infer<typeof VerifyEmailQuerySchema>;
+
+export const VerifyEmailConfirmSchema = z.object({
+  token: MagicLinkTokenSchema,
+});
+export type VerifyEmailInput = z.infer<typeof VerifyEmailConfirmSchema>;
 
 // MFA setup — supports totp and email device types.
 export const MFASetupSchema = z.object({
@@ -325,7 +334,7 @@ export const MFADisableRequestSchema = z.object({
 export type MFADisableRequestInput = z.infer<typeof MFADisableRequestSchema>;
 
 export const MFADisableConfirmSchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
 });
 export type MFADisableConfirmInput = z.infer<typeof MFADisableConfirmSchema>;
 
@@ -462,7 +471,7 @@ export const EmailChangeRequestSchema = z.object({
 export type EmailChangeRequestInput = z.infer<typeof EmailChangeRequestSchema>;
 
 export const EmailChangeConfirmSchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
 });
 export type EmailChangeConfirmInput = z.infer<typeof EmailChangeConfirmSchema>;
 
@@ -472,7 +481,7 @@ export const AccountUnlockRequestSchema = z.object({
 export type AccountUnlockRequestInput = z.infer<typeof AccountUnlockRequestSchema>;
 
 export const AccountUnlockConfirmSchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
 });
 export type AccountUnlockConfirmInput = z.infer<typeof AccountUnlockConfirmSchema>;
 
@@ -484,7 +493,7 @@ export type AccountDeletionRequestInput = z.infer<
 >;
 
 export const AccountDeletionConfirmSchema = z.object({
-  token: z.string().min(32).max(256),
+  token: MagicLinkTokenSchema,
 });
 export type AccountDeletionConfirmInput = z.infer<
   typeof AccountDeletionConfirmSchema

@@ -24,6 +24,8 @@ import {
 
   discovery,
 
+  randomNonce,
+
   randomPKCECodeVerifier,
 
   randomState,
@@ -184,6 +186,8 @@ async function startOidcLogin(
 
   const state = randomState();
 
+  const nonce = randomNonce();
+
   const redirectUri = getCallbackUrl();
 
 
@@ -200,6 +204,8 @@ async function startOidcLogin(
 
     state,
 
+    nonce,
+
   });
 
 
@@ -211,6 +217,8 @@ async function startOidcLogin(
     orgId: provider.org_id,
 
     codeVerifier,
+
+    nonce,
 
     redirectUri,
 
@@ -339,6 +347,8 @@ export async function completeSsoCallback(
   const oidcConfig = await buildOidcConfig(provider);
 
   const tokens = await authorizationCodeGrant(oidcConfig, url, {
+
+    expectedNonce: flow.nonce,
 
     expectedState: state,
 

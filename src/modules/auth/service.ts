@@ -94,7 +94,7 @@ import {
   type User,
   type UserProfile,
   type UserSecuritySummary,
-  type VerifyEmailQueryInput,
+  type VerifyEmailInput,
 } from './types.js';
 import {
   ABSOLUTE_SESSION_TTL_SECONDS,
@@ -103,8 +103,8 @@ import {
   buildPasswordHistory,
   EMAIL_VERIFICATION_TTL_SECONDS,
   generateAccessToken,
+  generateEmailFlowToken,
   generateRefreshToken,
-  generateSecureToken,
   hashEmailFlowToken,
   hashToken as hashAuthToken,
   MFA_DISABLE_TOKEN_TTL_SECONDS,
@@ -707,7 +707,7 @@ export async function createUserFromEmail(
   }
 
   const passwordHash = await hashPassword(input.password);
-  const verificationToken = generateSecureToken();
+  const verificationToken = generateEmailFlowToken();
   const verificationTokenHash = hashEmailFlowToken(
     'email_verification',
     verificationToken,
@@ -1329,7 +1329,7 @@ export async function loginWithEmailPassword(
   // INVALID_CREDENTIALS code as a wrong password. The frontend can guide
   // the user via /auth/resend-verification (which is also enumeration-safe).
   if (!user.email_verified) {
-    const verificationToken = generateSecureToken();
+    const verificationToken = generateEmailFlowToken();
     await repository.createEmailVerification({
       user_id: user.id,
       email: normalizedEmail,
@@ -1711,7 +1711,7 @@ export async function resendVerification(
     user.status === 'active' &&
     !user.email_verified
   ) {
-    const verificationToken = generateSecureToken();
+    const verificationToken = generateEmailFlowToken();
     await repository.createEmailVerification({
       user_id: user.id,
       email: normalizedEmail,
@@ -1740,7 +1740,7 @@ export async function resendVerification(
 }
 
 export async function verifyEmail(
-  input: VerifyEmailQueryInput,
+  input: VerifyEmailInput,
   ipAddress: string,
   requestId: string,
 ): Promise<{ message: string }> {
@@ -1822,7 +1822,7 @@ export async function requestPasswordReset(
   const user = await repository.findUserByEmailHash(emailHash);
 
   if (user && !user.deleted_at && user.status === 'active') {
-    const resetToken = generateSecureToken();
+    const resetToken = generateEmailFlowToken();
     const resetTokenHash = hashEmailFlowToken('password_reset', resetToken);
     await repository.createEmailVerification({
       user_id: user.id,
@@ -2474,7 +2474,7 @@ export async function adminForcePasswordReset(
 
   markAllUserTokensRevoked(targetUserId);
 
-  const resetToken = generateSecureToken();
+  const resetToken = generateEmailFlowToken();
   const resetTokenHash = hashEmailFlowToken('password_reset', resetToken);
   await repository.createEmailVerification({
     user_id: user.id,
@@ -2782,7 +2782,7 @@ export async function requestMfaDisable(
     throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
   }
 
-  const token = generateSecureToken();
+  const token = generateEmailFlowToken();
   await repository.createEmailVerification({
     user_id: user.id,
     email: normalizeEmail(user.email),
@@ -3030,6 +3030,13 @@ export async function refreshAccessToken(
       if (!user || user.deleted_at || user.status !== 'active') {
         await repository.revokeSession(session.id, 'User inactive');
         throw new AuthError('User inactive', AuthErrorCodes.USER_SUSPENDED, 401);
+      }
+      try {
+        await assertRefreshAllowedByOrgPolicy(user, session.last_active_at);
+      } catch (policyErr) {
+        await repository.revokeSession(session.id, 'Organization policy violation');
+        markAllUserTokensRevoked(user.id);
+        throw policyErr;
       }
       const mfaVerified =
         Boolean(session.mfa_verified_at) || !user.mfa_enabled;

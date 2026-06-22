@@ -21,13 +21,11 @@ export function isLinkableProvider(value: string): value is LinkableProvider {
 export function isProviderConfigured(provider: LinkableProvider): boolean {
   switch (provider) {
     case 'google':
-      return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+      return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
     case 'github':
-      return Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET);
+      return Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
     case 'microsoft':
-      return Boolean(
-        process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET,
-      );
+      return Boolean(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET);
     default:
       return false;
   }
@@ -38,6 +36,6 @@ export function listConfiguredLinkProviders(): LinkableProvider[] {
 }
 
 export function getMicrosoftIssuer(): string {
-  const tenant = process.env.MICROSOFT_TENANT_ID || 'common';
+  const tenant = env.MICROSOFT_TENANT_ID || 'common';
   return `https://login.microsoftonline.com/${tenant}/v2.0`;
 }

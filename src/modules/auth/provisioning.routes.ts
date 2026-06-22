@@ -10,6 +10,10 @@ import { registerScimRoutes } from '../scim/scim.routes.js';
 import { handleAuthError } from './routes.js';
 import { isLinkableProvider } from './identity-link.config.js';
 import {
+  buildConfiguredCallbackUrl,
+  getApiSocialLoginCallbackUrl,
+} from './oauth-callback.config.js';
+import {
   getRefreshCookieOptions,
   REFRESH_COOKIE_NAME,
 } from './utils.js';
@@ -75,9 +79,10 @@ export default async function provisioningRoutes(fastify: FastifyInstance) {
           });
         }
         const ci = getClientInfo(request);
-        const callbackUrl = request.url.startsWith('http')
-          ? request.url
-          : `${request.protocol}://${request.hostname}${request.url}`;
+        const callbackUrl = buildConfiguredCallbackUrl(
+          getApiSocialLoginCallbackUrl(),
+          request.url,
+        );
         const tokens = await socialLogin.completeSocialLogin(
           callbackUrl,
           ci.ip,

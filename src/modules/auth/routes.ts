@@ -53,6 +53,7 @@ import {
   ResetPasswordSchema,
   SuspendUserSchema,
   UpdateUserSchema,
+  VerifyEmailConfirmSchema,
   VerifyEmailQuerySchema,
 } from './types.js';
 import identityRoutes from './identity.routes.js';
@@ -153,6 +154,11 @@ function sendAuthSession(
       user_id: payload.user_id,
     },
   });
+}
+
+function preventSensitiveResponseCaching(reply: FastifyReply): void {
+  reply.header('Cache-Control', 'no-store, max-age=0');
+  reply.header('Pragma', 'no-cache');
 }
 
 // ============================================================================
@@ -292,9 +298,25 @@ async function passwordRoutes(fastify: FastifyInstance) {
   // GET /auth/verify-email
   fastify.get('/verify-email', { preHandler: [verifyEmailRateLimit] }, async (request, reply) => {
     try {
+      preventSensitiveResponseCaching(reply);
       const query = VerifyEmailQuerySchema.parse(request.query);
       const ci = getClientInfo(request);
       const result = await service.verifyEmail(query, ci.ip, request.id);
+      return reply.send({ data: result });
+    } catch (error) {
+      return handleAuthError(error, reply, request);
+    }
+  });
+
+  // POST /auth/verify-email/confirm
+  // Safer SPA flow: read the token client-side and POST it, instead of relying
+  // on a GET confirmation endpoint as the only supported redemption path.
+  fastify.post('/verify-email/confirm', { preHandler: [tokenConfirmRateLimit] }, async (request, reply) => {
+    try {
+      preventSensitiveResponseCaching(reply);
+      const body = VerifyEmailConfirmSchema.parse(request.body);
+      const ci = getClientInfo(request);
+      const result = await service.verifyEmail(body, ci.ip, request.id);
       return reply.send({ data: result });
     } catch (error) {
       return handleAuthError(error, reply, request);

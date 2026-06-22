@@ -12,6 +12,10 @@ import { getClientInfo } from '../../shared/utils/request.js';
 import { handleAuthError } from './routes.js';
 import * as identityLink from './identity-link.service.js';
 import { isLinkableProvider } from './identity-link.config.js';
+import {
+  buildConfiguredCallbackUrl,
+  getApiIdentityLinkCallbackUrl,
+} from './oauth-callback.config.js';
 import * as saml from './saml.service.js';
 import {
   getRefreshCookieOptions,
@@ -152,9 +156,10 @@ export default async function samlIdentityRoutes(fastify: FastifyInstance) {
           });
         }
         const ci = getClientInfo(request);
-        const callbackUrl = request.url.startsWith('http')
-          ? request.url
-          : `${request.protocol}://${request.hostname}${request.url}`;
+        const callbackUrl = buildConfiguredCallbackUrl(
+          getApiIdentityLinkCallbackUrl(),
+          request.url,
+        );
         const result = await identityLink.completeIdentityLink(
           callbackUrl,
           ci.ip,

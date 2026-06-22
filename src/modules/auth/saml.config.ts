@@ -8,21 +8,21 @@ function appBaseUrl(): string {
 }
 
 function apiBaseUrl(): string {
-  const api = process.env.API_PUBLIC_URL || env.APP_URL;
+  const api = env.API_PUBLIC_URL || env.APP_URL;
   return api.replace(/\/+$/, '');
 }
 
 export const samlSpConfig = {
   /** SP entity ID published in metadata. */
-  entityId: process.env.SAML_SP_ENTITY_ID || `${apiBaseUrl()}/auth/saml/metadata`,
+  entityId: env.SAML_SP_ENTITY_ID || `${apiBaseUrl()}/auth/saml/metadata`,
   /** Assertion Consumer Service URL (IdP POST target). */
-  acsUrl: process.env.SAML_SP_ACS_URL || `${apiBaseUrl()}/auth/saml/acs`,
+  acsUrl: env.SAML_SP_ACS_URL || `${apiBaseUrl()}/auth/saml/acs`,
   /** Single Logout Service URL (SP endpoint for SAML SLO). */
-  sloUrl: process.env.SAML_SP_SLO_URL || `${apiBaseUrl()}/auth/saml/slo`,
+  sloUrl: env.SAML_SP_SLO_URL || `${apiBaseUrl()}/auth/saml/slo`,
   /** Optional PEM private key for signing AuthnRequests (enterprise IdPs). */
-  privateKey: process.env.SAML_SP_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+  privateKey: env.SAML_SP_PRIVATE_KEY?.replace(/\\n/g, '\n'),
   /** Optional PEM certificate for SP metadata / signature verification. */
-  certificate: process.env.SAML_SP_CERTIFICATE?.replace(/\\n/g, '\n'),
+  certificate: env.SAML_SP_CERTIFICATE?.replace(/\\n/g, '\n'),
 };
 
 export function getSamlCallbackUrl(): string {

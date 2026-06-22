@@ -46,7 +46,7 @@ import {
   ACCOUNT_DELETION_TOKEN_TTL_SECONDS,
   ACCOUNT_UNLOCK_TTL_SECONDS,
   EMAIL_CHANGE_TTL_SECONDS,
-  generateSecureToken,
+  generateEmailFlowToken,
   hashEmailFlowToken,
   normalizeEmail,
 } from './utils.js';
@@ -139,7 +139,7 @@ export async function requestEmailChange(
     );
   }
 
-  const token = generateSecureToken();
+  const token = generateEmailFlowToken();
   await repository.createEmailVerification({
     user_id: userId,
     email: newEmail,
@@ -255,7 +255,7 @@ export async function requestAccountUnlock(
     user.locked_until > new Date() &&
     !user.deleted_at
   ) {
-    const token = generateSecureToken();
+    const token = generateEmailFlowToken();
     await repository.createEmailVerification({
       user_id: user.id,
       email: normalizeEmail(user.email),
@@ -360,7 +360,7 @@ export async function requestAccountDeletion(
   const scheduledAt = new Date(
     Date.now() + ACCOUNT_DELETION_GRACE_SECONDS * 1000,
   );
-  const token = generateSecureToken();
+  const token = generateEmailFlowToken();
 
   await repository.createEmailVerification({
     user_id: userId,

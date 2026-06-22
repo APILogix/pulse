@@ -1,8 +1,6 @@
 /**
  * Passwordless login via previously linked Google/GitHub/Microsoft identities.
  */
-import { randomState } from 'openid-client';
-
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 
 import { socialLoginStateCache } from './cache.js';
@@ -43,8 +41,7 @@ export async function startSocialLogin(
     );
   }
 
-  const { codeVerifier } = createPkcePair();
-  const state = randomState();
+  const { codeVerifier, nonce, state } = createPkcePair();
   const redirectUri = getSocialLoginCallbackUrl();
 
   const authorizationUrl = await buildOAuthAuthorizationUrl({
@@ -52,12 +49,14 @@ export async function startSocialLogin(
     redirectUri,
     state,
     codeVerifier,
+    nonce,
   });
 
   socialLoginStateCache.set(state, {
     provider,
     codeVerifier,
     redirectUri,
+    nonce,
     rememberMe: input.remember_me === true,
     ipAddress,
     userAgent,
@@ -117,6 +116,7 @@ export async function completeSocialLogin(
     callbackUrl,
     flow.codeVerifier,
     flow.redirectUri,
+    flow.nonce,
   );
 
   const link = await repository.findLinkedIdentityByProviderSubject(

@@ -6,7 +6,9 @@ import {
   buildAuthorizationUrl,
   calculatePKCECodeChallenge,
   discovery,
+  randomNonce,
   randomPKCECodeVerifier,
+  randomState,
 } from 'openid-client';
 
 import { env as config } from '../../config/env.js';
@@ -27,12 +29,12 @@ export interface OAuthProfile {
 export async function buildOidcClient(provider: 'google' | 'microsoft') {
   const clientId =
     provider === 'google'
-      ? process.env.GOOGLE_CLIENT_ID!
-      : process.env.MICROSOFT_CLIENT_ID!;
+      ? config.GOOGLE_CLIENT_ID!
+      : config.MICROSOFT_CLIENT_ID!;
   const clientSecret =
     provider === 'google'
-      ? process.env.GOOGLE_CLIENT_SECRET!
-      : process.env.MICROSOFT_CLIENT_SECRET!;
+      ? config.GOOGLE_CLIENT_SECRET!
+      : config.MICROSOFT_CLIENT_SECRET!;
   const issuer =
     provider === 'google'
       ? 'https://accounts.google.com'
@@ -45,11 +47,12 @@ export async function buildOAuthAuthorizationUrl(options: {
   redirectUri: string;
   state: string;
   codeVerifier: string;
+  nonce?: string;
 }): Promise<string> {
   if (options.provider === 'github') {
     const codeChallenge = await calculatePKCECodeChallenge(options.codeVerifier);
     const params = new URLSearchParams({
-      client_id: process.env.GITHUB_CLIENT_ID!,
+      client_id: config.GITHUB_CLIENT_ID!,
       redirect_uri: options.redirectUri,
       scope: 'read:user user:email',
       state: options.state,
@@ -70,6 +73,7 @@ export async function buildOAuthAuthorizationUrl(options: {
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
     state: options.state,
+    ...(options.nonce ? { nonce: options.nonce } : {}),
   });
   return url.toString();
 }
@@ -83,8 +87,8 @@ async function exchangeGithubCode(
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      client_id: process.env.GITHUB_CLIENT_ID,
-      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      client_id: config.GITHUB_CLIENT_ID,
+      client_secret: config.GITHUB_CLIENT_SECRET,
       code,
       redirect_uri: redirectUri,
       code_verifier: codeVerifier,
@@ -151,6 +155,7 @@ export async function exchangeOAuthCallback(
   callbackUrl: string,
   codeVerifier: string,
   redirectUri: string,
+  nonce?: string,
 ): Promise<OAuthProfile> {
   const url = new URL(callbackUrl);
   const code = url.searchParams.get('code');
@@ -169,6 +174,7 @@ export async function exchangeOAuthCallback(
 
   const oidcConfig = await buildOidcClient(provider);
   const tokens = await authorizationCodeGrant(oidcConfig, url, {
+    ...(nonce ? { expectedNonce: nonce } : {}),
     expectedState: state,
     pkceCodeVerifier: codeVerifier,
   });
@@ -193,6 +199,14 @@ export async function exchangeOAuthCallback(
   return { provider, subject, email, displayName };
 }
 
-export function createPkcePair(): { codeVerifier: string; state: string } {
-  return { codeVerifier: randomPKCECodeVerifier(), state: randomPKCECodeVerifier() };
+export function createPkcePair(): {
+  codeVerifier: string;
+  state: string;
+  nonce: string;
+} {
+  return {
+    codeVerifier: randomPKCECodeVerifier(),
+    state: randomState(),
+    nonce: randomNonce(),
+  };
 }

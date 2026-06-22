@@ -11,6 +11,10 @@ import { getClientInfo } from '../../shared/utils/request.js';
 
 import { handleAuthError } from './routes.js';
 import {
+  buildConfiguredCallbackUrl,
+  getApiOidcCallbackUrl,
+} from './oauth-callback.config.js';
+import {
   loginMfaRateLimit,
   ssoCallbackRateLimit,
   ssoLoginRateLimit,
@@ -93,9 +97,10 @@ export default async function ssoOidcRoutes(fastify: FastifyInstance) {
           });
         }
         const ci = getClientInfo(request);
-        const callbackUrl = request.url.startsWith('http')
-          ? request.url
-          : `${request.protocol}://${request.hostname}${request.url}`;
+        const callbackUrl = buildConfiguredCallbackUrl(
+          getApiOidcCallbackUrl(),
+          request.url,
+        );
         const tokens = await sso.completeSsoCallback(
           callbackUrl,
           ci.ip,

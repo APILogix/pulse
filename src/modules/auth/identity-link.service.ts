@@ -9,6 +9,7 @@ import {
   buildAuthorizationUrl,
   calculatePKCECodeChallenge,
   discovery,
+  randomNonce,
   randomPKCECodeVerifier,
   randomState,
 } from 'openid-client';
@@ -41,12 +42,12 @@ function assertProviderConfigured(provider: LinkableProvider): void {
 async function buildOidcLinkConfig(provider: 'google' | 'microsoft') {
   const clientId =
     provider === 'google'
-      ? process.env.GOOGLE_CLIENT_ID!
-      : process.env.MICROSOFT_CLIENT_ID!;
+      ? config.GOOGLE_CLIENT_ID!
+      : config.MICROSOFT_CLIENT_ID!;
   const clientSecret =
     provider === 'google'
-      ? process.env.GOOGLE_CLIENT_SECRET!
-      : process.env.MICROSOFT_CLIENT_SECRET!;
+      ? config.GOOGLE_CLIENT_SECRET!
+      : config.MICROSOFT_CLIENT_SECRET!;
   const issuer =
     provider === 'google'
       ? 'https://accounts.google.com'
@@ -78,13 +79,14 @@ export async function startIdentityLink(
   const redirectUri = getApiIdentityLinkCallbackUrl();
   const state = randomState();
   const codeVerifier = randomPKCECodeVerifier();
+  const nonce = provider === 'github' ? undefined : randomNonce();
 
   let authorizationUrl: string;
 
   if (provider === 'github') {
     const codeChallenge = await calculatePKCECodeChallenge(codeVerifier);
     const params = new URLSearchParams({
-      client_id: process.env.GITHUB_CLIENT_ID!,
+      client_id: config.GITHUB_CLIENT_ID!,
       redirect_uri: redirectUri,
       scope: 'read:user user:email',
       state,
@@ -101,6 +103,7 @@ export async function startIdentityLink(
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
       state,
+      ...(nonce ? { nonce } : {}),
     });
     authorizationUrl = url.toString();
   }
@@ -110,6 +113,7 @@ export async function startIdentityLink(
     provider,
     codeVerifier,
     redirectUri,
+    ...(nonce ? { nonce } : {}),
   });
 
   logAudit({
@@ -137,8 +141,8 @@ async function exchangeGithubCode(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      client_id: process.env.GITHUB_CLIENT_ID,
-      client_secret: process.env.GITHUB_CLIENT_SECRET,
+      client_id: config.GITHUB_CLIENT_ID,
+      client_secret: config.GITHUB_CLIENT_SECRET,
       code,
       redirect_uri: redirectUri,
       code_verifier: codeVerifier,
@@ -225,6 +229,7 @@ export async function completeIdentityLink(
   } else {
     const oidcConfig = await buildOidcLinkConfig(flow.provider);
     const tokens = await authorizationCodeGrant(oidcConfig, url, {
+      ...(flow.nonce ? { expectedNonce: flow.nonce } : {}),
       expectedState: state,
       pkceCodeVerifier: flow.codeVerifier,
     });

@@ -10,6 +10,7 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   APP_NAME: z.string().default('API Monitoring'),
   APP_URL: z.string().url().default('http://localhost:5173'),
+  API_PUBLIC_URL: z.string().url().optional(),
   // Primary Database (PostgreSQL)
   DATABASE_URL: z.string(),
 
@@ -51,6 +52,27 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM_EMAIL: z.string().email().default('security@example.com'),
   SMTP_FROM_NAME: z.string().default('API Monitoring Security'),
+
+  // Auth callbacks / SSO / WebAuthn
+  OIDC_CALLBACK_URL: z.string().url().optional(),
+  SOCIAL_LOGIN_CALLBACK_URL: z.string().url().optional(),
+  IDENTITY_LINK_CALLBACK_URL: z.string().url().optional(),
+  SAML_SP_ENTITY_ID: z.string().url().optional(),
+  SAML_SP_ACS_URL: z.string().url().optional(),
+  SAML_SP_SLO_URL: z.string().url().optional(),
+  SAML_SP_PRIVATE_KEY: z.string().optional(),
+  SAML_SP_CERTIFICATE: z.string().optional(),
+  WEBAUTHN_RP_ID: z.string().optional(),
+  WEBAUTHN_RP_NAME: z.string().optional(),
+
+  // Social OAuth / identity linking
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_CLIENT_ID: z.string().optional(),
+  MICROSOFT_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_TENANT_ID: z.string().optional(),
 
   // AI
   OPENAI_API_KEY: z.string().optional(),
