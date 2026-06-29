@@ -62,6 +62,7 @@ import {
 import {
   assertLoginAllowedByOrgPolicy,
   assertRefreshAllowedByOrgPolicy,
+  assertMfaEnrollmentAllowed,
 } from './policy.service.js';
 import * as repository from './repository.js';
 import {
@@ -80,6 +81,7 @@ import {
   type MFADevice,
   type MFADisableConfirmInput,
   type MFADisableRequestInput,
+  type MFAType,
   type MFASetupInput,
   type MFAToggleInput,
   type MFAVerifyInput,
@@ -493,6 +495,39 @@ async function blacklistOtherUserSessionTokens(
 // ----------------------------------------------------------------------------
 // TOTP helpers
 // ----------------------------------------------------------------------------
+
+/** Mask an email for display hints: "jane.doe@example.com" -> "j•••@example.com". */
+function maskEmailForHint(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain || !local) return 'Email code';
+  const head = local.slice(0, 1);
+  return `${head}•••@${domain}`;
+}
+
+/**
+ * Build the masked "try another way" display hint for a device. TOTP and
+ * hardware keys fall back to the user-chosen device name; email/SMS are masked.
+ */
+function buildMfaDisplayHint(
+  deviceType: MFAType,
+  deviceName: string,
+  opts: { email?: string | null } = {},
+): string {
+  switch (deviceType) {
+    case 'email':
+      return opts.email ? maskEmailForHint(opts.email) : 'Email code';
+    case 'totp':
+      return deviceName?.trim() || 'Authenticator App';
+    case 'hardware_key':
+      return deviceName?.trim() || 'Security key';
+    case 'sms':
+      return deviceName?.trim() || 'Text message';
+    case 'backup_codes':
+      return 'Backup code';
+    default:
+      return deviceName?.trim() || 'Verification method';
+  }
+}
 
 function buildTotp(secretBase32: string, label?: string): OTPAuth.TOTP {
   return new OTPAuth.TOTP({
@@ -1449,7 +1484,27 @@ export async function loginWithEmailPassword(
       id: d.id,
       type: d.device_type,
       name: d.device_name || (d.device_type === 'totp' ? 'Authenticator App' : 'Email OTP'),
+      display_hint:
+        d.display_hint ||
+        buildMfaDisplayHint(d.device_type, d.device_name, { email: user.email }),
+      is_primary: d.is_primary,
+      last_used_at: d.last_used_at,
     }));
+
+    const hasBackupCodes =
+      user.mfa_backup_codes_generated_at != null ||
+      verifiedDevices.some((d) => Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0);
+
+    if (hasBackupCodes) {
+      availableMethods.push({
+        id: 'backup_codes',
+        type: 'backup_codes',
+        name: 'Backup Codes',
+        display_hint: 'Use an emergency recovery code',
+        is_primary: false,
+        last_used_at: null,
+      });
+    }
 
     const challenge = createLoginMFAChallenge({
       userId: user.id,
@@ -2115,6 +2170,18 @@ export async function setupMFA(
   }
   assertUserUsable(user);
 
+  // Enforce organization MFA policy (allowed methods + per-user device cap)
+  // before enrolling. Re-enrolling an existing device of the same type reuses
+  // its row, so it does not count against the cap.
+  const policyDevices = await repository.findMFADevicesByUserId(userId);
+  const existingOfType = policyDevices.find(
+    (d) => d.device_type === input.type && d.is_active,
+  );
+  const activeCountForCap = policyDevices.filter(
+    (d) => d.is_active && d.id !== existingOfType?.id,
+  ).length;
+  await assertMfaEnrollmentAllowed(userId, input.type, activeCountForCap);
+
   // ── Email MFA setup ──────────────────────────────────────────────────────
   if (input.type === 'email') {
     const existing = await repository.findAnyMFADeviceByType(userId, 'email');
@@ -2164,6 +2231,9 @@ export async function setupMFA(
         secret_encrypted: null,
         is_primary: isPrimary,
         device_metadata: { setup_ip: ipAddress },
+        display_hint: buildMfaDisplayHint('email', input.device_name, {
+          email: user.email,
+        }),
       });
     }
 
@@ -2233,6 +2303,7 @@ export async function setupMFA(
       secret_encrypted: secretEncrypted,
       is_primary: isPrimary,
       device_metadata: { setup_ip: ipAddress },
+      display_hint: buildMfaDisplayHint('totp', input.device_name),
     });
   }
 

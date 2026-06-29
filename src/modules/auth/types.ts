@@ -113,8 +113,31 @@ export interface MFADevice {
   is_active: boolean;
   disabled_at: Date | null;
   disabled_reason: string | null;
+  // Added in migration 005 (Google-style MFA / "try another way").
+  display_hint: string | null;
+  phone_number_encrypted: string | null;
+  failed_attempts: number;
+  last_failed_at: Date | null;
+  use_count: number;
   created_at: Date;
   updated_at: Date;
+}
+
+/**
+ * Effective organization MFA policy (migration 005). Resolved across all of a
+ * user's active org memberships using a "strictest wins" rule, mirroring
+ * EffectiveAuthPolicy in policy.service.ts.
+ */
+export interface MfaPolicy {
+  mfa_required: boolean;
+  allowed_methods: MFAType[];
+  primary_method_preference: MFAType | null;
+  backup_codes_required: boolean;
+  grace_period_days: number;
+  max_devices_per_user: number;
+  allow_sms_fallback: boolean;
+  allow_email_fallback: boolean;
+  remember_device_days: number;
 }
 
 export interface TOTPSetup {

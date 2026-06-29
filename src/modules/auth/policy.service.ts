@@ -7,7 +7,7 @@
  */
 import * as repository from './repository.js';
 import { AuthError, AuthErrorCodes } from './types.js';
-import type { User } from './types.js';
+import type { MfaPolicy, MFAType, User } from './types.js';
 
 export interface PasswordPolicyPublic {
   min_length: number;
@@ -116,4 +116,105 @@ export async function assertRefreshAllowedByOrgPolicy(
       );
     }
   }
+}
+
+// ============================================================================
+// Organization MFA policy (migration 005)
+// ============================================================================
+
+/** Platform defaults applied when a user belongs to no organization. */
+const DEFAULT_MFA_POLICY: MfaPolicy = {
+  mfa_required: false,
+  allowed_methods: ['totp', 'email', 'hardware_key', 'backup_codes'],
+  primary_method_preference: null,
+  backup_codes_required: true,
+  grace_period_days: 7,
+  max_devices_per_user: 10,
+  allow_sms_fallback: false,
+  allow_email_fallback: true,
+  remember_device_days: 30,
+};
+
+// backup_codes is a fallback/recovery method, not a user-selectable primary
+// method, so it is never blocked by an org's allowed-method list.
+const ALWAYS_ALLOWED_METHODS: ReadonlySet<MFAType> = new Set(['backup_codes']);
+
+function intersectMethods(a: MFAType[], b: Set<MFAType>): MFAType[] {
+  return a.filter((m) => b.has(m) || ALWAYS_ALLOWED_METHODS.has(m));
+}
+
+/**
+ * Resolve the effective MFA policy for a user across every active org
+ * membership. "Strictest wins": MFA is required if any org requires it, a
+ * method is allowed only if every org allows it, and numeric caps take the
+ * most restrictive (minimum) value. A user with no orgs gets platform defaults.
+ */
+export async function getEffectiveMfaPolicy(userId: string): Promise<MfaPolicy> {
+  const orgPolicies = await repository.listOrgAuthPoliciesForUser(userId);
+  if (orgPolicies.length === 0) {
+    return { ...DEFAULT_MFA_POLICY };
+  }
+
+  let allowed: MFAType[] = orgPolicies[0]!.mfa_allowed_methods as MFAType[];
+  for (let i = 1; i < orgPolicies.length; i++) {
+    const next = new Set(orgPolicies[i]!.mfa_allowed_methods as MFAType[]);
+    allowed = intersectMethods(allowed, next);
+  }
+  // Guarantee recovery is always possible.
+  if (!allowed.includes('backup_codes')) {
+    allowed = [...allowed, 'backup_codes'];
+  }
+
+  const preference =
+    orgPolicies.find((p) => p.mfa_primary_method_preference)
+      ?.mfa_primary_method_preference ?? null;
+
+  return {
+    mfa_required: orgPolicies.some((p) => p.enforce_mfa),
+    allowed_methods: allowed,
+    primary_method_preference: preference as MFAType | null,
+    backup_codes_required: orgPolicies.some((p) => p.mfa_backup_codes_required),
+    grace_period_days: Math.min(...orgPolicies.map((p) => p.mfa_grace_period_days)),
+    max_devices_per_user: Math.min(
+      ...orgPolicies.map((p) => p.mfa_max_devices_per_user),
+    ),
+    // Fallback is allowed only when every org permits it.
+    allow_sms_fallback: orgPolicies.every((p) => p.mfa_allow_sms_fallback),
+    allow_email_fallback: orgPolicies.every((p) => p.mfa_allow_email_fallback),
+    remember_device_days: Math.min(
+      ...orgPolicies.map((p) => p.mfa_remember_device_days),
+    ),
+  };
+}
+
+/**
+ * Enforce org MFA policy before enrolling a new device: the method must be
+ * permitted and the user must be under the per-user device cap. Call this at
+ * the start of every enrollment flow (TOTP, email, SMS, WebAuthn/passkey).
+ */
+export async function assertMfaEnrollmentAllowed(
+  userId: string,
+  deviceType: MFAType,
+  currentActiveDeviceCount: number,
+): Promise<MfaPolicy> {
+  const policy = await getEffectiveMfaPolicy(userId);
+
+  if (!policy.allowed_methods.includes(deviceType)) {
+    throw new AuthError(
+      'This MFA method is not allowed by your organization',
+      AuthErrorCodes.VALIDATION_ERROR,
+      400,
+      { allowed_methods: policy.allowed_methods },
+    );
+  }
+
+  if (currentActiveDeviceCount >= policy.max_devices_per_user) {
+    throw new AuthError(
+      `Maximum ${policy.max_devices_per_user} MFA devices allowed`,
+      AuthErrorCodes.VALIDATION_ERROR,
+      400,
+    );
+  }
+
+  return policy;
 }

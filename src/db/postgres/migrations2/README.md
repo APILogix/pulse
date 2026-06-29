@@ -21,6 +21,10 @@ schema. It is the authoritative DDL for a fresh database. It does NOT depend on 
 |------|---------|
 | `001_auth_canonical_consolidated.up.sql` | Full auth schema with the bugs below fixed. Idempotent. |
 | `001_auth_canonical_consolidated.down.sql` | Clean rollback of everything created by the up file. |
+| `002_add_notification_connectors.{up,down}.sql` | Notification connector configs. |
+| `003_add_alerting_module.{up,down}.sql` | Alerting rules/incidents. |
+| `004_add_analytics_module.{up,down}.sql` | Pulse SDK event + analytics tables. |
+| `005_add_mfa_system.{up,down}.sql` | Google-style MFA: extends `user_mfa_devices` (display_hint, encrypted phone, per-device lockout), adds `sms_mfa_otps`, and adds org MFA-policy columns to `organization_settings`. Extends the existing MFA schema — does NOT create a parallel `mfa_devices` family. |
 | `BUGFIXES.md` | Point-by-point list of every bug this schema corrects vs. `migrations/`. |
 
 ## Bugs corrected (summary — full detail in `BUGFIXES.md`)
