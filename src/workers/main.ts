@@ -20,6 +20,8 @@ import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.pr
 import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
 import { registerAlertingWorkers } from '../modules/alerting/queue.js';
+import { registerAnalyticsWorkers } from '../modules/event-analytics/queue.js';
+import { startConnectorMonitor } from '../modules/connectors/workers.js';
 
 const workerLogger = logger.child({ component: 'workers' });
 
@@ -43,6 +45,8 @@ async function bootstrapWorkers(): Promise<void> {
   maintenance.start();
 
   let alertingWorkers: { stop: () => Promise<void> } | null = null;
+  let analyticsWorkers: { stop: () => Promise<void> } | null = null;
+  let connectorMonitor: { stop: () => Promise<void> } | null = null;
 
   initializeWorkers({
     pool: pgPool,
@@ -52,6 +56,8 @@ async function bootstrapWorkers(): Promise<void> {
       stopAuthCleanupWorker();
       stopAuthEmailWorker();
       if (alertingWorkers) await alertingWorkers.stop();
+      if (analyticsWorkers) await analyticsWorkers.stop();
+      if (connectorMonitor) await connectorMonitor.stop();
       await stopPgBoss();
       await pgPool.end();
     },
@@ -61,15 +67,21 @@ async function bootstrapWorkers(): Promise<void> {
   await startPgBoss();
   await startAuthEmailWorker();
 
+  // Connector delivery retry + health sweeps (moved out of the API process).
+  connectorMonitor = startConnectorMonitor(workerLogger);
+
   // Alerting pg-boss workers: batch processing (teamSize 5 / teamConcurrency 5),
   // batch formation, and auto-resolve sweeps.
   alertingWorkers = await registerAlertingWorkers(workerLogger);
+
+  // Event-analytics pg-boss workers: hourly rollups, error grouping, partition maintenance.
+  analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
 
   // Auth housekeeping (expired sessions, stale email tokens). Runs hourly.
   startAuthCleanupWorker();
 
   workerLogger.info('Worker process started');
-  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, alerting (pg-boss)');
+  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, connectors-monitor, alerting (pg-boss), event-analytics (pg-boss)');
 }
 
 bootstrapWorkers().catch((error) => {

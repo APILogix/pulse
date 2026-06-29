@@ -19,6 +19,9 @@ import registerOrganizationModule from './modules/organization/organization.modu
 import { registerProjectsModule } from './modules/projects/projects.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
+import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
+import { registerAlertingModule } from './modules/alerting/alerting.module.js';
+import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
     // Prod and non-prod use the same explicit allowlist. Reflecting any origin
@@ -133,6 +136,9 @@ export async function buildApp() {
     await app.register(ingestionModule); // Must be before projects
     await app.register(registerProjectsModule); // Depends on ingestion.redisCache
     await app.register(registerAnalyticsModule);
+    await app.register(registerConnectorsModule);
+    await app.register(registerAlertingModule);
+    await app.register(registerEventAnalyticsModule);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {

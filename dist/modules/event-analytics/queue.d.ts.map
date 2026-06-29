@@ -1,0 +1,1 @@
+{"version":3,"file":"queue.d.ts","sourceRoot":"","sources":["../../../src/modules/event-analytics/queue.ts"],"names":[],"mappings":"AAAA;;;;;;;;;;;GAWG;AACH,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,SAAS,CAAC;AAKjD,eAAO,MAAM,cAAc;;;;CAIjB,CAAC;AAQX,wBAAsB,wBAAwB,CAC5C,MAAM,EAAE,iBAAiB,GACxB,OAAO,CAAC;IAAE,IAAI,EAAE,MAAM,OAAO,CAAC,IAAI,CAAC,CAAA;CAAE,CAAC,CA0ExC"}

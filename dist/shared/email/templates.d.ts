@@ -23,12 +23,6 @@ export declare function mfaCodeTemplate(input: MfaCodeTemplateInput): EmailTempl
 export declare function mfaStatusTemplate(input: TemplateInput & {
     enabled: boolean;
 }): EmailTemplate;
-/**
- * Email sent when a user starts the MFA-disable flow. Contains a one-time
- * confirmation link the user must click to actually disable MFA. Until the
- * link is consumed, MFA remains in force, so a phished password + a stolen
- * TOTP cannot disable MFA on its own.
- */
 export declare function emailChangeConfirmTemplate(input: ActionTemplateInput & {
     newEmail: string;
 }): EmailTemplate;

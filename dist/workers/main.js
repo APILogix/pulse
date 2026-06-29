@@ -19,6 +19,8 @@ import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
+import { registerAlertingWorkers } from '../modules/alerting/queue.js';
+import { registerAnalyticsWorkers } from '../modules/event-analytics/queue.js';
 const workerLogger = logger.child({ component: 'workers' });
 async function bootstrapWorkers() {
     const pgPool = new Pool({
@@ -35,6 +37,8 @@ async function bootstrapWorkers() {
     await pgPool.query('SELECT 1');
     const maintenance = new TelemetryMaintenanceWorker(pgPool, workerLogger);
     maintenance.start();
+    let alertingWorkers = null;
+    let analyticsWorkers = null;
     initializeWorkers({
         pool: pgPool,
         concurrency: Number(process.env.INGESTION_WORKER_CONCURRENCY ?? 4),
@@ -42,6 +46,10 @@ async function bootstrapWorkers() {
             maintenance.stop();
             stopAuthCleanupWorker();
             stopAuthEmailWorker();
+            if (alertingWorkers)
+                await alertingWorkers.stop();
+            if (analyticsWorkers)
+                await analyticsWorkers.stop();
             await stopPgBoss();
             await pgPool.end();
         },
@@ -49,10 +57,15 @@ async function bootstrapWorkers() {
     // Start PgBoss and the Auth Email Worker
     await startPgBoss();
     await startAuthEmailWorker();
+    // Alerting pg-boss workers: batch processing (teamSize 5 / teamConcurrency 5),
+    // batch formation, and auto-resolve sweeps.
+    alertingWorkers = await registerAlertingWorkers(workerLogger);
+    // Event-analytics pg-boss workers: hourly rollups, error grouping, partition maintenance.
+    analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
     // Auth housekeeping (expired sessions, stale email tokens). Runs hourly.
     startAuthCleanupWorker();
     workerLogger.info('Worker process started');
-    workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup');
+    workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, alerting (pg-boss), event-analytics (pg-boss)');
 }
 bootstrapWorkers().catch((error) => {
     workerLogger.fatal({ error }, 'Failed to start worker process');

@@ -27,6 +27,7 @@ import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
+import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -164,6 +165,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerAnalyticsModule);
   await app.register(registerConnectorsModule);
   await app.register(registerAlertingModule);
+  await app.register(registerEventAnalyticsModule);
 
   appLogger.info('All modules registered');
 
