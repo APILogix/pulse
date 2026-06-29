@@ -41,7 +41,7 @@ function buildEmailChangeUrl(token) {
     return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/security/email/confirm?token=${encodeURIComponent(token)}`;
 }
 function buildAccountUnlockUrl(token) {
-    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/account/unlock?token=${encodeURIComponent(token)}`;
+    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/auth/unlock-success?token=${encodeURIComponent(token)}`;
 }
 function buildAccountDeletionConfirmUrl(token) {
     return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/account/delete/confirm?token=${encodeURIComponent(token)}`;

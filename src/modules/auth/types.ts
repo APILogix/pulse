@@ -323,13 +323,11 @@ export const MFAVerifySchema = z.object({
 });
 export type MFAVerifyInput = z.infer<typeof MFAVerifySchema>;
 
-// MFA disable now uses a two-step email-confirmation flow.
-//   POST /auth/mfa/disable/request  → emails the user a one-time link.
-//   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
-// The MFA code (TOTP or email OTP) is still required at request-time so a
-// stolen access token alone cannot initiate the disable.
+// MFA disable is protected by the route-level step-up gate. The body remains
+// permissive for older clients that still send an MFA code, but the current
+// single-step flow relies on verified step-up freshness.
 export const MFADisableRequestSchema = z.object({
-  mfa_code: z.string().length(6).regex(/^\d{6}$/),
+  mfa_code: z.string().length(6).regex(/^\d{6}$/).optional(),
 });
 export type MFADisableRequestInput = z.infer<typeof MFADisableRequestSchema>;
 
@@ -338,9 +336,8 @@ export const MFADisableConfirmSchema = z.object({
 });
 export type MFADisableConfirmInput = z.infer<typeof MFADisableConfirmSchema>;
 
-// MFA toggle: enabling still requires a verified device + TOTP. Disabling
-// goes through MFADisableRequest/MFADisableConfirm separately, so this
-// schema only handles enable.
+// MFA toggle: enabling still requires a verified device + MFA code. Disabling
+// uses the dedicated step-up protected disable route.
 export const MFAToggleSchema = z.object({
   enabled: z.literal(true),
   mfa_code: z.string().length(6).regex(/^\d{6}$/),

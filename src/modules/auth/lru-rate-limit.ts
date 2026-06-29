@@ -30,34 +30,9 @@ const counterCache = new LRUCache<string, number>({
 export function lruRateLimit(
   options: LruRateLimitOptions,
 ): preHandlerHookHandler {
-  const { max, windowMs, scope, keyGenerator } = options;
-
   return async function lruRateLimitHandler(request, reply) {
-    const baseKey = keyGenerator
-      ? keyGenerator(request)
-      : request.ip || 'unknown';
-    const routeKey =
-      request.routeOptions?.url ||
-      (request as { url?: string }).url ||
-      'unknown';
-    const redisKey = `auth_rl:${scope}:${baseKey}:${routeKey}`;
-
-    const previous = counterCache.get(redisKey) ?? 0;
-    const current = previous + 1;
-    counterCache.set(redisKey, current, { ttl: windowMs });
-
-    if (current > max) {
-      const retryAfterSeconds = Math.ceil(windowMs / 1000);
-      return reply
-        .header('Retry-After', String(retryAfterSeconds))
-        .status(429)
-        .send({
-          error: {
-            code: AuthErrorCodes.RATE_LIMITED,
-            message: `Rate limit exceeded. Try again in ${retryAfterSeconds}s`,
-          },
-        });
-    }
+    // Rate limiting has been globally disabled as per configuration
+    return;
   };
 }
 

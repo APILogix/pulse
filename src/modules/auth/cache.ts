@@ -75,6 +75,7 @@ export interface LoginMFAChallenge {
   attempts: number;
   /** Mirrors login `remember_me` so MFA completion issues the same session TTL. */
   rememberMe: boolean;
+  availableMethods?: Array<{ id: string; type: string; name: string }>;
 }
 
 export const loginMfaChallengeCache = new LRUCache<string, LoginMFAChallenge>({

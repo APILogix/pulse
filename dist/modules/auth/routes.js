@@ -1,7 +1,7 @@
 import { authenticate, requireAdmin, requireStepUp, } from '../../shared/middleware/auth.js';
 import { getClientInfo } from '../../shared/utils/request.js';
 import * as service from './service.js';
-import { AuthError, AdminLockUserSchema, AuthErrorCodes, BackupCodeLoginSchema, ChangePasswordSchema, CreateUserSchema, DeleteUserSchema, ForgotPasswordSchema, ListUsersQuerySchema, LoginMFAVerifySchema, LoginSchema, MFADeviceRemoveSchema, MFADisableConfirmSchema, MFADisableRequestSchema, MFASetupSchema, MFAToggleSchema, MFAVerifySchema, MFAVerifySetupSchema, EmailMfaResendSchema, RegenerateBackupCodesSchema, ResendVerificationSchema, ResetPasswordSchema, SuspendUserSchema, UpdateUserSchema, VerifyEmailConfirmSchema, VerifyEmailQuerySchema, } from './types.js';
+import { AuthError, AdminLockUserSchema, AuthErrorCodes, BackupCodeLoginSchema, ChangePasswordSchema, CreateUserSchema, DeleteUserSchema, ForgotPasswordSchema, ListUsersQuerySchema, LoginMFAVerifySchema, LoginSchema, MFADeviceRemoveSchema, MFADisableRequestSchema, MFASetupSchema, MFAToggleSchema, MFAVerifySchema, MFAVerifySetupSchema, EmailMfaResendSchema, RegenerateBackupCodesSchema, ResendVerificationSchema, ResetPasswordSchema, SuspendUserSchema, UpdateUserSchema, VerifyEmailConfirmSchema, VerifyEmailQuerySchema, } from './types.js';
 import identityRoutes from './identity.routes.js';
 import ssoOidcRoutes from './sso-oidc.routes.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
@@ -90,6 +90,21 @@ async function credentialRoutes(fastify) {
             const ci = getClientInfo(request);
             const result = await service.verifyLoginMFAChallenge(body, ci.ip, ci.userAgent, ci.device.type, request.id);
             return sendAuthSession(reply, result);
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
+    // POST /auth/login/mfa/switch
+    fastify.post('/login/mfa/switch', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+        try {
+            const { z } = await import('zod');
+            const body = z.object({
+                challenge_id: z.string().min(1),
+                device_id: z.string().min(1)
+            }).parse(request.body);
+            const result = await service.switchLoginMfaMethod(body.challenge_id, body.device_id);
+            return reply.send({ data: result });
         }
         catch (error) {
             return handleAuthError(error, reply, request);
@@ -553,12 +568,24 @@ async function mfaRoutes(fastify) {
     // POST /auth/mfa/disable/request — step 1 of MFA disable.
     // Requires authenticated session + valid TOTP. Sends an email with a
     // one-time confirmation link. MFA stays enabled until the link is used.
+    fastify.post('/mfa/disable', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
+        try {
+            const r = request;
+            const body = MFADisableRequestSchema.parse(r.body || {});
+            const { ip } = getClientInfo(r);
+            const result = await service.disableMFA(r.user.id, body, ip, r.id);
+            return reply.send({ data: result });
+        }
+        catch (error) {
+            return handleAuthError(error, reply, request);
+        }
+    });
     fastify.post('/mfa/disable/request', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
         try {
             const r = request;
-            const body = MFADisableRequestSchema.parse(r.body);
+            const body = MFADisableRequestSchema.parse(r.body || {});
             const { ip } = getClientInfo(r);
-            const result = await service.requestMfaDisable(r.user.id, body, ip, r.id);
+            const result = await service.disableMFA(r.user.id, body, ip, r.id);
             return reply.send({ data: result });
         }
         catch (error) {
@@ -569,10 +596,12 @@ async function mfaRoutes(fastify) {
     // Consumes the email-confirmation token and actually disables MFA.
     fastify.post('/mfa/disable/confirm', { preHandler: [tokenConfirmRateLimit] }, async (request, reply) => {
         try {
-            const body = MFADisableConfirmSchema.parse(request.body);
-            const ci = getClientInfo(request);
-            await service.confirmMfaDisable(body, ci.ip, request.id);
-            return reply.send({ message: 'MFA disabled successfully' });
+            return reply.status(410).send({
+                error: {
+                    code: AuthErrorCodes.INVALID_OPERATION,
+                    message: 'MFA disable confirmation links are no longer supported. Use POST /auth/mfa/disable.',
+                },
+            });
         }
         catch (error) {
             return handleAuthError(error, reply, request);

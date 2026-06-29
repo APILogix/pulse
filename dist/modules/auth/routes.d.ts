@@ -9,7 +9,7 @@
  *   - Map AuthError -> HTTP responses without leaking internals.
  *
  * Refresh-token transport:
- *   - The refresh JWT lives in an httpOnly, signed, SameSite=Strict cookie
+ *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie
  *     named `__Host-refresh_token` with Path=/. This forces the browser to
  *     require Secure + no Domain attribute, blocking sibling-subdomain
  *     overwrite attacks.

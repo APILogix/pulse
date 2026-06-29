@@ -8,7 +8,7 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   PORT: z.string().transform(Number).default(3000),
   HOST: z.string().default('0.0.0.0'),
-  APP_NAME: z.string().default('API Monitoring'),
+  APP_NAME: z.string().default('Pulsiv'),
   APP_URL: z.string().url().default('http://localhost:5173'),
   API_PUBLIC_URL: z.string().url().optional(),
   // Primary Database (PostgreSQL)

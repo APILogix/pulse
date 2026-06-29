@@ -70,10 +70,10 @@ function getBaseUrl(value, fallback) {
 }
 function buildVerifyEmailUrl(token) {
     // Verification links open in the SPA (same as password reset / MFA disable).
-    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/verify-email?token=${encodeURIComponent(token)}`;
+    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/auth/verify-email?token=${encodeURIComponent(token)}`;
 }
 function buildResetPasswordUrl(token) {
-    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/reset-password?token=${encodeURIComponent(token)}`;
+    return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/auth/reset-password?token=${encodeURIComponent(token)}`;
 }
 function buildMfaDisableConfirmUrl(token) {
     return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/security/mfa/disable?token=${encodeURIComponent(token)}`;
@@ -157,16 +157,15 @@ async function sendMfaDisableConfirmEmail(user, token) {
  * Uses rejection sampling to avoid modulo bias.
  */
 async function generateEmailMfaOtp() {
-    // 3 bytes = 24 bits; max value 16777215. We need 0-999999.
-    // Rejection threshold: floor(16777216 / 1000000) * 1000000 = 16000000.
-    // Values >= 16000000 are rejected to eliminate bias.
-    const REJECTION_THRESHOLD = 16_000_000;
+    // 4 bytes = 32 bits. Rejection threshold is the largest multiple of
+    // 1,000,000 below 2^32, so modulo does not introduce bias.
+    const REJECTION_THRESHOLD = 4_294_000_000;
     const RANGE = 1_000_000;
     while (true) {
-        const buf = await randomBytesAsync(3);
-        const val = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+        const buf = await randomBytesAsync(4);
+        const val = buf.readUInt32BE(0);
         if (val < REJECTION_THRESHOLD) {
-            return val.toString(10).padStart(EMAIL_MFA_OTP_DIGITS, '0');
+            return (val % RANGE).toString(10).padStart(EMAIL_MFA_OTP_DIGITS, '0');
         }
     }
 }
@@ -405,6 +404,7 @@ function createLoginMFAChallenge(options) {
         userAgent: options.userAgent,
         attempts: 0,
         rememberMe: options.rememberMe,
+        ...(options.availableMethods ? { availableMethods: options.availableMethods } : {}),
     };
     loginMfaChallengeCache.set(challengeId, challenge);
     return { challengeId, expiresAt, deviceType: options.device.device_type };
@@ -829,7 +829,7 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             ip_address: ipAddress,
             request_id: requestId,
         });
-        throw new AuthError('Invalid email or password', AuthErrorCodes.INVALID_CREDENTIALS, 401);
+        throw new AuthError('Email address is not verified. A new verification email has been sent.', AuthErrorCodes.EMAIL_NOT_VERIFIED, 403);
     }
     await assertLoginAllowedByOrgPolicy(user);
     // Trusted device: skip MFA when fingerprint is registered and valid.
@@ -893,6 +893,11 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             await createEmailMfaOtp(user.id, primary.id, otpHash);
             await sendEmailMfaOtpEmail(user, otp, primary.device_name, 'login');
         }
+        const availableMethods = verifiedDevices.map((d) => ({
+            id: d.id,
+            type: d.device_type,
+            name: d.device_name || (d.device_type === 'totp' ? 'Authenticator App' : 'Email OTP'),
+        }));
         const challenge = createLoginMFAChallenge({
             userId: user.id,
             device: primary,
@@ -901,12 +906,14 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             deviceName: input.device_name,
             clientDeviceType,
             rememberMe: input.remember_me === true,
+            availableMethods,
         });
         return {
             mfa_required: true,
             challenge_id: challenge.challengeId,
             expires_at: challenge.expiresAt,
             device_type: challenge.deviceType,
+            available_methods: availableMethods,
         };
     }
     // No MFA: issue a fresh session.
@@ -940,6 +947,29 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
         session_id: session.sessionId,
         user_id: user.id,
     };
+}
+export async function switchLoginMfaMethod(challengeId, deviceId) {
+    const challenge = loginMfaChallengeCache.get(challengeId);
+    if (!challenge) {
+        throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
+    }
+    const device = await repository.findMFADeviceById(deviceId);
+    if (!device || device.user_id !== challenge.userId || !device.verified || !device.is_active) {
+        throw new AuthError('Invalid or unverified MFA device', AuthErrorCodes.MFA_INVALID, 400);
+    }
+    challenge.deviceId = device.id;
+    challenge.deviceType = device.device_type;
+    loginMfaChallengeCache.set(challengeId, challenge);
+    if (device.device_type === 'email') {
+        const user = await repository.findUserById(challenge.userId);
+        if (user) {
+            const otp = await generateEmailMfaOtp();
+            const otpHash = hashEmailMfaOtp(otp);
+            await createEmailMfaOtp(user.id, device.id, otpHash);
+            await sendEmailMfaOtpEmail(user, otp, device.device_name, 'login');
+        }
+    }
+    return { message: 'MFA method switched successfully' };
 }
 export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clientDeviceType, requestId) {
     const challenge = loginMfaChallengeCache.get(input.challenge_id);
@@ -1685,11 +1715,11 @@ export async function generateNewBackupCodes(userId, input) {
     // Verify the code based on device type.
     let codeValid = false;
     if (primary.device_type === 'email') {
-        const codeHash = hashEmailMfaOtp(input.mfa_code);
+        const codeHash = hashEmailMfaOtp(input.mfa_code ?? '');
         codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
     }
     else {
-        codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+        codeValid = verifyTotpDeviceCode(primary, input.mfa_code ?? '');
     }
     if (!codeValid) {
         throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
@@ -1724,11 +1754,11 @@ export async function toggleMFA(userId, input, ipAddress, requestId) {
     // Verify the code based on device type.
     let codeValid = false;
     if (primary.device_type === 'email') {
-        const codeHash = hashEmailMfaOtp(input.mfa_code);
+        const codeHash = hashEmailMfaOtp(input.mfa_code ?? '');
         codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
     }
     else {
-        codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+        codeValid = verifyTotpDeviceCode(primary, input.mfa_code ?? '');
     }
     if (!codeValid) {
         throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
@@ -1773,11 +1803,11 @@ export async function requestMfaDisable(userId, input, ipAddress, requestId) {
     // be the entire trust signal for tearing down MFA.
     let codeValid = false;
     if (primary.device_type === 'email') {
-        const codeHash = hashEmailMfaOtp(input.mfa_code);
+        const codeHash = hashEmailMfaOtp(input.mfa_code ?? '');
         codeValid = await consumeEmailMfaOtp(primary.id, codeHash);
     }
     else {
-        codeValid = verifyTotpDeviceCode(primary, input.mfa_code);
+        codeValid = verifyTotpDeviceCode(primary, input.mfa_code ?? '');
     }
     if (!codeValid) {
         throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
@@ -1859,6 +1889,52 @@ export async function confirmMfaDisable(input, ipAddress, requestId) {
             metadata: { method: 'email_confirmation' },
         });
     }
+}
+/**
+ * Single-step MFA disable. The route requires fresh step-up, so this function
+ * only checks account/device state and performs the teardown transaction.
+ */
+export async function disableMFA(userId, _input, ipAddress, requestId) {
+    const user = await repository.findUserById(userId);
+    if (!user) {
+        throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+    }
+    assertUserUsable(user);
+    if (!user.mfa_enabled) {
+        throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    }
+    const devices = await repository.findMFADevicesByUserId(userId);
+    const verifiedActive = devices.filter((d) => d.verified && d.is_active);
+    if (verifiedActive.length === 0) {
+        throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    }
+    await repository.withTransaction(async (client) => {
+        await repository.disableAllMFADevices(user.id, 'User disabled MFA', client);
+        await repository.updateUserMFAEnabled(user.id, false, client);
+    });
+    await sendMFAStatusEmail(user, false);
+    await repository
+        .recordSecurityEvent({
+        event_type: 'mfa_disable_requested',
+        severity: 5,
+        user_id: user.id,
+        ip_address: ipAddress,
+        description: 'User disabled MFA after step-up verification',
+    })
+        .catch((err) => {
+        logger.warn({ err, userId: user.id }, 'recordSecurityEvent failed');
+    });
+    logAudit({
+        user_id: userId,
+        org_id: null,
+        action: 'user.mfa_disabled',
+        resource_type: 'user',
+        resource_id: userId,
+        ip_address: ipAddress,
+        request_id: requestId,
+        metadata: { method: 'step_up' },
+    });
+    return { mfa_enabled: false };
 }
 // ============================================================================
 // SESSIONS

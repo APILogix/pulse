@@ -15,7 +15,7 @@
  * housekeeping. If we later want distributed coordination, we can add a
  * Redis lock around runOnce.
  */
-import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
+// import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
 import { processDueAccountDeletions } from '../modules/auth/identity.service.js';
 import {
   cleanupExpiredSessions,
@@ -40,7 +40,7 @@ export async function runOnce(): Promise<void> {
     const tokens = await deleteExpiredEmailTokens();
     const emailMfaOtps = await deleteExpiredEmailMfaOtps();
     const scheduledDeletions = await processDueAccountDeletions();
-    const emailsSent = await processAuthEmailOutbox();
+    // const emailsSent = await processAuthEmailOutbox(); // Deprecated, handled by PgBoss
     log.info(
       {
         expired,
@@ -48,7 +48,6 @@ export async function runOnce(): Promise<void> {
         tokens,
         emailMfaOtps,
         scheduledDeletions,
-        emailsSent,
         durationMs: Date.now() - start,
       },
       'Auth cleanup pass complete',

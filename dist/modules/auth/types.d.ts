@@ -266,7 +266,7 @@ export declare const MFAVerifySchema: z.ZodObject<{
 }, z.core.$strip>;
 export type MFAVerifyInput = z.infer<typeof MFAVerifySchema>;
 export declare const MFADisableRequestSchema: z.ZodObject<{
-    mfa_code: z.ZodString;
+    mfa_code: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type MFADisableRequestInput = z.infer<typeof MFADisableRequestSchema>;
 export declare const MFADisableConfirmSchema: z.ZodObject<{

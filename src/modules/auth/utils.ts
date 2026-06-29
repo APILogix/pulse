@@ -222,7 +222,7 @@ export function getRefreshCookieOptions(maxAgeSeconds?: number) {
   return {
     httpOnly: true,
     secure: env.NODE_ENV !== 'development',
-    sameSite: 'strict' as const,
+    sameSite: 'none' as const,
     maxAge,
     path: '/',
     signed: true,

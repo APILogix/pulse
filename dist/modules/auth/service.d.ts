@@ -58,6 +58,11 @@ export declare function loginWithEmailPassword(input: LoginInput, ipAddress: str
     challenge_id: string;
     expires_at: Date;
     device_type: string;
+    available_methods?: Array<{
+        id: string;
+        type: string;
+        name: string;
+    }>;
 } | {
     mfa_required: false;
     access_token: string;
@@ -66,6 +71,9 @@ export declare function loginWithEmailPassword(input: LoginInput, ipAddress: str
     token_type: 'Bearer';
     session_id: string;
     user_id: string;
+}>;
+export declare function switchLoginMfaMethod(challengeId: string, deviceId: string): Promise<{
+    message: string;
 }>;
 export declare function verifyLoginMFAChallenge(input: LoginMFAVerifyInput, ipAddress: string, userAgent: string, clientDeviceType: string, requestId: string): Promise<{
     access_token: string;
@@ -189,6 +197,13 @@ export declare function requestMfaDisable(userId: string, input: MFADisableReque
  * user/purpose are invalidated when a new request is made.
  */
 export declare function confirmMfaDisable(input: MFADisableConfirmInput, ipAddress: string, requestId: string): Promise<void>;
+/**
+ * Single-step MFA disable. The route requires fresh step-up, so this function
+ * only checks account/device state and performs the teardown transaction.
+ */
+export declare function disableMFA(userId: string, _input: MFADisableRequestInput, ipAddress: string, requestId: string): Promise<{
+    mfa_enabled: false;
+}>;
 export declare function listUserSessions(userId: string, currentSessionId?: string): Promise<SessionInfo[]>;
 export declare function revokeSession(userId: string, sessionId: string, currentSessionId?: string): Promise<void>;
 /**

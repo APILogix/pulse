@@ -126,20 +126,17 @@ export const MFAVerifySchema = z.object({
     challenge_id: z.string().min(1).max(64),
     code: z.string().length(6).regex(/^\d{6}$/),
 });
-// MFA disable now uses a two-step email-confirmation flow.
-//   POST /auth/mfa/disable/request  → emails the user a one-time link.
-//   POST /auth/mfa/disable/confirm  → consumes the link and disables MFA.
-// The MFA code (TOTP or email OTP) is still required at request-time so a
-// stolen access token alone cannot initiate the disable.
+// MFA disable is protected by the route-level step-up gate. The body remains
+// permissive for older clients that still send an MFA code, but the current
+// single-step flow relies on verified step-up freshness.
 export const MFADisableRequestSchema = z.object({
-    mfa_code: z.string().length(6).regex(/^\d{6}$/),
+    mfa_code: z.string().length(6).regex(/^\d{6}$/).optional(),
 });
 export const MFADisableConfirmSchema = z.object({
     token: MagicLinkTokenSchema,
 });
-// MFA toggle: enabling still requires a verified device + TOTP. Disabling
-// goes through MFADisableRequest/MFADisableConfirm separately, so this
-// schema only handles enable.
+// MFA toggle: enabling still requires a verified device + MFA code. Disabling
+// uses the dedicated step-up protected disable route.
 export const MFAToggleSchema = z.object({
     enabled: z.literal(true),
     mfa_code: z.string().length(6).regex(/^\d{6}$/),

@@ -80,7 +80,7 @@ export declare function verifyRefreshToken(token: string): RefreshTokenClaims;
 export declare function getRefreshCookieOptions(maxAgeSeconds?: number): {
     httpOnly: boolean;
     secure: boolean;
-    sameSite: "strict";
+    sameSite: "none";
     maxAge: number;
     path: string;
     signed: boolean;

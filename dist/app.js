@@ -102,17 +102,18 @@ export async function buildApp() {
         encoding: 'utf8',
         runFirst: true,
     });
-    await app.register(fastifyRateLimit, {
-        max: 100,
-        timeWindow: '1 minute',
-        keyGenerator: (req) => req.ip || 'unknown',
-        skipOnError: false,
-        errorResponseBuilder: (_req, context) => ({
-            statusCode: 429,
-            error: 'Too Many Requests',
-            message: `Rate limit exceeded, retry in ${context.after}`,
-        }),
-    });
+    // Rate limit globally disabled
+    // await app.register(fastifyRateLimit, {
+    //   max: 100,
+    //   timeWindow: '1 minute',
+    //   keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
+    //   skipOnError: false,
+    //   errorResponseBuilder: (_req, context) => ({
+    //     statusCode: 429,
+    //     error: 'Too Many Requests',
+    //     message: `Rate limit exceeded, retry in ${context.after}`,
+    //   }),
+    // });
     await app.register(sensible);
     // ── Health & Readiness Probes ──────────────────────────────────────
     await app.register(registerHealthPlugin);

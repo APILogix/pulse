@@ -9,7 +9,7 @@
  *   - Map AuthError -> HTTP responses without leaking internals.
  *
  * Refresh-token transport:
- *   - The refresh JWT lives in an httpOnly, signed, SameSite=Strict cookie
+ *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie
  *     named `__Host-refresh_token` with Path=/. This forces the browser to
  *     require Secure + no Domain attribute, blocking sibling-subdomain
  *     overwrite attacks.
@@ -41,7 +41,6 @@ import {
   LoginMFAVerifySchema,
   LoginSchema,
   MFADeviceRemoveSchema,
-  MFADisableConfirmSchema,
   MFADisableRequestSchema,
   MFASetupSchema,
   MFAToggleSchema,
@@ -209,6 +208,22 @@ async function credentialRoutes(fastify: FastifyInstance) {
         request.id,
       );
       return sendAuthSession(reply, result);
+    } catch (error) {
+      return handleAuthError(error, reply, request);
+    }
+  });
+
+  // POST /auth/login/mfa/switch
+  fastify.post('/login/mfa/switch', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    try {
+      const { z } = await import('zod');
+      const body = z.object({
+        challenge_id: z.string().min(1),
+        device_id: z.string().min(1)
+      }).parse(request.body);
+      
+      const result = await service.switchLoginMfaMethod(body.challenge_id, body.device_id);
+      return reply.send({ data: result });
     } catch (error) {
       return handleAuthError(error, reply, request);
     }
@@ -861,14 +876,35 @@ async function mfaRoutes(fastify: FastifyInstance) {
   // Requires authenticated session + valid TOTP. Sends an email with a
   // one-time confirmation link. MFA stays enabled until the link is used.
   fastify.post(
+    '/mfa/disable',
+    { preHandler: [authenticate, requireStepUp] },
+    async (request, reply) => {
+      try {
+        const r = request as RequestWithUser;
+        const body = MFADisableRequestSchema.parse(r.body || {});
+        const { ip } = getClientInfo(r);
+        const result = await service.disableMFA(
+          r.user.id,
+          body,
+          ip,
+          r.id,
+        );
+        return reply.send({ data: result });
+      } catch (error) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
+
+  fastify.post(
     '/mfa/disable/request',
     { preHandler: [authenticate, requireStepUp] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
-        const body = MFADisableRequestSchema.parse(r.body);
+        const body = MFADisableRequestSchema.parse(r.body || {});
         const { ip } = getClientInfo(r);
-        const result = await service.requestMfaDisable(
+        const result = await service.disableMFA(
           r.user.id,
           body,
           ip,
@@ -888,10 +924,12 @@ async function mfaRoutes(fastify: FastifyInstance) {
     { preHandler: [tokenConfirmRateLimit] },
     async (request, reply) => {
     try {
-      const body = MFADisableConfirmSchema.parse(request.body);
-      const ci = getClientInfo(request);
-      await service.confirmMfaDisable(body, ci.ip, request.id);
-      return reply.send({ message: 'MFA disabled successfully' });
+      return reply.status(410).send({
+        error: {
+          code: AuthErrorCodes.INVALID_OPERATION,
+          message: 'MFA disable confirmation links are no longer supported. Use POST /auth/mfa/disable.',
+        },
+      });
     } catch (error) {
       return handleAuthError(error, reply, request);
     }

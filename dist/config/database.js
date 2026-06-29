@@ -21,11 +21,12 @@ export const pool = new Pool({
     // },
     max: 20,
     min: 5,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000,
     statement_timeout: 10000,
     query_timeout: 10000,
     application_name: `api_monitoring_${env.NODE_ENV}`,
+    keepAlive: true,
 });
 // Pool lifecycle events — only actionable events are logged.
 // 'acquire' is intentionally omitted: it fires on every query and produces

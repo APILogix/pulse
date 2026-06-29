@@ -53,5 +53,6 @@ type OrgInvitationTemplateInput = TemplateInput & {
  * to render the right screen (sign-in vs. create-account).
  */
 export declare function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailTemplate;
+export declare function passwordChangedTemplate(input: TemplateInput): EmailTemplate;
 export {};
 //# sourceMappingURL=templates.d.ts.map
