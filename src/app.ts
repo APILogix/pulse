@@ -25,6 +25,7 @@ import registerOrganizationModule from './modules/organization/organization.modu
 import { registerProjectsModule } from './modules/projects/projects.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
+import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -160,6 +161,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(ingestionModule);          // Must be before projects
   await app.register(registerProjectsModule);   // Depends on ingestion.redisCache
   await app.register(registerAnalyticsModule);
+  await app.register(registerConnectorsModule);
 
   appLogger.info('All modules registered');
 
