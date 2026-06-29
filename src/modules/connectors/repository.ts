@@ -127,6 +127,22 @@ export class ConnectorRepository {
     return r.rows[0] ?? null;
   }
 
+  /**
+   * Bulk-fetch connectors by id (single query — no N+1). Used by the alerting
+   * batch worker to resolve every connector referenced by a batch of events.
+   * Not org-scoped: callers must already have validated tenant ownership of
+   * the events that reference these connector ids.
+   */
+  async getByIds(ids: string[]): Promise<ConnectorConfigRow[]> {
+    if (ids.length === 0) return [];
+    const r = await this.db.query<ConnectorConfigRow>(
+      `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs
+       WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      [ids],
+    );
+    return r.rows;
+  }
+
   async list(
     organizationId: string,
     query: ListConnectorsQuery,
