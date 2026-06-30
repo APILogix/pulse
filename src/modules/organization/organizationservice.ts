@@ -2,10 +2,11 @@ import type { FastifyBaseLogger } from "fastify";
 import { OrganizationRepository } from "./repository.js";
 import { generateToken, hashToken } from "./utils.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
-import { apiKeyCache } from "../../config/lrucashe.js";
+import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
 import { env } from "../../config/env.js";
 import { emailService } from "../../shared/email/email.service.js";
 import { orgInvitationTemplate } from "../../shared/email/templates.js";
+import { enqueueOrgEmail } from "./email-outbox.js";
 import {
   hasMinRole, canManageRole, isMutableOrg,
   OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError,
@@ -16,6 +17,7 @@ import {
   type OrganizationRow, type OrgSettingsRow, type OrgMemberRow, type OrgInvitationRow,
   type OrganizationServiceDependencies,
   type CursorPaginationQuery, type CursorPaginatedResponse,
+  type AlertThresholdRow, type AlertThresholdDto,
 } from "./types.js";
 
 // ── DTO Mappers ─────────────────────────────────

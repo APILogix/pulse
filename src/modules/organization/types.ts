@@ -326,6 +326,43 @@ export const ReviewQuotaRequestSchema = z.object({
 });
 
 // ═══════════════════════════════════════════════════
+// ALERT THRESHOLD SCHEMAS — latency/error/apdex SLO gates per org/project
+// ═══════════════════════════════════════════════════
+
+/** Query for resolving which scope to read/write (org-wide vs project). */
+export const AlertThresholdQuerySchema = z.object({
+  projectId: UuidSchema.optional(),
+});
+
+export const UpsertAlertThresholdSchema = z.object({
+  projectId: UuidSchema.nullable().optional(),
+
+  p50ThresholdMs: z.number().int().min(1).max(600000).optional(),
+  p75ThresholdMs: z.number().int().min(1).max(600000).optional(),
+  p90ThresholdMs: z.number().int().min(1).max(600000).optional(),
+  p95ThresholdMs: z.number().int().min(1).max(600000).optional(),
+  p99ThresholdMs: z.number().int().min(1).max(600000).optional(),
+
+  p50AlertEnabled: z.boolean().optional(),
+  p75AlertEnabled: z.boolean().optional(),
+  p90AlertEnabled: z.boolean().optional(),
+  p95AlertEnabled: z.boolean().optional(),
+  p99AlertEnabled: z.boolean().optional(),
+
+  errorRateThresholdPercent: z.number().min(0).max(100).optional(),
+  errorRateAlertEnabled: z.boolean().optional(),
+
+  apdexThreshold: z.number().min(0).max(1).optional(),
+  apdexAlertEnabled: z.boolean().optional(),
+
+  evaluationWindowMinutes: z.number().int().min(1).max(1440).optional(),
+  cooldownMinutes: z.number().int().min(0).max(1440).optional(),
+
+  alertsEnabled: z.boolean().optional(),
+  notifyEmails: z.array(z.string().email()).max(50).optional(),
+});
+
+// ═══════════════════════════════════════════════════
 // AUDIT LOG QUERY SCHEMAS
 // ═══════════════════════════════════════════════════
 
@@ -566,6 +603,34 @@ export interface UserOrgRow {
   created_at: Date;
 }
 
+export interface AlertThresholdRow {
+  id: string;
+  org_id: string;
+  project_id: string | null;
+  p50_threshold_ms: number;
+  p75_threshold_ms: number;
+  p90_threshold_ms: number;
+  p95_threshold_ms: number;
+  p99_threshold_ms: number;
+  p50_alert_enabled: boolean;
+  p75_alert_enabled: boolean;
+  p90_alert_enabled: boolean;
+  p95_alert_enabled: boolean;
+  p99_alert_enabled: boolean;
+  error_rate_threshold_percent: string | number;
+  error_rate_alert_enabled: boolean;
+  apdex_threshold: string | number;
+  apdex_alert_enabled: boolean;
+  evaluation_window_minutes: number;
+  cooldown_minutes: number;
+  alerts_enabled: boolean;
+  notify_emails: string[];
+  last_alerted_at: Date | null;
+  created_by: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
 // ═══════════════════════════════════════════════════
 // RESPONSE DTOs — only expose safe, necessary fields
 // ═══════════════════════════════════════════════════
@@ -703,6 +768,28 @@ export interface QuotaRequestDto {
   reviewedAt: Date | null;
   notes: string | null;
   createdAt: Date;
+}
+
+export interface AlertThresholdDto {
+  id: string;
+  orgId: string;
+  projectId: string | null;
+  latency: {
+    p50: { thresholdMs: number; alertEnabled: boolean };
+    p75: { thresholdMs: number; alertEnabled: boolean };
+    p90: { thresholdMs: number; alertEnabled: boolean };
+    p95: { thresholdMs: number; alertEnabled: boolean };
+    p99: { thresholdMs: number; alertEnabled: boolean };
+  };
+  errorRate: { thresholdPercent: number; alertEnabled: boolean };
+  apdex: { threshold: number; alertEnabled: boolean };
+  evaluationWindowMinutes: number;
+  cooldownMinutes: number;
+  alertsEnabled: boolean;
+  notifyEmails: string[];
+  lastAlertedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 // ═══════════════════════════════════════════════════

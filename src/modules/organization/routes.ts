@@ -45,6 +45,7 @@ import {
   UpdateSsoProviderSchema,
   type RequestMeta,
 } from './types.js';
+import { registerSdkConfigRoutes } from './sdk-config.routes.js';
 
 type AuthenticatedRequest = FastifyRequest & {
   user: { id: string; email: string; isAdmin: boolean; sessionId: string; mfaVerified: boolean };
@@ -92,6 +93,9 @@ function strip<T>(obj: T): T {
 export async function organizationRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions): Promise<void> {
   const svc = fastify.organization.service;
   const auth = { preHandler: [authenticate] };
+
+  // SDK Remote Config routes (/:orgId/sdk-configs ...).
+  registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
 
   // ═══════════════════════════════════════════════
   // ORGANIZATION CRUD

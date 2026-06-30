@@ -9,10 +9,12 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "dev:workers": "tsx watch src/workers/main.ts",
+    "dev:cron": "tsx watch src/workers/cron.ts",
     "build": "tsc",
     "start": "node dist/main.js",
     "start:prod": "NODE_ENV=production node --max-old-space-size=512 dist/main.js",
     "start:workers": "node dist/workers/main.js",
+    "start:cron": "node dist/workers/cron.js",
     "pm2:start": "npx pm2 start ecosystem.config.cjs --env production",
     "pm2:stop": "npx pm2 stop api-backend",
     "pm2:restart": "npx pm2 restart api-backend",

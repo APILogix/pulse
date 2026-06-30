@@ -12,6 +12,8 @@ import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { OrganizationRepository } from './repository.js';
 import { OrganizationService } from './organizationservice.js';
+import { SdkConfigRepository } from './sdk-config.repository.js';
+import { SdkConfigService } from './sdk-config.service.js';
 import { organizationRoutes } from './routes.js';
 import { createOrganizationLogger } from './utils.js';
 
@@ -20,6 +22,7 @@ declare module 'fastify' {
     organization: {
       repository: OrganizationRepository;
       service: OrganizationService;
+      sdkConfigService: SdkConfigService;
     };
   }
 }
@@ -42,9 +45,15 @@ async function organizationModule(
     }
   });
 
+  // SDK Remote Config: its own repository, but reuses the organization
+  // repository for membership/RBAC checks and audit-log writes.
+  const sdkConfigRepository = new SdkConfigRepository();
+  const sdkConfigService = new SdkConfigService(sdkConfigRepository, repository, fastify.log);
+
   fastify.decorate('organization', {
     repository,
-    service
+    service,
+    sdkConfigService
   });
 
   await fastify.register(organizationRoutes, { prefix: '/organizations' });
