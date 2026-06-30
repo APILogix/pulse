@@ -10,11 +10,13 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { OrganizationRepository } from './repository.js';
 import { OrganizationService } from './organizationservice.js';
+import { SdkConfigService } from './sdk-config.service.js';
 declare module 'fastify' {
     interface FastifyInstance {
         organization: {
             repository: OrganizationRepository;
             service: OrganizationService;
+            sdkConfigService: SdkConfigService;
         };
     }
 }

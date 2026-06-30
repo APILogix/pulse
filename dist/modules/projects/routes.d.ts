@@ -1,13 +1,14 @@
 /**
- * Project route registration.
+ * Project route registration (management API only — NO ingestion routes).
  *
  * Flow:
- * 1. Authenticate the caller for every project and API-key management endpoint.
- * 2. Parse params, query, and body with module schemas before calling service
- *    methods.
- * 3. Pass request metadata into mutating service calls so audit logging can
- *    record request id, IP address, and user agent.
+ * 1. Authenticate every project/API-key/environment management endpoint.
+ * 2. Parse params/query/body with module schemas before calling the service.
+ * 3. Pass an audit-friendly RequestMeta into mutating calls so org audit logs
+ *    capture actor, ip, user agent, request id, method, and endpoint.
  * 4. Normalize service errors through handleProjectError.
+ *
+ * Prefix: /organizations/:orgId/projects
  */
 import type { FastifyInstance } from "fastify";
 export declare function projectsRoutes(fastify: FastifyInstance): Promise<void>;

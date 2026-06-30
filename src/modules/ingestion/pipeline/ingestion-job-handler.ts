@@ -12,6 +12,7 @@
  */
 import type { ClaimedJob } from '../queue/pg-queue.js';
 import type { TelemetryWriter, ScopedEvent } from './telemetry-writer.js';
+import type { UsageCounter } from '../usage/usage-counter.js';
 import { normalizeEvent } from './event-normalizer.js';
 
 interface JobEnvelope {
@@ -20,7 +21,7 @@ interface JobEnvelope {
   event: unknown;
 }
 
-export function createIngestionJobHandler(writer: TelemetryWriter) {
+export function createIngestionJobHandler(writer: TelemetryWriter, usage?: UsageCounter) {
   return async function handle(job: ClaimedJob): Promise<void> {
     const env = job.payload as JobEnvelope | JobEnvelope[];
     const envelopes = Array.isArray(env) ? env : [env];
@@ -39,5 +40,17 @@ export function createIngestionJobHandler(writer: TelemetryWriter) {
     }
 
     await writer.writeBatch(scoped);
+
+    // Fire-and-forget usage accounting (Tier-1, memory only — never awaited on
+    // the persistence path, never throws). One increment per persisted event,
+    // bucketed by type for per-signal usage/billing.
+    if (usage) {
+      for (const s of scoped) {
+        if (s.orgId) {
+          usage.increment(s.projectId, s.orgId, 'events_ingested', 1);
+          usage.increment(s.projectId, s.orgId, `events_ingested:${s.event.type}`, 1);
+        }
+      }
+    }
   };
 }

@@ -36,6 +36,21 @@ export interface EnqueueJob {
     /** Delay before the job becomes claimable, in milliseconds. */
     delayMs?: number;
     maxAttempts?: number;
+    eventId?: string | null;
+    traceId?: string | null;
+    spanId?: string | null;
+    sessionId?: string | null;
+    userId?: string | null;
+    tenantId?: string | null;
+}
+/** Job types handled by the SPECIALIZED worker lane (heavy / isolated). */
+export declare const SPECIALIZED_JOB_TYPES: readonly string[];
+/** Job types handled by the GENERAL worker lane (fast path). */
+export declare const GENERAL_JOB_TYPES: readonly string[];
+/** Options for marking a job complete (processing accounting). */
+export interface CompleteOptions {
+    processedBy?: string;
+    durationMs?: number;
 }
 export interface ClaimedJob {
     id: string;
@@ -74,6 +89,12 @@ export declare class PgQueue {
     private readonly baseBackoffMs;
     private readonly maxBackoffMs;
     constructor(pool: Pool, opts?: PgQueueOptions);
+    /**
+     * Resolve the scheduling priority for an event type (LOWER = higher).
+     * Single source of truth shared by the API enqueue path and the worker tier.
+     * Unknown types default to 50 (normal).
+     */
+    static getPriorityForType(jobType: string): number;
     /** Enqueue a single job. Returns the job id, or null if deduped. */
     enqueue(job: EnqueueJob, client?: PoolClient): Promise<string | null>;
     /**
@@ -91,15 +112,15 @@ export declare class PgQueue {
      * 'active' and stamps the lease in the same statement, so there is no window
      * where a row is selected but not yet leased.
      */
-    claim(workerId: string, batchSize: number): Promise<ClaimedJob[]>;
-    /** Mark a claimed job complete. */
-    complete(jobId: string): Promise<void>;
+    claim(workerId: string, batchSize: number, jobTypes?: readonly string[]): Promise<ClaimedJob[]>;
+    /** Mark a claimed job complete, optionally recording processing accounting. */
+    complete(jobId: string, opts?: CompleteOptions): Promise<void>;
     /**
      * Handle a failed job. If attempts remain, reschedule with exponential
      * backoff. Otherwise move it to the dead-letter table (in one transaction so
      * we never both DLQ and leave the job alive).
      */
-    fail(job: ClaimedJob, errorMessage: string): Promise<'retried' | 'dead-lettered'>;
+    fail(job: ClaimedJob, errorMessage: string, errorCode?: string): Promise<'retried' | 'dead-lettered'>;
     /** Extend a job's lease while a long-running task is still in progress. */
     heartbeat(jobId: string, workerId: string): Promise<void>;
     /**
@@ -110,7 +131,7 @@ export declare class PgQueue {
     /** Delete completed jobs older than the retention window. Returns rows removed. */
     pruneCompleted(olderThanMs: number, limit?: number): Promise<number>;
     /** Requeue a dead-letter row back onto the live queue (operator action). */
-    replayDeadLetter(dlqId: string): Promise<string | null>;
+    replayDeadLetter(dlqId: string, replayedBy?: string): Promise<string | null>;
     /** Snapshot queue depth + health for observability/backpressure decisions. */
     metrics(): Promise<QueueMetrics>;
     /** Approximate pending depth — cheap backpressure probe. */

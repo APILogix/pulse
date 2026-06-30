@@ -2,26 +2,35 @@
  * Project business service.
  *
  * Flow:
- * 1. Validate organization/project access before reads and mutations.
- * 2. Enforce project status transitions and API-key limits.
- * 3. Generate API-key material in memory, persist only hashes/prefixes, and
- *    return the full key once.
- * 4. Populate Redis and LRU caches after API-key creation so ingestion can
- *    resolve new keys without waiting for a cache miss.
- * 5. Write audit records for sensitive project and API-key lifecycle changes.
+ * 1. Authorize via organization membership before any read/mutation (tenant
+ *    isolation root check). Role gating is centralized in requireProjectAccess.
+ * 2. Enforce project status transitions, API-key limits, and key lifecycle.
+ * 3. Mint key material in memory; persist only hash + prefix; return the full
+ *    key exactly once.
+ * 4. Warm/evict the in-process LRU (config/lrucashe.ts, 30-min TTL) so ingestion
+ *    resolves keys without a Postgres round trip. NO Redis.
+ * 5. Write every sensitive lifecycle event to organization_audit_logs (projects
+ *    and API keys are org-owned resources, so they share the org audit trail).
  */
 import type { FastifyBaseLogger } from "fastify";
+import type { OrganizationRepository } from "../organization/repository.js";
 import { ProjectsRepository } from "./repository.js";
-import type { ApiKeyUsage, CreateApiKeyBody, CreateApiKeyResponse, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, Project, ProjectApiKey, ProjectApiKeyRecord, ProjectListItem, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateProjectBody } from "./types.js";
-type RequestMeta = {
+import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, Project, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+export interface RequestMeta {
+    actorUserId: string;
+    actorEmail: string | null;
+    actorSessionId: string | null;
+    actorIp: string;
+    actorUserAgent: string | null;
     requestId: string;
-    ipAddress: string;
-    userAgent: string | null;
-};
+    httpMethod: string;
+    endpoint: string;
+}
 export declare class ProjectsService {
     private readonly repository;
     private readonly logger;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger);
+    private readonly orgRepo;
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;
@@ -37,6 +46,11 @@ export declare class ProjectsService {
     pauseProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     resumeProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     getProjectStats(orgId: string, projectId: string, userId: string): Promise<ProjectWithStats>;
+    listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]>;
+    getEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string): Promise<ProjectEnvironmentConfig>;
+    createEnvironment(orgId: string, projectId: string, userId: string, body: CreateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
+    updateEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string, body: UpdateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
+    deleteEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string, meta: RequestMeta): Promise<void>;
     listApiKeys(orgId: string, projectId: string, userId: string, query: ListApiKeysQuery): Promise<{
         keys: ProjectApiKey[];
         total: number;
@@ -46,34 +60,42 @@ export declare class ProjectsService {
     createApiKey(orgId: string, projectId: string, userId: string, body: CreateApiKeyBody, meta: RequestMeta): Promise<CreateApiKeyResponse>;
     getApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ProjectApiKey>;
     updateApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, body: UpdateApiKeyBody, meta: RequestMeta): Promise<ProjectApiKey>;
-    deleteApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta): Promise<void>;
+    /** Revoke (delete) a key with a reason. Soft state change, not row removal. */
+    deleteApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta, reason?: string | null): Promise<ProjectApiKey>;
     rotateApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, body: RotateApiKeyBody, meta: RequestMeta): Promise<CreateApiKeyResponse>;
+    /** Emergency regenerate: rotate with no grace window (old key dies instantly). */
+    regenerateApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta): Promise<CreateApiKeyResponse>;
     enableApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta): Promise<ProjectApiKey>;
     disableApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta): Promise<ProjectApiKey>;
+    bulkRotateKeys(orgId: string, projectId: string, userId: string, body: BulkRotateBody, meta: RequestMeta): Promise<BulkOperationResult>;
+    bulkRevokeKeys(orgId: string, projectId: string, userId: string, body: BulkRevokeBody, meta: RequestMeta): Promise<BulkOperationResult>;
     getApiKeyUsage(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ApiKeyUsage>;
-    validateApiKey(rawKey: string): Promise<ProjectApiKeyRecord | null>;
+    /**
+     * Resolve a raw key to its validated context. Prefix narrows the candidate
+     * set, then a constant-time hash compare prevents timing leaks. Enforces
+     * project status, expiry, and rotation grace. Touches last_used_at async.
+     */
+    validateApiKey(rawKey: string): Promise<ValidatedApiKey | null>;
     private requireOrganizationAccess;
     private requireProjectAccess;
+    private assignProjectConfig;
+    private provisionDefaultEnvironments;
     private generateUniqueSlug;
     private assertFutureExpiry;
     private publicApiKey;
+    private summarizeBulk;
     /**
-     * Warm the in-process LRU cache used by ingestion to resolve an API key to
-     * its project config without a Postgres round trip. LRU-only (no Redis).
+     * Warm the in-process LRU so ingestion resolves the key without a Postgres
+     * round trip. Only active keys on active projects are cached as active;
+     * ingestion re-validates project status on a miss.
      */
-    private cacheApiKeyConfig;
-    /**
-     * Evict a single API key from the ingestion cache. Called on revoke, rotate,
-     * disable, and delete so a revoked secret cannot keep ingesting for the
-     * remainder of the LRU TTL window.
-     */
+    private warmApiKeyCache;
     private evictApiKeyConfig;
-    /**
-     * Evict every cached API key belonging to a project. Called when a project
-     * is paused, archived, or deleted so its keys stop resolving as active.
-     */
     private evictProjectApiKeys;
+    /**
+     * Write a project/API-key lifecycle event to the organization audit trail.
+     * Non-fatal: a failed audit write never breaks the originating request.
+     */
     private audit;
 }
-export {};
 //# sourceMappingURL=service.d.ts.map

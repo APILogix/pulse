@@ -248,6 +248,34 @@ export const ReviewQuotaRequestSchema = z.object({
     notes: z.string().max(2000).optional(),
 });
 // ═══════════════════════════════════════════════════
+// ALERT THRESHOLD SCHEMAS — latency/error/apdex SLO gates per org/project
+// ═══════════════════════════════════════════════════
+/** Query for resolving which scope to read/write (org-wide vs project). */
+export const AlertThresholdQuerySchema = z.object({
+    projectId: UuidSchema.optional(),
+});
+export const UpsertAlertThresholdSchema = z.object({
+    projectId: UuidSchema.nullable().optional(),
+    p50ThresholdMs: z.number().int().min(1).max(600000).optional(),
+    p75ThresholdMs: z.number().int().min(1).max(600000).optional(),
+    p90ThresholdMs: z.number().int().min(1).max(600000).optional(),
+    p95ThresholdMs: z.number().int().min(1).max(600000).optional(),
+    p99ThresholdMs: z.number().int().min(1).max(600000).optional(),
+    p50AlertEnabled: z.boolean().optional(),
+    p75AlertEnabled: z.boolean().optional(),
+    p90AlertEnabled: z.boolean().optional(),
+    p95AlertEnabled: z.boolean().optional(),
+    p99AlertEnabled: z.boolean().optional(),
+    errorRateThresholdPercent: z.number().min(0).max(100).optional(),
+    errorRateAlertEnabled: z.boolean().optional(),
+    apdexThreshold: z.number().min(0).max(1).optional(),
+    apdexAlertEnabled: z.boolean().optional(),
+    evaluationWindowMinutes: z.number().int().min(1).max(1440).optional(),
+    cooldownMinutes: z.number().int().min(0).max(1440).optional(),
+    alertsEnabled: z.boolean().optional(),
+    notifyEmails: z.array(z.string().email()).max(50).optional(),
+});
+// ═══════════════════════════════════════════════════
 // AUDIT LOG QUERY SCHEMAS
 // ═══════════════════════════════════════════════════
 export const AuditLogQuerySchema = CursorPaginationSchema.extend({

@@ -55,7 +55,8 @@ type ControllerMethodName =
   | "reprocessDLQ"
   | "reprocessAllDLQ"
   | "replay"
-  | "debugEvent";
+  | "debugEvent"
+  | "getUsage";
 
 function requireFastifyDecorator<T>(
   fastify: FastifyInstance,
@@ -94,6 +95,7 @@ function assertControllerMethods(controller: IngestionController): void {
     "reprocessAllDLQ",
     "replay",
     "debugEvent",
+    "getUsage",
   ];
 
   for (const method of methods) {
@@ -208,6 +210,28 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
         });
       }
     },
+  );
+
+  // ── Tenant-scoped usage lookup (new usage tables) ───────────────────────
+  // Realtime per-project usage read from project_usage_realtime (durable
+  // hourly buckets + un-flushed staging tail). Project membership enforced.
+  fastify.get(
+    "/v1/usage",
+    {
+      preHandler: [authenticate, requireProjectMembershipFromQuery],
+      schema: {
+        querystring: {
+          type: "object",
+          required: ["projectId"],
+          properties: {
+            projectId: { type: "string", format: "uuid" },
+            counterType: { type: "string", maxLength: 64 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    controller.getUsage.bind(controller),
   );
 
   // ── Error event lookups ─────────────────────────────────────────────────

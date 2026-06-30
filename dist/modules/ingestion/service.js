@@ -241,6 +241,8 @@ export class IngestionService {
                 errors.push({ eventId, reason: 'shed_backpressure' });
                 continue;
             }
+            const ev2 = ev;
+            const corr = (k) => typeof ev2[k] === 'string' ? ev2[k].slice(0, 64) : null;
             jobs.push({
                 jobType: ev.type,
                 payload: { projectId: project.id, orgId: project.orgId, event: ev },
@@ -251,6 +253,13 @@ export class IngestionService {
                 // Fixed-length type prefix prevents collisions between IDs that happen
                 // to share a numeric prefix.
                 dedupeKey: `evt:${project.id}:${eventId}`,
+                // Correlation columns lifted into indexed queue columns for operator
+                // debugging without a JSONB scan.
+                eventId: eventId.slice(0, 64),
+                traceId: corr('traceId'),
+                spanId: corr('spanId'),
+                sessionId: corr('sessionId'),
+                userId: corr('userId'),
             });
         }
         let accepted = 0;

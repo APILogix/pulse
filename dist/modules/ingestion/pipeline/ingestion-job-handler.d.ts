@@ -12,5 +12,6 @@
  */
 import type { ClaimedJob } from '../queue/pg-queue.js';
 import type { TelemetryWriter } from './telemetry-writer.js';
-export declare function createIngestionJobHandler(writer: TelemetryWriter): (job: ClaimedJob) => Promise<void>;
+import type { UsageCounter } from '../usage/usage-counter.js';
+export declare function createIngestionJobHandler(writer: TelemetryWriter, usage?: UsageCounter): (job: ClaimedJob) => Promise<void>;
 //# sourceMappingURL=ingestion-job-handler.d.ts.map

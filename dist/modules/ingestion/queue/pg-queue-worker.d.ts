@@ -33,6 +33,29 @@ export interface PgQueueWorkerOptions {
     completedRetentionMs?: number;
     /** Max handlers running at once per poll cycle (bounds DB connections). */
     handlerConcurrency?: number;
+    /**
+     * Restrict this worker to a subset of job types (general vs specialized lane
+     * isolation). When omitted the worker claims any pending job.
+     */
+    jobTypes?: readonly string[];
+    /**
+     * Whether this worker runs the background stuck-recovery + prune timer.
+     * Default true. Set false when a dedicated RETRY worker owns maintenance so
+     * the work isn't duplicated across every consumer.
+     */
+    enableMaintenance?: boolean;
+    /** Logical worker type label for performance reporting (e.g. 'general'). */
+    workerType?: string;
+}
+/** Rolling per-worker processing stats, drained for performance reporting. */
+export interface WorkerStats {
+    workerId: string;
+    workerType: string;
+    jobsProcessed: number;
+    jobsFailed: number;
+    pollCycles: number;
+    avgDurationMs: number;
+    p95DurationMs: number;
 }
 export declare class PgQueueWorker {
     private readonly queue;
@@ -44,14 +67,23 @@ export declare class PgQueueWorker {
     private pollTimer;
     private maintenanceTimer;
     private readonly workerId;
+    private readonly workerType;
     private readonly batchSize;
     private readonly busyPollMs;
     private readonly idlePollMs;
     private readonly maintenanceMs;
     private readonly completedRetentionMs;
     private readonly handlerConcurrency;
+    private readonly jobTypes;
+    private readonly enableMaintenance;
+    private jobsProcessed;
+    private jobsFailed;
+    private pollCycles;
+    private durations;
     constructor(queue: PgQueue, handler: JobHandler, log: Logger, opts: PgQueueWorkerOptions);
     start(): void;
+    /** Drain and reset rolling stats (called periodically for perf reporting). */
+    drainStats(): WorkerStats;
     private loop;
     /** Run handlers over jobs with a bounded number in flight at once. */
     private runBounded;

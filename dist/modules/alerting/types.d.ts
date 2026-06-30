@@ -68,8 +68,8 @@ export declare const DeliveryAttemptStatusSchema: z.ZodEnum<{
 export type DeliveryAttemptStatus = z.infer<typeof DeliveryAttemptStatusSchema>;
 export declare const BatchStatusSchema: z.ZodEnum<{
     pending: "pending";
-    completed: "completed";
     failed: "failed";
+    completed: "completed";
     processing: "processing";
     partial: "partial";
 }>;

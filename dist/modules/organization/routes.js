@@ -1,5 +1,6 @@
 import { authenticate } from '../../shared/middleware/auth.js';
 import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { registerSdkConfigRoutes } from './sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
     if (error instanceof OrganizationError) {
         return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
@@ -45,6 +46,8 @@ function strip(obj) {
 export async function organizationRoutes(fastify, _options) {
     const svc = fastify.organization.service;
     const auth = { preHandler: [authenticate] };
+    // SDK Remote Config routes (/:orgId/sdk-configs ...).
+    registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
     // ═══════════════════════════════════════════════
     // ORGANIZATION CRUD
     // ═══════════════════════════════════════════════

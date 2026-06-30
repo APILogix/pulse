@@ -254,11 +254,28 @@ export class IngestionController {
     }
   }
 
+  /** Returns realtime per-project usage rollups from the new usage tables. */
+  async getUsage(request: FastifyRequest, reply: FastifyReply) {
+    try {
+      const { projectId, counterType } = (request.query ?? {}) as {
+        projectId?: string;
+        counterType?: string;
+      };
+      if (!projectId) {
+        return reply.status(400).send({ error: 'projectId is required', code: 'INVALID_REQUEST' });
+      }
+      const usage = await this.service.getProjectUsage(projectId, counterType);
+      return reply.send({ success: true, projectId, usage });
+    } catch (err) {
+      return this.handleError(err, request, reply);
+    }
+  }
+
   /** Requeues one failed ingestion job from the Postgres dead-letter table. */
   async reprocessDLQ(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { jobId } = request.params as ReprocessParams;
-      await this.service.reprocessDLQJob(jobId);
+      await this.service.reprocessDLQJob(jobId, request.user?.id);
       return reply.send({ success: true, message: 'Job requeued' });
     } catch (err) {
       if (err instanceof Error && err.message === 'JOB_NOT_FOUND') {
@@ -275,6 +292,7 @@ export class IngestionController {
       const body = (request.body ?? {}) as ReprocessAllBody;
       const count = await this.service.reprocessAllDLQ(
         typeof body.batchSize === 'number' ? body.batchSize : 100,
+        request.user?.id,
       );
       return reply.send({ success: true, reprocessed: count });
     } catch (err) {

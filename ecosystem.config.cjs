@@ -75,5 +75,47 @@ module.exports = {
       description: `Fastify API backend — ${cpuCount} CPU cores detected`,
       version: '2.0.0',
     },
+
+    {
+      // ── Ingestion worker tier (dedicated process) ──────────────────────
+      // Drains the PostgreSQL ingestion queue and persists telemetry. Kept
+      // separate from the API cluster so heavy persistence never steals CPU
+      // from request acceptance. Fork mode (NOT cluster): scale by raising
+      // `instances` — FOR UPDATE SKIP LOCKED keeps multiple copies safe.
+      name: 'ingestion-workers',
+      script: 'dist/workers/ingestion-worker-main.js',
+      instances: 1,
+      exec_mode: 'fork',
+
+      node_args: ['--max-old-space-size=512'],
+
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '5s',
+      restart_delay: 1000,
+      max_memory_restart: '700M',
+
+      merge_logs: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      out_file: 'logs/pm2-ingestion-out.log',
+      error_file: 'logs/pm2-ingestion-error.log',
+
+      // ingestion-worker-main.ts calls process.send('ready') after the
+      // WorkerRegistry starts.
+      wait_ready: true,
+      listen_timeout: 20000,
+      // Allow in-flight jobs to drain (visibility timeout aware).
+      kill_timeout: 20000,
+
+      env: {
+        NODE_ENV: 'development',
+      },
+      env_production: {
+        NODE_ENV: 'production',
+      },
+
+      description: 'Ingestion queue worker tier (general/specialized/retry/maintenance)',
+      version: '2.0.0',
+    },
   ],
 };

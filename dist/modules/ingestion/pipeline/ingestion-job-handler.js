@@ -1,5 +1,5 @@
 import { normalizeEvent } from './event-normalizer.js';
-export function createIngestionJobHandler(writer) {
+export function createIngestionJobHandler(writer, usage) {
     return async function handle(job) {
         const env = job.payload;
         const envelopes = Array.isArray(env) ? env : [env];
@@ -17,6 +17,17 @@ export function createIngestionJobHandler(writer) {
             throw new Error('NO_PERSISTABLE_EVENTS');
         }
         await writer.writeBatch(scoped);
+        // Fire-and-forget usage accounting (Tier-1, memory only — never awaited on
+        // the persistence path, never throws). One increment per persisted event,
+        // bucketed by type for per-signal usage/billing.
+        if (usage) {
+            for (const s of scoped) {
+                if (s.orgId) {
+                    usage.increment(s.projectId, s.orgId, 'events_ingested', 1);
+                    usage.increment(s.projectId, s.orgId, `events_ingested:${s.event.type}`, 1);
+                }
+            }
+        }
     };
 }
 //# sourceMappingURL=ingestion-job-handler.js.map

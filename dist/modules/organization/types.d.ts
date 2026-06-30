@@ -306,6 +306,31 @@ export declare const CreateQuotaRequestSchema: z.ZodObject<{
 export declare const ReviewQuotaRequestSchema: z.ZodObject<{
     notes: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
+/** Query for resolving which scope to read/write (org-wide vs project). */
+export declare const AlertThresholdQuerySchema: z.ZodObject<{
+    projectId: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const UpsertAlertThresholdSchema: z.ZodObject<{
+    projectId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    p50ThresholdMs: z.ZodOptional<z.ZodNumber>;
+    p75ThresholdMs: z.ZodOptional<z.ZodNumber>;
+    p90ThresholdMs: z.ZodOptional<z.ZodNumber>;
+    p95ThresholdMs: z.ZodOptional<z.ZodNumber>;
+    p99ThresholdMs: z.ZodOptional<z.ZodNumber>;
+    p50AlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    p75AlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    p90AlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    p95AlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    p99AlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    errorRateThresholdPercent: z.ZodOptional<z.ZodNumber>;
+    errorRateAlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    apdexThreshold: z.ZodOptional<z.ZodNumber>;
+    apdexAlertEnabled: z.ZodOptional<z.ZodBoolean>;
+    evaluationWindowMinutes: z.ZodOptional<z.ZodNumber>;
+    cooldownMinutes: z.ZodOptional<z.ZodNumber>;
+    alertsEnabled: z.ZodOptional<z.ZodBoolean>;
+    notifyEmails: z.ZodOptional<z.ZodArray<z.ZodString>>;
+}, z.core.$strip>;
 export declare const AuditLogQuerySchema: z.ZodObject<{
     cursor: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -536,6 +561,33 @@ export interface UserOrgRow {
     role: OrgRole;
     created_at: Date;
 }
+export interface AlertThresholdRow {
+    id: string;
+    org_id: string;
+    project_id: string | null;
+    p50_threshold_ms: number;
+    p75_threshold_ms: number;
+    p90_threshold_ms: number;
+    p95_threshold_ms: number;
+    p99_threshold_ms: number;
+    p50_alert_enabled: boolean;
+    p75_alert_enabled: boolean;
+    p90_alert_enabled: boolean;
+    p95_alert_enabled: boolean;
+    p99_alert_enabled: boolean;
+    error_rate_threshold_percent: string | number;
+    error_rate_alert_enabled: boolean;
+    apdex_threshold: string | number;
+    apdex_alert_enabled: boolean;
+    evaluation_window_minutes: number;
+    cooldown_minutes: number;
+    alerts_enabled: boolean;
+    notify_emails: string[];
+    last_alerted_at: Date | null;
+    created_by: string | null;
+    created_at: Date;
+    updated_at: Date;
+}
 export interface OrganizationDto {
     id: string;
     name: string;
@@ -662,6 +714,48 @@ export interface QuotaRequestDto {
     reviewedAt: Date | null;
     notes: string | null;
     createdAt: Date;
+}
+export interface AlertThresholdDto {
+    id: string;
+    orgId: string;
+    projectId: string | null;
+    latency: {
+        p50: {
+            thresholdMs: number;
+            alertEnabled: boolean;
+        };
+        p75: {
+            thresholdMs: number;
+            alertEnabled: boolean;
+        };
+        p90: {
+            thresholdMs: number;
+            alertEnabled: boolean;
+        };
+        p95: {
+            thresholdMs: number;
+            alertEnabled: boolean;
+        };
+        p99: {
+            thresholdMs: number;
+            alertEnabled: boolean;
+        };
+    };
+    errorRate: {
+        thresholdPercent: number;
+        alertEnabled: boolean;
+    };
+    apdex: {
+        threshold: number;
+        alertEnabled: boolean;
+    };
+    evaluationWindowMinutes: number;
+    cooldownMinutes: number;
+    alertsEnabled: boolean;
+    notifyEmails: string[];
+    lastAlertedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
 }
 export interface OrganizationServiceDependencies {
     repository: OrganizationRepository;

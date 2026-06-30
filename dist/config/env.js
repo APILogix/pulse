@@ -79,6 +79,34 @@ const envSchema = z.object({
     INGESTION_RATE_BUCKET_TTL_MS: z.coerce.number().int().min(60_000).default(300_000), // 5m
     INGESTION_RATE_BUCKET_SWEEP_MS: z.coerce.number().int().min(5_000).default(60_000), // 1m
     INGESTION_ENDPOINT: z.string().url().optional(),
+    // ── Ingestion worker tier (v2) ─────────────────────────────────────────
+    // General workers drain fast signals (error/message/request/span/metric/log/
+    // cron_checkin); specialized workers isolate heavy signals (profile/replay/
+    // trace) so a slow profile upload never starves error ingestion.
+    INGESTION_GENERAL_WORKERS: z.coerce.number().int().min(1).max(64).default(4),
+    INGESTION_GENERAL_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(8),
+    INGESTION_GENERAL_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(50),
+    INGESTION_SPECIALIZED_WORKERS: z.coerce.number().int().min(0).max(64).default(2),
+    INGESTION_SPECIALIZED_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(4),
+    INGESTION_SPECIALIZED_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).default(10),
+    INGESTION_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(300_000), // 5m
+    INGESTION_SPECIALIZED_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(600_000), // 10m
+    INGESTION_POLL_MS: z.coerce.number().int().min(1).max(10_000).default(25),
+    INGESTION_IDLE_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
+    INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(20),
+    INGESTION_RETRY_INTERVAL_MS: z.coerce.number().int().min(1000).default(15_000),
+    INGESTION_MAINTENANCE_INTERVAL_MS: z.coerce.number().int().min(60_000).default(6 * 60 * 60_000),
+    INGESTION_COMPLETED_RETENTION_MS: z.coerce.number().int().min(60_000).default(60 * 60_000), // 1h
+    // ── Usage counter (three-tier) ─────────────────────────────────────────
+    INGESTION_USAGE_FLUSH_MS: z.coerce.number().int().min(1000).default(30_000),
+    INGESTION_USAGE_BUFFER_LIMIT: z.coerce.number().int().min(100).default(10_000),
+    // ── TimescaleDB logging database (operational metrics + audit) ─────────
+    // Separate instance from the primary DB. When unset, the logging subsystem
+    // degrades gracefully to no-ops (admin logs still land in the main DB).
+    TIMESCALEDB_URL: z.string().optional(),
+    INGESTION_LOG_DB_POOL_SIZE: z.coerce.number().int().min(1).max(50).default(5),
+    INGESTION_ADMIN_LOG_BUFFER_SIZE: z.coerce.number().int().min(10).default(100),
+    INGESTION_ADMIN_LOG_FLUSH_MS: z.coerce.number().int().min(1000).default(5000),
 });
 export const env = envSchema.parse(process.env);
 // Defense-in-depth: refuse to boot if any two crypto secrets are identical.

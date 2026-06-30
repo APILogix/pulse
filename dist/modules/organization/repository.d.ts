@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { type OrganizationRow, type OrgSettingsRow, type OrgMemberRow, type OrgInvitationRow, type AuditLogRow, type OrgEnvironmentRow, type OrgApiKeyRow, type OrgSsoProviderRow, type OrgScimTokenRow, type SecurityEventRow, type QuotaRequestRow, type UserOrgRow, type CreateAuditLogRecord, type CursorPaginationQuery, type CursorPaginatedResponse } from "./types.js";
+import { type OrganizationRow, type OrgSettingsRow, type OrgMemberRow, type OrgInvitationRow, type AuditLogRow, type OrgEnvironmentRow, type OrgApiKeyRow, type OrgSsoProviderRow, type OrgScimTokenRow, type SecurityEventRow, type QuotaRequestRow, type UserOrgRow, type CreateAuditLogRecord, type CursorPaginationQuery, type CursorPaginatedResponse, type AlertThresholdRow } from "./types.js";
 export declare class OrganizationRepository {
     private readonly db;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
@@ -100,5 +100,49 @@ export declare class OrganizationRepository {
     isSlugAvailable(slug: string): Promise<boolean>;
     listScimTokens(orgId: string): Promise<OrgScimTokenRow[]>;
     listSsoProviders(orgId: string): Promise<OrgSsoProviderRow[]>;
+    private static readonly ALERT_THRESHOLD_COLS;
+    /** Read the threshold config for an org/project scope (project null = org-wide). */
+    getAlertThresholds(orgId: string, projectId: string | null): Promise<AlertThresholdRow | null>;
+    /** List every threshold config for an org (org-wide row + per-project rows). */
+    listAlertThresholds(orgId: string): Promise<AlertThresholdRow[]>;
+    /**
+     * Insert-or-update the threshold config for an org/project scope. Only the
+     * provided columns are overwritten; on conflict, COALESCE keeps the existing
+     * value for any column passed as NULL so partial updates are safe.
+     */
+    upsertAlertThresholds(orgId: string, projectId: string | null, data: Record<string, unknown>, createdBy: string): Promise<AlertThresholdRow>;
+    /** Stamp last_alerted_at to enforce the cooldown window after an alert fires. */
+    markAlertThresholdFired(id: string): Promise<void>;
+    /** Resolve a fallback alert recipient for an org (alert/billing/support/owner email). */
+    getOrgFallbackEmail(orgId: string): Promise<string | null>;
+    /**
+     * Transition pending invitations whose expiry has passed to 'expired'.
+     * A safe, reversible state move (the row is retained for the audit/UI trail)
+     * that also frees the partial-unique (org_id, email) WHERE status='pending'
+     * index so a fresh invite to the same address can be issued.
+     */
+    expireStalePendingInvitations(): Promise<number>;
+    /**
+     * Permanently delete invitations that reached a terminal, non-accepted state
+     * (expired / revoked / declined) longer than `days` ago. Accepted invitations
+     * are retained (they record how a current member joined).
+     */
+    purgeTerminalInvitations(days: number): Promise<number>;
+    /** Revoke org API keys whose expires_at has passed but are not yet revoked. */
+    revokeExpiredApiKeys(): Promise<number>;
+    /** Revoke SCIM tokens whose expires_at has passed but are not yet revoked. */
+    revokeExpiredScimTokens(): Promise<number>;
+    /** Delete successfully-sent outbox rows older than `days` (delivery is done). */
+    purgeSentEmailOutbox(days: number): Promise<number>;
+    /** Delete permanently-failed outbox rows older than `days` (retries exhausted). */
+    purgeFailedEmailOutbox(days: number): Promise<number>;
+    /**
+     * Enforce per-org audit-log retention. Each org's
+     * organization_settings.audit_log_retention_days defines its own window;
+     * non-sensitive logs older than that window are deleted. Sensitive logs
+     * (is_sensitive = TRUE) are retained regardless — compliance/forensics keep
+     * those even when normal operational logs roll off.
+     */
+    purgeExpiredAuditLogs(): Promise<number>;
 }
 //# sourceMappingURL=repository.d.ts.map

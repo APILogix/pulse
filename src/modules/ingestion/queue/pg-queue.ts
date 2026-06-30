@@ -40,6 +40,47 @@ export interface EnqueueJob {
   /** Delay before the job becomes claimable, in milliseconds. */
   delayMs?: number;
   maxAttempts?: number;
+  // Correlation columns lifted out of the payload for indexed lookups and
+  // operator debugging. All optional; default NULL.
+  eventId?: string | null;
+  traceId?: string | null;
+  spanId?: string | null;
+  sessionId?: string | null;
+  userId?: string | null;
+  tenantId?: string | null;
+}
+
+/**
+ * Per-type queue priority (LOWER = HIGHER priority). Single source of truth so
+ * the API path and the worker tier agree on scheduling. Mirrors the SDK
+ * transport matrix: errors/messages/crons are highest; requests/spans/traces
+ * normal; logs/metrics/profiles/replays lower.
+ */
+const TYPE_PRIORITY: Record<string, number> = {
+  error: 10,
+  message: 10,
+  cron_checkin: 10,
+  request: 50,
+  span: 50,
+  trace: 50,
+  log: 60,
+  metric: 80,
+  profile: 90,
+  replay: 90,
+};
+
+/** Job types handled by the SPECIALIZED worker lane (heavy / isolated). */
+export const SPECIALIZED_JOB_TYPES: readonly string[] = ['profile', 'replay', 'trace'];
+
+/** Job types handled by the GENERAL worker lane (fast path). */
+export const GENERAL_JOB_TYPES: readonly string[] = [
+  'error', 'message', 'request', 'span', 'metric', 'log', 'cron_checkin',
+];
+
+/** Options for marking a job complete (processing accounting). */
+export interface CompleteOptions {
+  processedBy?: string;
+  durationMs?: number;
 }
 
 export interface ClaimedJob {
@@ -101,6 +142,15 @@ export class PgQueue {
     this.maxBackoffMs = opts.maxBackoffMs ?? 5 * 60_000;
   }
 
+  /**
+   * Resolve the scheduling priority for an event type (LOWER = higher).
+   * Single source of truth shared by the API enqueue path and the worker tier.
+   * Unknown types default to 50 (normal).
+   */
+  static getPriorityForType(jobType: string): number {
+    return TYPE_PRIORITY[jobType] ?? 50;
+  }
+
   /** Enqueue a single job. Returns the job id, or null if deduped. */
   async enqueue(job: EnqueueJob, client?: PoolClient): Promise<string | null> {
     const ids = await this.enqueueBulk([job], client);
@@ -122,24 +172,32 @@ export class PgQueue {
     let i = 1;
     for (const j of jobs) {
       cols.push(
-        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}::jsonb, $${i++}, NOW() + ($${i++}::int || ' milliseconds')::interval, $${i++})`,
+        `($${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++}::jsonb, $${i++}, NOW() + ($${i++}::int || ' milliseconds')::interval, $${i++}, ` +
+          `$${i++}, $${i++}, $${i++}, $${i++}, $${i++}, $${i++})`,
       );
       params.push(
         this.queue,
         j.jobType,
-        j.priority ?? 100,
+        j.priority ?? PgQueue.getPriorityForType(j.jobType),
         j.orgId ?? null,
         j.projectId ?? null,
         JSON.stringify(j.payload),
         j.dedupeKey ?? null,
         j.delayMs ?? 0,
-        j.maxAttempts ?? 5,
+        j.maxAttempts ?? 3,
+        j.eventId ?? null,
+        j.traceId ?? null,
+        j.spanId ?? null,
+        j.sessionId ?? null,
+        j.userId ?? null,
+        j.tenantId ?? null,
       );
     }
 
     const result = await db.query<{ id: string }>(
       `INSERT INTO ingestion_jobs
-         (queue, job_type, priority, org_id, project_id, payload, dedupe_key, run_at, max_attempts)
+         (queue, job_type, priority, org_id, project_id, payload, dedupe_key, run_at, max_attempts,
+          event_id, trace_id, span_id, session_id, user_id, tenant_id)
        VALUES ${cols.join(', ')}
        ON CONFLICT DO NOTHING
        RETURNING id`,
@@ -157,7 +215,8 @@ export class PgQueue {
    * 'active' and stamps the lease in the same statement, so there is no window
    * where a row is selected but not yet leased.
    */
-  async claim(workerId: string, batchSize: number): Promise<ClaimedJob[]> {
+  async claim(workerId: string, batchSize: number, jobTypes?: readonly string[]): Promise<ClaimedJob[]> {
+    const hasTypeFilter = Array.isArray(jobTypes) && jobTypes.length > 0;
     const result = await this.pool.query<ClaimRow>(
       `
       WITH claimable AS (
@@ -166,6 +225,7 @@ export class PgQueue {
         WHERE queue = $1
           AND state = 'pending'
           AND run_at <= NOW()
+          ${hasTypeFilter ? 'AND job_type = ANY($5::text[])' : ''}
         ORDER BY priority ASC, run_at ASC
         LIMIT $2
         FOR UPDATE SKIP LOCKED
@@ -181,7 +241,9 @@ export class PgQueue {
       RETURNING j.id, j.queue, j.job_type, j.priority, j.org_id, j.project_id,
                 j.payload, j.attempts, j.max_attempts, j.dedupe_key
       `,
-      [this.queue, batchSize, workerId, this.visibilityTimeoutMs],
+      hasTypeFilter
+        ? [this.queue, batchSize, workerId, this.visibilityTimeoutMs, jobTypes]
+        : [this.queue, batchSize, workerId, this.visibilityTimeoutMs],
     );
 
     return result.rows.map((r) => ({
@@ -198,13 +260,16 @@ export class PgQueue {
     }));
   }
 
-  /** Mark a claimed job complete. */
-  async complete(jobId: string): Promise<void> {
+  /** Mark a claimed job complete, optionally recording processing accounting. */
+  async complete(jobId: string, opts?: CompleteOptions): Promise<void> {
     await this.pool.query(
       `UPDATE ingestion_jobs
-         SET state = 'completed', completed_at = NOW(), locked_until = NULL, locked_by = NULL
+         SET state = 'completed', completed_at = NOW(),
+             locked_until = NULL, locked_by = NULL,
+             processed_by = COALESCE($2, processed_by),
+             processing_duration_ms = COALESCE($3, processing_duration_ms)
        WHERE id = $1 AND state = 'active'`,
-      [jobId],
+      [jobId, opts?.processedBy ?? null, opts?.durationMs ?? null],
     );
   }
 
@@ -213,25 +278,28 @@ export class PgQueue {
    * backoff. Otherwise move it to the dead-letter table (in one transaction so
    * we never both DLQ and leave the job alive).
    */
-  async fail(job: ClaimedJob, errorMessage: string): Promise<'retried' | 'dead-lettered'> {
+  async fail(job: ClaimedJob, errorMessage: string, errorCode?: string): Promise<'retried' | 'dead-lettered'> {
     if (job.attempts >= job.maxAttempts) {
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
         await client.query(
           `INSERT INTO ingestion_dead_letter_jobs
-             (original_job_id, queue, job_type, org_id, project_id, payload, dedupe_key, attempts, last_error)
-           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9)`,
+             (original_job_id, queue, job_type, org_id, project_id, payload, dedupe_key,
+              attempts, max_attempts, last_error, error_code)
+           VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11)`,
           [
             job.id, job.queue, job.jobType, job.orgId, job.projectId,
-            JSON.stringify(job.payload), job.dedupeKey, job.attempts, errorMessage.slice(0, 4000),
+            JSON.stringify(job.payload), job.dedupeKey, job.attempts, job.maxAttempts,
+            errorMessage.slice(0, 4000), errorCode ?? null,
           ],
         );
         await client.query(
           `UPDATE ingestion_jobs
-             SET state = 'failed', last_error = $2, locked_until = NULL, locked_by = NULL
+             SET state = 'failed', last_error = $2, error_code = $3,
+                 locked_until = NULL, locked_by = NULL
            WHERE id = $1`,
-          [job.id, errorMessage.slice(0, 4000)],
+          [job.id, errorMessage.slice(0, 4000), errorCode ?? null],
         );
         await client.query('COMMIT');
       } catch (err) {
@@ -255,10 +323,11 @@ export class PgQueue {
          SET state = 'pending',
              run_at = NOW() + (($2::int) || ' milliseconds')::interval,
              last_error = $3,
+             error_code = $4,
              locked_until = NULL,
              locked_by = NULL
        WHERE id = $1`,
-      [job.id, backoff + jitter, errorMessage.slice(0, 4000)],
+      [job.id, backoff + jitter, errorMessage.slice(0, 4000), errorCode ?? null],
     );
     return 'retried';
   }
@@ -317,7 +386,7 @@ export class PgQueue {
   }
 
   /** Requeue a dead-letter row back onto the live queue (operator action). */
-  async replayDeadLetter(dlqId: string): Promise<string | null> {
+  async replayDeadLetter(dlqId: string, replayedBy?: string): Promise<string | null> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -338,13 +407,16 @@ export class PgQueue {
       }
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO ingestion_jobs (queue, job_type, priority, org_id, project_id, payload, dedupe_key)
-         VALUES ($1,$2,100,$3,$4,$5::jsonb,$6)
+         VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)
          RETURNING id`,
-        [row.queue, row.job_type, row.org_id, row.project_id, JSON.stringify(row.payload), row.dedupe_key],
+        [
+          row.queue, row.job_type, PgQueue.getPriorityForType(row.job_type),
+          row.org_id, row.project_id, JSON.stringify(row.payload), row.dedupe_key,
+        ],
       );
       await client.query(
-        `UPDATE ingestion_dead_letter_jobs SET replayed_at = NOW() WHERE id = $1`,
-        [dlqId],
+        `UPDATE ingestion_dead_letter_jobs SET replayed_at = NOW(), replayed_by = $2 WHERE id = $1`,
+        [dlqId, replayedBy ?? null],
       );
       await client.query('COMMIT');
       return inserted.rows[0]?.id ?? null;

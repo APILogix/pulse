@@ -2,11 +2,16 @@
  * Project utility functions.
  *
  * Flow:
- * - Domain errors and handler helpers standardize project API failures.
+ * - ProjectError + handleProjectError standardize every project/API-key
+ *   failure envelope.
  * - Role helpers keep organization authorization comparisons consistent.
- * - Slug/API-key helpers generate stable public identifiers while storing only
- *   hashed secrets.
- * - Constant-time comparison protects API-key verification from timing leaks.
+ * - Slug/prefix/API-key helpers generate stable public identifiers while only
+ *   ever persisting the SHA-256 hash of a key.
+ * - constantTimeEqualHex protects verification from timing leaks.
+ *
+ * Security: the raw API key exists only in the create/rotate response cycle.
+ * We persist key_hash (sha256 hex) for verification and key_prefix for
+ * candidate narrowing. Keys carry >= 24 bytes (48 hex chars) of entropy.
  */
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { ZodError } from "zod";
@@ -17,25 +22,46 @@ const ROLE_HIERARCHY = {
     member: 2,
     viewer: 1,
 };
+// Status codes for every domain error the module raises. Centralized so routes
+// and tests share one source of truth.
+export const ProjectErrorCodes = {
+    PROJECT_NOT_FOUND: 404,
+    PROJECT_SLUG_EXISTS: 409,
+    PROJECT_INVALID_TRANSITION: 400,
+    PROJECT_LIMIT_EXCEEDED: 400,
+    PROJECT_ARCHIVED: 409,
+    INSUFFICIENT_PERMISSIONS: 403,
+    ENVIRONMENT_NOT_FOUND: 404,
+    ENVIRONMENT_EXISTS: 409,
+    API_KEY_NOT_FOUND: 404,
+    API_KEY_LIMIT_EXCEEDED: 400,
+    API_KEY_REVOKED: 400,
+    API_KEY_EXPIRED: 400,
+    API_KEY_CONFLICT: 409,
+    API_KEY_INVALID_STATE: 400,
+    VALIDATION_ERROR: 422,
+    INTERNAL_ERROR: 500,
+};
 export class ProjectError extends Error {
     code;
     statusCode;
-    constructor(code, message, statusCode = 400) {
+    details;
+    constructor(code, message, statusCode = 400, details) {
         super(message);
         this.code = code;
         this.statusCode = statusCode;
+        this.details = details;
         this.name = "ProjectError";
     }
 }
 export function handleProjectError(error, reply) {
-    // The routes call this from a shared wrapper so every project endpoint returns
-    // the same error envelope for domain, validation, and unexpected failures.
     if (error instanceof ProjectError) {
         return reply.code(error.statusCode).send({
             success: false,
             error: {
                 code: error.code,
                 message: error.message,
+                ...(error.details ? { details: error.details } : {}),
             },
         });
     }
@@ -61,8 +87,6 @@ export function hasRequiredRole(role, requiredRole) {
     return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY[requiredRole];
 }
 export function slugifyProjectName(name) {
-    // Slugs are restricted to URL-safe lowercase tokens and receive a random
-    // fallback if the project name contains no usable characters.
     const slug = name
         .toLowerCase()
         .trim()
@@ -71,12 +95,23 @@ export function slugifyProjectName(name) {
         .slice(0, 48);
     return slug || `project-${randomBytes(3).toString("hex")}`;
 }
-export function buildApiPrefixes(slug) {
-    const suffix = slug.replace(/[^a-z0-9]/g, "").slice(0, 8) ||
-        randomBytes(4).toString("hex");
+/** Public prefix for keys minted in a given environment. */
+export function environmentKeyPrefix(environment) {
+    switch (environment) {
+        case "production":
+            return "pk_live_";
+        case "staging":
+            return "pk_stg_";
+        case "development":
+        default:
+            return "pk_dev_";
+    }
+}
+export function buildApiPrefixes() {
     return {
-        productionApiPrefix: `pk_live_`,
-        developmentApiPrefix: `pk_dev_`,
+        productionApiPrefix: environmentKeyPrefix("production"),
+        developmentApiPrefix: environmentKeyPrefix("development"),
+        stagingApiPrefix: environmentKeyPrefix("staging"),
     };
 }
 export function validateStatusTransition(current, next) {
@@ -90,11 +125,16 @@ export function validateStatusTransition(current, next) {
 export function hashApiKey(rawKey) {
     return createHash("sha256").update(rawKey).digest("hex");
 }
+/**
+ * Mint a new API key.
+ *
+ * Format: `pk_{env}_{40 hex}` (>= 20 bytes of entropy). Only the prefix (first
+ * 16 chars, which includes the env discriminator) is stored in cleartext for
+ * candidate narrowing; the rest is recoverable only via the returned fullKey.
+ */
 export function createApiKey(environment) {
-    // The full key is returned once. The prefix is public metadata for candidate
-    // lookup and the hash is the only value persisted for verification.
-    const prefix = environment === "production" ? "pk_live_" : "pk_dev_";
-    const rawKey = `${prefix}${randomBytes(20).toString("hex")}`;
+    const prefix = environmentKeyPrefix(environment);
+    const rawKey = `${prefix}${randomBytes(24).toString("hex")}`;
     return {
         fullKey: rawKey,
         keyPrefix: rawKey.slice(0, 16),
@@ -103,19 +143,33 @@ export function createApiKey(environment) {
 }
 export function extractApiKeyPrefix(rawKey) {
     const value = rawKey.trim();
-    if (!value.startsWith("pk_live_") && !value.startsWith("pk_dev_")) {
+    if (!value.startsWith("pk_live_") &&
+        !value.startsWith("pk_dev_") &&
+        !value.startsWith("pk_stg_")) {
         return null;
     }
     return value.length >= 16 ? value.slice(0, 16) : null;
 }
 export function constantTimeEqualHex(left, right) {
-    // Length mismatch is rejected before timingSafeEqual because the Node API
-    // requires buffers of equal length.
     const leftBuffer = Buffer.from(left, "hex");
     const rightBuffer = Buffer.from(right, "hex");
     if (leftBuffer.length !== rightBuffer.length) {
         return false;
     }
     return timingSafeEqual(leftBuffer, rightBuffer);
+}
+/** Default permission set for a freshly minted key of a given type. */
+export function defaultPermissionsForType(keyType) {
+    switch (keyType) {
+        case "read_only":
+            return ["ingest:read", "events:read", "metrics:read"];
+        case "ingestion_only":
+            return ["ingest:write"];
+        case "admin":
+            return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
+        case "standard":
+        default:
+            return ["ingest:write", "ingest:read"];
+    }
 }
 //# sourceMappingURL=utils.js.map
