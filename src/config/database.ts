@@ -23,8 +23,8 @@ export const pool = new Pool({
   //   rejectUnauthorized: false,
   // },
   max: 20,
-  min: 5,
-  idleTimeoutMillis: 10000,
+  min: 2,
+  idleTimeoutMillis: 60000,
   connectionTimeoutMillis: 30000,
   statement_timeout: 10000,
   query_timeout: 10000,
@@ -43,8 +43,23 @@ pool.on('remove', () => {
   dbLogger.debug('Connection removed from pool');
 });
 
-pool.on('error', (err: Error) => {
-  dbLogger.error({ err }, 'Unexpected pool error — connection may have been lost');
+pool.on("error", (err) => {
+  const expected =
+    err.message.includes("Connection terminated unexpectedly") ||
+    err.message.includes("Connection ended unexpectedly");
+
+  if (expected) {
+    dbLogger.debug(
+      { err: err.message },
+      "Idle database connection closed by server."
+    );
+    return;
+  }
+
+  dbLogger.error(
+    { err },
+    "Unexpected database pool error"
+  );
 });
 
 /**

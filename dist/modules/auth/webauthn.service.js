@@ -16,7 +16,7 @@ import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 import { loginMfaChallengeCache, mfaBackupTempCache, recordStepUpFreshness, stepUpChallengeCache, webauthnChallengeCache, } from './cache.js';
 import * as repository from './repository.js';
-import { assertLoginAllowedByOrgPolicy } from './policy.service.js';
+import { assertLoginAllowedByOrgPolicy, assertMfaEnrollmentAllowed, } from './policy.service.js';
 import { issueSessionForUser } from './service.js';
 import { AuthError, AuthErrorCodes, } from './types.js';
 import { webauthnConfig } from './webauthn.config.js';
@@ -54,6 +54,9 @@ export async function createWebAuthnRegistrationOptions(userId, deviceName) {
     }
     const devices = await repository.findMFADevicesByUserId(userId);
     const existing = listHardwareKeys(devices);
+    // Enforce org MFA policy: hardware_key (WebAuthn/passkey) must be permitted
+    // and the user must be under the per-user device cap.
+    await assertMfaEnrollmentAllowed(userId, 'hardware_key', devices.filter((d) => d.is_active).length);
     const options = await generateRegistrationOptions({
         rpName: webauthnConfig.rpName,
         rpID: webauthnConfig.rpID,

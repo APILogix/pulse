@@ -5,7 +5,11 @@
  * 1. Construct repository, dispatcher, service, and the background monitor.
  * 2. Decorate Fastify with the connector service boundary.
  * 3. Register connector routes under /organizations/:orgId/connectors.
- * 4. Start the monitor (retry + health sweeps) and stop it on shutdown.
+ *
+ * The background monitor (retry + health sweeps) is NOT started here — it runs
+ * only in the worker process (npm run dev:workers) via startConnectorMonitor()
+ * in workers/main.ts. The API process (npm run dev) serves HTTP only and runs
+ * no background job workers.
  *
  * The connector type registry self-registers built-in connectors on import.
  */

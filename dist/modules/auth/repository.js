@@ -301,8 +301,8 @@ export async function createMFADevice(data, client) {
     const db = client || pool;
     const result = await db.query(`INSERT INTO user_mfa_devices (
        user_id, device_type, device_name, secret_encrypted, is_primary,
-       device_metadata, is_active, verified
-     ) VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE)
+       device_metadata, display_hint, phone_number_encrypted, is_active, verified
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, FALSE)
      RETURNING *`, [
         data.user_id,
         data.device_type,
@@ -310,6 +310,8 @@ export async function createMFADevice(data, client) {
         data.secret_encrypted,
         data.is_primary,
         JSON.stringify(data.device_metadata || {}),
+        data.display_hint ?? null,
+        data.phone_number_encrypted ?? null,
     ]);
     return result.rows[0];
 }
@@ -776,7 +778,17 @@ export async function listOrgAuthPoliciesForUser(userId, client) {
             o.name AS org_name,
             COALESCE(os.enforce_sso, FALSE) AS enforce_sso,
             COALESCE(os.enforce_mfa, FALSE) AS enforce_mfa,
-            os.session_timeout_minutes
+            os.session_timeout_minutes,
+            COALESCE(os.mfa_allowed_methods,
+                     ARRAY['totp','email','hardware_key','backup_codes'])
+              AS mfa_allowed_methods,
+            os.mfa_primary_method_preference,
+            COALESCE(os.mfa_backup_codes_required, TRUE) AS mfa_backup_codes_required,
+            COALESCE(os.mfa_grace_period_days, 7)       AS mfa_grace_period_days,
+            COALESCE(os.mfa_max_devices_per_user, 10)   AS mfa_max_devices_per_user,
+            COALESCE(os.mfa_allow_sms_fallback, FALSE)  AS mfa_allow_sms_fallback,
+            COALESCE(os.mfa_allow_email_fallback, TRUE) AS mfa_allow_email_fallback,
+            COALESCE(os.mfa_remember_device_days, 30)   AS mfa_remember_device_days
      FROM organization_members om
      JOIN organizations o ON o.id = om.org_id AND o.deleted_at IS NULL
      LEFT JOIN organization_settings os ON os.org_id = o.id

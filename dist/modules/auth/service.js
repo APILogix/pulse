@@ -36,7 +36,7 @@ import { logAudit } from '../../shared/middleware/audit-logger.js';
 import { decrypt, encrypt, hashPassword, verifyPassword, } from '../../shared/utils/encryption.js';
 import { generateId } from '../../shared/utils/id.js';
 import { blacklistAccessToken, loginMfaChallengeCache, mfaBackupTempCache, recordStepUpFreshness, revokeAllUserTokens as cacheRevokeAllUserTokens, stepUpChallengeCache, } from './cache.js';
-import { assertLoginAllowedByOrgPolicy, assertRefreshAllowedByOrgPolicy, } from './policy.service.js';
+import { assertLoginAllowedByOrgPolicy, assertRefreshAllowedByOrgPolicy, assertMfaEnrollmentAllowed, } from './policy.service.js';
 import * as repository from './repository.js';
 import { AuthError, AuthErrorCodes, } from './types.js';
 import { ABSOLUTE_SESSION_TTL_SECONDS, ACCESS_TOKEN_TTL_SECONDS, buildDeviceFingerprint, buildPasswordHistory, EMAIL_VERIFICATION_TTL_SECONDS, generateAccessToken, generateEmailFlowToken, generateRefreshToken, hashEmailFlowToken, hashToken as hashAuthToken, MFA_DISABLE_TOKEN_TTL_SECONDS, MFA_LOGIN_CHALLENGE_TTL_SECONDS, normalizeEmail, PASSWORD_RESET_TTL_SECONDS, REFRESH_GRACE_WINDOW_MS, REFRESH_TOKEN_TTL_SECONDS, REMEMBER_ME_REFRESH_TTL_SECONDS, STEP_UP_CHALLENGE_TTL_SECONDS, timingSafeFakePasswordCompare, verifyRefreshToken, } from './utils.js';
@@ -309,6 +309,34 @@ async function blacklistOtherUserSessionTokens(userId, currentSessionId) {
 // ----------------------------------------------------------------------------
 // TOTP helpers
 // ----------------------------------------------------------------------------
+/** Mask an email for display hints: "jane.doe@example.com" -> "j•••@example.com". */
+function maskEmailForHint(email) {
+    const [local, domain] = email.split('@');
+    if (!domain || !local)
+        return 'Email code';
+    const head = local.slice(0, 1);
+    return `${head}•••@${domain}`;
+}
+/**
+ * Build the masked "try another way" display hint for a device. TOTP and
+ * hardware keys fall back to the user-chosen device name; email/SMS are masked.
+ */
+function buildMfaDisplayHint(deviceType, deviceName, opts = {}) {
+    switch (deviceType) {
+        case 'email':
+            return opts.email ? maskEmailForHint(opts.email) : 'Email code';
+        case 'totp':
+            return deviceName?.trim() || 'Authenticator App';
+        case 'hardware_key':
+            return deviceName?.trim() || 'Security key';
+        case 'sms':
+            return deviceName?.trim() || 'Text message';
+        case 'backup_codes':
+            return 'Backup code';
+        default:
+            return deviceName?.trim() || 'Verification method';
+    }
+}
 function buildTotp(secretBase32, label) {
     return new OTPAuth.TOTP({
         issuer: config.APP_NAME.replace(/\s+/g, '_'), // QR-safe
@@ -897,7 +925,23 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             id: d.id,
             type: d.device_type,
             name: d.device_name || (d.device_type === 'totp' ? 'Authenticator App' : 'Email OTP'),
+            display_hint: d.display_hint ||
+                buildMfaDisplayHint(d.device_type, d.device_name, { email: user.email }),
+            is_primary: d.is_primary,
+            last_used_at: d.last_used_at,
         }));
+        const hasBackupCodes = user.mfa_backup_codes_generated_at != null ||
+            verifiedDevices.some((d) => Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0);
+        if (hasBackupCodes) {
+            availableMethods.push({
+                id: 'backup_codes',
+                type: 'backup_codes',
+                name: 'Backup Codes',
+                display_hint: 'Use an emergency recovery code',
+                is_primary: false,
+                last_used_at: null,
+            });
+        }
         const challenge = createLoginMFAChallenge({
             userId: user.id,
             device: primary,
@@ -1322,6 +1366,13 @@ export async function setupMFA(userId, input, ipAddress) {
         throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
     }
     assertUserUsable(user);
+    // Enforce organization MFA policy (allowed methods + per-user device cap)
+    // before enrolling. Re-enrolling an existing device of the same type reuses
+    // its row, so it does not count against the cap.
+    const policyDevices = await repository.findMFADevicesByUserId(userId);
+    const existingOfType = policyDevices.find((d) => d.device_type === input.type && d.is_active);
+    const activeCountForCap = policyDevices.filter((d) => d.is_active && d.id !== existingOfType?.id).length;
+    await assertMfaEnrollmentAllowed(userId, input.type, activeCountForCap);
     // ── Email MFA setup ──────────────────────────────────────────────────────
     if (input.type === 'email') {
         const existing = await repository.findAnyMFADeviceByType(userId, 'email');
@@ -1360,6 +1411,9 @@ export async function setupMFA(userId, input, ipAddress) {
                 secret_encrypted: null,
                 is_primary: isPrimary,
                 device_metadata: { setup_ip: ipAddress },
+                display_hint: buildMfaDisplayHint('email', input.device_name, {
+                    email: user.email,
+                }),
             });
         }
         // Generate and send a setup OTP to confirm the user controls this email.
@@ -1414,6 +1468,7 @@ export async function setupMFA(userId, input, ipAddress) {
             secret_encrypted: secretEncrypted,
             is_primary: isPrimary,
             device_metadata: { setup_ip: ipAddress },
+            display_hint: buildMfaDisplayHint('totp', input.device_name),
         });
     }
     const { plain: backupCodes, hashed } = await generateBackupCodes();

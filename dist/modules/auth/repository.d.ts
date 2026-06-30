@@ -106,6 +106,8 @@ export declare function createMFADevice(data: {
     secret_encrypted: string | null;
     is_primary: boolean;
     device_metadata?: Record<string, unknown>;
+    display_hint?: string | null;
+    phone_number_encrypted?: string | null;
 }, client?: PoolClient): Promise<MFADevice>;
 /**
  * Reset an existing MFA device row for a fresh setup. Called when a user
@@ -249,6 +251,14 @@ export interface OrgAuthPolicyRow {
     enforce_sso: boolean;
     enforce_mfa: boolean;
     session_timeout_minutes: number | null;
+    mfa_allowed_methods: string[];
+    mfa_primary_method_preference: string | null;
+    mfa_backup_codes_required: boolean;
+    mfa_grace_period_days: number;
+    mfa_max_devices_per_user: number;
+    mfa_allow_sms_fallback: boolean;
+    mfa_allow_email_fallback: boolean;
+    mfa_remember_device_days: number;
 }
 export declare function listOrgAuthPoliciesForUser(userId: string, client?: PoolClient): Promise<OrgAuthPolicyRow[]>;
 export interface SsoDiscoveryRow {

@@ -68,6 +68,9 @@ export interface LoginMFAChallenge {
         id: string;
         type: string;
         name: string;
+        display_hint?: string | null;
+        is_primary?: boolean;
+        last_used_at?: Date | null;
     }>;
 }
 export declare const loginMfaChallengeCache: LRUCache<string, LoginMFAChallenge, unknown>;

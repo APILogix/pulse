@@ -74,6 +74,7 @@ async function credentialRoutes(fastify) {
                         challenge_id: result.challenge_id,
                         expires_at: result.expires_at,
                         device_type: result.device_type,
+                        available_methods: result.available_methods,
                     },
                 });
             }
@@ -497,6 +498,7 @@ async function mfaRoutes(fastify) {
                     id: d.id,
                     type: d.device_type,
                     name: d.device_name,
+                    display_hint: d.display_hint,
                     verified: d.verified,
                     is_primary: d.is_primary,
                     last_used_at: d.last_used_at,

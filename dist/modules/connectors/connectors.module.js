@@ -21,11 +21,10 @@ async function connectorsModule(fastify, _options) {
     const monitor = new ConnectorMonitor(repository, dispatcher, service, fastify.log);
     fastify.decorate('connectors', { repository, dispatcher, service, monitor });
     await fastify.register(connectorRoutes, { prefix: '/organizations/:orgId/connectors' });
-    fastify.addHook('onReady', async () => {
-        monitor.start();
-    });
+    // NOTE: monitor.start() is intentionally NOT called here. Background sweeps
+    // run only in the worker process (workers/main.ts → startConnectorMonitor).
     fastify.addHook('onClose', async () => {
-        monitor.stop();
+        monitor.stop(); // no-op in the API process (never started here)
         moduleLogger.info('Connectors module shutting down');
     });
     moduleLogger.info('Connectors module registered');
