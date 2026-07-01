@@ -51,7 +51,9 @@ export const REFRESH_GRACE_WINDOW_MS = 30 * 1000;
 // Refresh-token cookie name. The `__Host-` prefix forces the browser to
 // require Secure + Path=/ + no Domain attribute; sibling subdomains cannot
 // overwrite this cookie.
-export const REFRESH_COOKIE_NAME = '__Host-refresh_token';
+// export const REFRESH_COOKIE_NAME = '__Host-refresh_token';
+// export const REFRESH_COOKIE_NAME = '__Host-refresh_token';
+export const REFRESH_COOKIE_NAME = 'refresh_token';
 
 // ---------------------------------------------------------------------------
 // JWT issuer / audience claims (defense-in-depth against token confusion)
