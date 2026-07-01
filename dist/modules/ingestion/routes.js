@@ -36,6 +36,7 @@ function assertControllerMethods(controller) {
         "reprocessAllDLQ",
         "replay",
         "debugEvent",
+        "getUsage",
     ];
     for (const method of methods) {
         if (typeof controller[method] !== "function") {
@@ -101,6 +102,23 @@ export async function ingestionRoutes(fastify) {
             });
         }
     });
+    // ── Tenant-scoped usage lookup (new usage tables) ───────────────────────
+    // Realtime per-project usage read from project_usage_realtime (durable
+    // hourly buckets + un-flushed staging tail). Project membership enforced.
+    fastify.get("/v1/usage", {
+        preHandler: [authenticate, requireProjectMembershipFromQuery],
+        schema: {
+            querystring: {
+                type: "object",
+                required: ["projectId"],
+                properties: {
+                    projectId: { type: "string", format: "uuid" },
+                    counterType: { type: "string", maxLength: 64 },
+                },
+                additionalProperties: false,
+            },
+        },
+    }, controller.getUsage.bind(controller));
     // ── Error event lookups ─────────────────────────────────────────────────
     fastify.get("/v1/errors", {
         preHandler: [authenticate, requireProjectMembershipFromQuery],

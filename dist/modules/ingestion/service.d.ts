@@ -20,6 +20,7 @@ export declare class IngestionService {
     private readonly writer;
     private readonly queue;
     private readonly rateLimiter;
+    private readonly usage;
     private readonly backpressure;
     private readonly replayMaxEvents;
     private readonly maxBatchSize;
@@ -59,8 +60,8 @@ export declare class IngestionService {
      * before they touch the SQL.
      */
     getDLQJobs(offset?: number, limit?: number): Promise<unknown[]>;
-    reprocessDLQJob(jobId: string): Promise<void>;
-    reprocessAllDLQ(batchSize?: number): Promise<number>;
+    reprocessDLQJob(jobId: string, replayedBy?: string): Promise<void>;
+    reprocessAllDLQ(batchSize?: number, replayedBy?: string): Promise<number>;
     /**
      * Replay historical telemetry by re-enqueuing it through the standard worker
      * path. Capped by INGESTION_REPLAY_MAX_EVENTS to prevent operator typos from
@@ -75,6 +76,16 @@ export declare class IngestionService {
     getDebugEvent(eventId: string, projectId: string): Promise<unknown>;
     /** Drain in-process state. The queue is durable in Postgres. */
     shutdown(): Promise<void>;
+    /**
+     * Realtime per-project usage, read from project_usage_realtime (durable
+     * hourly buckets + un-flushed staging tail). Optionally filtered to a single
+     * counter type. Powers the GET /v1/usage endpoint.
+     */
+    getProjectUsage(projectId: string, counterType?: string): Promise<Array<{
+        counterType: string;
+        total: number;
+        periodStart: string | null;
+    }>>;
     private normalizeErrorEventListQuery;
     private parseOptionalDate;
     private normalizeInteger;

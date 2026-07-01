@@ -38,6 +38,13 @@ export interface UsageCounterOptions {
     flushIntervalMs?: number;
     /** Force a flush when the in-memory buffer reaches this many keys. Default 10k. */
     bufferLimit?: number;
+    /**
+     * Whether this instance drives the staging->durable rollup
+     * (flush_usage_counters()). Default true. Set false in the API cluster
+     * (many processes) so only the worker tier runs the aggregation, while API
+     * processes still drain their Tier-1 memory into the UNLOGGED staging table.
+     */
+    driveRollup?: boolean;
 }
 export declare class UsageCounter {
     private readonly pool;
@@ -45,6 +52,7 @@ export declare class UsageCounter {
     private buffer;
     private readonly flushIntervalMs;
     private readonly bufferLimit;
+    private readonly driveRollup;
     private timer;
     private flushing;
     private stopped;

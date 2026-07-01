@@ -14,10 +14,40 @@ const envSchema = z.object({
     // Log Database (Primary + Replica)
     LOG_DB_PRIMARY: z.string().optional(),
     LOG_DB_REPLICA: z.string().optional(),
-    LOG_POOL_MAX: z.string().transform(Number).default(20),
-    LOG_POOL_MIN: z.string().transform(Number).default(5),
-    LOG_QUERY_TIMEOUT: z.string().transform(Number).default(30000),
-    LOG_RETRIES: z.string().transform(Number).default(3),
+    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(20),
+    LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(5),
+    // Read-path statement timeout (ms). Bounds runaway analytical reads.
+    LOG_QUERY_TIMEOUT: z.coerce.number().int().min(0).default(30000),
+    LOG_RETRIES: z.coerce.number().int().min(1).max(20).default(3),
+    // ── Log DB resilience / timeout tuning ─────────────────────────────────
+    // The ingestion log DB must NEVER abort large batch writes or background
+    // maintenance under load. Writes therefore run with a separate (and by
+    // default unbounded) statement timeout, while reads stay bounded.
+    // 0 disables the statement timeout entirely for that path.
+    LOG_DB_WRITE_TIMEOUT: z.coerce.number().int().min(0).default(0),
+    LOG_DB_IDLE_TIMEOUT: z.coerce.number().int().min(0).default(30000),
+    LOG_DB_CONNECTION_TIMEOUT: z.coerce.number().int().min(1000).default(10000),
+    // Socket keepalive prevents managed providers (Neon/PgBouncer) from
+    // silently dropping idle pooled connections mid-flight.
+    LOG_DB_KEEPALIVE_MS: z.coerce.number().int().min(0).default(10000),
+    LOG_DB_SLOW_QUERY_MS: z.coerce.number().int().min(1).default(1000),
+    // Reject unauthorized TLS in production unless explicitly relaxed (some
+    // managed providers serve certs that need this off).
+    LOG_DB_SSL_REJECT_UNAUTHORIZED: z
+        .string()
+        .optional()
+        .transform((v) => v !== 'false'),
+    // ── Log DB TimescaleDB tuning ──────────────────────────────────────────
+    // When enabled, connect() promotes the event tables to TimescaleDB
+    // hypertables and installs compression + retention policies. Idempotent
+    // and non-fatal: any failure degrades to plain PostgreSQL behaviour.
+    LOG_DB_ENABLE_TIMESCALE: z
+        .string()
+        .optional()
+        .transform((v) => v === 'true'),
+    LOG_DB_CHUNK_INTERVAL: z.string().default('1 day'),
+    LOG_DB_COMPRESS_AFTER: z.string().default('7 days'),
+    LOG_DB_RETENTION: z.string().default('90 days'),
     // ClickHouse (Optional)
     CLICKHOUSE_URL: z.string().optional(),
     // Redis

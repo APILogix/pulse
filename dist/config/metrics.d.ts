@@ -7,8 +7,8 @@
 import type { FastifyInstance } from 'fastify';
 import promClient from 'prom-client';
 declare const register: promClient.Registry<"text/plain; version=0.0.4; charset=utf-8">;
-declare const httpRequestDurationMicroseconds: promClient.Histogram<"method" | "route" | "status_code">;
-declare const httpRequestTotal: promClient.Counter<"method" | "route" | "status_code">;
+declare const httpRequestDurationMicroseconds: promClient.Histogram<"method" | "status_code" | "route">;
+declare const httpRequestTotal: promClient.Counter<"method" | "status_code" | "route">;
 declare const httpRequestsInFlight: promClient.Gauge<string>;
 declare function metricsPlugin(fastify: FastifyInstance): Promise<void>;
 export declare const registerMetricsPlugin: typeof metricsPlugin;

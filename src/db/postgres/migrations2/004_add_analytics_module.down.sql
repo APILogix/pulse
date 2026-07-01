@@ -1,8 +1,11 @@
 -- ============================================================================
 -- 004_add_analytics_module.down.sql
 -- ----------------------------------------------------------------------------
--- Rollback of 004. Dropping the partitioned parent tables CASCADEs to all
--- daily/default partitions. update_updated_at_column() is shared and left intact.
+-- Rollback of 004. DROP TABLE on a TimescaleDB hypertable transparently drops
+-- all of its chunks and its compression/retention policies, so no extra
+-- TimescaleDB-specific teardown is required here. The timescaledb extension
+-- itself is intentionally left installed. update_updated_at_column() is shared
+-- and left intact.
 -- ============================================================================
 
 BEGIN;

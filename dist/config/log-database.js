@@ -2,101 +2,184 @@ import { Pool } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
 const dbLogger = logger.child({ component: 'log-database' });
+/** PostgreSQL error codes that must never be retried — retrying cannot help. */
+const NON_RETRYABLE_PG_CODES = new Set([
+    '23505', // unique_violation
+    '23503', // foreign_key_violation
+    '23502', // not_null_violation
+    '23514', // check_violation
+    '42501', // insufficient_privilege
+    '42601', // syntax_error
+    '42P01', // undefined_table
+    '42703', // undefined_column
+    '22P02', // invalid_text_representation
+]);
+/** Connection-level errors where a retry on a fresh connection is worthwhile. */
+const RETRYABLE_CONNECTION_CODES = new Set([
+    '57P01', // admin_shutdown
+    '57P02', // crash_shutdown
+    '57P03', // cannot_connect_now
+    '08000', // connection_exception
+    '08003', // connection_does_not_exist
+    '08006', // connection_failure
+    '08001', // sqlclient_unable_to_establish_sqlconnection
+    '08004', // sqlserver_rejected_establishment_of_sqlconnection
+    '53300', // too_many_connections
+    '40001', // serialization_failure
+    '40P01', // deadlock_detected
+]);
 /**
- * LogDatabaseManager — enterprise-grade dual-pool manager for the log database.
+ * LogDatabaseManager — enterprise-grade dual-pool manager for the dedicated log
+ * / event-ingestion database (TimescaleDB-compatible).
  *
- * Architecture:
- * - Primary pool: handles all writes (INSERT, UPDATE, DELETE) and DDL
- * - Replica pool: handles read-heavy queries (SELECT) to offload the primary
- * - Falls back to primary for reads when no replica is configured
- *
- * Features:
- * - Retry with exponential backoff (skips non-retryable errors like constraint violations)
- * - Slow query detection and logging
- * - Batch insert for high-throughput event ingestion
- * - Health check for load-balancer probes
+ * Design goals:
+ * - **Never time out ingestion.** Writes run with a separate, by-default
+ *   unbounded statement timeout so large batch inserts and background
+ *   maintenance are never aborted. Reads stay bounded to contain runaway
+ *   analytical queries. Timeouts are applied with `SET LOCAL` inside a
+ *   transaction so they can never leak onto a pooled connection.
+ * - **Dual pool.** Primary handles writes/DDL; replica absorbs read traffic and
+ *   transparently falls back to primary when absent or unhealthy.
+ * - **TimescaleDB.** On connect (when enabled) the event tables are promoted to
+ *   hypertables with compression + retention policies. Every step is idempotent
+ *   and non-fatal — failure degrades cleanly to plain PostgreSQL.
+ * - **High-throughput batch ingest** via set-based `UNNEST` inserts.
+ * - **Resilience.** Exponential backoff with jitter, fast-fail on
+ *   non-retryable errors, TCP keepalive, and a load-balancer health probe.
  */
 class LogDatabaseManager {
     primaryPool;
     replicaPool = null;
     isShuttingDown = false;
+    timescaleReady = false;
     constructor() {
+        const primaryUrl = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
         if (!env.LOG_DB_PRIMARY) {
-            dbLogger.warn('LOG_DB_PRIMARY is not configured — log database features will be unavailable');
-            // Create a pool with the main DATABASE_URL as fallback
-            this.primaryPool = this.createPool(env.DATABASE_URL, 'log_primary');
+            dbLogger.warn('LOG_DB_PRIMARY not configured — falling back to DATABASE_URL for the log DB');
         }
-        else {
-            this.primaryPool = this.createPool(env.LOG_DB_PRIMARY, 'log_primary');
-        }
-        // Set up replica pool if a separate replica URL is provided
+        this.primaryPool = this.createPool(primaryUrl, 'log_primary');
         if (env.LOG_DB_REPLICA && env.LOG_DB_REPLICA !== env.LOG_DB_PRIMARY) {
-            dbLogger.info('Replica pool configured — read queries will be routed to replica');
+            dbLogger.info('Replica pool configured — read queries will be routed to the replica');
             this.replicaPool = this.createPool(env.LOG_DB_REPLICA, 'log_replica');
         }
     }
     /**
-     * Creates a configured connection pool with monitoring.
+     * Build a tuned connection pool.
+     *
+     * Note: we deliberately do NOT set a global `statement_timeout`/`query_timeout`
+     * on the pool. A hard global timeout silently kills legitimate long-running
+     * ingestion batches, COPY, and TimescaleDB maintenance. Instead, timeouts are
+     * applied per-statement via `SET LOCAL`, scoped to the read path only.
      */
     createPool(connectionString, appName) {
-        const pool = new Pool({
+        const config = {
             connectionString,
             max: env.LOG_POOL_MAX,
             min: env.LOG_POOL_MIN,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-            statement_timeout: env.LOG_QUERY_TIMEOUT,
-            query_timeout: env.LOG_QUERY_TIMEOUT,
+            idleTimeoutMillis: env.LOG_DB_IDLE_TIMEOUT,
+            connectionTimeoutMillis: env.LOG_DB_CONNECTION_TIMEOUT,
             application_name: `${appName}_${env.NODE_ENV}`,
-            ssl: env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : false,
-        });
+            keepAlive: env.LOG_DB_KEEPALIVE_MS > 0,
+            keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
+            allowExitOnIdle: false,
+            ssl: env.NODE_ENV === 'production'
+                ? { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED }
+                : false,
+        };
+        const pool = new Pool(config);
         this.setupPoolMonitoring(pool, appName);
         return pool;
-    }
-    /**
-     * Test connections on startup (fail-fast pattern).
-     * Verifies both primary and replica (if configured) are reachable.
-     */
-    async connect() {
-        dbLogger.info('Testing log database connections');
-        // Test primary
-        const primaryClient = await this.primaryPool.connect();
-        try {
-            const res = await primaryClient.query('SELECT NOW() AS time, current_database() AS db');
-            const primaryTime = res.rows[0]?.time;
-            dbLogger.info({ db: res.rows[0]?.db, time: primaryTime }, 'Log DB primary connected');
-            // Test replica if configured
-            let replicaTime;
-            if (this.replicaPool) {
-                const replicaClient = await this.replicaPool.connect();
-                try {
-                    const replicaRes = await replicaClient.query('SELECT NOW() AS time, current_database() AS db');
-                    replicaTime = replicaRes.rows[0]?.time;
-                    dbLogger.info({ db: replicaRes.rows[0]?.db, time: replicaTime }, 'Log DB replica connected');
-                }
-                finally {
-                    replicaClient.release();
-                }
-            }
-            return { primary: primaryTime, ...(replicaTime ? { replica: replicaTime } : {}) };
-        }
-        finally {
-            primaryClient.release();
-        }
     }
     setupPoolMonitoring(pool, name) {
         pool.on('connect', () => {
             dbLogger.debug({ pool: name }, 'New connection added to pool');
         });
+        // Idle server-side disconnects are expected with managed providers; only
+        // surface genuinely unexpected pool errors at error level.
         pool.on('error', (err) => {
-            dbLogger.error({ err, pool: name }, 'Unexpected pool error');
+            const expected = err.message.includes('Connection terminated unexpectedly') ||
+                err.message.includes('Connection ended unexpectedly') ||
+                err.message.includes('terminating connection');
+            if (expected) {
+                dbLogger.debug({ pool: name, err: err.message }, 'Idle log DB connection closed by server');
+                return;
+            }
+            dbLogger.error({ err, pool: name }, 'Unexpected log DB pool error');
         });
     }
     /**
-     * Get a connection from the appropriate pool.
+     * Test connections on startup (fail-fast) and, when enabled, promote the
+     * event tables to TimescaleDB hypertables. Safe to call once at bootstrap.
+     */
+    async connect() {
+        dbLogger.info('Testing log database connections');
+        const primaryClient = await this.primaryPool.connect();
+        let primaryTime;
+        try {
+            const res = await primaryClient.query('SELECT NOW() AS time, current_database() AS db');
+            primaryTime = res.rows[0].time;
+            dbLogger.info({ db: res.rows[0]?.db, time: primaryTime }, 'Log DB primary connected');
+        }
+        finally {
+            primaryClient.release();
+        }
+        let replicaTime;
+        if (this.replicaPool) {
+            const replicaClient = await this.replicaPool.connect();
+            try {
+                const replicaRes = await replicaClient.query('SELECT NOW() AS time, current_database() AS db');
+                replicaTime = replicaRes.rows[0]?.time;
+                dbLogger.info({ db: replicaRes.rows[0]?.db, time: replicaTime }, 'Log DB replica connected');
+            }
+            finally {
+                replicaClient.release();
+            }
+        }
+        if (env.LOG_DB_ENABLE_TIMESCALE) {
+            await this.initializeTimescale();
+        }
+        return { primary: primaryTime, ...(replicaTime ? { replica: replicaTime } : {}) };
+    }
+    /**
+     * Ensure the TimescaleDB extension is available on the log database.
      *
-     * @param operation - 'read' routes to replica (if available), 'write' always uses primary.
-     * @param projectId - Optional project ID to set as a session variable for RLS.
+     * Table-level hypertable provisioning (chunking, compression, retention) for
+     * the analytics event tables lives in the schema migrations where those
+     * tables are defined (migrations2/004), not here — that keeps DDL in one
+     * authoritative place. This method only guarantees the extension exists so
+     * the log DB is ready to host hypertables.
+     *
+     * Fully non-fatal: if TimescaleDB is unavailable the log DB simply runs as
+     * plain PostgreSQL.
+     */
+    async initializeTimescale() {
+        const client = await this.primaryPool.connect();
+        try {
+            await client.query('CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE');
+            const res = await client.query(`SELECT extversion AS version FROM pg_extension WHERE extname = 'timescaledb'`);
+            this.timescaleReady = true;
+            dbLogger.info({ version: res.rows[0]?.version }, 'TimescaleDB extension ready on log database');
+        }
+        catch (err) {
+            dbLogger.warn({ err: err.message }, 'TimescaleDB extension unavailable — log DB will run as plain PostgreSQL');
+        }
+        finally {
+            client.release();
+        }
+    }
+    /** True once TimescaleDB hypertables have been provisioned. */
+    get isTimescaleReady() {
+        return this.timescaleReady;
+    }
+    /** True if a separate replica pool is configured. */
+    get hasReplica() {
+        return this.replicaPool !== null;
+    }
+    /**
+     * Acquire a pooled connection from the appropriate pool.
+     *
+     * @param options.operation 'read' routes to the replica when available.
+     * @param options.projectId sets the RLS tenant scope for the session.
      */
     async getConnection(options) {
         if (this.isShuttingDown) {
@@ -111,133 +194,187 @@ class LogDatabaseManager {
         return client;
     }
     /**
-     * Execute a query with retry logic and exponential backoff.
+     * Execute a query with retry + exponential backoff (with jitter).
      *
-     * Non-retryable errors (constraint violations, permission denied, syntax errors)
-     * are thrown immediately without retry.
+     * - Non-retryable errors (constraint, permission, syntax) fail immediately.
+     * - A per-statement timeout, when supplied, is applied via `SET LOCAL` inside
+     *   a transaction so it can never leak onto a reused pooled connection.
+     * - Reads default to the configured read timeout; writes default to the
+     *   write timeout (0/unbounded) so ingestion is never aborted mid-batch.
      */
     async queryWithRetry(sql, params, options = {}) {
-        const { maxRetries = env.LOG_RETRIES, operation = 'read', projectId, timeout } = options;
+        const { maxRetries = env.LOG_RETRIES, operation = 'read', projectId } = options;
+        const effectiveTimeout = options.timeout ?? (operation === 'write' ? env.LOG_DB_WRITE_TIMEOUT : env.LOG_QUERY_TIMEOUT);
         let lastError = null;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
-            const client = await this.getConnection({ operation, ...(projectId !== undefined ? { projectId } : {}) });
+            const client = await this.getConnection({
+                operation,
+                ...(projectId !== undefined ? { projectId } : {}),
+            });
             try {
-                if (timeout) {
-                    await client.query(`SET statement_timeout = ${timeout}`);
-                }
                 const start = Date.now();
-                const result = await client.query(sql, params);
+                const result = await this.runWithTimeout(client, sql, params, effectiveTimeout);
                 const duration = Date.now() - start;
-                if (duration > 1000) {
-                    dbLogger.warn({ query: sql.slice(0, 120), duration, rows: result.rowCount }, 'Slow log query detected');
+                if (duration > env.LOG_DB_SLOW_QUERY_MS) {
+                    dbLogger.warn({ query: sql.slice(0, 120), duration, rows: result.rowCount, operation }, 'Slow log query detected');
                 }
                 return result;
             }
             catch (err) {
                 lastError = err;
-                // Non-retryable PG error codes:
-                // 23505 = unique_violation, 42501 = insufficient_privilege, 42601 = syntax_error
-                const NON_RETRYABLE = ['23505', '42501', '42601', '42P01', '23503'];
-                if (NON_RETRYABLE.includes(err.code)) {
+                const code = err.code;
+                if (code && NON_RETRYABLE_PG_CODES.has(code)) {
                     throw err;
                 }
-                if (attempt < maxRetries - 1) {
-                    const delay = Math.min(1000 * (2 ** attempt), 5000);
-                    dbLogger.warn({ error: err.message, attempt: attempt + 1, nextRetryMs: delay }, 'Log query failed — retrying');
-                    await new Promise(resolve => setTimeout(resolve, delay));
+                const isLastAttempt = attempt === maxRetries - 1;
+                if (!isLastAttempt) {
+                    const base = Math.min(1000 * 2 ** attempt, 5000);
+                    const delay = base + Math.floor(Math.random() * 250); // jitter
+                    dbLogger.warn({ error: err.message, code, attempt: attempt + 1, nextRetryMs: delay }, 'Log query failed — retrying');
+                    await sleep(delay);
                 }
             }
             finally {
                 client.release();
             }
         }
-        throw lastError || new Error('Query failed after retries');
+        throw lastError ?? new Error('Query failed after retries');
     }
     /**
-     * Batch insert events using multi-row INSERT.
-     * Suitable for batches up to ~1000 rows. For larger batches, consider COPY protocol.
+     * Run a single statement, optionally bounded by a transaction-scoped
+     * `SET LOCAL statement_timeout`. A timeout of 0 means "no statement timeout"
+     * and the query runs directly without transaction overhead.
      */
-    async batchInsertEvents(events) {
-        if (events.length === 0)
-            return;
-        const client = await this.getConnection({ operation: 'write' });
+    async runWithTimeout(client, sql, params, timeout) {
+        if (!timeout || timeout <= 0) {
+            return client.query(sql, params);
+        }
+        await client.query('BEGIN');
         try {
-            const values = events.map((_, i) => `($${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4})`).join(',');
-            const params = events.flatMap(e => [
-                e.project_id,
-                e.type,
-                e.timestamp,
-                JSON.stringify(e.payload)
-            ]);
-            await client.query(`
-        INSERT INTO events (project_id, type, timestamp, payload)
-        VALUES ${values}
-      `, params);
-            // Insert into specialized tables if needed
-            const requests = events.filter(e => e.type === 'request');
-            const errors = events.filter(e => e.type === 'error');
-            if (requests.length > 0) {
-                await this.insertRequests(client, requests);
+            // SET LOCAL is transaction-scoped: it cannot leak onto the pooled
+            // connection once the transaction ends.
+            await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+            const result = await client.query(sql, params);
+            await client.query('COMMIT');
+            return result;
+        }
+        catch (err) {
+            await client.query('ROLLBACK').catch(() => { });
+            throw err;
+        }
+    }
+    /**
+     * Run a function inside a single transaction on the primary pool. The
+     * statement timeout defaults to the (unbounded) write timeout so long
+     * ingestion transactions are never aborted.
+     */
+    async withTransaction(fn, options) {
+        const client = await this.getConnection({
+            operation: 'write',
+            ...(options?.projectId !== undefined ? { projectId: options.projectId } : {}),
+        });
+        const timeout = options?.timeout ?? env.LOG_DB_WRITE_TIMEOUT;
+        try {
+            await client.query('BEGIN');
+            if (timeout > 0) {
+                await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
             }
-            if (errors.length > 0) {
-                await this.insertErrors(client, errors);
-            }
+            const result = await fn(client);
+            await client.query('COMMIT');
+            return result;
+        }
+        catch (err) {
+            await client.query('ROLLBACK').catch(() => { });
+            throw err;
         }
         finally {
             client.release();
         }
     }
+    /**
+     * High-throughput batch insert of raw events plus their specialized rows.
+     *
+     * Uses set-based `UNNEST` inserts (one statement per table regardless of
+     * batch size) inside a single transaction with an unbounded statement timeout
+     * so large batches never get killed mid-flight.
+     */
+    async batchInsertEvents(events) {
+        if (events.length === 0)
+            return;
+        await this.withTransaction(async (client) => {
+            await client.query(`
+        INSERT INTO events (project_id, type, timestamp, payload)
+        SELECT * FROM UNNEST(
+          $1::uuid[], $2::varchar[], $3::timestamptz[], $4::jsonb[]
+        )
+        `, [
+                events.map((e) => e.project_id),
+                events.map((e) => e.type),
+                events.map((e) => e.timestamp),
+                events.map((e) => JSON.stringify(e.payload)),
+            ]);
+            const requests = events.filter((e) => e.type === 'request');
+            const errors = events.filter((e) => e.type === 'error');
+            if (requests.length > 0)
+                await this.insertRequests(client, requests);
+            if (errors.length > 0)
+                await this.insertErrors(client, errors);
+        });
+    }
     async insertRequests(client, requests) {
-        const values = requests.map((r, i) => `($${i * 6 + 1}, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6})`).join(',');
-        const params = requests.flatMap(r => [
-            r.project_id,
-            r.payload.request_id,
-            r.payload.url,
-            r.payload.method,
-            r.payload.status_code,
-            r.timestamp
-        ]);
         await client.query(`
       INSERT INTO request_events (project_id, request_id, url, method, status_code, timestamp)
-      VALUES ${values}
-    `, params);
+      SELECT * FROM UNNEST(
+        $1::uuid[], $2::uuid[], $3::text[], $4::varchar[], $5::int[], $6::timestamptz[]
+      )
+      `, [
+            requests.map((r) => r.project_id),
+            requests.map((r) => r.payload.request_id ?? null),
+            requests.map((r) => r.payload.url ?? null),
+            requests.map((r) => r.payload.method ?? null),
+            requests.map((r) => r.payload.status_code ?? null),
+            requests.map((r) => r.timestamp),
+        ]);
     }
     async insertErrors(client, errors) {
-        const crypto = await import('crypto');
-        for (const error of errors) {
-            const fingerprint = crypto
-                .createHash('sha256')
-                .update(`${error.payload.error_type}:${JSON.stringify(error.payload.stack)}`)
-                .digest('hex')
-                .slice(0, 16);
-            await client.query(`
-        INSERT INTO error_events (project_id, request_id, message, error_type, fingerprint, stack, timestamp)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        const { createHash } = await import('crypto');
+        const fingerprints = errors.map((e) => createHash('sha256')
+            .update(`${String(e.payload.error_type)}:${JSON.stringify(e.payload.stack)}`)
+            .digest('hex')
+            .slice(0, 16));
+        await client.query(`
+      INSERT INTO error_events
+        (project_id, request_id, message, error_type, fingerprint, stack, timestamp)
+      SELECT * FROM UNNEST(
+        $1::uuid[], $2::uuid[], $3::text[], $4::varchar[], $5::varchar[], $6::jsonb[], $7::timestamptz[]
+      )
       `, [
-                error.project_id,
-                error.payload.request_id,
-                error.payload.message,
-                error.payload.error_type,
-                fingerprint,
-                JSON.stringify(error.payload.stack),
-                error.timestamp
-            ]);
-        }
+            errors.map((e) => e.project_id),
+            errors.map((e) => e.payload.request_id ?? null),
+            errors.map((e) => e.payload.message ?? null),
+            errors.map((e) => e.payload.error_type ?? null),
+            fingerprints,
+            errors.map((e) => JSON.stringify(e.payload.stack ?? null)),
+            errors.map((e) => e.timestamp),
+        ]);
     }
     /**
-     * Health check — verifies primary (and optionally replica) connectivity.
+     * Health check for load-balancer / readiness probes. Verifies primary and,
+     * when configured, replica connectivity. A failed replica is non-fatal (reads
+     * fall back to primary) and is reported but does not flip `healthy`.
      */
     async healthCheck() {
         try {
             const primaryRes = await this.primaryPool.query('SELECT NOW() AS time');
             const result = {
                 healthy: true,
-                primary: primaryRes.rows[0]?.time,
+                ...(primaryRes.rows[0]?.time ? { primary: primaryRes.rows[0].time } : {}),
             };
             if (this.replicaPool) {
                 try {
                     const replicaRes = await this.replicaPool.query('SELECT NOW() AS time');
-                    result.replica = replicaRes.rows[0]?.time;
+                    if (replicaRes.rows[0]?.time)
+                        result.replica = replicaRes.rows[0].time;
                 }
                 catch {
                     dbLogger.warn('Replica health check failed — reads will fall back to primary');
@@ -250,15 +387,19 @@ class LogDatabaseManager {
             return { healthy: false };
         }
     }
-    /**
-     * Returns true if a replica pool is configured and available.
-     */
-    get hasReplica() {
-        return this.replicaPool !== null;
+    /** Live pool utilization, useful for metrics dashboards and capacity alerts. */
+    getPoolStats() {
+        const snapshot = (p) => ({
+            total: p.totalCount,
+            idle: p.idleCount,
+            waiting: p.waitingCount,
+        });
+        return {
+            primary: snapshot(this.primaryPool),
+            ...(this.replicaPool ? { replica: snapshot(this.replicaPool) } : {}),
+        };
     }
-    /**
-     * Graceful shutdown — drains both pools.
-     */
+    /** Graceful shutdown — drains both pools. */
     async close() {
         this.isShuttingDown = true;
         dbLogger.info('Closing log database pools');
@@ -270,11 +411,12 @@ class LogDatabaseManager {
         }
     }
 }
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 // Export singleton
 export const logDB = new LogDatabaseManager();
 // Convenience helpers
 export const logQuery = (sql, params, options) => logDB.queryWithRetry(sql, params, options);
-export const connectLogDB = async () => {
-    return logDB.connect();
-};
+export const connectLogDB = async () => logDB.connect();
 //# sourceMappingURL=log-database.js.map

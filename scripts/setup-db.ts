@@ -1,7 +1,7 @@
 /**
  * Postgres migration runner.
  *
- * Reads every *.sql file in src/db/postgres/migrations (in lexicographic
+ * Reads every `*.up.sql` file in `src/db/postgres/migrations2` (in lexicographic
  * order, ignoring sub-folders and helper files), tracks applied filenames
  * in a `schema_migrations` ledger table, and applies each pending migration
  * inside its own transaction.
@@ -21,12 +21,8 @@ import { logger } from '../src/config/logger.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.resolve(
   __dirname,
-  '../src/db/postgres/migrations',
+  '../src/db/postgres/migrations2',
 );
-
-// Files in the migrations directory that are NOT migration files. The legacy
-// authtable.sql and schema.sql are kept for reference but should not run.
-const SKIP_FILES = new Set(['authtable.sql', 'schema.sql']);
 
 async function ensureLedger(): Promise<void> {
   await pool.query(`
@@ -47,9 +43,8 @@ async function getApplied(): Promise<Set<string>> {
 async function listMigrationFiles(): Promise<string[]> {
   const entries = await fs.readdir(MIGRATIONS_DIR, { withFileTypes: true });
   return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.sql'))
+    .filter((e) => e.isFile() && e.name.endsWith('.up.sql'))
     .map((e) => e.name)
-    .filter((name) => !SKIP_FILES.has(name))
     .sort((a, b) => a.localeCompare(b));
 }
 

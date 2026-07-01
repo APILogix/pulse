@@ -49,8 +49,8 @@ export declare const HealthStateSchema: z.ZodEnum<{
 export type HealthState = z.infer<typeof HealthStateSchema>;
 /** Categories used by the dead-letter queue and error classification. */
 export declare const FailureCategorySchema: z.ZodEnum<{
-    timeout: "timeout";
     unknown: "unknown";
+    timeout: "timeout";
     auth_error: "auth_error";
     rate_limit: "rate_limit";
     invalid_config: "invalid_config";

@@ -4,6 +4,7 @@ export class UsageCounter {
     buffer = new Map();
     flushIntervalMs;
     bufferLimit;
+    driveRollup;
     timer = null;
     flushing = false;
     stopped = false;
@@ -12,6 +13,7 @@ export class UsageCounter {
         this.log = log;
         this.flushIntervalMs = opts.flushIntervalMs ?? 30_000;
         this.bufferLimit = opts.bufferLimit ?? 10_000;
+        this.driveRollup = opts.driveRollup ?? true;
     }
     /** Start the periodic flush timer. Safe to call once. */
     start() {
@@ -98,6 +100,8 @@ export class UsageCounter {
     }
     /** Drive flush_usage_counters() until it stops returning work (bounded). */
     async runRollup() {
+        if (!this.driveRollup)
+            return;
         try {
             // The SQL function consumes up to 10k staging rows per call. Loop a
             // bounded number of times so a backlog drains without an unbounded loop.

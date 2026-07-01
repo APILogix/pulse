@@ -64,6 +64,8 @@ export declare class IngestionController {
      * and again in the service for defense in depth.
      */
     getDLQ(request: FastifyRequest, reply: FastifyReply): Promise<never>;
+    /** Returns realtime per-project usage rollups from the new usage tables. */
+    getUsage(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Requeues one failed ingestion job from the Postgres dead-letter table. */
     reprocessDLQ(request: FastifyRequest, reply: FastifyReply): Promise<never>;
     /** Requeues a bounded batch of failed jobs for bulk recovery operations. */

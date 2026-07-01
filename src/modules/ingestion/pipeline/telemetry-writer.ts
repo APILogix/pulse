@@ -1,13 +1,32 @@
 /**
- * TelemetryWriter — persists normalized events to their typed, partitioned
- * tables (migration 013). One method per signal family; all writes are
- * tenant-scoped (project_id/org_id come from the authenticated API key, NEVER
- * from the event payload — defends cross-tenant ingestion / project spoofing).
+ * TelemetryWriter — persists normalized events into the AUTHORITATIVE analytics
+ * event schema (migrations2/004): the partitioned `events_*` tables that the
+ * analytics + event-analytics modules read from.
  *
- * Batching: each method accepts an array and does a single multi-row insert per
- * call so the worker can flush a claimed batch in one round trip per type.
- * Inserts are best-effort idempotent where a natural key exists (traces).
+ * ── Why this was rewritten ──────────────────────────────────────────────────
+ * The previous implementation (preserved in telemetry-writer.legacy.ts) wrote
+ * into the legacy `migrations/013-014` tables (`errors`, `requests`, `metrics`,
+ * …). Those tables are outdated and are NOT queried by analytics/alerting, so
+ * every ingested event was invisible downstream. This version targets the
+ * `events_*` tables (`events_errors`, `events_requests`, …) keyed by
+ * `organization_id` + `project_id`, so ingested data flows straight into
+ * dashboards, error groups, rollups and the alerting read path.
+ *
+ * Design:
+ *   - One multi-row INSERT per event type per batch (single round trip/type).
+ *   - All writes are tenant-scoped: organization_id + project_id come from the
+ *     authenticated API key, NEVER the payload (defends cross-tenant spoofing).
+ *   - `timestamp` = the event time (clamped); `created_at` is left to DEFAULT
+ *     NOW() because it is the DAILY PARTITION KEY — partitions are pre-created
+ *     by the analytics `create_event_partitions()` job, with a DEFAULT
+ *     partition catching any gap so inserts never fail.
+ *   - Enum-typed columns (severity/kind/status/level) are coerced to the exact
+ *     migrations2 enum domains; unknown values fall back to a safe default.
+ *   - Rollups (analytics_hourly_rollup / analytics_error_groups) are owned by
+ *     the event-analytics worker, NOT written here — this writer only persists
+ *     raw events.
  */
+import { randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 import { resolveTimestamp } from './event-normalizer.js';
@@ -15,6 +34,7 @@ import { resolveTimestamp } from './event-normalizer.js';
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
   projectId: string;
+  /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
   orgId: string | null;
   event: NormalizedEvent;
 }
@@ -23,7 +43,59 @@ function iso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-/** Build a parameterized multi-row INSERT. cols: column names; rows: value arrays. */
+/** Cast a normalized event to a loose record for passthrough field access. */
+function rec(ev: NormalizedEvent): Record<string, unknown> {
+  return ev as unknown as Record<string, unknown>;
+}
+
+/** Safe optional string with a max length, else null. */
+function str(v: unknown, max = 255): string | null {
+  return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
+}
+
+/** Safe optional finite number, else null. */
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Basic IPv4/IPv6 validation so an invalid string can't fail an INET insert. */
+const IP_RE =
+  /^(?:\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]+:[0-9a-fA-F:]*$/;
+function inet(v: unknown): string | null {
+  return typeof v === 'string' && IP_RE.test(v) ? v.slice(0, 45) : null;
+}
+
+// ── Enum coercion to the migrations2/004 enum domains ───────────────────────
+function eventSeverity(v: unknown, fallback: 'info' | 'error' = 'error'): string {
+  const s = typeof v === 'string' ? v.toLowerCase() : '';
+  if (s === 'debug') return 'debug';
+  if (s === 'info' || s === 'information') return 'info';
+  if (s === 'warn' || s === 'warning') return 'warning';
+  if (s === 'error' || s === 'err') return 'error';
+  if (s === 'fatal' || s === 'critical') return 'fatal';
+  return fallback;
+}
+function logLevel(v: unknown): string {
+  const s = typeof v === 'string' ? v.toLowerCase() : '';
+  if (s === 'debug') return 'debug';
+  if (s === 'info') return 'info';
+  if (s === 'warn' || s === 'warning') return 'warn';
+  if (s === 'error' || s === 'err' || s === 'fatal' || s === 'critical') return 'error';
+  return 'info';
+}
+function spanKind(v: unknown): string | null {
+  const s = typeof v === 'string' ? v.toLowerCase() : '';
+  return ['internal', 'server', 'client', 'producer', 'consumer'].includes(s) ? s : null;
+}
+function spanStatus(v: unknown): string {
+  const s = typeof v === 'string' ? v.toLowerCase() : '';
+  if (s === 'ok') return 'ok';
+  if (s === 'error' || s === 'err') return 'error';
+  return 'unset';
+}
+
+/** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
+ * (unknown→jsonb coercion handles the cast in an INSERT ... VALUES context). */
 function buildInsert(table: string, cols: string[], rows: unknown[][]): { text: string; values: unknown[] } {
   const values: unknown[] = [];
   const tuples: string[] = [];
@@ -42,14 +114,17 @@ export class TelemetryWriter {
   constructor(private readonly pool: Pool) {}
 
   /**
-   * Route a batch of scoped events to the correct table(s). Events of mixed
-   * types are grouped so each table gets one insert. Returns count persisted.
+   * Route a batch of scoped events to the correct events_* table(s). Mixed
+   * types are grouped so each table gets one multi-row insert. Events without a
+   * resolvable organization_id are skipped (events_* requires it) and counted
+   * out of the return total.
    */
   async writeBatch(scoped: ScopedEvent[]): Promise<number> {
     if (scoped.length === 0) return 0;
 
     const byType = new Map<string, ScopedEvent[]>();
     for (const s of scoped) {
+      if (!s.orgId) continue; // organization_id is NOT NULL in events_*
       const list = byType.get(s.event.type) ?? [];
       list.push(s);
       byType.set(s.event.type, list);
@@ -64,6 +139,9 @@ export class TelemetryWriter {
 
   private async writeTyped(type: string, list: ScopedEvent[]): Promise<number> {
     switch (type) {
+      case 'error': return this.writeErrors(list);
+      case 'message': return this.writeMessages(list);
+      case 'request': return this.writeRequests(list);
       case 'span': return this.writeSpans(list);
       case 'trace': return this.writeTraces(list);
       case 'metric': return this.writeMetrics(list);
@@ -71,395 +149,293 @@ export class TelemetryWriter {
       case 'profile': return this.writeProfiles(list);
       case 'cron_checkin': return this.writeCronCheckins(list);
       case 'replay': return this.writeReplays(list);
-      case 'message': return this.writeMessages(list);
-      case 'error': return this.writeErrors(list);
-      case 'request': return this.writeRequests(list);
       default: return 0;
     }
   }
 
-  private async writeSpans(list: ScopedEvent[]): Promise<number> {
+  /** Best-effort event id (events_*.event_id is NOT NULL). */
+  private eventId(ev: NormalizedEvent): string {
+    const id = (ev as { eventId?: unknown }).eventId;
+    return typeof id === 'string' && id.length > 0 ? id.slice(0, 64) : randomUUID();
+  }
+
+  // ── events_errors ─────────────────────────────────────────────────────────
+  private async writeErrors(list: ScopedEvent[]): Promise<number> {
     const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'span' }>;
-      const ts = e.startTime ?? resolveTimestamp(event);
+      const e = event as Extract<NormalizedEvent, { type: 'error' }>;
+      const r = rec(event);
+      const errorName = typeof e.name === 'string' ? e.name.slice(0, 256) : 'UnknownError';
+      const fingerprint =
+        (e.fingerprint && e.fingerprint.slice(0, 64)) ||
+        `auto:${errorName}:${e.message.slice(0, 48)}`.slice(0, 64);
       return [
-        projectId, orgId, e.traceId, e.spanId, e.parentSpanId ?? null,
-        e.name, e.kind ?? null, e.status ?? null, e.statusMessage ?? null,
-        iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
-        e.duration ?? null, e.exclusiveDuration ?? null,
-        JSON.stringify(e.attributes ?? {}), JSON.stringify(e.events ?? []), JSON.stringify(e.links ?? []),
-        e.requestId ?? null, e.sessionId ?? null, null, iso(ts),
+        orgId, projectId, this.eventId(event), fingerprint, e.message,
+        errorName, eventSeverity(e.severity, 'error'),
+        str(r.stackHash, 64), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
+        str(r.source, 100) ?? 'capture', str(r.mechanism, 50), str(r.service, 100),
+        str(r.environment, 50), str(r.release, 100), str(r.serverName, 100),
+        JSON.stringify(e.stack ?? []), r.sourceContext != null ? JSON.stringify(r.sourceContext) : null,
+        str(r.userId, 255), str(r.userEmail, 255), inet(r.userIp),
+        JSON.stringify(e.breadcrumbs ?? []),
+        JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(e.context ?? {}),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
       ];
     });
     const { text, values } = buildInsert(
-      'spans',
-      ['project_id', 'org_id', 'trace_id', 'span_id', 'parent_span_id', 'name', 'kind',
-       'status', 'status_message', 'start_time', 'end_time', 'duration_ms', 'exclusive_duration_ms',
-       'attributes', 'events', 'links', 'request_id', 'session_id', 'user_id', 'timestamp'],
+      'events_errors',
+      ['organization_id', 'project_id', 'event_id', 'fingerprint', 'message',
+       'error_name', 'severity', 'stack_hash', 'trace_id', 'span_id', 'request_id', 'session_id',
+       'source', 'mechanism', 'service', 'environment', 'release', 'server_name',
+       'stack_frames', 'source_context', 'user_id', 'user_email', 'user_ip',
+       'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'],
       rows,
     );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
   }
 
-  private async writeTraces(list: ScopedEvent[]): Promise<number> {
-    // Traces are upserted in a single multi-row statement. Per-row INSERTs
-    // would multiply DB round trips by the batch size — at high ingest rates
-    // that exhausts pool capacity AND blows up the per-batch latency. We use
-    // ON CONFLICT (project_id, trace_id, timestamp) so partial→complete
-    // re-emits replace rather than duplicate.
-    if (list.length === 0) return 0;
-
-    const cols = [
-      'project_id', 'org_id', 'trace_id', 'root_span', 'span_count',
-      'total_duration_ms', 'is_partial', 'root_name', 'has_error',
-      'request_id', 'session_id', 'timestamp',
-    ];
-
-    const tuples: string[] = [];
-    const values: unknown[] = [];
-    let p = 1;
-    for (const { projectId, orgId, event } of list) {
-      const e = event as Extract<NormalizedEvent, { type: 'trace' }>;
-      const ts = resolveTimestamp(event);
-      const root = e.rootSpan as { name?: string; status?: string } | undefined;
-      const hasError = root?.status === 'error';
-
-      // 12 columns; the 4th ($p+3) is JSONB and the rest are scalars/timestamps.
-      tuples.push(
-        `($${p},$${p + 1},$${p + 2},$${p + 3}::jsonb,$${p + 4},$${p + 5},$${p + 6},$${p + 7},$${p + 8},$${p + 9},$${p + 10},$${p + 11})`,
-      );
-      p += 12;
-
-      values.push(
-        projectId,
-        orgId,
-        e.traceId,
-        JSON.stringify(e.rootSpan ?? {}),
-        e.spanCount,
-        e.totalDuration ?? null,
-        e.isPartial ?? false,
-        root?.name ?? null,
-        hasError,
-        e.requestId ?? null,
-        e.sessionId ?? null,
-        iso(ts),
-      );
-    }
-
-    const text = `
-      INSERT INTO traces (${cols.join(', ')})
-      VALUES ${tuples.join(', ')}
-      ON CONFLICT (project_id, trace_id, timestamp) DO UPDATE SET
-        root_span = EXCLUDED.root_span,
-        span_count = EXCLUDED.span_count,
-        total_duration_ms = EXCLUDED.total_duration_ms,
-        is_partial = EXCLUDED.is_partial,
-        has_error = EXCLUDED.has_error
-    `;
-
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
-  private async writeMetrics(list: ScopedEvent[]): Promise<number> {
-    const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'metric' }>;
-      return [
-        projectId, orgId, e.metricName, e.metricType, e.value ?? null, e.unit ?? null,
-        e.count ?? null, e.sum ?? null, e.min ?? null, e.max ?? null, e.avg ?? null,
-        e.buckets != null ? JSON.stringify(e.buckets) : null,
-        JSON.stringify(e.tags ?? {}), iso(resolveTimestamp(event)),
-      ];
-    });
-    const { text, values } = buildInsert(
-      'metrics',
-      ['project_id', 'org_id', 'metric_name', 'metric_type', 'value', 'unit',
-       'count', 'sum', 'min', 'max', 'avg', 'buckets', 'tags', 'timestamp'],
-      rows,
-    );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
-  private async writeLogs(list: ScopedEvent[]): Promise<number> {
-    const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'log' }>;
-      return [
-        projectId, orgId, e.level, e.message, JSON.stringify(e.args ?? []),
-        e.requestId ?? null, e.traceId ?? null, e.spanId ?? null, iso(resolveTimestamp(event)),
-      ];
-    });
-    const { text, values } = buildInsert(
-      'logs',
-      ['project_id', 'org_id', 'level', 'message', 'args', 'request_id', 'trace_id', 'span_id', 'timestamp'],
-      rows,
-    );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
-  private async writeProfiles(list: ScopedEvent[]): Promise<number> {
-    const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'profile' }>;
-      return [
-        projectId, orgId, e.profileType,
-        e.startTime != null ? iso(e.startTime) : null,
-        e.endTime != null ? iso(e.endTime) : null,
-        e.duration ?? null, e.profile != null ? JSON.stringify(e.profile) : null,
-        e.requestId ?? null, e.traceId ?? null, e.spanId ?? null, iso(resolveTimestamp(event)),
-      ];
-    });
-    const { text, values } = buildInsert(
-      'profiles',
-      ['project_id', 'org_id', 'profile_type', 'start_time', 'end_time', 'duration_ms',
-       'profile', 'request_id', 'trace_id', 'span_id', 'timestamp'],
-      rows,
-    );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
-  private async writeCronCheckins(list: ScopedEvent[]): Promise<number> {
-    const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'cron_checkin' }>;
-      return [
-        projectId, orgId, e.monitorSlug, e.status, e.duration ?? null,
-        e.environment ?? null, iso(resolveTimestamp(event)),
-      ];
-    });
-    const { text, values } = buildInsert(
-      'cron_checkins',
-      ['project_id', 'org_id', 'monitor_slug', 'status', 'duration_ms', 'environment', 'timestamp'],
-      rows,
-    );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
-  private async writeReplays(list: ScopedEvent[]): Promise<number> {
-    const rows = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'replay' }>;
-      return [
-        projectId, orgId, e.sessionId, e.segmentId, JSON.stringify(e.events ?? []),
-        iso(resolveTimestamp(event)),
-      ];
-    });
-    const { text, values } = buildInsert(
-      'replays',
-      ['project_id', 'org_id', 'session_id', 'segment_id', 'events', 'timestamp'],
-      rows,
-    );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
-  }
-
+  // ── events_messages ─────────────────────────────────────────────────────────
   private async writeMessages(list: ScopedEvent[]): Promise<number> {
     const rows = list.map(({ projectId, orgId, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'message' }>;
+      const r = rec(event);
       return [
-        projectId, orgId, e.message, e.severity ?? 'info',
-        JSON.stringify(e.context ?? {}), JSON.stringify(e.breadcrumbs ?? []),
-        e.requestId ?? null, e.traceId ?? null, e.spanId ?? null, iso(resolveTimestamp(event)),
+        orgId, projectId, this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.userId, 255), inet(r.userIp),
+        JSON.stringify(r.tags ?? {}), JSON.stringify(e.context ?? {}), JSON.stringify(e.breadcrumbs ?? []),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
       ];
     });
     const { text, values } = buildInsert(
-      'messages',
-      ['project_id', 'org_id', 'message', 'severity', 'context', 'breadcrumbs',
-       'request_id', 'trace_id', 'span_id', 'timestamp'],
+      'events_messages',
+      ['organization_id', 'project_id', 'event_id', 'message', 'severity',
+       'trace_id', 'span_id', 'request_id', 'session_id',
+       'service', 'environment', 'release', 'user_id', 'user_ip',
+       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'timestamp'],
       rows,
     );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
   }
 
-  /**
-   * Errors are persisted to the partitioned `errors` table and rolled up into
-   * `error_groups` for analytics. Both project_id and org_id come from the
-   * authenticated API key, never the payload.
-   *
-   * Performance note: The original implementation inserted one row at a time
-   * AND issued a separate fingerprint-rollup statement per event. At high
-   * error rates that doubles round trips per event and exhausts the pool.
-   * This version uses one multi-row INSERT for the canonical errors table
-   * and a single multi-row UPSERT for the rollup, both inside the same call
-   * stack. The rollup is still best-effort: if it fails, the durable error
-   * write has already committed.
-   */
-  private async writeErrors(list: ScopedEvent[]): Promise<number> {
-    if (list.length === 0) return 0;
-
-    type PreparedRow = {
-      projectId: string;
-      orgId: string | null;
-      message: string;
-      errorType: string;
-      fingerprint: string;
-      severity: string | null;
-      stack: string;
-      context: string;
-      breadcrumbs: string;
-      requestId: string | null;
-      traceId: string | null;
-      spanId: string | null;
-      sessionId: string | null;
-      timestampIso: string;
-    };
-
-    const prepared: PreparedRow[] = list.map(({ projectId, orgId, event }) => {
-      const e = event as Extract<NormalizedEvent, { type: 'error' }>;
-      const ts = resolveTimestamp(event);
-      const errorType =
-        typeof e.name === 'string' ? e.name.slice(0, 256) : 'UnknownError';
-      const fingerprint =
-        (e.fingerprint && e.fingerprint.slice(0, 128)) ||
-        `auto:${errorType}:${e.message.slice(0, 64)}`;
-
-      return {
-        projectId,
-        orgId,
-        message: e.message,
-        errorType,
-        fingerprint,
-        severity: e.severity ?? null,
-        stack: JSON.stringify(e.stack ?? []),
-        context: JSON.stringify(e.context ?? {}),
-        breadcrumbs: JSON.stringify(e.breadcrumbs ?? []),
-        requestId: e.requestId ?? null,
-        traceId: e.traceId ?? null,
-        spanId: e.spanId ?? null,
-        sessionId: e.sessionId ?? null,
-        timestampIso: iso(ts),
-      };
-    });
-
-    // ── 1. Multi-row INSERT into the canonical errors table ────────────────
-    const errorCols = [
-      'project_id', 'org_id', 'message', 'error_type', 'fingerprint',
-      'severity', 'stack', 'context', 'breadcrumbs', 'request_id',
-      'trace_id', 'span_id', 'session_id', 'timestamp',
-    ];
-    const errorTuples: string[] = [];
-    const errorValues: unknown[] = [];
-    {
-      let p = 1;
-      for (const r of prepared) {
-        // 14 columns; 7,8,9 are JSONB.
-        errorTuples.push(
-          `($${p},$${p + 1},$${p + 2},$${p + 3},$${p + 4},$${p + 5},` +
-            `$${p + 6}::jsonb,$${p + 7}::jsonb,$${p + 8}::jsonb,` +
-            `$${p + 9},$${p + 10},$${p + 11},$${p + 12},$${p + 13})`,
-        );
-        p += 14;
-        errorValues.push(
-          r.projectId, r.orgId, r.message, r.errorType, r.fingerprint, r.severity,
-          r.stack, r.context, r.breadcrumbs, r.requestId, r.traceId, r.spanId,
-          r.sessionId, r.timestampIso,
-        );
-      }
-    }
-    const errorInsert = `
-      INSERT INTO errors (${errorCols.join(', ')})
-      VALUES ${errorTuples.join(', ')}
-    `;
-    const inserted = await this.pool.query(errorInsert, errorValues);
-
-    // ── 2. Multi-row UPSERT into error_groups (best-effort rollup) ─────────
-    // We collapse multiple events that share the same fingerprint into a
-    // single rollup row PER PROJECT. ON CONFLICT keeps the rollup monotonic.
-    type RollupKey = string;
-    const rollupMap = new Map<
-      RollupKey,
-      { projectId: string; fingerprint: string; firstSeen: string; lastSeen: string; count: number; lastMessage: string; errorType: string }
-    >();
-    for (const r of prepared) {
-      const key = `${r.projectId}::${r.fingerprint}`;
-      const existing = rollupMap.get(key);
-      if (existing) {
-        existing.count += 1;
-        if (r.timestampIso < existing.firstSeen) existing.firstSeen = r.timestampIso;
-        if (r.timestampIso > existing.lastSeen) {
-          existing.lastSeen = r.timestampIso;
-          existing.lastMessage = r.message;
-          existing.errorType = r.errorType;
-        }
-      } else {
-        rollupMap.set(key, {
-          projectId: r.projectId,
-          fingerprint: r.fingerprint,
-          firstSeen: r.timestampIso,
-          lastSeen: r.timestampIso,
-          count: 1,
-          lastMessage: r.message,
-          errorType: r.errorType,
-        });
-      }
-    }
-
-    if (rollupMap.size > 0) {
-      const rollupTuples: string[] = [];
-      const rollupValues: unknown[] = [];
-      let p = 1;
-      for (const v of rollupMap.values()) {
-        // 7 columns: project_id, fingerprint, first_seen, last_seen, occurrences, last_message, error_type
-        rollupTuples.push(
-          `($${p},$${p + 1},$${p + 2},$${p + 3},$${p + 4},$${p + 5},$${p + 6})`,
-        );
-        p += 7;
-        rollupValues.push(
-          v.projectId, v.fingerprint, v.firstSeen, v.lastSeen,
-          v.count, v.lastMessage, v.errorType,
-        );
-      }
-
-      const rollupSql = `
-        INSERT INTO error_groups
-          (project_id, fingerprint, first_seen, last_seen, occurrences, last_message, error_type)
-        VALUES ${rollupTuples.join(', ')}
-        ON CONFLICT (project_id, fingerprint) DO UPDATE SET
-          last_seen   = GREATEST(error_groups.last_seen, EXCLUDED.last_seen),
-          first_seen  = LEAST(error_groups.first_seen, EXCLUDED.first_seen),
-          occurrences = error_groups.occurrences + EXCLUDED.occurrences,
-          last_message = EXCLUDED.last_message,
-          error_type   = EXCLUDED.error_type,
-          updated_at   = NOW()
-      `;
-      await this.pool.query(rollupSql, rollupValues).catch(() => {
-        /* rollup is best-effort; the durable errors row is already committed */
-      });
-    }
-
-    return inserted.rowCount ?? prepared.length;
-  }
-
+  // ── events_requests ─────────────────────────────────────────────────────────
   private async writeRequests(list: ScopedEvent[]): Promise<number> {
     const rows = list.map(({ projectId, orgId, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'request' }>;
-      const p = e as unknown as Record<string, unknown>;
+      const r = rec(event);
       return [
-        projectId, orgId, e.requestId ?? null, e.url, e.method,
-        e.statusCode, e.latency, e.bodySize ?? null,
-        typeof p.responseSize === 'number' ? p.responseSize : null,
-        e.userId ?? null,
-        typeof p.tenantId === 'string' ? p.tenantId : null,
-        e.sessionId ?? null,
-        typeof p.clientIp === 'string' ? p.clientIp : null,
-        typeof p.userAgent === 'string' ? p.userAgent : null,
-        typeof p.referer === 'string' ? p.referer : null,
-        typeof p.route === 'string' ? p.route : null,
-        e.traceId ?? null, e.spanId ?? null,
+        orgId, projectId, this.eventId(event), e.requestId, e.url, e.method,
+        e.statusCode, Math.round(e.latency), str(r.route, 500), str(r.framework, 50),
         JSON.stringify(e.headers ?? {}), JSON.stringify(e.query ?? {}),
-        iso(resolveTimestamp(event)),
+        e.body != null ? JSON.stringify(e.body) : null,
+        num(e.bodySize), num(r.responseSize),
+        str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
+        inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
+        e.traceId ?? null, e.spanId ?? null,
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    // is_slow / is_error are GENERATED columns — do NOT insert them.
+    const { text, values } = buildInsert(
+      'events_requests',
+      ['organization_id', 'project_id', 'event_id', 'request_id', 'url', 'method',
+       'status_code', 'latency_ms', 'route', 'framework', 'headers', 'query_params',
+       'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
+       'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
+       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_spans ─────────────────────────────────────────────────────────
+  private async writeSpans(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'span' }>;
+      const r = rec(event);
+      return [
+        orgId, projectId, this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
+        e.name, spanKind(e.kind), spanStatus(e.status), e.statusMessage ?? null,
+        iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
+        num(e.duration), num(e.exclusiveDuration),
+        JSON.stringify(e.attributes ?? {}), JSON.stringify(e.events ?? []), JSON.stringify(e.links ?? []),
+        str(r.dbSystem, 50), str(r.dbName, 100), str(r.dbOperation, 50), str(r.dbCollection, 100), str(r.dbStatement, 8192),
+        str(r.httpMethod, 10), str(r.httpUrl, 8192), num(r.httpStatusCode), str(r.httpHost, 255), str(r.httpRoute, 500),
+        str(r.messagingSystem, 50), str(r.messagingDestination, 255), str(r.messagingOperation, 50),
+        e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
       ];
     });
     const { text, values } = buildInsert(
-      'requests',
-      ['project_id', 'org_id', 'request_id', 'url', 'method', 'status_code', 'latency_ms',
-       'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id', 'client_ip',
-       'user_agent', 'referer', 'route', 'trace_id', 'span_id', 'headers', 'query', 'timestamp'],
+      'events_spans',
+      ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+       'name', 'kind', 'status', 'status_message', 'start_time', 'end_time',
+       'duration_ms', 'exclusive_duration_ms', 'attributes', 'events', 'links',
+       'db_system', 'db_name', 'db_operation', 'db_collection', 'db_statement',
+       'http_method', 'http_url', 'http_status_code', 'http_host', 'http_route',
+       'messaging_system', 'messaging_destination', 'messaging_operation',
+       'request_id', 'session_id', 'user_id', 'tenant_id',
+       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
       rows,
     );
-    const r = await this.pool.query(text, values);
-    return r.rowCount ?? 0;
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_traces ─────────────────────────────────────────────────────────
+  private async writeTraces(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'trace' }>;
+      const r = rec(event);
+      const root = (e.rootSpan ?? {}) as { name?: unknown; spanId?: unknown; id?: unknown };
+      return [
+        orgId, projectId, this.eventId(event), e.traceId,
+        str(root.name, 500), str(root.spanId ?? root.id, 64),
+        e.spanCount, num(e.totalDuration), e.isPartial ?? false,
+        e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
+        e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_traces',
+      ['organization_id', 'project_id', 'event_id', 'trace_id',
+       'root_span_name', 'root_span_id', 'span_count', 'total_duration_ms', 'is_partial',
+       'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
+       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_metrics ─────────────────────────────────────────────────────────
+  private async writeMetrics(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'metric' }>;
+      const r = rec(event);
+      return [
+        orgId, projectId, this.eventId(event), e.metricName, e.metricType,
+        num(e.value) ?? 0, str(e.unit, 50),
+        JSON.stringify(e.tags ?? {}), num(e.count), num(e.sum), num(e.min), num(e.max), num(e.avg),
+        num(r.rate), e.buckets != null ? JSON.stringify(e.buckets) : null,
+        num(r.p50), num(r.p75), num(r.p90), num(r.p95), num(r.p99),
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_metrics',
+      ['organization_id', 'project_id', 'event_id', 'metric_name', 'metric_type',
+       'value', 'unit', 'tags', 'count', 'sum', 'min', 'max', 'avg',
+       'rate', 'buckets', 'p50', 'p75', 'p90', 'p95', 'p99',
+       'trace_id', 'span_id', 'request_id', 'service', 'environment', 'release',
+       'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_logs ─────────────────────────────────────────────────────────
+  private async writeLogs(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'log' }>;
+      const r = rec(event);
+      return [
+        orgId, projectId, this.eventId(event), logLevel(e.level), e.message,
+        JSON.stringify(e.args ?? []), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.userId, 255), inet(r.userIp),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_logs',
+      ['organization_id', 'project_id', 'event_id', 'level', 'message',
+       'args', 'trace_id', 'span_id', 'request_id',
+       'service', 'environment', 'release', 'user_id', 'user_ip',
+       'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_profiles ─────────────────────────────────────────────────────────
+  private async writeProfiles(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'profile' }>;
+      const r = rec(event);
+      const ts = resolveTimestamp(event);
+      return [
+        orgId, projectId, this.eventId(event), str(e.profileType, 20) ?? 'cpu',
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
+        e.startTime != null ? iso(e.startTime) : iso(ts),
+        e.endTime != null ? iso(e.endTime) : null, num(e.duration),
+        e.profile != null ? JSON.stringify(e.profile) : null,
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(ts),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_profiles',
+      ['organization_id', 'project_id', 'event_id', 'profile_type',
+       'trace_id', 'span_id', 'request_id', 'start_time', 'end_time', 'duration_ms',
+       'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_cron_checkins ─────────────────────────────────────────────────────
+  private async writeCronCheckins(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'cron_checkin' }>;
+      const r = rec(event);
+      return [
+        orgId, projectId, this.eventId(event), e.monitorSlug, e.status, num(e.duration),
+        str(r.service, 100), str(e.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_cron_checkins',
+      ['organization_id', 'project_id', 'event_id', 'monitor_slug', 'status', 'duration_ms',
+       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  // ── events_replays ─────────────────────────────────────────────────────────
+  private async writeReplays(list: ScopedEvent[]): Promise<number> {
+    const rows = list.map(({ projectId, orgId, event }) => {
+      const e = event as Extract<NormalizedEvent, { type: 'replay' }>;
+      const r = rec(event);
+      return [
+        orgId, projectId, this.eventId(event), e.sessionId, e.segmentId,
+        JSON.stringify(e.events ?? []),
+        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+      ];
+    });
+    const { text, values } = buildInsert(
+      'events_replays',
+      ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
+       'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      rows,
+    );
+    const res = await this.pool.query(text, values);
+    return res.rowCount ?? 0;
   }
 }

@@ -1,19 +1,22 @@
 -- ============================================================================
 -- 004_add_analytics_module.up.sql
 -- ----------------------------------------------------------------------------
--- Analytics module for Pulse SDK event data: 10 time-partitioned event tables,
+-- Analytics module for Pulse SDK event data: 10 time-series event tables,
 -- rollup/aggregate tables, and config tables (dashboards, saved queries,
 -- analytics alerts).
 --
--- Idempotent + safe-to-run-on-fresh-DB. Depends only on pgcrypto.
+-- Idempotent + safe-to-run-on-fresh-DB. Depends on pgcrypto; optionally uses
+-- timescaledb.
+--
+-- TIME-SERIES STORAGE:
+--   The 10 events_* tables are TimescaleDB hypertables (daily chunks on
+--   created_at, compression after 7d, retention 90d). When the timescaledb
+--   extension is unavailable they degrade to plain tables — see the
+--   "TIMESCALEDB HYPERTABLES" block below. The composite PK (id, created_at)
+--   keeps the time column in the primary key, which hypertables require.
 --
 -- Conventions match 002/003:
 --   * Enums guarded via DO/IF NOT EXISTS.
---   * Partitioned event tables use composite PK (id, created_at) — a partition
---     key MUST be part of every unique/primary key in PostgreSQL.
---   * Each event table gets a DEFAULT partition so inserts never fail before
---     the daily-partition maintenance job has run; create_event_partitions()
---     pre-creates a week of daily partitions.
 --   * BRIN indexes use the correct `USING BRIN (col)` syntax (the spec's
 --     "CREATE BRIN INDEX" is not valid SQL).
 --   * Time-windowed partial indexes from the spec are NOT used: an index
@@ -106,7 +109,7 @@ CREATE TABLE IF NOT EXISTS events_errors (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_errors_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_messages (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -132,7 +135,7 @@ CREATE TABLE IF NOT EXISTS events_messages (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_messages_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_requests (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -169,7 +172,7 @@ CREATE TABLE IF NOT EXISTS events_requests (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_requests_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_spans (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -215,7 +218,7 @@ CREATE TABLE IF NOT EXISTS events_spans (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_spans_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_traces (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -241,7 +244,7 @@ CREATE TABLE IF NOT EXISTS events_traces (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_traces_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_metrics (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -276,7 +279,7 @@ CREATE TABLE IF NOT EXISTS events_metrics (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_metrics_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_logs (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -299,7 +302,7 @@ CREATE TABLE IF NOT EXISTS events_logs (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_logs_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_profiles (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -322,7 +325,7 @@ CREATE TABLE IF NOT EXISTS events_profiles (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_profiles_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_cron_checkins (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -340,7 +343,7 @@ CREATE TABLE IF NOT EXISTS events_cron_checkins (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_cron_checkins_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
 CREATE TABLE IF NOT EXISTS events_replays (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -358,19 +361,68 @@ CREATE TABLE IF NOT EXISTS events_replays (
     timestamp TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT events_replays_pkey PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
+);
 
--- DEFAULT partitions so inserts succeed before/after daily partitions exist.
-CREATE TABLE IF NOT EXISTS events_errors_default        PARTITION OF events_errors        DEFAULT;
-CREATE TABLE IF NOT EXISTS events_messages_default       PARTITION OF events_messages       DEFAULT;
-CREATE TABLE IF NOT EXISTS events_requests_default       PARTITION OF events_requests       DEFAULT;
-CREATE TABLE IF NOT EXISTS events_spans_default          PARTITION OF events_spans          DEFAULT;
-CREATE TABLE IF NOT EXISTS events_traces_default         PARTITION OF events_traces         DEFAULT;
-CREATE TABLE IF NOT EXISTS events_metrics_default        PARTITION OF events_metrics        DEFAULT;
-CREATE TABLE IF NOT EXISTS events_logs_default           PARTITION OF events_logs           DEFAULT;
-CREATE TABLE IF NOT EXISTS events_profiles_default       PARTITION OF events_profiles       DEFAULT;
-CREATE TABLE IF NOT EXISTS events_cron_checkins_default  PARTITION OF events_cron_checkins  DEFAULT;
-CREATE TABLE IF NOT EXISTS events_replays_default        PARTITION OF events_replays        DEFAULT;
+-- ----------------------------------------------------------------------------
+-- TIMESCALEDB HYPERTABLES
+-- ----------------------------------------------------------------------------
+-- The 10 events_* tables are append-only, high-volume time-series keyed by
+-- created_at. When the `timescaledb` extension is available they are promoted
+-- to hypertables with native daily chunking, columnar compression (chunks
+-- older than 7 days) and automatic retention (chunks older than 90 days).
+--
+-- Graceful degradation: if timescaledb is NOT installed (vanilla PostgreSQL or
+-- a managed provider without the extension), this whole block is a no-op and
+-- the events_* tables remain plain tables — ingestion and analytics queries
+-- continue to work unchanged. Each step is independently guarded so a single
+-- unsupported feature never aborts the migration.
+DO $$
+DECLARE
+  evt TEXT;
+  event_tables TEXT[] := ARRAY[
+    'events_errors','events_messages','events_requests','events_spans','events_traces',
+    'events_metrics','events_logs','events_profiles','events_cron_checkins','events_replays'
+  ];
+  has_timescale BOOLEAN := FALSE;
+BEGIN
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS timescaledb;
+    has_timescale := TRUE;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'TimescaleDB extension unavailable (%) — events_* remain plain tables', SQLERRM;
+  END;
+
+  IF has_timescale THEN
+    FOREACH evt IN ARRAY event_tables LOOP
+      BEGIN
+        -- Promote to a hypertable chunked daily on created_at. Tables are empty
+        -- at creation, so migrate_data is unnecessary (and avoids the
+        -- "cannot run in a transaction block" restriction).
+        PERFORM create_hypertable(evt, 'created_at',
+          chunk_time_interval => INTERVAL '1 day',
+          if_not_exists       => TRUE);
+
+        -- Drop chunks older than 90 days automatically.
+        PERFORM add_retention_policy(evt, INTERVAL '90 days', if_not_exists => TRUE);
+
+        -- Columnar compression is best-effort: it can conflict with the
+        -- (id, created_at) primary key on some versions, so failure here is
+        -- non-fatal and leaves the hypertable + retention policy intact.
+        BEGIN
+          EXECUTE format(
+            'ALTER TABLE %I SET (timescaledb.compress, timescaledb.compress_orderby = ''created_at DESC'')',
+            evt);
+          PERFORM add_compression_policy(evt, INTERVAL '7 days', if_not_exists => TRUE);
+        EXCEPTION WHEN OTHERS THEN
+          RAISE NOTICE 'TimescaleDB compression skipped for % (%)', evt, SQLERRM;
+        END;
+      EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'TimescaleDB hypertable setup skipped for % (%)', evt, SQLERRM;
+      END;
+    END LOOP;
+    RAISE NOTICE 'TimescaleDB hypertables provisioned for events_* tables';
+  END IF;
+END $$;
 
 
 -- ----------------------------------------------------------------------------
@@ -624,37 +676,19 @@ CREATE INDEX IF NOT EXISTS idx_saved_queries_org ON analytics_saved_queries(orga
 CREATE INDEX IF NOT EXISTS idx_analytics_alerts_org ON analytics_alerts(organization_id) WHERE deleted_at IS NULL;
 
 -- ----------------------------------------------------------------------------
--- PARTITION MAINTENANCE + ROLLUP FUNCTIONS
+-- PARTITION MAINTENANCE (legacy shim) + ROLLUP FUNCTIONS
 -- ----------------------------------------------------------------------------
+-- Chunk management is now automatic: TimescaleDB creates chunks on write (and
+-- plain-table fallback needs none). This shim is retained with the original
+-- signature so existing callers (e.g. the event-analytics maintenance cron's
+-- `SELECT create_event_partitions(7)`) keep working as harmless no-ops.
 CREATE OR REPLACE FUNCTION create_event_partitions(p_days_ahead INTEGER DEFAULT 7)
 RETURNS void AS $$
-DECLARE
-  tables TEXT[] := ARRAY[
-    'events_errors','events_messages','events_requests','events_spans','events_traces',
-    'events_metrics','events_logs','events_profiles','events_cron_checkins','events_replays'
-  ];
-  t TEXT;
-  partition_date DATE;
-  partition_name TEXT;
 BEGIN
-  FOREACH t IN ARRAY tables LOOP
-    FOR partition_date IN
-      SELECT generate_series(CURRENT_DATE, CURRENT_DATE + (p_days_ahead || ' days')::interval, INTERVAL '1 day')::DATE
-    LOOP
-      partition_name := t || '_' || TO_CHAR(partition_date, 'YYYY_MM_DD');
-      IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = partition_name) THEN
-        EXECUTE format(
-          'CREATE TABLE %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L)',
-          partition_name, t, partition_date, partition_date + INTERVAL '1 day'
-        );
-      END IF;
-    END LOOP;
-  END LOOP;
+  -- No-op: hypertable chunks are created automatically; plain tables need none.
+  RETURN;
 END;
 $$ LANGUAGE plpgsql;
-
--- Pre-create a week of daily partitions immediately.
-SELECT create_event_partitions(7);
 
 CREATE OR REPLACE FUNCTION refresh_hourly_rollup(
   p_org_id UUID, p_start_hour TIMESTAMPTZ, p_end_hour TIMESTAMPTZ

@@ -9,6 +9,5 @@ export declare class TelemetryReader {
     getEventsForReplay(projectId: string, startTime: string, endTime: string, eventTypes?: string[], maxEvents?: number): Promise<EnrichedEvent[]>;
     private mapErrorRow;
     private rowToNormalizedEvent;
-    private withProjectContext;
 }
 //# sourceMappingURL=telemetry-reader.d.ts.map

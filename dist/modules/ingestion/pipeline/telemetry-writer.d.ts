@@ -1,18 +1,9 @@
-/**
- * TelemetryWriter — persists normalized events to their typed, partitioned
- * tables (migration 013). One method per signal family; all writes are
- * tenant-scoped (project_id/org_id come from the authenticated API key, NEVER
- * from the event payload — defends cross-tenant ingestion / project spoofing).
- *
- * Batching: each method accepts an array and does a single multi-row insert per
- * call so the worker can flush a claimed batch in one round trip per type.
- * Inserts are best-effort idempotent where a natural key exists (traces).
- */
 import type { Pool } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
     projectId: string;
+    /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
     orgId: string | null;
     event: NormalizedEvent;
 }
@@ -20,11 +11,18 @@ export declare class TelemetryWriter {
     private readonly pool;
     constructor(pool: Pool);
     /**
-     * Route a batch of scoped events to the correct table(s). Events of mixed
-     * types are grouped so each table gets one insert. Returns count persisted.
+     * Route a batch of scoped events to the correct events_* table(s). Mixed
+     * types are grouped so each table gets one multi-row insert. Events without a
+     * resolvable organization_id are skipped (events_* requires it) and counted
+     * out of the return total.
      */
     writeBatch(scoped: ScopedEvent[]): Promise<number>;
     private writeTyped;
+    /** Best-effort event id (events_*.event_id is NOT NULL). */
+    private eventId;
+    private writeErrors;
+    private writeMessages;
+    private writeRequests;
     private writeSpans;
     private writeTraces;
     private writeMetrics;
@@ -32,21 +30,5 @@ export declare class TelemetryWriter {
     private writeProfiles;
     private writeCronCheckins;
     private writeReplays;
-    private writeMessages;
-    /**
-     * Errors are persisted to the partitioned `errors` table and rolled up into
-     * `error_groups` for analytics. Both project_id and org_id come from the
-     * authenticated API key, never the payload.
-     *
-     * Performance note: The original implementation inserted one row at a time
-     * AND issued a separate fingerprint-rollup statement per event. At high
-     * error rates that doubles round trips per event and exhausts the pool.
-     * This version uses one multi-row INSERT for the canonical errors table
-     * and a single multi-row UPSERT for the rollup, both inside the same call
-     * stack. The rollup is still best-effort: if it fails, the durable error
-     * write has already committed.
-     */
-    private writeErrors;
-    private writeRequests;
 }
 //# sourceMappingURL=telemetry-writer.d.ts.map

@@ -32,6 +32,7 @@ import { apiKeyCache } from '../../config/lrucashe.js';
 import { PgQueue } from './queue/pg-queue.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionRateLimiter } from './rate-limiter.js';
+import { UsageCounter } from './usage/usage-counter.js';
 import { normalizeEvent, } from './pipeline/event-normalizer.js';
 const svcLogger = logger.child({ component: 'ingestion-service' });
 function hashApiKey(apiKey) {
@@ -66,6 +67,7 @@ export class IngestionService {
     writer;
     queue;
     rateLimiter;
+    usage;
     backpressure;
     replayMaxEvents;
     maxBatchSize;
@@ -87,6 +89,15 @@ export class IngestionService {
             ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
             sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
         });
+        // API-tier usage counter. Tier-1 (memory) + Tier-2 (UNLOGGED staging) only;
+        // the worker tier drives the staging->durable rollup so the many API
+        // cluster processes don't all contend on flush_usage_counters().
+        this.usage = new UsageCounter(pool, svcLogger, {
+            flushIntervalMs: env.INGESTION_USAGE_FLUSH_MS,
+            bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
+            driveRollup: false,
+        });
+        this.usage.start();
     }
     // ── Project resolution (LRU only; Postgres fallback) ──────────────────────
     async resolveProject(apiKey) {
@@ -277,6 +288,16 @@ export class IngestionService {
         if (shed > 0) {
             svcLogger.warn({ projectId: project.id, shed, depth, highWater: this.backpressure.highWater }, 'Backpressure shedding active');
         }
+        // Fire-and-forget usage accounting at ingest time (Tier-1, memory only —
+        // never awaited, never throws). Captures the request-path view of usage
+        // (accepted/rejected/shed) distinct from the worker's persisted count.
+        this.usage.increment(project.id, project.orgId, 'events_received', events.length);
+        if (accepted > 0)
+            this.usage.increment(project.id, project.orgId, 'events_accepted', accepted);
+        if (errors.length > 0)
+            this.usage.increment(project.id, project.orgId, 'events_rejected', errors.length);
+        if (shed > 0)
+            this.usage.increment(project.id, project.orgId, 'events_shed', shed);
         const nextMinuteMs = (Math.floor(Date.now() / 60_000) + 1) * 60_000;
         const response = {
             success: true,
@@ -333,6 +354,21 @@ export class IngestionService {
     }
     async getIngestionHealth() {
         const m = await this.queue.metrics();
+        // Per-type/priority snapshot from the v2 operator view (single grouped
+        // scan; cheap enough for an authenticated ops endpoint).
+        let byType = [];
+        try {
+            const snap = await this.pool.query(`SELECT job_type, state, priority_label, job_count, retried_count, oldest_age_seconds
+         FROM ingestion_queue_snapshot
+         WHERE state IN ('pending','active','failed')
+         ORDER BY job_count DESC
+         LIMIT 50`);
+            byType = snap.rows;
+        }
+        catch {
+            // View may not exist if migration 009 hasn't been applied yet; degrade.
+            byType = [];
+        }
         return {
             queue: 'ingestion',
             jobs: {
@@ -343,6 +379,7 @@ export class IngestionService {
                 deadLettered: m.deadLettered,
             },
             lagSeconds: m.oldestPendingAgeSeconds,
+            byType,
             rateLimiterEntries: this.rateLimiter.size(),
             backpressure: {
                 highWater: this.backpressure.highWater,
@@ -377,15 +414,15 @@ export class IngestionService {
        OFFSET $1 LIMIT $2`, [safeOffset, safeLimit]);
         return r.rows;
     }
-    async reprocessDLQJob(jobId) {
+    async reprocessDLQJob(jobId, replayedBy) {
         if (typeof jobId !== 'string' || jobId.length === 0) {
             throw new Error('JOB_NOT_FOUND');
         }
-        const id = await this.queue.replayDeadLetter(jobId);
+        const id = await this.queue.replayDeadLetter(jobId, replayedBy);
         if (!id)
             throw new Error('JOB_NOT_FOUND');
     }
-    async reprocessAllDLQ(batchSize = 100) {
+    async reprocessAllDLQ(batchSize = 100, replayedBy) {
         const safeBatch = Number.isFinite(batchSize) && batchSize > 0
             ? Math.min(Math.trunc(batchSize), 1000)
             : 100;
@@ -396,7 +433,7 @@ export class IngestionService {
         let n = 0;
         for (const row of r.rows) {
             try {
-                const id = await this.queue.replayDeadLetter(row.id);
+                const id = await this.queue.replayDeadLetter(row.id, replayedBy);
                 if (id)
                     n++;
             }
@@ -446,6 +483,32 @@ export class IngestionService {
     /** Drain in-process state. The queue is durable in Postgres. */
     async shutdown() {
         this.rateLimiter.dispose();
+        await this.usage.stop();
+    }
+    /**
+     * Realtime per-project usage, read from project_usage_realtime (durable
+     * hourly buckets + un-flushed staging tail). Optionally filtered to a single
+     * counter type. Powers the GET /v1/usage endpoint.
+     */
+    async getProjectUsage(projectId, counterType) {
+        const params = [projectId];
+        let typeClause = '';
+        if (counterType) {
+            params.push(counterType);
+            typeClause = 'AND counter_type = $2';
+        }
+        const r = await this.pool.query(`SELECT counter_type,
+              SUM(total_value)::text AS total,
+              MAX(period_start)::text AS period_start
+       FROM project_usage_realtime
+       WHERE project_id = $1 ${typeClause}
+       GROUP BY counter_type
+       ORDER BY counter_type`, params);
+        return r.rows.map((row) => ({
+            counterType: row.counter_type,
+            total: Number(row.total ?? 0),
+            periodStart: row.period_start,
+        }));
     }
     normalizeErrorEventListQuery(query) {
         const normalized = {
