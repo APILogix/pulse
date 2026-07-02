@@ -320,7 +320,7 @@
   <div class="header">
     <h1>API Route Documentation</h1>
     <div class="meta">
-      <span id="generated-at">Generated: 2026-06-21T11:21:39.961Z</span>
+      <span id="generated-at">Generated: 2026-07-01T17:20:06.696Z</span>
       <span style="margin-left: 1rem;">|</span>
       <span style="margin-left: 1rem;"><span id="total-routes">0</span> total routes</span>
     </div>
@@ -331,6 +331,7 @@
       <label>View Version:</label>
       <select id="version-select">        <option value="v1">v1 - 21/6/2026</option>
         <option value="v2">v2 - 21/6/2026</option>
+        <option value="v3">v3 - 1/7/2026</option>
       </select>
     </div>
     <div class="control-group">
@@ -362,7 +363,7 @@
         <h2>Auth Module</h2>
         <div class="module-info">
           <span class="prefix">Prefix: <code>/auth</code></span>
-          <span class="route-count">80 routes</span>
+          <span class="route-count">83 routes</span>
         </div>
       </div>
       <div class="table-container">
@@ -629,6 +630,13 @@
           <td><span class="rate-limit-tag">loginMfaRateLimit</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="POST" data-path="/login/mfa/switch">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/login/mfa/switch</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="rate-limit-tag">loginMfaRateLimit</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="POST" data-path="/login/backup-code">
           <td><span class="method-badge method-post">POST</span></td>
           <td class="route-path">/login/backup-code</td>
@@ -669,6 +677,13 @@
           <td class="route-path">/resend-verification</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="rate-limit-tag">resendVerificationRateLimit</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/verify-email/confirm">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/verify-email/confirm</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="rate-limit-tag">tokenConfirmRateLimit</span></td>
           <td>-</td>
         </tr>
         <tr class="route-row" data-method="POST" data-path="/password/change">
@@ -765,6 +780,13 @@
         <tr class="route-row" data-method="POST" data-path="/mfa/backup-codes">
           <td><span class="method-badge method-post">POST</span></td>
           <td class="route-path">/mfa/backup-codes</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/mfa/disable">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/mfa/disable</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -1306,7 +1328,7 @@
         <h2>Organization Module</h2>
         <div class="module-info">
           <span class="prefix">Prefix: <code>/organizations</code></span>
-          <span class="route-count">48 routes</span>
+          <span class="route-count">58 routes</span>
         </div>
       </div>
       <div class="table-container">
@@ -1447,6 +1469,48 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs/resolve">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs/resolve</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs/:configId">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs/:configId/versions">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId/versions</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs/:configId/versions/:version">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId/versions/:version</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:orgId/sdk-configs/:configId/deployments">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId/deployments</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="POST" data-path="/">
           <td><span class="method-badge method-post">POST</span></td>
           <td class="route-path">/</td>
@@ -1580,6 +1644,27 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="POST" data-path="/:orgId/sdk-configs">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:orgId/sdk-configs</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/:orgId/sdk-configs/:configId/rollback">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId/rollback</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/:orgId/sdk-configs/:configId/versions/:version/ack">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId/versions/:version/ack</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="PATCH" data-path="/:id">
           <td><span class="method-badge method-patch">PATCH</span></td>
           <td class="route-path">/:id</td>
@@ -1611,6 +1696,13 @@
         <tr class="route-row" data-method="PATCH" data-path="/:orgId/sso/:ssoId">
           <td><span class="method-badge method-patch">PATCH</span></td>
           <td class="route-path">/:orgId/sso/:ssoId</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="PATCH" data-path="/:orgId/sdk-configs/:configId">
+          <td><span class="method-badge method-patch">PATCH</span></td>
+          <td class="route-path">/:orgId/sdk-configs/:configId</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -1666,7 +1758,7 @@
         <h2>Projects Module</h2>
         <div class="module-info">
           <span class="prefix">Prefix: <code>/organizations/:orgId/projects</code></span>
-          <span class="route-count">19 routes</span>
+          <span class="route-count">24 routes</span>
         </div>
       </div>
       <div class="table-container">
@@ -1702,6 +1794,20 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="GET" data-path="/:projectId/environments">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:projectId/environments</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/:projectId/environments/:environment">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/:projectId/environments/:environment</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="GET" data-path="/:projectId/api-keys">
           <td><span class="method-badge method-get">GET</span></td>
           <td class="route-path">/:projectId/api-keys</td>
@@ -1730,30 +1836,16 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
-        <tr class="route-row" data-method="POST" data-path="/:projectId/archive">
+        <tr class="route-row" data-method="POST" data-path="/:projectId/${path}">
           <td><span class="method-badge method-post">POST</span></td>
-          <td class="route-path">/:projectId/archive</td>
+          <td class="route-path">/:projectId/${path}</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
-        <tr class="route-row" data-method="POST" data-path="/:projectId/unarchive">
+        <tr class="route-row" data-method="POST" data-path="/:projectId/environments">
           <td><span class="method-badge method-post">POST</span></td>
-          <td class="route-path">/:projectId/unarchive</td>
-          <td><span class="no-auth">None</span></td>
-          <td><span class="no-rate-limit">-</span></td>
-          <td>-</td>
-        </tr>
-        <tr class="route-row" data-method="POST" data-path="/:projectId/pause">
-          <td><span class="method-badge method-post">POST</span></td>
-          <td class="route-path">/:projectId/pause</td>
-          <td><span class="no-auth">None</span></td>
-          <td><span class="no-rate-limit">-</span></td>
-          <td>-</td>
-        </tr>
-        <tr class="route-row" data-method="POST" data-path="/:projectId/resume">
-          <td><span class="method-badge method-post">POST</span></td>
-          <td class="route-path">/:projectId/resume</td>
+          <td class="route-path">/:projectId/environments</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -1765,9 +1857,30 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="POST" data-path="/:projectId/api-keys/bulk-rotate">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:projectId/api-keys/bulk-rotate</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/:projectId/api-keys/bulk-revoke">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:projectId/api-keys/bulk-revoke</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="POST" data-path="/:projectId/api-keys/:apiKeyId/rotate">
           <td><span class="method-badge method-post">POST</span></td>
           <td class="route-path">/:projectId/api-keys/:apiKeyId/rotate</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="POST" data-path="/:projectId/api-keys/:apiKeyId/regenerate">
+          <td><span class="method-badge method-post">POST</span></td>
+          <td class="route-path">/:projectId/api-keys/:apiKeyId/regenerate</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -1793,6 +1906,13 @@
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
         </tr>
+        <tr class="route-row" data-method="PATCH" data-path="/:projectId/environments/:environment">
+          <td><span class="method-badge method-patch">PATCH</span></td>
+          <td class="route-path">/:projectId/environments/:environment</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
         <tr class="route-row" data-method="PATCH" data-path="/:projectId/api-keys/:apiKeyId">
           <td><span class="method-badge method-patch">PATCH</span></td>
           <td class="route-path">/:projectId/api-keys/:apiKeyId</td>
@@ -1803,6 +1923,13 @@
         <tr class="route-row" data-method="DELETE" data-path="/:projectId">
           <td><span class="method-badge method-delete">DELETE</span></td>
           <td class="route-path">/:projectId</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="DELETE" data-path="/:projectId/environments/:environment">
+          <td><span class="method-badge method-delete">DELETE</span></td>
+          <td class="route-path">/:projectId/environments/:environment</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -1903,7 +2030,7 @@
         <h2>Ingestion Module</h2>
         <div class="module-info">
           <span class="prefix">Prefix: <code>/ingestion</code></span>
-          <span class="route-count">16 routes</span>
+          <span class="route-count">17 routes</span>
         </div>
       </div>
       <div class="table-container">
@@ -1935,6 +2062,13 @@
         <tr class="route-row" data-method="GET" data-path="/v1/limits">
           <td><span class="method-badge method-get">GET</span></td>
           <td class="route-path">/v1/limits</td>
+          <td><span class="no-auth">None</span></td>
+          <td><span class="no-rate-limit">-</span></td>
+          <td>-</td>
+        </tr>
+        <tr class="route-row" data-method="GET" data-path="/v1/usage">
+          <td><span class="method-badge method-get">GET</span></td>
+          <td class="route-path">/v1/usage</td>
           <td><span class="no-auth">None</span></td>
           <td><span class="no-rate-limit">-</span></td>
           <td>-</td>
@@ -2175,13 +2309,15 @@
         <div class="diff-controls">
           <div class="control-group">
             <label>From:</label>
-            <select id="diff-from">          <option value="v2">v2</option>
+            <select id="diff-from">          <option value="v3">v3</option>
+          <option value="v2">v2</option>
           <option value="v1">v1</option>
             </select>
           </div>
           <div class="control-group">
             <label>To:</label>
-            <select id="diff-to">          <option value="v2">v2</option>
+            <select id="diff-to">          <option value="v3">v3</option>
+          <option value="v2">v2</option>
           <option value="v1">v1</option>
             </select>
           </div>
@@ -6489,6 +6625,3128 @@
             }
         },
         "changelog": "No changes"
+    },
+    {
+        "id": "v3",
+        "generatedAt": "2026-07-01T17:20:06.595Z",
+        "modules": {
+            "ai": {
+                "prefix": "/ai",
+                "routes": []
+            },
+            "alerting": {
+                "prefix": "/alerting",
+                "routes": [
+                    {
+                        "method": "POST",
+                        "path": "/rules",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/rules",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/rules/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/rules/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/rules/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/rules/:id/enable",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/rules/:id/disable",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/rules/:id/test",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/rules/:id/clone",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/events",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/events",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/events/stats",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/events/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/events/:id/acknowledge",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/events/:id/resolve",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/events/:id/silence",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/events/:id/deliveries",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/silences",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/silences",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/silences/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/escalation-policies",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/escalation-policies",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/escalation-policies/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/escalation-policies/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PUT",
+                        "path": "/escalation-policies/:id/steps",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/templates",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/templates",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/templates/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/templates/:id/preview",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/routing-rules",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/routing-rules",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/routing-rules/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/routing-rules/test",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/metrics",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "analytics": {
+                "prefix": "/analytics",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/events",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/events/:eventId",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/requests/overview",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/dashboard",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/error-groups",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:projectId/error-groups/:fingerprint",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/error-groups/:fingerprint/resolve",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/health",
+                        "auth": [
+                            "authenticate",
+                            "requireProjectMembership"
+                        ],
+                        "requiresAuth": true,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "auth": {
+                "prefix": "/auth",
+                "routes": [
+                    {
+                        "method": "POST",
+                        "path": "/mfa/step-up/webauthn/options",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/step-up/webauthn/verify",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/mfa/devices/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/password/reset",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/password/policy",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/me/verification",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/policy/effective",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sso/discovery",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/account/unlock/request",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/account/unlock/confirm",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/email/change/request",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/email/change/confirm",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/me/export",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/me/delete/request",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/me/delete/confirm",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/recovery/request",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/:id/audit-events",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/social/:provider",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/login/social/callback",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/saml/logout",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/saml/slo",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "loginRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/mfa",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "loginMfaRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/mfa/switch",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "loginMfaRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/backup-code",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/forgot-password",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "forgotPasswordRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/password/forgot",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "forgotPasswordRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/reset-password",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "resetPasswordRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/password/reset",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "resetPasswordRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/resend-verification",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "resendVerificationRateLimit"
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/verify-email",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "verifyEmailRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/verify-email/confirm",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "tokenConfirmRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/password/change",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/register",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "registerRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "registerRateLimit"
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/me",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/me/security-summary",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/users/me",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/users/me",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/restore",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/suspend",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/unsuspend",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/lock",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/users/:id/unlock",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/users/:id/sessions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/setup",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/verify-setup",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/challenge",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/verify",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/email/resend",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/mfa/devices",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/mfa/devices/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/mfa/devices/:id/primary",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/backup-codes",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/mfa/toggle",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/disable",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/disable/request",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/disable/confirm",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sessions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sessions/${UUID_PATH_SEGMENT}",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/sessions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/sessions/others",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/sessions/${UUID_PATH_SEGMENT}",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/sessions/refresh",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": "refreshSessionRateLimit"
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/logout",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/health",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/saml/metadata",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/saml/acs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/identity-providers",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/identity-providers/:provider/link",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/identity-providers/callback",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/identity-providers/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/sso/login",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sso/callback",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/webauthn/register/options",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/mfa/webauthn/register/verify",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/mfa/webauthn/options",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/login/mfa/webauthn/verify",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/trusted-devices",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/trusted-devices",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/trusted-devices/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "billing": {
+                "prefix": "/billing",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/plans",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/plans/:planId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/plans/compare",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/plans/estimate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/subscription",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/subscription",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/subscription/plan",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/subscription/cancel",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/subscription/reactivate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/subscription/preview-change",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/payment-methods",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/payment-methods",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/payment-methods/:id/default",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/payment-methods/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/payment-methods/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/payment-methods/:id/verify",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/invoices",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/invoices/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/invoices/:id/pdf",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/invoices/:id/pay",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/invoices/upcoming",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/usage",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/usage/detailed",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/usage/history",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/usage/forecast",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/usage/export",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/quotas",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/quotas/:type",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/quotas/:type/increase",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/quotas/requests",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/settings",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/settings",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/settings/email",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/settings/address",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/settings/tax",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/coupons/apply",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/coupons",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/coupons/validate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/promotions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/webhooks/stripe",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/webhooks/:provider",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/admin/sync",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/admin/override",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/admin/credits",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/admin/invoices/:id/waive",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/admin/analytics",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/portal/session",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/checkout/session",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "connectors": {
+                "prefix": "/connectors",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/types",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:id/test",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:id/send",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:id/deliveries",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "event-analytics": {
+                "prefix": "/event-analytics",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/overview",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/trends",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/health",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/errors",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/errors/groups",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/errors/trends",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/errors/groups/:fingerprint",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/errors/groups/:fingerprint/resolve",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/errors/groups/:fingerprint/ignore",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/errors/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/performance/routes",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/performance/distribution",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/performance/apdex",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/requests",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/requests/waterfall/:traceId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/requests/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/traces",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/traces/:traceId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/metrics",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/metrics/:name/stats",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/metrics/:name",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/logs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/logs/stream",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sessions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/sessions/:sessionId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/users/:userId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/crons",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/crons/:slug/history",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/crons/:slug",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/live/errors",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/dashboards",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/dashboards",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/dashboards/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/dashboards/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/dashboards/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/dashboards/:id/duplicate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/queries",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/queries",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/queries/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/queries/:id/execute",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/alerts",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/alerts",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/alerts/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/export",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "ingestion": {
+                "prefix": "/ingestion",
+                "routes": [
+                    {
+                        "method": "POST",
+                        "path": "/v1/init",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/ingest",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/ingest/requests",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/ingest/errors",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/ingest/logs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/ingest/metrics",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/health",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/ingest/health",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/limits",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/usage",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/errors",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/errors/:errorId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/dlq",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/dlq/reprocess/:jobId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/dlq/reprocess-all",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/v1/replay",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/v1/debug/events/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "organization": {
+                "prefix": "/organizations",
+                "routes": [
+                    {
+                        "method": "POST",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:id/archive",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:id/restore",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:id/transfer-ownership",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/settings",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/settings",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/members",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/members/me",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/members/:userId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/members/:userId/role",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/members/:userId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/members/:userId/suspend",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/members/:userId/reactivate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/leave",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/invitations",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/invitations",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/invitations/:invitationId/resend",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/invitations/:invitationId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/invitations/accept",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/invitations/:id/decline",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/invitations/validate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/environments",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/environments",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/environments/:envId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/api-keys",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/api-keys",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/api-keys/:keyId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/api-keys/:keyId/rotate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sso",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/sso",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/sso/:ssoId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/sso/:ssoId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/scim-tokens",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/scim-tokens",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/scim-tokens/:tokenId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/security-events",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/audit-logs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/audit-logs/export",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/quota-requests",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/quota-requests",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/quota-requests/:requestId/approve",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/quota-requests/:requestId/reject",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/slug-available/:slug",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/by-slug/:slug",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/sdk-configs",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs/resolve",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs/:configId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/sdk-configs/:configId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/sdk-configs/:configId/rollback",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs/:configId/versions",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs/:configId/versions/:version",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/sdk-configs/:configId/deployments",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/sdk-configs/:configId/versions/:version/ack",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "projects": {
+                "prefix": "/organizations/:orgId/projects",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/stats",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:projectId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:projectId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/${path}",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/environments",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/environments",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/environments/:environment",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:projectId/environments/:environment",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:projectId/environments/:environment",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/api-keys",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/bulk-rotate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/bulk-revoke",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/api-keys/:apiKeyId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:projectId/api-keys/:apiKeyId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:projectId/api-keys/:apiKeyId",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/:apiKeyId/rotate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/:apiKeyId/regenerate",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/:apiKeyId/enable",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:projectId/api-keys/:apiKeyId/disable",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:projectId/api-keys/:apiKeyId/usage",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "scim": {
+                "prefix": "/scim/v2",
+                "routes": [
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/ServiceProviderConfig",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/ResourceTypes",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/Schemas",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/Users",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/Users/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "POST",
+                        "path": "/:orgId/Users",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PUT",
+                        "path": "/:orgId/Users/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "PATCH",
+                        "path": "/:orgId/Users/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "DELETE",
+                        "path": "/:orgId/Users/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/Groups",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    },
+                    {
+                        "method": "GET",
+                        "path": "/:orgId/Groups/:id",
+                        "auth": null,
+                        "requiresAuth": false,
+                        "isAdminOnly": false,
+                        "requiresStepUp": false,
+                        "rateLimit": null
+                    }
+                ]
+            },
+            "webhooks": {
+                "prefix": "/webhooks",
+                "routes": []
+            }
+        },
+        "changelog": "Added 111 route(s): POST /rules, GET /rules, GET /rules/:id, PATCH /rules/:id, DELETE /rules/:id, POST /rules/:id/enable, POST /rules/:id/disable, POST /rules/:id/test, POST /rules/:id/clone, POST /events, GET /events, GET /events/stats, GET /events/:id, POST /events/:id/acknowledge, POST /events/:id/resolve, POST /events/:id/silence, GET /events/:id/deliveries, POST /silences, GET /silences, DELETE /silences/:id, POST /escalation-policies, GET /escalation-policies, GET /escalation-policies/:id, DELETE /escalation-policies/:id, PUT /escalation-policies/:id/steps, POST /templates, GET /templates, DELETE /templates/:id, POST /templates/:id/preview, POST /routing-rules, GET /routing-rules, DELETE /routing-rules/:id, POST /routing-rules/test, GET /metrics, POST /login/mfa/switch, POST /verify-email/confirm, POST /mfa/disable, GET /types, POST /, GET /, GET /:id, PATCH /:id, DELETE /:id, POST /:id/test, POST /:id/send, GET /:id/deliveries, GET /overview, GET /trends, GET /health, GET /errors, GET /errors/groups, GET /errors/trends, GET /errors/groups/:fingerprint, POST /errors/groups/:fingerprint/resolve, POST /errors/groups/:fingerprint/ignore, GET /errors/:id, GET /performance/routes, GET /performance/distribution, GET /performance/apdex, GET /requests, GET /requests/waterfall/:traceId, GET /requests/:id, GET /traces, GET /traces/:traceId, GET /metrics, GET /metrics/:name/stats, GET /metrics/:name, GET /logs, GET /logs/stream, GET /sessions, GET /sessions/:sessionId, GET /users, GET /users/:userId, GET /crons, GET /crons/:slug/history, GET /crons/:slug, GET /live/errors, POST /dashboards, GET /dashboards, GET /dashboards/:id, PATCH /dashboards/:id, DELETE /dashboards/:id, POST /dashboards/:id/duplicate, POST /queries, GET /queries, DELETE /queries/:id, POST /queries/:id/execute, POST /alerts, GET /alerts, DELETE /alerts/:id, POST /export, GET /v1/usage, GET /:orgId/sdk-configs, POST /:orgId/sdk-configs, GET /:orgId/sdk-configs/resolve, GET /:orgId/sdk-configs/:configId, PATCH /:orgId/sdk-configs/:configId, POST /:orgId/sdk-configs/:configId/rollback, GET /:orgId/sdk-configs/:configId/versions, GET /:orgId/sdk-configs/:configId/versions/:version, GET /:orgId/sdk-configs/:configId/deployments, POST /:orgId/sdk-configs/:configId/versions/:version/ack, POST /:projectId/${path}, GET /:projectId/environments, POST /:projectId/environments, GET /:projectId/environments/:environment, PATCH /:projectId/environments/:environment, DELETE /:projectId/environments/:environment, POST /:projectId/api-keys/bulk-rotate, POST /:projectId/api-keys/bulk-revoke, POST /:projectId/api-keys/:apiKeyId/regenerate | Removed 4 route(s): POST /:projectId/archive, POST /:projectId/unarchive, POST /:projectId/pause, POST /:projectId/resume"
     }
 ];
     
