@@ -13,7 +13,6 @@ import { getClientInfo } from '../../shared/utils/request.js';
 import * as identity from './identity.service.js';
 import {
   accountUnlockRequestRateLimit,
-  emailChangeRequestRateLimit,
   ssoDiscoveryRateLimit,
   tokenConfirmRateLimit,
 } from './rate-limits.js';
@@ -27,8 +26,6 @@ import {
   AccountUnlockConfirmSchema,
   AccountUnlockRequestSchema,
   AdminAuditLogsQuerySchema,
-  EmailChangeConfirmSchema,
-  EmailChangeRequestSchema,
   MfaRecoveryRequestSchema,
   SsoDiscoveryQuerySchema,
 } from './types.js';
@@ -128,50 +125,6 @@ export default async function identityRoutes(fastify: FastifyInstance) {
         ip,
         request.id,
       );
-      return reply.send({ data: result });
-    } catch (error) {
-      return handleAuthError(error, reply, request);
-    }
-  },
-  );
-
-  // POST /auth/email/change/request
-  fastify.post(
-    '/email/change/request',
-    {
-      preHandler: [
-        authenticate,
-        requireStepUp,
-        emailChangeRequestRateLimit,
-      ],
-    },
-    async (request, reply) => {
-      try {
-        const r = request as RequestWithUser;
-        const body = EmailChangeRequestSchema.parse(r.body);
-        const { ip } = getClientInfo(r);
-        const result = await identity.requestEmailChange(
-          r.user.id,
-          body,
-          ip,
-          r.id,
-        );
-        return reply.send({ data: result });
-      } catch (error) {
-        return handleAuthError(error, reply, request);
-      }
-    },
-  );
-
-  // POST /auth/email/change/confirm
-  fastify.post(
-    '/email/change/confirm',
-    { preHandler: [tokenConfirmRateLimit] },
-    async (request, reply) => {
-    try {
-      const body = EmailChangeConfirmSchema.parse(request.body);
-      const { ip } = getClientInfo(request);
-      const result = await identity.confirmEmailChange(body, ip, request.id);
       return reply.send({ data: result });
     } catch (error) {
       return handleAuthError(error, reply, request);

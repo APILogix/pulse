@@ -40,6 +40,7 @@ import type {
 
 
 
+import { logger } from '../../config/logger.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 
 
@@ -59,6 +60,7 @@ import {
   assertMfaEnrollmentAllowed,
 } from './policy.service.js';
 import { issueSessionForUser } from './service.js';
+import { trustCurrentDevice } from './trusted-device.service.js';
 
 import {
 
@@ -780,6 +782,18 @@ export async function verifyLoginMfaWebAuthn(
 
   });
 
+  if (loginChallenge.trustDevice) {
+    await trustCurrentDevice(
+      user.id,
+      ipAddress,
+      userAgent,
+      loginChallenge.deviceName,
+      requestId,
+    ).catch((err) => {
+      logger.warn({ err, userId: user.id }, 'Failed to trust device after WebAuthn MFA login');
+    });
+  }
+
 
 
   await repository.recordLogin(user.id, ipAddress, userAgent);
@@ -804,7 +818,12 @@ export async function verifyLoginMfaWebAuthn(
 
     request_id: requestId,
 
-    metadata: { session_id: session.sessionId, mfa_required: true, webauthn: true },
+    metadata: {
+      session_id: session.sessionId,
+      mfa_required: true,
+      webauthn: true,
+      trusted_device_added: loginChallenge.trustDevice,
+    },
 
   });
 

@@ -1,4 +1,4 @@
-# Organization Module - Complete Architecture
+﻿# Organization Module - Complete Architecture
 
 ## Overview
 
@@ -74,7 +74,7 @@ Organization-level configuration and policy flags.
 | `created_at` | TIMESTAMPTZ | Creation timestamp |
 | `updated_at` | TIMESTAMPTZ | Last update timestamp |
 
-**MFA policy columns** added in `migrations2/005_add_mfa_system.up.sql`.
+**MFA policy columns** added in `migrations2/005_auth_extend_mfa_schema.up.sql`.
 
 ---
 
@@ -251,14 +251,14 @@ The service layer encapsulates business logic and authorization checks:
 
 | Action | Owner | Admin | Member | Viewer |
 |--------|-------|-------|--------|--------|
-| View organization | ✅ | ✅ | ✅ | ✅ |
-| Update organization | ✅ | ✅ | ❌ | ❌ |
-| Delete organization | ✅ | ❌ | ❌ | ❌ |
-| Invite members | ✅ | ✅ | ❌ | ❌ |
-| Update member role | ✅ | ✅ | ❌ | ❌ |
-| Remove member | ✅ | ✅ | ❌ | ❌ |
-| Leave organization | ✅ | ✅ | ✅ | ✅ |
-| Update settings | ✅ | ✅ | ❌ | ❌ |
+| View organization | âœ… | âœ… | âœ… | âœ… |
+| Update organization | âœ… | âœ… | âŒ | âŒ |
+| Delete organization | âœ… | âŒ | âŒ | âŒ |
+| Invite members | âœ… | âœ… | âŒ | âŒ |
+| Update member role | âœ… | âœ… | âŒ | âŒ |
+| Remove member | âœ… | âœ… | âŒ | âŒ |
+| Leave organization | âœ… | âœ… | âœ… | âœ… |
+| Update settings | âœ… | âœ… | âŒ | âŒ |
 
 ### Key Service Functions
 
@@ -311,7 +311,7 @@ The application uses **application-level isolation** (not database-level RLS):
 
 3. **Authorization:** Role-based access control (RBAC) is enforced at the service layer using membership roles.
 
-4. **No RLS:** Row-Level Security is intentionally disabled (see `migrations2/001_auth_canonical_consolidated.up.sql` BUGFIX #4 note) because:
+4. **No RLS:** Row-Level Security is intentionally disabled (see `migrations2/001_auth_create_core_schema.up.sql` BUGFIX #4 note) because:
    - The codebase never sets `app.current_org_id` session variable
    - Application-level isolation provides equivalent security
    - RLS adds query overhead and debugging complexity
@@ -400,12 +400,12 @@ throw new AuthError('Organization slug already exists', AuthErrorCodes.VALIDATIO
 
 ## Maintenance / Cleanup Cron (no Redis)
 
-Background housekeeping runs as **Postgres-backed pg-boss cron jobs** — no Redis. pg-boss delivers each scheduled job to exactly one consumer, so cleanup runs once even across multiple worker/cron processes (the API runs in PM2 cluster mode, so it must never host the scheduler).
+Background housekeeping runs as **Postgres-backed pg-boss cron jobs** â€” no Redis. pg-boss delivers each scheduled job to exactly one consumer, so cleanup runs once even across multiple worker/cron processes (the API runs in PM2 cluster mode, so it must never host the scheduler).
 
 **Files**
-- `src/modules/organization/cleanup.ts` — pure sweep orchestration (`runHourlyOrgCleanup`, `runDailyOrgCleanup`).
-- `src/modules/organization/queue.ts` — `registerOrganizationCleanupWorkers()`: registers the pg-boss workers + cron schedules.
-- `src/modules/organization/repository.ts` — bulk-sweep SQL (`expireStalePendingInvitations`, `purgeTerminalInvitations`, `revokeExpiredApiKeys`, `revokeExpiredScimTokens`, `purgeSentEmailOutbox`, `purgeFailedEmailOutbox`, `purgeExpiredAuditLogs`).
+- `src/modules/organization/cleanup.ts` â€” pure sweep orchestration (`runHourlyOrgCleanup`, `runDailyOrgCleanup`).
+- `src/modules/organization/queue.ts` â€” `registerOrganizationCleanupWorkers()`: registers the pg-boss workers + cron schedules.
+- `src/modules/organization/repository.ts` â€” bulk-sweep SQL (`expireStalePendingInvitations`, `purgeTerminalInvitations`, `revokeExpiredApiKeys`, `revokeExpiredScimTokens`, `purgeSentEmailOutbox`, `purgeFailedEmailOutbox`, `purgeExpiredAuditLogs`).
 
 **Schedules**
 
@@ -420,11 +420,11 @@ Background housekeeping runs as **Postgres-backed pg-boss cron jobs** — no Red
 
 ## SDK Remote Config (migration 007)
 
-Org/project-scoped remote configuration that SDKs fetch at runtime, with auto-versioning, immutable history, rollback, and rollout tracking. No Redis — the resolve path is cached in-process (`sdkConfigCache`, 30s TTL).
+Org/project-scoped remote configuration that SDKs fetch at runtime, with auto-versioning, immutable history, rollback, and rollout tracking. No Redis â€” the resolve path is cached in-process (`sdkConfigCache`, 30s TTL).
 
-**Schema** — `migrations2/007_add_sdk_config_module.up.sql`: `sdk_configs` (one live row per scope, version++ in place), `sdk_config_versions` (append-only history), `sdk_config_deployments` (rollout tracking).
+**Schema** â€” `migrations2/007_organizations_create_sdk_config_schema.up.sql`: `sdk_configs` (one live row per scope, version++ in place), `sdk_config_versions` (append-only history), `sdk_config_deployments` (rollout tracking).
 
-**Code** — `sdk-config.types.ts`, `sdk-config.repository.ts`, `sdk-config.service.ts` (admin+ RBAC, SHA-256 canonical-JSON `version_hash`, change diffs, audit logging), `sdk-config.routes.ts`.
+**Code** â€” `sdk-config.types.ts`, `sdk-config.repository.ts`, `sdk-config.service.ts` (admin+ RBAC, SHA-256 canonical-JSON `version_hash`, change diffs, audit logging), `sdk-config.routes.ts`.
 
 **Routes** (under `/organizations`):
 
@@ -441,7 +441,7 @@ Org/project-scoped remote configuration that SDKs fetch at runtime, with auto-ve
 | GET | `/:orgId/sdk-configs/:configId/deployments` | Member |
 | POST | `/:orgId/sdk-configs/:configId/versions/:version/ack` | Member |
 
-Note: the master prompt's public `GET /sdk/config` (SDK-key auth) is intentionally deferred — API-key auth is a separate module per the architecture ("NO API KEYS IN THIS MODULE").
+Note: the master prompt's public `GET /sdk/config` (SDK-key auth) is intentionally deferred â€” API-key auth is a separate module per the architecture ("NO API KEYS IN THIS MODULE").
 
 ## Future Enhancements
 
@@ -450,3 +450,4 @@ Note: the master prompt's public `GET /sdk/config` (SDK-key auth) is intentional
 3. **Organization quotas:** Enforce limits on members, projects per organization
 4. **Domain-based SSO:** Auto-associate users to organizations by email domain
 5. **Nested organizations:** Support for sub-organizations / teams
+

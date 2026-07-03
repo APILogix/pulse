@@ -51,5 +51,6 @@ export interface RequestWithUser extends FastifyRequest {
     startTime: number;
 }
 export declare function getClientInfo(request: FastifyRequest): ClientInfo;
+export declare function buildSessionDeviceLabel(userAgent: string, fallbackType?: string | null): string;
 export declare const clientInfoPlugin: (fastify: import("fastify").FastifyInstance<import("fastify").RawServerDefault, import("node:http").IncomingMessage, import("node:http").ServerResponse<import("node:http").IncomingMessage>, import("fastify").FastifyBaseLogger, import("fastify").FastifyTypeProviderDefault>) => Promise<void>;
 //# sourceMappingURL=request.d.ts.map

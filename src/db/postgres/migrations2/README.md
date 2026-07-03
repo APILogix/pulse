@@ -1,4 +1,4 @@
-# migrations2 - Consolidated and Corrected Schema
+﻿# migrations2 - Consolidated and Corrected Schema
 
 ## Why this folder exists
 
@@ -22,17 +22,19 @@ It does not need the old `migrations/` files to bootstrap a working database.
 
 | File | Purpose |
 |------|---------|
-| `001_auth_canonical_consolidated.{up,down}.sql` | Canonical auth schema. |
-| `002_add_notification_connectors.{up,down}.sql` | Notification connector configs and delivery tables. |
-| `003_add_alerting_module.{up,down}.sql` | Alerting rules, events, routing, and delivery attempts. |
-| `004_add_analytics_module.{up,down}.sql` | Authoritative `events_*` telemetry schema and analytics tables. |
-| `005_add_mfa_system.{up,down}.sql` | MFA extensions. |
-| `006_add_organization_module.{up,down}.sql` | Organizations, members, audit, invites, environments, quotas. |
-| `007_add_sdk_config_module.{up,down}.sql` | SDK config module schema. |
-| `008_add_projects_module.{up,down}.sql` | Projects, project API keys, environment config, governance. |
-| `009_add_ingestion_queue_v2.{up,down}.sql` | Postgres ingestion queue, DLQ, admin logs, queue snapshot view. |
-| `010_add_ingestion_usage_counters.{up,down}.sql` | Usage staging, rollups, realtime view, rollup function. |
-| `011_add_legacy_ingestion_compat_tables.{up,down}.sql` | Legacy ingestion table names preserved for compatibility while live ingestion writes to `events_*`. |
+| `001_auth_create_core_schema.{up,down}.sql` | Canonical auth schema. |
+| `002_connectors_create_notification_schema.{up,down}.sql` | Notification connector configs and delivery tables. |
+| `003_alerting_create_core_schema.{up,down}.sql` | Alerting rules, events, routing, and delivery attempts. |
+| `004_analytics_create_core_schema.{up,down}.sql` | Authoritative `events_*` telemetry schema and analytics tables. |
+| `005_auth_extend_mfa_schema.{up,down}.sql` | MFA extensions. |
+| `006_organizations_create_core_schema.{up,down}.sql` | Organizations, members, audit, invites, environments, quotas. |
+| `007_organizations_create_sdk_config_schema.{up,down}.sql` | SDK config module schema. |
+| `008_projects_create_core_schema.{up,down}.sql` | Projects, project API keys, environment config, governance. |
+| `009_ingestion_create_queue_schema.{up,down}.sql` | Postgres ingestion queue, DLQ, admin logs, queue snapshot view. |
+| `010_ingestion_create_usage_counters_schema.{up,down}.sql` | Usage staging, rollups, realtime view, rollup function. |
+| `011_ingestion_create_legacy_compat_schema.{up,down}.sql` | Legacy ingestion table names preserved for compatibility while live ingestion writes to `events_*`. |
+| `012_auth_harden_email_outbox_schema.{up,down}.sql` | Auth outbox processing-claim hardening and purge indexes. |
+| `015_billing_create_core_schema.{up,down}.sql` | Canonical billing plans, subscriptions, invoices, coupons, subscription events, and daily usage counters. |
 
 ## Operational note
 
@@ -44,10 +46,11 @@ not the authoritative bootstrap path.
 
 ```bash
 # Fresh DB
-psql "$DATABASE_URL" -f migrations2/001_auth_canonical_consolidated.up.sql
+psql "$DATABASE_URL" -f migrations2/001_auth_create_core_schema.up.sql
 
 # Continue through the remaining *.up.sql files in lexicographic order
 ```
 
 For databases that already ran some older migrations, the `migrations2/` files
 are written to be additive and idempotent where practical.
+

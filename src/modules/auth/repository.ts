@@ -12,7 +12,28 @@
 import type { PoolClient } from 'pg';
 
 import { pool } from '../../config/database.js';
+import { logger } from '../../config/logger.js';
 import type { MFADevice, User, UserSession, UserStatus, MFAType } from './types.js';
+
+const repositoryLogger = logger.child({ component: 'auth-repository' });
+
+function shouldDestroyTransactionClient(error: unknown): boolean {
+  const pgCode = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : '';
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    pgCode.startsWith('08') ||
+    pgCode === '57P01' ||
+    pgCode === '57P02' ||
+    pgCode === '57P03' ||
+    message.includes('Query read timeout') ||
+    message.includes('Connection terminated') ||
+    message.includes('Connection ended unexpectedly') ||
+    message.includes('Connection terminated unexpectedly')
+  );
+}
 
 // ============================================================================
 // USER QUERIES
@@ -762,7 +783,6 @@ export type EmailTokenPurpose =
   | 'email_verification'
   | 'password_reset'
   | 'mfa_disable'
-  | 'email_change'
   | 'account_unlock'
   | 'account_deletion';
 
@@ -1296,27 +1316,6 @@ export async function purgeOldRevokedSessions(
 // PHASE 3 — EMAIL, POLICY, AUDIT, SSO DISCOVERY
 // ============================================================================
 
-export async function updateUserEmail(
-  userId: string,
-  email: string,
-  emailHash: string,
-  client?: PoolClient,
-): Promise<User | null> {
-  const db = client || pool;
-  const result = await db.query<User>(
-    `UPDATE users
-     SET email = $2,
-         email_hash = $3,
-         email_verified = TRUE,
-         email_verified_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`,
-    [userId, email, emailHash],
-  );
-  return result.rows[0] || null;
-}
-
 export async function scheduleAccountDeletion(
   userId: string,
   scheduledAt: Date,
@@ -1779,7 +1778,7 @@ export async function listTrustedDevices(
   return result.rows;
 }
 
-export type LinkedIdentityProvider = 'google' | 'github' | 'microsoft';
+export type LinkedIdentityProvider = 'google' | 'github';
 
 export interface LinkedIdentityRow {
   id: string;
@@ -2094,6 +2093,23 @@ export async function revokeTrustedDevice(
   return (result.rowCount ?? 0) > 0;
 }
 
+export async function revokeAllTrustedDevices(
+  userId: string,
+  _reason: string,
+  client?: PoolClient,
+): Promise<number> {
+  const db = client || pool;
+  const result = await db.query(
+    `UPDATE user_trusted_devices
+     SET revoked_at = NOW()
+     WHERE user_id = $1
+       AND revoked_at IS NULL
+       AND expires_at > NOW()`,
+    [userId],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function listAuditLogsForUser(
   userId: string,
   options: { limit?: number; offset?: number },
@@ -2153,15 +2169,32 @@ export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
+  let transactionError: unknown;
   try {
     await client.query('BEGIN');
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
   } catch (e) {
-    await client.query('ROLLBACK');
+    transactionError = e;
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      repositoryLogger.warn(
+        { err: rollbackError, originalError: e },
+        'Failed to rollback auth transaction; preserving original error',
+      );
+    }
     throw e;
   } finally {
-    client.release();
+    if (transactionError && shouldDestroyTransactionClient(transactionError)) {
+      client.release(
+        transactionError instanceof Error
+          ? transactionError
+          : new Error('Destroying transaction client after connection-level failure'),
+      );
+    } else {
+      client.release();
+    }
   }
 }

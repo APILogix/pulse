@@ -231,13 +231,6 @@ export const SocialLoginSchema = z.object({
     device_name: z.string().max(255).optional(),
     device_type: z.string().max(50).optional(),
 });
-export const EmailChangeRequestSchema = z.object({
-    new_email: z.string().email().max(255),
-    current_password: z.string().min(1).max(256),
-});
-export const EmailChangeConfirmSchema = z.object({
-    token: MagicLinkTokenSchema,
-});
 export const AccountUnlockRequestSchema = z.object({
     email: z.string().email(),
 });

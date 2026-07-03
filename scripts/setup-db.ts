@@ -1,7 +1,8 @@
-/**
+﻿/**
  * Postgres migration runner.
  *
- * Reads every `*.up.sql` file in `src/db/postgres/migrations2` (in lexicographic
+ * Reads every `*.up.sql` file in the canonical migrations directory (in
+ * lexicographic
  * order, ignoring sub-folders and helper files), tracks applied filenames
  * in a `schema_migrations` ledger table, and applies each pending migration
  * inside its own transaction.
@@ -11,18 +12,15 @@
  * Usage:
  *   npm run db:migrate
  */
-import { promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
 import { pool } from '../src/config/database.js';
 import { logger } from '../src/config/logger.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = path.resolve(
-  __dirname,
-  '../src/db/postgres/migrations2',
-);
+import {
+  applyMigrationSql,
+  LEGACY_MIGRATION_ALIASES,
+  listMigrationFiles,
+  readMigrationSql,
+  resolveMigrationsDir,
+} from './lib/migrations.js';
 
 async function ensureLedger(): Promise<void> {
   await pool.query(`
@@ -40,29 +38,18 @@ async function getApplied(): Promise<Set<string>> {
   return new Set(result.rows.map((r) => r.filename));
 }
 
-async function listMigrationFiles(): Promise<string[]> {
-  const entries = await fs.readdir(MIGRATIONS_DIR, { withFileTypes: true });
-  return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.up.sql'))
-    .map((e) => e.name)
-    .sort((a, b) => a.localeCompare(b));
-}
-
 async function applyMigration(filename: string): Promise<void> {
-  const full = path.join(MIGRATIONS_DIR, filename);
-  const sql = await fs.readFile(full, 'utf8');
+  const migrationsDir = await resolveMigrationsDir();
+  const sql = await readMigrationSql(filename, migrationsDir);
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query(sql);
+    await applyMigrationSql(client, filename, sql);
     await client.query(
       `INSERT INTO schema_migrations (filename) VALUES ($1)`,
       [filename],
     );
-    await client.query('COMMIT');
     logger.info({ filename }, 'Migration applied');
   } catch (err) {
-    await client.query('ROLLBACK');
     logger.error({ err, filename }, 'Migration failed');
     throw err;
   } finally {
@@ -71,15 +58,19 @@ async function applyMigration(filename: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const migrationsDir = await resolveMigrationsDir();
   await ensureLedger();
   const [applied, files] = await Promise.all([getApplied(), listMigrationFiles()]);
 
-  const pending = files.filter((f) => !applied.has(f));
+  const pending = files.filter((f) => {
+    const legacy = LEGACY_MIGRATION_ALIASES[f];
+    return !applied.has(f) && !(legacy && applied.has(legacy));
+  });
   if (pending.length === 0) {
-    logger.info('No pending migrations');
+    logger.info({ migrationsDir }, 'No pending migrations');
     return;
   }
-  logger.info({ pending }, `Applying ${pending.length} migration(s)`);
+  logger.info({ migrationsDir, pending }, `Applying ${pending.length} migration(s)`);
   for (const file of pending) {
     await applyMigration(file);
   }
@@ -93,3 +84,4 @@ main()
     await pool.end();
     process.exit(1);
   });
+

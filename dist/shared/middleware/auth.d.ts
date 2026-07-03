@@ -28,7 +28,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 declare module 'fastify' {
     interface FastifyRequest {
-        user: {
+        user?: {
             id: string;
             email: string;
             isAdmin: boolean;

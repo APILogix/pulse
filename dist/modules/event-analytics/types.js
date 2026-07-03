@@ -1,8 +1,8 @@
 /**
- * Event-analytics module — types, Zod schemas, DTOs, and errors.
+ * Event-analytics module â€” types, Zod schemas, DTOs, and errors.
  *
  * Operates on the Pulse SDK event tables created in
- * migrations2/004_add_analytics_module (events_*, analytics_*).
+ * migrations2/004_analytics_create_core_schema (events_*, analytics_*).
  *
  * Distinct from the existing project-scoped `analytics` module (telemetry).
  * This module is organization-scoped and read-optimized for dashboards.
@@ -12,9 +12,9 @@
  */
 import { z } from 'zod';
 import { AppError } from '../../shared/errors/app-error.js';
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TIME RANGE + GRANULARITY
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 export const TimeRangeKeySchema = z.enum(['1h', '24h', '7d', '30d', '90d']);
 export const GranularitySchema = z.enum(['hour', 'day', 'week']);
 /** Milliseconds for each named range. */
@@ -25,9 +25,9 @@ export const RANGE_MS = {
     '30d': 30 * 24 * 60 * 60 * 1000,
     '90d': 90 * 24 * 60 * 60 * 1000,
 };
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // COMMON SCHEMAS
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 export const UuidSchema = z.string().uuid();
 export const OrgIdParamsSchema = z.object({ orgId: UuidSchema });
 export const TimeRangeQuerySchema = z.object({
@@ -44,7 +44,7 @@ export const PaginationSchema = z.object({
     offset: z.coerce.number().int().min(0).default(0),
 });
 export const SeverityFilterSchema = z.enum(['debug', 'info', 'warning', 'error', 'fatal']);
-// ── Errors ──
+// â”€â”€ Errors â”€â”€
 export const ListErrorsQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
     severity: SeverityFilterSchema.optional(),
     service: z.string().max(100).optional(),
@@ -60,13 +60,13 @@ export const ListErrorGroupsQuerySchema = PaginationSchema.extend({
     sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
 export const ResolveGroupSchema = z.object({ actorId: UuidSchema.optional() });
-// ── Performance ──
+// â”€â”€ Performance â”€â”€
 export const RoutePerfQuerySchema = z.object({
     projectId: UuidSchema.optional(),
     days: z.coerce.number().int().min(1).max(90).default(7),
     limit: z.coerce.number().int().min(1).max(500).default(100),
 });
-// ── Requests ──
+// â”€â”€ Requests â”€â”€
 export const ListRequestsQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
     method: z.string().max(10).optional(),
     statusCode: z.coerce.number().int().optional(),
@@ -74,27 +74,27 @@ export const ListRequestsQuerySchema = TimeRangeQuerySchema.merge(PaginationSche
     slowOnly: z.coerce.boolean().optional(),
     errorOnly: z.coerce.boolean().optional(),
 });
-// ── Traces ──
+// â”€â”€ Traces â”€â”€
 export const ListTracesQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema);
-// ── Metrics ──
+// â”€â”€ Metrics â”€â”€
 export const MetricSeriesQuerySchema = TrendsQuerySchema.extend({
     aggregate: z.enum(['avg', 'sum', 'min', 'max', 'count']).default('avg'),
 });
-// ── Logs ──
+// â”€â”€ Logs â”€â”€
 export const ListLogsQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
     level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
     search: z.string().max(500).optional(),
 });
-// ── Sessions / Users ──
+// â”€â”€ Sessions / Users â”€â”€
 export const ListSessionsQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
     userId: z.string().max(255).optional(),
     crashedOnly: z.coerce.boolean().optional(),
 });
-// ── Crons ──
+// â”€â”€ Crons â”€â”€
 export const CronHistoryQuerySchema = PaginationSchema.extend({
     projectId: UuidSchema.optional(),
 });
-// ── Dashboards ──
+// â”€â”€ Dashboards â”€â”€
 export const CreateDashboardSchema = z.object({
     projectId: UuidSchema.optional(),
     name: z.string().min(1).max(255).trim(),
@@ -104,7 +104,7 @@ export const CreateDashboardSchema = z.object({
     isShared: z.boolean().default(false),
 });
 export const UpdateDashboardSchema = CreateDashboardSchema.partial();
-// ── Saved queries ──
+// â”€â”€ Saved queries â”€â”€
 export const CreateSavedQuerySchema = z.object({
     projectId: UuidSchema.optional(),
     name: z.string().min(1).max(255).trim(),
@@ -114,7 +114,7 @@ export const CreateSavedQuerySchema = z.object({
     visualizationType: z.enum(['line', 'bar', 'pie', 'table', 'metric']).optional(),
     visualizationConfig: z.record(z.string(), z.unknown()).default({}),
 });
-// ── Analytics alerts ──
+// â”€â”€ Analytics alerts â”€â”€
 export const CreateAnalyticsAlertSchema = z.object({
     projectId: UuidSchema.optional(),
     name: z.string().min(1).max(255).trim(),
@@ -125,7 +125,7 @@ export const CreateAnalyticsAlertSchema = z.object({
     notificationChannels: z.array(UuidSchema).default([]),
     isActive: z.boolean().default(true),
 });
-// ── Export ──
+// â”€â”€ Export â”€â”€
 export const ExportSchema = z.object({
     dataset: z.enum(['errors', 'requests', 'logs', 'metrics']),
     format: z.enum(['csv', 'json']).default('json'),
@@ -133,9 +133,9 @@ export const ExportSchema = z.object({
     projectId: UuidSchema.optional(),
     limit: z.coerce.number().int().min(1).max(10_000).default(1000),
 });
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ERRORS
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 export class AnalyticsError extends AppError {
     constructor(message, code = 'ANALYTICS_ERROR', statusCode = 500, details) {
         super(message, code, statusCode, details);
@@ -151,9 +151,9 @@ export class InvalidTimeRangeError extends AnalyticsError {
         super(message, 'INVALID_TIME_RANGE', 400);
     }
 }
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // HELPERS
-// ════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 /** Resolve an explicit from/to or a named range into a concrete TimeRange. */
 export function resolveTimeRange(q) {
     const to = q.to ?? new Date();

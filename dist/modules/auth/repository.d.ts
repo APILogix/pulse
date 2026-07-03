@@ -128,7 +128,7 @@ export declare function updateBackupCodesGenerated(userId: string, client?: Pool
 export declare function updateMFADeviceBackupCodes(deviceId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<void>;
 export declare function setBackupCodesForAllUserDevices(userId: string, backupCodesHash: string[], client?: PoolClient): Promise<void>;
 export declare function updateMFADeviceLastUsed(deviceId: string, ipAddress: string, client?: PoolClient): Promise<void>;
-export type EmailTokenPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'email_change' | 'account_unlock' | 'account_deletion';
+export type EmailTokenPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'account_unlock' | 'account_deletion';
 export type EmailVerificationRecord = {
     id: string;
     user_id: string;
@@ -241,7 +241,6 @@ export declare function rotateRefreshToken(sessionId: string, oldHash: string, n
 export declare function touchSessionActivity(sessionId: string, client?: PoolClient): Promise<void>;
 export declare function cleanupExpiredSessions(client?: PoolClient): Promise<number>;
 export declare function purgeOldRevokedSessions(olderThanDays?: number, client?: PoolClient): Promise<number>;
-export declare function updateUserEmail(userId: string, email: string, emailHash: string, client?: PoolClient): Promise<User | null>;
 export declare function scheduleAccountDeletion(userId: string, scheduledAt: Date, client?: PoolClient): Promise<User | null>;
 export declare function clearScheduledAccountDeletion(userId: string, client?: PoolClient): Promise<User | null>;
 export declare function listUsersDueForDeletion(client?: PoolClient): Promise<User[]>;
@@ -338,7 +337,7 @@ export declare function listTrustedDevices(userId: string, client?: PoolClient):
     expires_at: Date;
     last_seen_at: Date;
 }>>;
-export type LinkedIdentityProvider = 'google' | 'github' | 'microsoft';
+export type LinkedIdentityProvider = 'google' | 'github';
 export interface LinkedIdentityRow {
     id: string;
     user_id: string;
@@ -394,6 +393,7 @@ export declare function updateLinkedIdentityLastUsed(linkId: string, client?: Po
 export declare function findActiveSessionBySamlNameId(nameId: string, client?: PoolClient): Promise<UserSession | null>;
 export declare function revokeLinkedIdentity(userId: string, linkId: string, client?: PoolClient): Promise<boolean>;
 export declare function revokeTrustedDevice(userId: string, deviceId: string, client?: PoolClient): Promise<boolean>;
+export declare function revokeAllTrustedDevices(userId: string, _reason: string, client?: PoolClient): Promise<number>;
 export declare function listAuditLogsForUser(userId: string, options: {
     limit?: number;
     offset?: number;

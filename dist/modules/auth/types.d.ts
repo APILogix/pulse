@@ -401,15 +401,6 @@ export declare const SocialLoginSchema: z.ZodObject<{
     device_type: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type SocialLoginInput = z.infer<typeof SocialLoginSchema>;
-export declare const EmailChangeRequestSchema: z.ZodObject<{
-    new_email: z.ZodString;
-    current_password: z.ZodString;
-}, z.core.$strip>;
-export type EmailChangeRequestInput = z.infer<typeof EmailChangeRequestSchema>;
-export declare const EmailChangeConfirmSchema: z.ZodObject<{
-    token: z.ZodString;
-}, z.core.$strip>;
-export type EmailChangeConfirmInput = z.infer<typeof EmailChangeConfirmSchema>;
 export declare const AccountUnlockRequestSchema: z.ZodObject<{
     email: z.ZodString;
 }, z.core.$strip>;
@@ -461,11 +452,11 @@ export interface SsoDiscoveryResult {
     }>;
     oidc_login_ready: boolean;
     saml_login_ready: boolean;
-    configured_link_providers: Array<'google' | 'github' | 'microsoft'>;
+    configured_link_providers: Array<'google' | 'github'>;
     /** Deployment has OAuth clients configured for passwordless social login. */
     social_login_ready: boolean;
     /** When email is supplied: providers the user has already linked (subset of configured). */
-    linked_social_providers: Array<'google' | 'github' | 'microsoft'>;
+    linked_social_providers: Array<'google' | 'github'>;
 }
 export declare const SsoLoginSchema: z.ZodObject<{
     email: z.ZodOptional<z.ZodString>;

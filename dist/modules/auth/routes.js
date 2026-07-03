@@ -8,7 +8,13 @@ import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
 import { forgotPasswordRateLimit, loginMfaRateLimit, loginRateLimit, mfaEmailResendRateLimit, refreshSessionRateLimit, registerRateLimit, resendVerificationRateLimit, resetPasswordRateLimit, tokenConfirmRateLimit, verifyEmailRateLimit, } from './rate-limits.js';
-import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from './utils.js';
+import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from './utils.js';
+function clearRefreshCookies(reply) {
+    const options = getRefreshCookieOptions();
+    for (const name of getRefreshCookieNames()) {
+        reply.clearCookie(name, options);
+    }
+}
 // ============================================================================
 // ERROR HANDLER
 // ============================================================================
@@ -645,7 +651,7 @@ async function sessionRoutes(fastify) {
         try {
             const r = request;
             const count = await service.revokeAllSessionsForUser(r.user.id, r.user.sessionId);
-            reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+            clearRefreshCookies(reply);
             return reply.send({ data: { revoked: count } });
         }
         catch (error) {
@@ -680,7 +686,7 @@ async function sessionRoutes(fastify) {
     fastify.post('/sessions/refresh', { preHandler: [refreshSessionRateLimit] }, async (request, reply) => {
         try {
             const ci = getClientInfo(request);
-            const raw = request.cookies?.[REFRESH_COOKIE_NAME];
+            const raw = getRefreshCookieValue(request.cookies);
             if (!raw) {
                 return reply.status(401).send({
                     error: {
@@ -691,7 +697,7 @@ async function sessionRoutes(fastify) {
             }
             const unsigned = request.unsignCookie(raw);
             if (!unsigned.valid || !unsigned.value) {
-                reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+                clearRefreshCookies(reply);
                 return reply.status(401).send({
                     error: {
                         code: 'INVALID_REFRESH_TOKEN',
@@ -716,7 +722,7 @@ async function sessionRoutes(fastify) {
                 (error.code === AuthErrorCodes.REFRESH_TOKEN_REUSED ||
                     error.code === AuthErrorCodes.SESSION_EXPIRED ||
                     error.code === AuthErrorCodes.SESSION_INVALID)) {
-                reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+                clearRefreshCookies(reply);
             }
             return handleAuthError(error, reply, request);
         }
@@ -727,7 +733,7 @@ async function sessionRoutes(fastify) {
             const r = request;
             const { ip } = getClientInfo(r);
             const result = await service.logout(r.user.id, r.user.sessionId, ip, r.id);
-            reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+            clearRefreshCookies(reply);
             return reply.send({ data: result });
         }
         catch (error) {

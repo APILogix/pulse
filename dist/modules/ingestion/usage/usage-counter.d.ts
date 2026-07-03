@@ -1,21 +1,21 @@
 /**
- * UsageCounter — ultra-low-latency, three-tier usage accounting.
+ * UsageCounter â€” ultra-low-latency, three-tier usage accounting.
  *
  * The ingestion hot path must NEVER block on a usage write. Counting every
  * accepted/persisted event with a synchronous DB UPDATE would serialize the
  * pipeline on a single hot row per project. Instead we use three tiers:
  *
  *   Tier 1  In-memory Map<string, number> per worker process.
- *           increment() only touches memory — O(1), allocation-free on the hot
+ *           increment() only touches memory â€” O(1), allocation-free on the hot
  *           path, never awaits. This is where the ingestion pipeline calls in.
  *
- *   Tier 2  usage_counter_staging — an UNLOGGED Postgres table (no WAL). On a
+ *   Tier 2  usage_counter_staging â€” an UNLOGGED Postgres table (no WAL). On a
  *           timer (or when the buffer is large) we drain the memory map into a
  *           single multi-row INSERT. UNLOGGED keeps these writes cheap; the
  *           trade-off is they are lost on an unclean crash, which is acceptable
  *           for approximate usage pre-aggregation.
  *
- *   Tier 3  project_usage — durable, hourly-bucketed rollups. The SQL function
+ *   Tier 3  project_usage â€” durable, hourly-bucketed rollups. The SQL function
  *           flush_usage_counters() aggregates settled staging rows into hourly
  *           buckets and UPSERTs them, then deletes the consumed rows.
  *
@@ -25,9 +25,9 @@
  *
  * Delivery semantics: at-least-once aggregation with bounded loss only on an
  * unclean process crash before the next 30s flush (tier-1 memory). The durable
- * telemetry rows themselves are never affected — this is a side-channel counter.
+ * telemetry rows themselves are never affected â€” this is a side-channel counter.
  *
- * Migration: migrations2/010_add_ingestion_usage_counters.up.sql.
+ * Migration: migrations2/010_ingestion_create_usage_counters_schema.up.sql.
  */
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';

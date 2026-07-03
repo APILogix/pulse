@@ -133,6 +133,10 @@ function textGreeting(userName?: string): string {
   return userName ? `Hi ${userName},` : "Hi,";
 }
 
+function subjectLine(appName: string, detail: string): string {
+  return `${appName}: ${detail}`;
+}
+
 export function passwordResetTemplate(input: ActionTemplateInput): EmailTemplate {
   const title = "Reset your password";
   const body = `
@@ -144,7 +148,7 @@ export function passwordResetTemplate(input: ActionTemplateInput): EmailTemplate
   `;
 
   return {
-    subject: `${input.appName}: password reset request`,
+    subject: subjectLine(input.appName, 'Security alert - password reset requested'),
     html: layout(input.appName, title, body, "key", theme.brand),
     text: `${textGreeting(input.userName)}\n\nReset your password: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes.`,
   };
@@ -160,7 +164,7 @@ export function emailVerificationTemplate(input: ActionTemplateInput): EmailTemp
   `;
 
   return {
-    subject: `${input.appName}: verify your email`,
+    subject: subjectLine(input.appName, 'Action required - verify your email address'),
     html: layout(input.appName, title, body, "mail", theme.brand),
     text: `${textGreeting(input.userName)}\n\nVerify your email: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes.`,
   };
@@ -186,7 +190,14 @@ export function mfaCodeTemplate(input: MfaCodeTemplateInput): EmailTemplate {
   `;
 
   return {
-    subject: `${input.appName}: verification code`,
+    subject: subjectLine(
+      input.appName,
+      input.purpose === "setup"
+        ? 'Action required - confirm email MFA setup'
+        : input.purpose === "login"
+          ? 'Sign-in verification code'
+          : 'Security verification code',
+    ),
     html: layout(input.appName, title, body, "otp", theme.brand),
     text: `${textGreeting(input.userName)}\n\nYour verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nNever share this code.`,
   };
@@ -212,30 +223,17 @@ export function mfaStatusTemplate(input: TemplateInput & { enabled: boolean }): 
   `;
 
   return {
-    subject: `${input.appName}: ${title}`,
+    subject: subjectLine(
+      input.appName,
+      input.enabled
+        ? 'Security notice - MFA enabled on your account'
+        : 'Security alert - MFA disabled on your account',
+    ),
     html: layout(input.appName, title, body, input.enabled ? "shield" : "shield-off", iconColor),
     text: `${textGreeting(input.userName)}\n\nMulti-factor authentication was ${input.enabled ? "enabled for" : "disabled on"} your ${input.appName} account.`,
   };
 }
 
-
-export function emailChangeConfirmTemplate(
-  input: ActionTemplateInput & { newEmail: string },
-): EmailTemplate {
-  const title = "Confirm your new email address";
-  const body = `
-    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">${escapeHtml(textGreeting(input.userName))}</p>
-    <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">Confirm <strong style="color:${theme.brand};">${escapeHtml(input.newEmail)}</strong> as the new sign-in email for ${escapeHtml(input.appName)}. This will update your login credentials and all security notifications.</p>
-    <p style="margin:0 0 24px;">${button(input.actionUrl, "Confirm new email")}</p>
-    <div style="border:1px solid ${theme.border};border-radius:6px;padding:14px;background:${theme.bg};word-break:break-all;font-size:13px;color:${theme.muted};font-family:'JetBrains Mono',monospace;">${escapeHtml(input.actionUrl)}</div>
-  `;
-
-  return {
-    subject: `${input.appName}: confirm your new email`,
-    html: layout(input.appName, title, body, "mail-arrow", theme.brand),
-    text: `${textGreeting(input.userName)}\n\nConfirm ${input.newEmail} as your new email: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
-  };
-}
 
 export function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate {
   const title = "Unlock your account";
@@ -247,7 +245,7 @@ export function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate
   `;
 
   return {
-    subject: `${input.appName}: unlock your account`,
+    subject: subjectLine(input.appName, 'Security alert - unlock your account'),
     html: layout(input.appName, title, body, "unlock", theme.warningText),
     text: `${textGreeting(input.userName)}\n\nUnlock your account: ${input.actionUrl}\n\nExpires in ${input.expiresInMinutes} minutes.`,
   };
@@ -265,7 +263,7 @@ export function accountDeletionConfirmTemplate(
   `;
 
   return {
-    subject: `${input.appName}: confirm account deletion`,
+    subject: subjectLine(input.appName, 'Action required - confirm account deletion'),
     html: layout(input.appName, title, body, "danger", theme.danger),
     text: `${textGreeting(input.userName)}\n\nConfirm deletion (scheduled ${input.scheduledFor}): ${input.actionUrl}`,
   };
@@ -282,7 +280,7 @@ export function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemp
   `;
 
   return {
-    subject: `${input.appName}: confirm MFA disable`,
+    subject: subjectLine(input.appName, 'Security alert - confirm MFA disable request'),
     html: layout(input.appName, title, body, "shield-off", theme.warningText),
     text: `${textGreeting(input.userName)}\n\nA request was made to disable multi-factor authentication on your ${input.appName} account.\n\nConfirm: ${input.actionUrl}\n\nThis link expires in ${input.expiresInMinutes} minutes. If this was not you, do nothing &mdash; MFA stays enabled, then change your password.`,
   };
@@ -319,7 +317,7 @@ export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailT
   `;
 
   return {
-    subject: `${input.appName}: invitation to join ${input.orgName}`,
+    subject: subjectLine(input.appName, `Invitation - join ${input.orgName}`),
     html: layout(input.appName, title, body, "team", theme.brand),
     text: `${textGreeting(input.userName)}\n\n${input.inviterName ? `${input.inviterName} invited you` : "You have been invited"} to join ${input.orgName} on ${input.appName} as ${input.roleLabel}.\n\n${nextStep}\n\nAccept: ${input.actionUrl}\n\nThis invitation expires in ${input.expiresInDays} days.`,
   };
@@ -334,7 +332,7 @@ export function passwordChangedTemplate(input: TemplateInput): EmailTemplate {
   `;
 
   return {
-    subject: `${input.appName}: password changed`,
+    subject: subjectLine(input.appName, 'Security alert - your password was changed'),
     html: layout(input.appName, title, body, "lock", theme.brand),
     text: `${textGreeting(input.userName)}\n\nThe password for your ${input.appName} account was recently changed.`,
   };

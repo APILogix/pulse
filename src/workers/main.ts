@@ -1,5 +1,5 @@
 /**
- * Worker process bootstrap (PostgreSQL queue — no BullMQ/Redis).
+ * Worker process bootstrap (PostgreSQL queue - no BullMQ/Redis).
  *
  * Flow:
  * 1. Open a dedicated Postgres pool for background work.
@@ -14,16 +14,18 @@
 import { Pool } from 'pg';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
-import { initializeWorkers } from './index.js';
-import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
-import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
-import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
-import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
-import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
 import { registerAlertingWorkers } from '../modules/alerting/queue.js';
+import { registerAuthAutomationWorkers } from '../modules/auth/automation/queue.js';
+import { registerBillingWorkers } from '../modules/billing/queue.js';
+import { startConnectorMonitor } from '../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../modules/event-analytics/queue.js';
 import { registerOrganizationCleanupWorkers } from '../modules/organization/queue.js';
-import { startConnectorMonitor } from '../modules/connectors/workers.js';
+import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
+import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
+import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
+import { initializeWorkers } from './index.js';
+import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
+import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
 
 const workerLogger = logger.child({ component: 'workers' });
 
@@ -48,6 +50,8 @@ async function bootstrapWorkers(): Promise<void> {
 
   let alertingWorkers: { stop: () => Promise<void> } | null = null;
   let analyticsWorkers: { stop: () => Promise<void> } | null = null;
+  let authAutomationWorkers: { stop: () => Promise<void> } | null = null;
+  let billingWorkers: { stop: () => Promise<void> } | null = null;
   let connectorMonitor: { stop: () => Promise<void> } | null = null;
   let orgCleanupWorkers: { stop: () => Promise<void> } | null = null;
 
@@ -59,7 +63,9 @@ async function bootstrapWorkers(): Promise<void> {
       stopAuthCleanupWorker();
       stopAuthEmailWorker();
       stopOrgEmailWorker();
+      if (authAutomationWorkers) await authAutomationWorkers.stop();
       if (alertingWorkers) await alertingWorkers.stop();
+      if (billingWorkers) await billingWorkers.stop();
       if (analyticsWorkers) await analyticsWorkers.stop();
       if (connectorMonitor) await connectorMonitor.stop();
       if (orgCleanupWorkers) await orgCleanupWorkers.stop();
@@ -68,40 +74,26 @@ async function bootstrapWorkers(): Promise<void> {
     },
   });
 
-  // Start PgBoss and the Auth Email Worker
   await startPgBoss();
   await startAuthEmailWorker();
-
-  // Organization + project email worker (invitations, member lifecycle,
-  // quota decisions, latency-SLO alerts) with retry + backoff. No Redis.
   await startOrgEmailWorker();
 
-  // Connector delivery retry + health sweeps (moved out of the API process).
+  authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
   connectorMonitor = startConnectorMonitor(workerLogger);
-
-  // Alerting pg-boss workers: batch processing (teamSize 5 / teamConcurrency 5),
-  // batch formation, and auto-resolve sweeps.
   alertingWorkers = await registerAlertingWorkers(workerLogger);
-
-  // Event-analytics pg-boss workers: hourly rollups, error grouping, partition maintenance.
+  billingWorkers = await registerBillingWorkers(workerLogger);
   analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
 
-  // Organization cleanup cron (pg-boss, Postgres-backed — no Redis): hourly
-  // invitation expiry + expired key/token revocation, daily purge of terminal
-  // invitations, drained email outbox, and audit logs past per-org retention.
-  // Disable here (ORG_CRON_ENABLED=false) when running the dedicated cron
-  // process (npm run start:cron) so the schedule isn't owned in two places.
   if (process.env.ORG_CRON_ENABLED !== 'false') {
     orgCleanupWorkers = await registerOrganizationCleanupWorkers(workerLogger);
   } else {
     workerLogger.info('Organization cleanup cron disabled in worker (ORG_CRON_ENABLED=false)');
   }
 
-  // Auth housekeeping (expired sessions, stale email tokens). Runs hourly.
   startAuthCleanupWorker();
 
   workerLogger.info('Worker process started');
-  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, org-email, org-cleanup-cron (pg-boss), connectors-monitor, alerting (pg-boss), event-analytics (pg-boss)');
+  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors-monitor, alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
 }
 
 bootstrapWorkers().catch((error) => {

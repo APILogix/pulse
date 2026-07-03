@@ -60,8 +60,6 @@ Bad / risk:
 
 Missing routes:
 
-- `POST /auth/email/change/request` - authenticated user requests email change.
-- `POST /auth/email/change/confirm` - confirms new email token.
 - `POST /auth/email/verification/status` or `GET /auth/users/me/verification` - safe verification status for frontend polling.
 
 ### Login and Credential Flow
@@ -278,7 +276,6 @@ Missing routes:
 | --- | --- |
 | WebAuthn/passkeys | `/auth/mfa/webauthn/*` |
 | Trusted devices | `/auth/trusted-devices/*` |
-| Email change verification | `/auth/email/change/*` |
 | Security summary | `GET /auth/users/me/security-summary` |
 | Admin force password reset | `POST /auth/users/:id/password/reset` |
 | Admin lock/unlock | `POST /auth/users/:id/lock`, `POST /auth/users/:id/unlock` |

@@ -8,25 +8,27 @@ if (!env.DATABASE_URL) {
 /**
  * Primary PostgreSQL connection pool.
  *
- * Tuned for enterprise workloads:
- * - max 20 connections (matches typical PG max_connections / app-instance ratio)
- * - 5 min connections kept warm to avoid cold-start latency
- * - 5s connection timeout to fail fast on network issues
- * - 10s statement/query timeout to prevent runaway queries
+ * Tuned for managed Postgres / Neon-style poolers:
+ * - env-driven pool size so API, workers, and log DB pools do not over-subscribe
+ * - no required warm idle clients by default; serverless poolers can close idle sockets
+ * - server-side statement timeout bounds runaway SQL
+ * - client-side query timeout is disabled by default because it can abort healthy
+ *   remote queries during cold starts or transient network latency
  */
 export const pool = new Pool({
     connectionString: env.DATABASE_URL,
     // ssl: {
     //   rejectUnauthorized: false,
     // },
-    max: 20,
-    min: 2,
-    idleTimeoutMillis: 60000,
-    connectionTimeoutMillis: 30000,
-    statement_timeout: 10000,
-    query_timeout: 10000,
+    max: env.DB_POOL_MAX,
+    min: env.DB_POOL_MIN,
+    idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
+    statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
+    query_timeout: env.DB_QUERY_TIMEOUT_MS,
     application_name: `api_monitoring_${env.NODE_ENV}`,
     keepAlive: true,
+    keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
 });
 // Pool lifecycle events — only actionable events are logged.
 // 'acquire' is intentionally omitted: it fires on every query and produces

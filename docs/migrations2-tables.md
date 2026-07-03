@@ -1,4 +1,4 @@
-# Migrations2 - Complete Database Schema
+﻿# Migrations2 - Complete Database Schema
 
 This document provides a comprehensive reference of all PostgreSQL tables created in the `migrations2/` folder, which represents the canonical, consolidated schema for the Pulse platform.
 
@@ -8,11 +8,11 @@ This document provides a comprehensive reference of all PostgreSQL tables create
 
 | File | Purpose |
 |------|---------|
-| `001_auth_canonical_consolidated.up.sql` | Full auth schema with users, sessions, MFA, SSO, email tokens |
-| `002_add_notification_connectors.up.sql` | Notification connector configurations |
-| `003_add_alerting_module.up.sql` | Alerting rules, incidents, and notification channels |
-| `004_add_analytics_module.up.sql` | Pulse SDK events and analytics tables |
-| `005_add_mfa_system.up.sql` | Google-style MFA enhancements (display_hint, policy columns, SMS OTP) |
+| `001_auth_create_core_schema.up.sql` | Full auth schema with users, sessions, MFA, SSO, email tokens |
+| `002_connectors_create_notification_schema.up.sql` | Notification connector configurations |
+| `003_alerting_create_core_schema.up.sql` | Alerting rules, incidents, and notification channels |
+| `004_analytics_create_core_schema.up.sql` | Pulse SDK events and analytics tables |
+| `005_auth_extend_mfa_schema.up.sql` | Google-style MFA enhancements (display_hint, policy columns, SMS OTP) |
 
 ---
 
@@ -52,7 +52,7 @@ This document provides a comprehensive reference of all PostgreSQL tables create
 
 ---
 
-### 001_auth_canonical_consolidated.up.sql
+### 001_auth_create_core_schema.up.sql
 
 #### `users`
 
@@ -225,7 +225,7 @@ Email verification and magic link tokens.
 | `used_at` | TIMESTAMPTZ | YES | - | When used |
 | `created_at` | TIMESTAMPTZ | NO | `NOW()` | Creation timestamp |
 
-**Token Types:** `email_verification`, `magic_link`, `email_change_verification`
+**Token Types:** `email_verification`, `magic_link`
 
 **Indexes:**
 - `idx_email_tokens_hash` UNIQUE on `token_hash`
@@ -321,7 +321,7 @@ SSO session tracking.
 
 ---
 
-### 002_add_notification_connectors.up.sql
+### 002_connectors_create_notification_schema.up.sql
 
 #### `notification_connectors`
 
@@ -369,7 +369,7 @@ Event log for connector invocations.
 
 ---
 
-### 003_add_alerting_module.up.sql
+### 003_alerting_create_core_schema.up.sql
 
 #### `alert_rules`
 
@@ -470,7 +470,7 @@ Many-to-many mapping between rules and channels.
 
 ---
 
-### 004_add_analytics_module.up.sql
+### 004_analytics_create_core_schema.up.sql
 
 #### `sdk_events`
 
@@ -553,7 +553,7 @@ User session tracking.
 
 ---
 
-### 005_add_mfa_system.up.sql
+### 005_auth_extend_mfa_schema.up.sql
 
 This migration **adds columns** to existing tables rather than creating new ones (except `sms_mfa_otps`).
 
@@ -591,40 +591,40 @@ This migration **adds columns** to existing tables rather than creating new ones
 
 ```
 users
-  ├── user_sessions (1:N)
-  ├── user_mfa_devices (1:N)
-  │     ├── email_mfa_otps (1:N)
-  │     └── sms_mfa_otps (1:N)
-  ├── user_trusted_devices (1:N)
-  ├── email_tokens (1:N)
-  ├── password_reset_tokens (1:N)
-  ├── account_unlock_tokens (1:N)
-  ├── social_identities (1:N)
-  ├── saml_identities (1:N)
-  └── sso_sessions (1:N)
+  â”œâ”€â”€ user_sessions (1:N)
+  â”œâ”€â”€ user_mfa_devices (1:N)
+  â”‚     â”œâ”€â”€ email_mfa_otps (1:N)
+  â”‚     â””â”€â”€ sms_mfa_otps (1:N)
+  â”œâ”€â”€ user_trusted_devices (1:N)
+  â”œâ”€â”€ email_tokens (1:N)
+  â”œâ”€â”€ password_reset_tokens (1:N)
+  â”œâ”€â”€ account_unlock_tokens (1:N)
+  â”œâ”€â”€ social_identities (1:N)
+  â”œâ”€â”€ saml_identities (1:N)
+  â””â”€â”€ sso_sessions (1:N)
 
 organizations
-  ├── organization_members (1:N)
-  ├── organization_settings (1:1)
-  ├── projects (1:N)
-  ├── notification_connectors (1:N)
-  ├── alert_rules (1:N)
-  ├── alert_incidents (1:N)
-  ├── alert_notification_channels (1:N)
-  └── sdk_events (1:N)
+  â”œâ”€â”€ organization_members (1:N)
+  â”œâ”€â”€ organization_settings (1:1)
+  â”œâ”€â”€ projects (1:N)
+  â”œâ”€â”€ notification_connectors (1:N)
+  â”œâ”€â”€ alert_rules (1:N)
+  â”œâ”€â”€ alert_incidents (1:N)
+  â”œâ”€â”€ alert_notification_channels (1:N)
+  â””â”€â”€ sdk_events (1:N)
 
 alert_rules
-  ├── alert_incidents (1:N)
-  └── alert_rule_channels (1:N)
+  â”œâ”€â”€ alert_incidents (1:N)
+  â””â”€â”€ alert_rule_channels (1:N)
 
 alert_notification_channels
-  └── alert_rule_channels (1:N)
+  â””â”€â”€ alert_rule_channels (1:N)
 
 notification_connectors
-  └── notification_connector_events (1:N)
+  â””â”€â”€ notification_connector_events (1:N)
 
 sdk_events
-  └── sdk_event_aggregates (aggregated from)
+  â””â”€â”€ sdk_event_aggregates (aggregated from)
 ```
 
 ---
@@ -640,11 +640,11 @@ psql -d pulse_db -f migrations/002_audit_logs.sql
 # ... continue through 010_organizations.sql, 011_projects.sql
 
 # 2. Apply migrations2 (canonical, consolidated)
-psql -d pulse_db -f migrations2/001_auth_canonical_consolidated.up.sql
-psql -d pulse_db -f migrations2/002_add_notification_connectors.up.sql
-psql -d pulse_db -f migrations2/003_add_alerting_module.up.sql
-psql -d pulse_db -f migrations2/004_add_analytics_module.up.sql
-psql -d pulse_db -f migrations2/005_add_mfa_system.up.sql
+psql -d pulse_db -f migrations2/001_auth_create_core_schema.up.sql
+psql -d pulse_db -f migrations2/002_connectors_create_notification_schema.up.sql
+psql -d pulse_db -f migrations2/003_alerting_create_core_schema.up.sql
+psql -d pulse_db -f migrations2/004_analytics_create_core_schema.up.sql
+psql -d pulse_db -f migrations2/005_auth_extend_mfa_schema.up.sql
 ```
 
 **Note:** Migration 001 will handle `IF NOT EXISTS` for tables that overlap with legacy migrations.
@@ -662,3 +662,4 @@ psql -d pulse_db -f migrations2/005_add_mfa_system.up.sql
 4. **Soft Deletes:** Organizations and projects use `deleted_at` for soft deletes. Users use `status = 'deleted'`.
 
 5. **Time-Series Optimization:** The `sdk_events` table is designed for time-series workloads and should be partitioned by `timestamp` for high-volume deployments.
+

@@ -85,8 +85,7 @@ export async function buildApp() {
         hsts: env.NODE_ENV === 'production' ? { maxAge: 31536000 } : false,
     });
     await app.register(cors, {
-        // origin: buildCorsOrigin(),
-        origin: true,
+        origin: buildCorsOrigin(),
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
         allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
@@ -105,18 +104,17 @@ export async function buildApp() {
         encoding: 'utf8',
         runFirst: true,
     });
-    // Rate limit globally disabled
-    // await app.register(fastifyRateLimit, {
-    //   max: 100,
-    //   timeWindow: '1 minute',
-    //   keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
-    //   skipOnError: false,
-    //   errorResponseBuilder: (_req, context) => ({
-    //     statusCode: 429,
-    //     error: 'Too Many Requests',
-    //     message: `Rate limit exceeded, retry in ${context.after}`,
-    //   }),
-    // });
+    await app.register(fastifyRateLimit, {
+        max: 100,
+        timeWindow: '1 minute',
+        keyGenerator: (req) => req.ip || 'unknown',
+        skipOnError: false,
+        errorResponseBuilder: (_req, context) => ({
+            statusCode: 429,
+            error: 'Too Many Requests',
+            message: `Rate limit exceeded, retry in ${context.after}`,
+        }),
+    });
     await app.register(sensible);
     // ── Health & Readiness Probes ──────────────────────────────────────
     await app.register(registerHealthPlugin);
@@ -146,15 +144,10 @@ export async function buildApp() {
     });
     app.addHook('onResponse', async (request, reply) => {
         const duration = Date.now() - request.startTime;
-        const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
-        appLogger[logLevel]({
-            reqId: request.id,
-            method: request.method,
-            url: request.url,
-            statusCode: reply.statusCode,
+        // const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
+        appLogger["debug"]({
             durationMs: duration,
-            ip: request.ip,
-        }, 'Request completed');
+        });
     });
     // ── Global Error Handler ───────────────────────────────────────────
     app.setErrorHandler((error, request, reply) => {

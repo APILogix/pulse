@@ -39,7 +39,7 @@ import { verifyAccessToken } from '../../modules/auth/utils.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
-    user: {
+    user?: {
       id: string;
       email: string;
       isAdmin: boolean;

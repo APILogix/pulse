@@ -1,9 +1,9 @@
-# Event Analytics Module (Pulse SDK)
+﻿# Event Analytics Module (Pulse SDK)
 
 Read-optimized analytics over the Pulse SDK event data: 10 partitioned event
 tables (`events_*`), rollup/aggregate tables, and config tables (dashboards,
 saved queries, analytics alerts) created in
-`migrations2/004_add_analytics_module`.
+`migrations2/004_analytics_create_core_schema`.
 
 This is a **separate module** (`src/modules/event-analytics/`, decorator
 `eventAnalytics`, prefix `/organizations/:orgId/analytics`) from the existing
@@ -44,7 +44,7 @@ Per requirements: **no caching and no rate limiting** anywhere in this module.
   live single-query aggregate when no summary rows exist yet.
 - **Tenant isolation**: every query is scoped by `organization_id` in the
   repository (the query builder forces `organization_id = $1` as the first
-  predicate). RLS is left commented in the migration — the codebase never sets
+  predicate). RLS is left commented in the migration â€” the codebase never sets
   `app.current_org_id`, so enabling it would zero out results.
 
 ## Safety of the query builder
@@ -57,12 +57,12 @@ Per requirements: **no caching and no rate limiting** anywhere in this module.
 
 ## Endpoints (prefix `/organizations/:orgId/analytics`)
 
-Overview/trends/health · errors (+ groups, resolve/ignore, trends, detail) ·
-performance (routes, distribution, apdex) · requests (+ waterfall, detail) ·
-traces (list, detail) · metrics (names, series, stats) · logs (+ `/logs/stream`
-SSE) · sessions · users (+ journey) · crons (list, detail, history) ·
-`live/errors` SSE · dashboards CRUD (+ duplicate) · saved queries CRUD
-(+ execute) · analytics alerts CRUD · `POST /export` (CSV/JSON).
+Overview/trends/health Â· errors (+ groups, resolve/ignore, trends, detail) Â·
+performance (routes, distribution, apdex) Â· requests (+ waterfall, detail) Â·
+traces (list, detail) Â· metrics (names, series, stats) Â· logs (+ `/logs/stream`
+SSE) Â· sessions Â· users (+ journey) Â· crons (list, detail, history) Â·
+`live/errors` SSE Â· dashboards CRUD (+ duplicate) Â· saved queries CRUD
+(+ execute) Â· analytics alerts CRUD Â· `POST /export` (CSV/JSON).
 
 All routes require `authenticate` + `requireOrgAccess`.
 
@@ -88,29 +88,30 @@ jobs. pg-boss v12 option names are used (`localConcurrency`, `batchSize`,
 
 ## Migration notes / fixes vs the spec SQL
 
-- `CREATE BRIN INDEX` → corrected to `CREATE INDEX ... USING BRIN (col)`.
+- `CREATE BRIN INDEX` â†’ corrected to `CREATE INDEX ... USING BRIN (col)`.
 - Time-windowed partial-index predicates (`WHERE created_at > NOW() - ...`) were
-  dropped — an index predicate must be IMMUTABLE and `NOW()` is not, so those
+  dropped â€” an index predicate must be IMMUTABLE and `NOW()` is not, so those
   statements would fail. Plain composite indexes are used instead.
 - Partitioned tables use composite PK `(id, created_at)` (a partition key must
   be part of every PK/unique constraint in PostgreSQL).
-- Enum renamed `metric_type` → `analytics_metric_type` and `event_status` →
+- Enum renamed `metric_type` â†’ `analytics_metric_type` and `event_status` â†’
   `span_status` to avoid collisions with existing/likely enum names.
 
 ## Apply
 
 ```bash
-psql "$DATABASE_URL" -f src/db/postgres/migrations2/004_add_analytics_module.up.sql
+psql "$DATABASE_URL" -f src/db/postgres/migrations2/004_analytics_create_core_schema.up.sql
 # rollback
-psql "$DATABASE_URL" -f src/db/postgres/migrations2/004_add_analytics_module.down.sql
+psql "$DATABASE_URL" -f src/db/postgres/migrations2/004_analytics_create_core_schema.down.sql
 ```
 
 ## Tests
 
-`test/unit/modules/event-analytics.test.ts` — query-builder parameterization +
+`test/unit/modules/event-analytics.test.ts` â€” query-builder parameterization +
 table allow-list, waterfall tree (nesting/orphans/cycles), Apdex, time-range
 resolution, CSV escaping:
 
 ```bash
 npx vitest run test/unit/modules/event-analytics.test.ts
 ```
+

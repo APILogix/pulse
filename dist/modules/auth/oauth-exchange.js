@@ -1,22 +1,13 @@
 /**
- * Shared OAuth token exchange for identity linking and social login.
+ * Shared OAuth token exchange for social login and related provider callbacks.
  */
 import { authorizationCodeGrant, buildAuthorizationUrl, calculatePKCECodeChallenge, discovery, randomNonce, randomPKCECodeVerifier, randomState, } from 'openid-client';
 import { env as config } from '../../config/env.js';
-import { getMicrosoftIssuer, } from './identity-link.config.js';
+import {} from './identity-link.config.js';
 import { AuthError, AuthErrorCodes } from './types.js';
 import { normalizeEmail } from './utils.js';
 export async function buildOidcClient(provider) {
-    const clientId = provider === 'google'
-        ? config.GOOGLE_CLIENT_ID
-        : config.MICROSOFT_CLIENT_ID;
-    const clientSecret = provider === 'google'
-        ? config.GOOGLE_CLIENT_SECRET
-        : config.MICROSOFT_CLIENT_SECRET;
-    const issuer = provider === 'google'
-        ? 'https://accounts.google.com'
-        : getMicrosoftIssuer();
-    return discovery(new URL(issuer), clientId, clientSecret);
+    return discovery(new URL('https://accounts.google.com'), config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET);
 }
 export async function buildOAuthAuthorizationUrl(options) {
     if (options.provider === 'github') {
@@ -37,7 +28,7 @@ export async function buildOAuthAuthorizationUrl(options) {
         redirect_uri: options.redirectUri,
         scope: options.provider === 'google'
             ? 'openid email profile'
-            : 'openid email profile User.Read',
+            : 'read:user user:email',
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
         state: options.state,

@@ -1,4 +1,4 @@
-# Notification Connectors
+﻿# Notification Connectors
 
 A pluggable, multi-tenant notification system. Organizations configure one or
 more connectors (Slack, Discord, Teams, PagerDuty, generic Webhook, Email, SMS)
@@ -23,18 +23,18 @@ dead-letter queue for unrecoverable failures.
 
 Every delivery passes through, in order:
 
-1. **Rate limit** — sliding window per connector (`rate_limit_requests` per
+1. **Rate limit** â€” sliding window per connector (`rate_limit_requests` per
    `rate_limit_window_seconds`).
-2. **Circuit breaker** — opens after `failure_threshold` consecutive failures,
+2. **Circuit breaker** â€” opens after `failure_threshold` consecutive failures,
    half-opens after a reset timeout.
-3. **Send** — the connector's `send()` call with a hard HTTP timeout.
-4. **Outcome** — success updates health counters; a *retryable* failure is
+3. **Send** â€” the connector's `send()` call with a hard HTTP timeout.
+4. **Outcome** â€” success updates health counters; a *retryable* failure is
    re-scheduled with exponential backoff + jitter; a terminal failure is
    written to the **dead-letter queue**.
 
 ## Data model
 
-Migration: `src/db/postgres/migrations2/002_add_notification_connectors.up.sql`
+Migration: `src/db/postgres/migrations2/002_connectors_create_notification_schema.up.sql`
 (rollback: `...down.sql`).
 
 Tables: `connector_configs`, `connector_secrets`, `notification_templates`,
@@ -53,24 +53,24 @@ Tables: `connector_configs`, `connector_secrets`, `notification_templates`,
 ### Applying the migration
 
 ```bash
-psql "$DATABASE_URL" -f src/db/postgres/migrations2/002_add_notification_connectors.up.sql
+psql "$DATABASE_URL" -f src/db/postgres/migrations2/002_connectors_create_notification_schema.up.sql
 # rollback
-psql "$DATABASE_URL" -f src/db/postgres/migrations2/002_add_notification_connectors.down.sql
+psql "$DATABASE_URL" -f src/db/postgres/migrations2/002_connectors_create_notification_schema.down.sql
 ```
 
 ## Security
 
-- **Encryption at rest** — AES-256-GCM via `shared/utils/encryption.ts`, keyed
+- **Encryption at rest** â€” AES-256-GCM via `shared/utils/encryption.ts`, keyed
   by `ENCRYPTION_KEY`. Each ciphertext carries its own random salt + IV.
-- **Secret rotation** — `crypto.reencryptConfig()` re-encrypts in place with a
+- **Secret rotation** â€” `crypto.reencryptConfig()` re-encrypts in place with a
   fresh salt/IV without changing plaintext.
-- **Webhook signing** — the generic webhook connector signs the body with
+- **Webhook signing** â€” the generic webhook connector signs the body with
   HMAC-SHA256 over `${timestamp}.${body}` and sends `X-Pulse-Signature:
   t=<ts>,v1=<hex>`. Receivers should verify with a constant-time compare and
   reject stale timestamps.
-- **Input validation** — every connector config is validated by a Zod schema
+- **Input validation** â€” every connector config is validated by a Zod schema
   before persistence; payloads are length-bounded per provider.
-- **Audit** — every create/update/delete/test/send writes a
+- **Audit** â€” every create/update/delete/test/send writes a
   `connector_audit_logs` row with actor, IP, user agent, and request id.
 
 ## API
@@ -133,12 +133,12 @@ POST /organizations/{orgId}/connectors/{id}/send
   threading via `threadKey`.
 
 ### Discord
-- Server Settings → Integrations → Webhooks → New Webhook. Set
+- Server Settings â†’ Integrations â†’ Webhooks â†’ New Webhook. Set
   `config.webhookUrl`. Optional `username` / `avatarUrl` overrides. Threading
   uses the message `threadKey` (Discord `thread_id`).
 
 ### Microsoft Teams
-- Channel → Connectors → Incoming Webhook → create and copy the URL into
+- Channel â†’ Connectors â†’ Incoming Webhook â†’ create and copy the URL into
   `config.webhookUrl`. Messages render as Adaptive Cards.
 
 ### PagerDuty
@@ -168,7 +168,7 @@ POST /organizations/{orgId}/connectors/{id}/send
    `ConnectorTypeSchema`.
 3. Register it in `registry.ts` via `registerConnectorType` with its metadata.
 
-No other code needs to change — the factory, dispatcher, routes, and monitor
+No other code needs to change â€” the factory, dispatcher, routes, and monitor
 are type-agnostic.
 
 ## Testing
@@ -180,3 +180,4 @@ signing, config validation) live in
 ```bash
 npx vitest run test/unit/modules/connectors.test.ts
 ```
+

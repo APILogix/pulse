@@ -35,7 +35,7 @@ import { handleProjectError } from "./utils.js";
 
 function requestMeta(request: FastifyRequest): RequestMeta {
   const userAgent = request.headers["user-agent"];
-  const user = request.user;
+  const user = request.user!;
   return {
     actorUserId: user.id,
     actorEmail: user.email ?? null,
@@ -46,6 +46,10 @@ function requestMeta(request: FastifyRequest): RequestMeta {
     httpMethod: request.method,
     endpoint: request.url,
   };
+}
+
+function authenticatedUser(request: FastifyRequest) {
+  return request.user!;
 }
 
 function withErrorHandling(
@@ -72,7 +76,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const query = ListProjectsQuerySchema.parse(request.query ?? {});
-      const result = await service.listProjects(orgId, request.user.id, query);
+      const result = await service.listProjects(orgId, authenticatedUser(request).id, query);
       return reply.send({
         success: true,
         data: result.projects,
@@ -87,7 +91,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const body = CreateProjectBodySchema.parse(request.body);
-      const project = await service.createProject(orgId, request.user.id, body, requestMeta(request));
+      const project = await service.createProject(orgId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.code(201).send({ success: true, data: project });
     }),
   );
@@ -97,7 +101,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-      const project = await service.getProject(orgId, projectId, request.user.id);
+      const project = await service.getProject(orgId, projectId, authenticatedUser(request).id);
       return reply.send({ success: true, data: project });
     }),
   );
@@ -107,7 +111,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-      const project = await service.getProjectStats(orgId, projectId, request.user.id);
+      const project = await service.getProjectStats(orgId, projectId, authenticatedUser(request).id);
       return reply.send({ success: true, data: project });
     }),
   );
@@ -118,7 +122,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const body = UpdateProjectBodySchema.parse(request.body);
-      const project = await service.updateProject(orgId, projectId, request.user.id, body, requestMeta(request));
+      const project = await service.updateProject(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: project });
     }),
   );
@@ -128,7 +132,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-      await service.deleteProject(orgId, projectId, request.user.id, requestMeta(request));
+      await service.deleteProject(orgId, projectId, authenticatedUser(request).id, requestMeta(request));
       return reply.code(204).send();
     }),
   );
@@ -144,7 +148,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
       { preHandler: [authenticate] },
       withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-        const project = await service[method](orgId, projectId, request.user.id, requestMeta(request));
+        const project = await service[method](orgId, projectId, authenticatedUser(request).id, requestMeta(request));
         return reply.send({ success: true, data: project });
       }),
     );
@@ -157,7 +161,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-      const envs = await service.listEnvironments(orgId, projectId, request.user.id);
+      const envs = await service.listEnvironments(orgId, projectId, authenticatedUser(request).id);
       return reply.send({ success: true, data: envs });
     }),
   );
@@ -168,7 +172,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const body = CreateEnvironmentBodySchema.parse(request.body);
-      const env = await service.createEnvironment(orgId, projectId, request.user.id, body, requestMeta(request));
+      const env = await service.createEnvironment(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.code(201).send({ success: true, data: env });
     }),
   );
@@ -178,7 +182,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
-      const env = await service.getEnvironment(orgId, projectId, environment, request.user.id);
+      const env = await service.getEnvironment(orgId, projectId, environment, authenticatedUser(request).id);
       return reply.send({ success: true, data: env });
     }),
   );
@@ -189,7 +193,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
       const body = UpdateEnvironmentBodySchema.parse(request.body);
-      const env = await service.updateEnvironment(orgId, projectId, environment, request.user.id, body, requestMeta(request));
+      const env = await service.updateEnvironment(orgId, projectId, environment, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: env });
     }),
   );
@@ -199,7 +203,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
-      await service.deleteEnvironment(orgId, projectId, environment, request.user.id, requestMeta(request));
+      await service.deleteEnvironment(orgId, projectId, environment, authenticatedUser(request).id, requestMeta(request));
       return reply.code(204).send();
     }),
   );
@@ -212,7 +216,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const query = ListApiKeysQuerySchema.parse(request.query ?? {});
-      const result = await service.listApiKeys(orgId, projectId, request.user.id, query);
+      const result = await service.listApiKeys(orgId, projectId, authenticatedUser(request).id, query);
       return reply.send({
         success: true,
         data: result.keys,
@@ -229,7 +233,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
       const body = CreateApiKeyBodySchema.parse(request.body);
       // The full key is returned exactly once. It is cached (LRU, 30-min TTL)
       // for ingestion resolution; only the hash + prefix are persisted.
-      const result = await service.createApiKey(orgId, projectId, request.user.id, body, requestMeta(request));
+      const result = await service.createApiKey(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.code(201).send({
         success: true,
         data: result,
@@ -246,7 +250,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const body = BulkRotateBodySchema.parse(request.body ?? {});
-      const result = await service.bulkRotateKeys(orgId, projectId, request.user.id, body, requestMeta(request));
+      const result = await service.bulkRotateKeys(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: result });
     }),
   );
@@ -257,7 +261,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const body = BulkRevokeBodySchema.parse(request.body ?? {});
-      const result = await service.bulkRevokeKeys(orgId, projectId, request.user.id, body, requestMeta(request));
+      const result = await service.bulkRevokeKeys(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: result });
     }),
   );
@@ -267,7 +271,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const apiKey = await service.getApiKey(orgId, projectId, apiKeyId, request.user.id);
+      const apiKey = await service.getApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id);
       return reply.send({ success: true, data: apiKey });
     }),
   );
@@ -278,7 +282,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
       const body = UpdateApiKeyBodySchema.parse(request.body);
-      const apiKey = await service.updateApiKey(orgId, projectId, apiKeyId, request.user.id, body, requestMeta(request));
+      const apiKey = await service.updateApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: apiKey });
     }),
   );
@@ -289,7 +293,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
       const body = RevokeApiKeyBodySchema.parse(request.body ?? {});
-      await service.deleteApiKey(orgId, projectId, apiKeyId, request.user.id, requestMeta(request), body.revokedReason ?? null);
+      await service.deleteApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, requestMeta(request), body.revokedReason ?? null);
       return reply.code(204).send();
     }),
   );
@@ -300,7 +304,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
       const body = RotateApiKeyBodySchema.parse(request.body ?? {});
-      const result = await service.rotateApiKey(orgId, projectId, apiKeyId, request.user.id, body, requestMeta(request));
+      const result = await service.rotateApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({
         success: true,
         data: result,
@@ -314,7 +318,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const result = await service.regenerateApiKey(orgId, projectId, apiKeyId, request.user.id, requestMeta(request));
+      const result = await service.regenerateApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, requestMeta(request));
       return reply.send({
         success: true,
         data: result,
@@ -328,7 +332,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const apiKey = await service.enableApiKey(orgId, projectId, apiKeyId, request.user.id, requestMeta(request));
+      const apiKey = await service.enableApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, requestMeta(request));
       return reply.send({ success: true, data: apiKey });
     }),
   );
@@ -338,7 +342,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const apiKey = await service.disableApiKey(orgId, projectId, apiKeyId, request.user.id, requestMeta(request));
+      const apiKey = await service.disableApiKey(orgId, projectId, apiKeyId, authenticatedUser(request).id, requestMeta(request));
       return reply.send({ success: true, data: apiKey });
     }),
   );
@@ -348,7 +352,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const usage = await service.getApiKeyUsage(orgId, projectId, apiKeyId, request.user.id);
+      const usage = await service.getApiKeyUsage(orgId, projectId, apiKeyId, authenticatedUser(request).id);
       return reply.send({ success: true, data: usage });
     }),
   );

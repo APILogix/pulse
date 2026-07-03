@@ -63,7 +63,7 @@ export async function completeSocialLogin(callbackUrl, ipAddress, userAgent, req
         throw new AuthError('Login session expired; try again', AuthErrorCodes.SOCIAL_LOGIN_FAILED, 400);
     }
     socialLoginStateCache.delete(state);
-    const profile = await exchangeOAuthCallback(flow.provider, callbackUrl, flow.codeVerifier, flow.redirectUri, flow.nonce);
+    const profile = await exchangeOAuthCallback(flow.provider, callbackUrl, flow.codeVerifier ?? '', flow.redirectUri ?? getSocialLoginCallbackUrl(), flow.nonce);
     const link = await repository.findLinkedIdentityByProviderSubject(flow.provider, profile.subject);
     if (!link) {
         throw new AuthError('Invalid email or password', AuthErrorCodes.INVALID_CREDENTIALS, 401);

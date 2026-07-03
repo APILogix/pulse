@@ -114,8 +114,8 @@ export async function completeSocialLogin(
   const profile = await exchangeOAuthCallback(
     flow.provider,
     callbackUrl,
-    flow.codeVerifier,
-    flow.redirectUri,
+    flow.codeVerifier ?? '',
+    flow.redirectUri ?? getSocialLoginCallbackUrl(),
     flow.nonce,
   );
 

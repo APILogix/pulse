@@ -1,13 +1,13 @@
 /**
- * SDK Remote Config types — DB rows, DTOs, and Zod validators.
+ * SDK Remote Config types â€” DB rows, DTOs, and Zod validators.
  *
- * Mirrors migrations2/007_add_sdk_config_module.up.sql. Snake_case Row types
+ * Mirrors migrations2/007_organizations_create_sdk_config_schema.up.sql. Snake_case Row types
  * match columns; camelCase DTOs are what the API returns.
  */
 import { z } from "zod";
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ENUMS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 export const ConfigTypeSchema = z.enum(["json", "yaml", "env", "feature_flag"]);
 export const DeploymentStatusSchema = z.enum([
     "pending",
@@ -16,9 +16,9 @@ export const DeploymentStatusSchema = z.enum([
     "failed",
     "rolled_back",
 ]);
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PARAM / QUERY / BODY SCHEMAS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 const Uuid = z.string().uuid();
 export const SdkConfigParamsSchema = z.object({ orgId: Uuid, configId: Uuid });
 export const SdkConfigVersionParamsSchema = z.object({

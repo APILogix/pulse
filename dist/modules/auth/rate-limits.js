@@ -77,15 +77,6 @@ export const accountUnlockRequestRateLimit = lruRateLimit({
     windowMs: MS_HOUR,
     keyGenerator: ipAndEmail,
 });
-export const emailChangeRequestRateLimit = lruRateLimit({
-    scope: 'email-change',
-    max: 3,
-    windowMs: MS_HOUR,
-    keyGenerator: (req) => {
-        const u = req.user;
-        return u?.id ?? req.ip ?? 'anonymous';
-    },
-});
 export const ssoDiscoveryRateLimit = lruRateLimit({
     scope: 'sso-discovery',
     max: 30,
@@ -110,7 +101,7 @@ export const webauthnRateLimit = lruRateLimit({
     windowMs: MS_15_MIN,
     keyGenerator: userIdFromAuth,
 });
-/** Token consumption endpoints (unlock, email change, MFA disable, deletion). */
+/** Token consumption endpoints (unlock, MFA disable, deletion). */
 export const tokenConfirmRateLimit = lruRateLimit({
     scope: 'token-confirm',
     max: 15,

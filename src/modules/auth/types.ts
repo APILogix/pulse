@@ -484,17 +484,6 @@ export const SocialLoginSchema = z.object({
 });
 export type SocialLoginInput = z.infer<typeof SocialLoginSchema>;
 
-export const EmailChangeRequestSchema = z.object({
-  new_email: z.string().email().max(255),
-  current_password: z.string().min(1).max(256),
-});
-export type EmailChangeRequestInput = z.infer<typeof EmailChangeRequestSchema>;
-
-export const EmailChangeConfirmSchema = z.object({
-  token: MagicLinkTokenSchema,
-});
-export type EmailChangeConfirmInput = z.infer<typeof EmailChangeConfirmSchema>;
-
 export const AccountUnlockRequestSchema = z.object({
   email: z.string().email(),
 });
@@ -558,11 +547,11 @@ export interface SsoDiscoveryResult {
   }>;
   oidc_login_ready: boolean;
   saml_login_ready: boolean;
-  configured_link_providers: Array<'google' | 'github' | 'microsoft'>;
+  configured_link_providers: Array<'google' | 'github'>;
   /** Deployment has OAuth clients configured for passwordless social login. */
   social_login_ready: boolean;
   /** When email is supplied: providers the user has already linked (subset of configured). */
-  linked_social_providers: Array<'google' | 'github' | 'microsoft'>;
+  linked_social_providers: Array<'google' | 'github'>;
 }
 
 export const SsoLoginSchema = z.object({

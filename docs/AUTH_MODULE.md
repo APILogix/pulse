@@ -36,7 +36,6 @@ flowchart TB
     SAML[saml.service.ts]
     SLOS[saml-slo.service.ts]
     SL[social-login.service.ts]
-    IL[identity-link.service.ts]
     WV[webauthn.service.ts]
     TD[trusted-device.service.ts]
     POL[policy.service.ts]
@@ -57,7 +56,6 @@ flowchart TB
   SO --> SSO
   SO --> WV
   SI --> SAML
-  SI --> IL
   PR --> SL
   PR --> SLOS
   PR --> SC
@@ -126,14 +124,10 @@ All paths below are relative to `/auth` unless noted.
 | POST | `/saml/logout` | User | Revokes session + returns IdP SLO URL |
 | POST | `/saml/slo` | Public | SAML logout POST binding |
 
-### Social OAuth (link + login)
+### Social OAuth login
 
 | Method | Path | Auth | Notes |
 |--------|------|------|-------|
-| GET | `/identity-providers` | User | List linked accounts |
-| POST | `/identity-providers/:provider/link` | User + step-up | `google` \| `github` \| `microsoft` |
-| GET | `/identity-providers/callback` | Public | Link completion (**API URL**) |
-| DELETE | `/identity-providers/:id` | User + step-up | Unlink |
 | POST | `/login/social/:provider` | Public | Passwordless login (must be linked) |
 | GET | `/login/social/callback` | Public | Social login callback (**API URL**) |
 
@@ -197,8 +191,6 @@ All paths below are relative to `/auth` unless noted.
 | Method | Path | Auth |
 |--------|------|------|
 | POST | `/account/unlock/request`, `/confirm` | Public |
-| POST | `/email/change/request` | User + step-up |
-| POST | `/email/change/confirm` | Public |
 | POST | `/users/me/delete/request` | User + step-up |
 | POST | `/users/me/delete/confirm` | Public |
 | POST | `/mfa/recovery/request` | User + step-up |
@@ -278,7 +270,6 @@ Configured in `oauth-callback.config.ts` — always use **API host**:
 |------|----------------|
 | OIDC SSO | `{API_PUBLIC_URL}/auth/sso/callback` |
 | Social login | `{API_PUBLIC_URL}/auth/login/social/callback` |
-| Identity linking | `{API_PUBLIC_URL}/auth/identity-providers/callback` |
 
 Set `API_PUBLIC_URL` in every deployed environment.
 
@@ -306,7 +297,7 @@ Set `API_PUBLIC_URL` in every deployed environment.
 | `identity.routes.ts` | Policy, discovery, compliance |
 | `sso-oidc.routes.ts` | OIDC SSO, WebAuthn register/login MFA, trusted devices |
 | `account-administration.routes.ts` | WebAuthn step-up, MFA rename, admin password reset |
-| `saml-identity.routes.ts` | SAML ACS/metadata, OAuth identity linking |
+| `saml-identity.routes.ts` | SAML ACS/metadata |
 | `provisioning.routes.ts` | Social login, SAML SLO, SCIM under `/auth/scim/v2` |
 | `service.ts` | Login, register, MFA, sessions, admin users |
 | `identity.service.ts` | Email change, unlock, deletion, export, discovery |

@@ -129,6 +129,47 @@ function parseDeviceInfo(userAgent: string): DeviceInfo {
   };
 }
 
+export function buildSessionDeviceLabel(
+  userAgent: string,
+  fallbackType?: string | null,
+): string {
+  const parsed = parseDeviceInfo(userAgent);
+
+  if (parsed.type === 'mobile') {
+    if (parsed.os === 'iOS') return 'iPhone';
+    if (parsed.os === 'Android') return 'Android phone';
+    return 'Mobile phone';
+  }
+
+  if (parsed.type === 'tablet') {
+    if (parsed.os === 'iOS') return 'iPad';
+    if (parsed.os === 'Android') return 'Android tablet';
+    return 'Tablet';
+  }
+
+  if (parsed.type === 'desktop') {
+    if (parsed.os === 'Windows') return 'Windows PC';
+    if (parsed.os === 'macOS') return 'Mac';
+    if (parsed.os === 'Linux') return 'Linux PC';
+    return 'Desktop';
+  }
+
+  if (parsed.type === 'bot') {
+    return 'Automated client';
+  }
+
+  switch ((fallbackType || '').toLowerCase()) {
+    case 'mobile':
+      return 'Mobile phone';
+    case 'tablet':
+      return 'Tablet';
+    case 'desktop':
+      return 'Desktop';
+    default:
+      return 'Unknown device';
+  }
+}
+
 function detectDeviceType(userAgent: string): DeviceInfo['type'] {
   if (BOT_REGEX.test(userAgent)) return 'bot';
   if (TABLET_REGEX.test(userAgent)) return 'tablet';

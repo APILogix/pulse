@@ -9,10 +9,11 @@
  *   - Map AuthError -> HTTP responses without leaking internals.
  *
  * Refresh-token transport:
- *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie
- *     named `__Host-refresh_token` with Path=/. This forces the browser to
- *     require Secure + no Domain attribute, blocking sibling-subdomain
- *     overwrite attacks.
+ *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie.
+ *   - Production/staging use `__Host-refresh_token` with Path=/, which forces
+ *     Secure + no Domain attribute and blocks sibling-subdomain overwrite.
+ *   - Development falls back to `refresh_token` because browsers reject
+ *     `__Host-` cookies over plain HTTP.
  *
  * Rate limiting:
  *   - Scoped in-process LRU limits (rate-limits.ts) on sensitive auth routes.

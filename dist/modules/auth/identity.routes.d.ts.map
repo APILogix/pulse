@@ -1,1 +1,1 @@
-{"version":3,"file":"identity.routes.d.ts","sourceRoot":"","sources":["../../../src/modules/auth/identity.routes.ts"],"names":[],"mappings":"AAAA;;GAEG;AACH,OAAO,KAAK,EAAE,eAAe,EAAgC,MAAM,SAAS,CAAC;AA4C7E,wBAA8B,cAAc,CAAC,OAAO,EAAE,eAAe,iBAgPpE"}
+{"version":3,"file":"identity.routes.d.ts","sourceRoot":"","sources":["../../../src/modules/auth/identity.routes.ts"],"names":[],"mappings":"AAAA;;GAEG;AACH,OAAO,KAAK,EAAE,eAAe,EAAgC,MAAM,SAAS,CAAC;AAyC7E,wBAA8B,cAAc,CAAC,OAAO,EAAE,eAAe,iBAoMpE"}

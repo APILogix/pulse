@@ -75,6 +75,8 @@ export interface LoginMFAChallenge {
   attempts: number;
   /** Mirrors login `remember_me` so MFA completion issues the same session TTL. */
   rememberMe: boolean;
+  /** Mirrors login `trust_device`; applied only after MFA has succeeded. */
+  trustDevice: boolean;
   availableMethods?: Array<{
     id: string;
     type: string;
@@ -190,9 +192,9 @@ export const samlLoginStateCache = new LRUCache<string, SamlLoginState>({
  */
 export interface IdentityLinkState {
   userId: string;
-  provider: 'google' | 'github' | 'microsoft';
-  codeVerifier: string;
-  redirectUri: string;
+  provider: 'google' | 'github';
+  codeVerifier?: string;
+  redirectUri?: string;
   nonce?: string;
 }
 
@@ -202,11 +204,11 @@ export const identityLinkStateCache = new LRUCache<string, IdentityLinkState>({
   ttlAutopurge: true,
 });
 
-/** Passwordless social login OAuth state (public login, not account linking). */
+/** Passwordless social login OAuth state (public login flow). */
 export interface SocialLoginState {
-  provider: 'google' | 'github' | 'microsoft';
-  codeVerifier: string;
-  redirectUri: string;
+  provider: 'google' | 'github';
+  codeVerifier?: string;
+  redirectUri?: string;
   nonce?: string;
   rememberMe: boolean;
   ipAddress: string;

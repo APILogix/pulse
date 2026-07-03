@@ -1,7 +1,7 @@
 /**
- * Dedicated cron process (PostgreSQL-backed scheduling via pg-boss — no Redis).
+ * Dedicated cron process (PostgreSQL-backed scheduling via pg-boss - no Redis).
  *
- * This is the OPTIONAL standalone scheduler. By default the organization
+ * This is the optional standalone scheduler. By default the organization
  * cleanup cron runs inside the main worker process (src/workers/main.ts). For
  * deployments that prefer to isolate scheduled maintenance in its own
  * container/pod, run this process instead and start the worker with
@@ -18,6 +18,8 @@
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
+import { registerAuthAutomationWorkers } from '../modules/auth/automation/queue.js';
+import { registerBillingWorkers } from '../modules/billing/queue.js';
 import { registerOrganizationCleanupWorkers } from '../modules/organization/queue.js';
 const cronLogger = logger.child({ component: 'cron' });
 async function bootstrapCron() {
@@ -25,11 +27,15 @@ async function bootstrapCron() {
         throw new Error('DATABASE_URL is not set');
     }
     await startPgBoss();
+    const authAutomation = await registerAuthAutomationWorkers(cronLogger);
+    const billing = await registerBillingWorkers(cronLogger);
     const orgCleanup = await registerOrganizationCleanupWorkers(cronLogger);
-    cronLogger.info('Cron process started — organization cleanup schedules active');
+    cronLogger.info('Cron process started - auth automation, billing, and organization cleanup schedules active');
     const shutdown = async (signal) => {
-        cronLogger.info({ signal }, 'Shutdown signal received — stopping cron');
+        cronLogger.info({ signal }, 'Shutdown signal received - stopping cron');
         try {
+            await authAutomation.stop();
+            await billing.stop();
             await orgCleanup.stop();
             await stopPgBoss();
         }

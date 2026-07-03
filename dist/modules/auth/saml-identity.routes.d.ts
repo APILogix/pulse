@@ -1,5 +1,5 @@
 /**
- * SAML federation (ACS/metadata) and OAuth identity-provider linking routes.
+ * SAML federation (ACS/metadata) routes.
  */
 import type { FastifyInstance } from 'fastify';
 export default function samlIdentityRoutes(fastify: FastifyInstance): Promise<void>;

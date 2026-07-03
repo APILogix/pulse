@@ -20,7 +20,7 @@
  *   - Auth runs Redis-free; revocation/challenge state lives in an
  *     in-process LRU (see `cache.ts`). DB-level state (sessions, users,
  *     email tokens) is the cross-process source of truth.
- *   - Email via authEmail (sync SMTP or Postgres outbox when AUTH_EMAIL_ASYNC=true).
+ *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
@@ -33,6 +33,7 @@ import { authEmail } from './auth-email.js';
 import { isLoginTrustedDevice, trustCurrentDevice } from './trusted-device.service.js';
 import { emailVerificationTemplate, mfaCodeTemplate, mfaDisableConfirmTemplate, mfaStatusTemplate, passwordResetTemplate, } from '../../shared/email/templates.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
+import { buildSessionDeviceLabel } from '../../shared/utils/request.js';
 import { decrypt, encrypt, hashPassword, verifyPassword, } from '../../shared/utils/encryption.js';
 import { generateId } from '../../shared/utils/id.js';
 import { blacklistAccessToken, loginMfaChallengeCache, mfaBackupTempCache, recordStepUpFreshness, revokeAllUserTokens as cacheRevokeAllUserTokens, stepUpChallengeCache, } from './cache.js';
@@ -62,6 +63,20 @@ const GENERIC_PASSWORD_RESET_MESSAGE = 'If the email exists, a password reset li
 const GENERIC_VERIFICATION_MESSAGE = 'If the account exists and is not verified, a verification email has been sent';
 const GENERIC_REGISTRATION_MESSAGE = 'Account creation request received. Check your email to continue.';
 const randomBytesAsync = promisify(randomBytes);
+function looksLikeRawUserAgent(value) {
+    if (!value)
+        return false;
+    return /mozilla\/|chrome\/|safari\/|firefox\/|edg\/|android|iphone|ipad/i.test(value);
+}
+function getSessionDeviceName(session) {
+    if (session.device_name && !looksLikeRawUserAgent(session.device_name)) {
+        return session.device_name;
+    }
+    if (session.user_agent) {
+        return buildSessionDeviceLabel(session.user_agent, session.device_type);
+    }
+    return buildSessionDeviceLabel('unknown', session.device_type);
+}
 // ============================================================================
 // EMAIL HELPERS
 // ============================================================================
@@ -400,7 +415,8 @@ export async function issueSessionForUser(options) {
         refresh_token_hash: refreshTokenHash,
         access_token_jti: sessionId,
         device_fingerprint: buildDeviceFingerprint(options.ipAddress, options.userAgent),
-        device_name: options.deviceName || options.userAgent.slice(0, 255),
+        device_name: options.deviceName ||
+            buildSessionDeviceLabel(options.userAgent, options.deviceType),
         device_type: options.deviceType || 'web',
         ip_address: options.ipAddress,
         user_agent: options.userAgent,
@@ -432,6 +448,7 @@ function createLoginMFAChallenge(options) {
         userAgent: options.userAgent,
         attempts: 0,
         rememberMe: options.rememberMe,
+        trustDevice: options.trustDevice,
         ...(options.availableMethods ? { availableMethods: options.availableMethods } : {}),
     };
     loginMfaChallengeCache.set(challengeId, challenge);
@@ -950,6 +967,7 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             deviceName: input.device_name,
             clientDeviceType,
             rememberMe: input.remember_me === true,
+            trustDevice: input.trust_device === true,
             availableMethods,
         });
         return {
@@ -1065,6 +1083,11 @@ export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clien
         mfaVerified: true,
         rememberMe: challenge.rememberMe,
     });
+    if (challenge.trustDevice) {
+        await trustCurrentDevice(user.id, ipAddress, userAgent, challenge.deviceName, requestId).catch((err) => {
+            logger.warn({ err, userId: user.id }, 'Failed to trust device after MFA login');
+        });
+    }
     await repository.recordLogin(user.id, ipAddress, userAgent);
     logAudit({
         user_id: user.id,
@@ -1075,7 +1098,11 @@ export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clien
         ip_address: ipAddress,
         user_agent: userAgent,
         request_id: requestId,
-        metadata: { session_id: session.sessionId, mfa_required: true },
+        metadata: {
+            session_id: session.sessionId,
+            mfa_required: true,
+            trusted_device_added: challenge.trustDevice,
+        },
     });
     return {
         access_token: session.accessToken,
@@ -1117,6 +1144,11 @@ export async function verifyLoginBackupCode(input, ipAddress, userAgent, clientD
         mfaVerified: true,
         rememberMe: challenge.rememberMe,
     });
+    if (challenge.trustDevice) {
+        await trustCurrentDevice(user.id, ipAddress, userAgent, challenge.deviceName, requestId).catch((err) => {
+            logger.warn({ err, userId: user.id }, 'Failed to trust device after backup-code login');
+        });
+    }
     await repository.recordLogin(user.id, ipAddress, userAgent);
     logAudit({
         user_id: user.id,
@@ -1127,7 +1159,10 @@ export async function verifyLoginBackupCode(input, ipAddress, userAgent, clientD
         ip_address: ipAddress,
         user_agent: userAgent,
         request_id: requestId,
-        metadata: { session_id: session.sessionId },
+        metadata: {
+            session_id: session.sessionId,
+            trusted_device_added: challenge.trustDevice,
+        },
     });
     return {
         access_token: session.accessToken,
@@ -1926,6 +1961,7 @@ export async function confirmMfaDisable(input, ipAddress, requestId) {
             return;
         }
         await repository.disableAllMFADevices(user.id, 'User disabled MFA', client);
+        await repository.revokeAllTrustedDevices(user.id, 'MFA disabled', client);
         await repository.updateUserMFAEnabled(user.id, false, client);
         userId = user.id;
     });
@@ -1965,6 +2001,7 @@ export async function disableMFA(userId, _input, ipAddress, requestId) {
     }
     await repository.withTransaction(async (client) => {
         await repository.disableAllMFADevices(user.id, 'User disabled MFA', client);
+        await repository.revokeAllTrustedDevices(user.id, 'MFA disabled', client);
         await repository.updateUserMFAEnabled(user.id, false, client);
     });
     await sendMFAStatusEmail(user, false);
@@ -1998,7 +2035,7 @@ export async function listUserSessions(userId, currentSessionId) {
     const sessions = await repository.listActiveSessionsByUser(userId);
     return sessions.map((s) => ({
         id: s.id,
-        device_name: s.device_name,
+        device_name: getSessionDeviceName(s),
         device_type: s.device_type,
         ip_address: s.ip_address,
         ip_geo_country: s.ip_geo_country,
@@ -2205,7 +2242,7 @@ export async function getUserSessionDetail(userId, sessionId, currentSessionId) 
     }
     return {
         id: session.id,
-        device_name: session.device_name ?? 'Unknown device',
+        device_name: getSessionDeviceName(session),
         device_type: session.device_type ?? 'web',
         ip_address: session.ip_address,
         ip_geo_country: session.ip_geo_country,

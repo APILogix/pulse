@@ -11,7 +11,9 @@ export declare const PASSWORD_RESET_TTL_SECONDS: number;
 export declare const EMAIL_VERIFICATION_TTL_SECONDS: number;
 export declare const MFA_DISABLE_TOKEN_TTL_SECONDS: number;
 export declare const REFRESH_GRACE_WINDOW_MS: number;
-export declare const REFRESH_COOKIE_NAME = "__Host-refresh_token";
+export declare const REFRESH_COOKIE_NAME: string;
+export declare function getRefreshCookieNames(): readonly string[];
+export declare function getRefreshCookieValue(cookies: Record<string, string | undefined> | undefined): string | undefined;
 /**
  * SHA-256 hash a token for at-rest storage. Refresh tokens, email-flow tokens,
  * and any other bearer credential MUST be stored as a hash so a database
@@ -29,9 +31,8 @@ export declare function generateSecureToken(byteLength?: number): string;
  * another (verification token vs reset token vs MFA-disable token), even
  * though all three flows share the same backing table.
  */
-export type EmailFlowPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'email_change' | 'account_unlock' | 'account_deletion';
+export type EmailFlowPurpose = 'email_verification' | 'password_reset' | 'mfa_disable' | 'account_unlock' | 'account_deletion';
 /** TTLs for additional email-bound flows (seconds). */
-export declare const EMAIL_CHANGE_TTL_SECONDS: number;
 export declare const ACCOUNT_UNLOCK_TTL_SECONDS: number;
 export declare const ACCOUNT_DELETION_GRACE_SECONDS: number;
 export declare const ACCOUNT_DELETION_TOKEN_TTL_SECONDS: number;
@@ -68,11 +69,14 @@ export declare function verifyRefreshToken(token: string): RefreshTokenClaims;
 /**
  * Refresh-token cookie configuration.
  *
- * The cookie name is `__Host-refresh_token` (returned by REFRESH_COOKIE_NAME),
- * which the browser only accepts when:
+ * In secure environments the cookie name is `__Host-refresh_token`, which the
+ * browser only accepts when:
  *   - Secure is set
  *   - Path is "/"
  *   - Domain attribute is absent
+ *
+ * In development we fall back to `refresh_token` because browsers reject
+ * `__Host-` cookies over plain HTTP.
  *
  * In development we relax `secure` so tests work over plain HTTP. In every
  * other environment Secure is mandatory.
@@ -80,7 +84,7 @@ export declare function verifyRefreshToken(token: string): RefreshTokenClaims;
 export declare function getRefreshCookieOptions(maxAgeSeconds?: number): {
     httpOnly: boolean;
     secure: boolean;
-    sameSite: "none";
+    sameSite: "none" | "lax";
     maxAge: number;
     path: string;
     signed: boolean;

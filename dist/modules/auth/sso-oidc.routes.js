@@ -7,12 +7,17 @@ import * as sso from './sso.service.js';
 import * as trusted from './trusted-device.service.js';
 import * as webauthn from './webauthn.service.js';
 import { getRefreshCookieOptions, REFRESH_COOKIE_NAME, } from './utils.js';
+import { env } from '../../config/env.js';
 import { SsoCallbackQuerySchema, SsoLoginSchema, TrustDeviceSchema, WebAuthnLoginMfaOptionsSchema, WebAuthnLoginMfaVerifySchema, WebAuthnRegisterOptionsSchema, WebAuthnRegisterVerifySchema, } from './types.js';
 function setRefreshCookie(reply, refreshToken, expiresAt) {
     reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, {
         ...getRefreshCookieOptions(),
         expires: expiresAt,
     });
+}
+function frontendAuthCallbackUrl() {
+    const base = (env.FRONTEND_URL || env.APP_URL).replace(/\/+$/, '');
+    return `${base}/auth/callback`;
 }
 export default async function ssoOidcRoutes(fastify) {
     // POST /auth/sso/login
@@ -43,7 +48,7 @@ export default async function ssoOidcRoutes(fastify) {
             const callbackUrl = buildConfiguredCallbackUrl(getApiOidcCallbackUrl(), request.url);
             const tokens = await sso.completeSsoCallback(callbackUrl, ci.ip, ci.userAgent, request.id);
             setRefreshCookie(reply, tokens.refresh_token, tokens.expires_at);
-            return reply.send({ data: tokens });
+            return reply.redirect(frontendAuthCallbackUrl());
         }
         catch (error) {
             return handleAuthError(error, reply, request);

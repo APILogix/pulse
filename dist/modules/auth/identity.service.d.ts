@@ -1,11 +1,5 @@
 import { getPasswordPolicy } from './policy.service.js';
-import { type AccountDeletionConfirmInput, type AccountDeletionRequestInput, type AccountUnlockConfirmInput, type AccountUnlockRequestInput, type AdminAuditLogsQueryInput, type AuditLogEntryPublic, type EmailChangeConfirmInput, type EmailChangeRequestInput, type MfaRecoveryRequestInput, type SsoDiscoveryQueryInput, type SsoDiscoveryResult, type UserDataExport } from './types.js';
-export declare function requestEmailChange(userId: string, input: EmailChangeRequestInput, ipAddress: string, requestId: string): Promise<{
-    message: string;
-}>;
-export declare function confirmEmailChange(input: EmailChangeConfirmInput, ipAddress: string, requestId: string): Promise<{
-    message: string;
-}>;
+import { type AccountDeletionConfirmInput, type AccountDeletionRequestInput, type AccountUnlockConfirmInput, type AccountUnlockRequestInput, type AdminAuditLogsQueryInput, type AuditLogEntryPublic, type MfaRecoveryRequestInput, type SsoDiscoveryQueryInput, type SsoDiscoveryResult, type UserDataExport } from './types.js';
 export declare function requestAccountUnlock(input: AccountUnlockRequestInput, ipAddress: string, requestId: string): Promise<{
     message: string;
 }>;

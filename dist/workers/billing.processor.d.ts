@@ -1,9 +1,11 @@
 export {};
 /**
- * Billing worker placeholder.
+ * Billing worker notes.
  *
- * No BullMQ processor is implemented here yet. Future billing jobs could handle
- * invoice generation, plan sync, quota review, webhook reconciliation, or other
- * asynchronous billing side effects.
+ * Billing scheduling now lives in src/modules/billing/queue.ts via pg-boss,
+ * consistent with the rest of the platform's Postgres-backed cron jobs.
+ *
+ * This file remains as a marker for any future non-cron billing processors
+ * (for example provider webhook fan-out or heavy invoice-generation workers).
  */
 //# sourceMappingURL=billing.processor.d.ts.map

@@ -59,6 +59,7 @@ declare class LogDatabaseManager {
      * applied per-statement via `SET LOCAL`, scoped to the read path only.
      */
     private createPool;
+    private resolveSslConfig;
     private setupPoolMonitoring;
     /**
      * Test connections on startup (fail-fast) and, when enabled, promote the

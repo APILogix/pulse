@@ -1,11 +1,11 @@
-# Alerting Module
+﻿# Alerting Module
 
 Enterprise alerting: rule CRUD, event ingestion with deduplication, dynamic
 routing to org-configured connectors, and high-throughput background delivery
 via pg-boss batches of 100 processed with `Promise.allSettled` (no sequential
 async loops, no N+1 writes).
 
-Built on top of migration `migrations2/003_add_alerting_module` and reuses the
+Built on top of migration `migrations2/003_alerting_create_core_schema` and reuses the
 **connectors** module for delivery (`NotificationDispatcher`, `ConnectorRepository`,
 and the shared circuit-breaker / rate-limiter in `connectors/runtime.ts`).
 
@@ -36,42 +36,42 @@ and the shared circuit-breaker / rate-limiter in `connectors/runtime.ts`).
 - **Single fetches.** `getBatchWithEvents` loads the batch + all its events in
   one query; `connectorRepo.getByIds` loads every referenced connector in one
   query (`= ANY($1::uuid[])`).
-- **Bulk writes.** Status updates use `UPDATE … FROM UNNEST(...)`; delivery logs
-  use `INSERT … SELECT FROM UNNEST(...)`. No per-row writes in the worker.
+- **Bulk writes.** Status updates use `UPDATE â€¦ FROM UNNEST(...)`; delivery logs
+  use `INSERT â€¦ SELECT FROM UNNEST(...)`. No per-row writes in the worker.
 - **Bulkhead + circuit breaker.** Each connector has its own circuit breaker
   (shared with the connectors feature), so one failing/slow connector only
   affects its own deliveries, not the batch.
 
 ## pg-boss jobs
 
-Registered in the **worker process** (`workers/main.ts` →
+Registered in the **worker process** (`workers/main.ts` â†’
 `registerAlertingWorkers`). pg-boss is already started there.
 
 | Job | Trigger | Purpose |
 |---|---|---|
-| `alert.form-batches` | cron `* * * * *` | Claim pending events → create batches → enqueue `alert.process-batch` |
-| `alert.process-batch` | enqueued by form-batches | Deliver one batch of ≤100 events |
+| `alert.form-batches` | cron `* * * * *` | Claim pending events â†’ create batches â†’ enqueue `alert.process-batch` |
+| `alert.process-batch` | enqueued by form-batches | Deliver one batch of â‰¤100 events |
 | `alert.auto-resolve` | cron `* * * * *` | Resolve stale `firing` events past `auto_resolve_at` |
 
 Worker config (v12 option names): `localConcurrency: 5` (the spec's
-teamSize/teamConcurrency — 5 independent workers), `retryLimit: 3`,
+teamSize/teamConcurrency â€” 5 independent workers), `retryLimit: 3`,
 `retryDelay: 60`, `retryBackoff: true`, `expireInSeconds: 7200` (2h).
 
 > The API process stays thin: ingesting an event only inserts a `pending` row.
-> The scheduled `alert.form-batches` job (≈ every minute) turns pending events
+> The scheduled `alert.form-batches` job (â‰ˆ every minute) turns pending events
 > into `process-batch` jobs. This avoids requiring pg-boss in the API process,
 > matching how the rest of the codebase splits API vs worker responsibilities.
 
 ## Alert lifecycle
 
-1. **Ingest** (`POST .../alerting/events`): compute fingerprint → dedup check
+1. **Ingest** (`POST .../alerting/events`): compute fingerprint â†’ dedup check
    (fold into an active event within the rule's window, incrementing
-   `duplicate_count`) → silence check (suppress at ingest if a matcher hits) →
+   `duplicate_count`) â†’ silence check (suppress at ingest if a matcher hits) â†’
    persist as `pending` (or `silenced`) + write history.
-2. **Form batch** (worker): claim pending → `alert_event_batches`.
-3. **Process batch** (worker): resolve routing per event → deliver to connectors
-   concurrently → bulk-update event statuses → bulk-insert
-   `alert_delivery_attempts` → complete the batch (`completed`/`partial`/`failed`).
+2. **Form batch** (worker): claim pending â†’ `alert_event_batches`.
+3. **Process batch** (worker): resolve routing per event â†’ deliver to connectors
+   concurrently â†’ bulk-update event statuses â†’ bulk-insert
+   `alert_delivery_attempts` â†’ complete the batch (`completed`/`partial`/`failed`).
 4. **Acknowledge / Resolve / Silence**: user actions write to the event and an
    `alert_event_history` audit row.
 5. **Auto-resolve** (worker): events past `auto_resolve_at` are resolved.
@@ -99,7 +99,7 @@ teamSize/teamConcurrency — 5 independent workers), `retryLimit: 3`,
 ## Security
 
 - Every route requires `authenticate` + `requireOrgAccess`; all queries are
-  scoped by `organization_id` (service-layer isolation — RLS is left commented
+  scoped by `organization_id` (service-layer isolation â€” RLS is left commented
   in the migration, consistent with the rest of the schema).
 - Template values are **sanitized** (control chars stripped, HTML escaped)
   before rendering to prevent injection into Slack/Discord/email messages.
@@ -108,10 +108,11 @@ teamSize/teamConcurrency — 5 independent workers), `retryLimit: 3`,
 
 ## Tests
 
-`test/unit/modules/alerting.test.ts` covers the pure logic — fingerprint/dedup,
+`test/unit/modules/alerting.test.ts` covers the pure logic â€” fingerprint/dedup,
 the evaluation engine (operators + AND/OR grouping), template rendering +
 sanitization, and routing resolution incl. fallback:
 
 ```bash
 npx vitest run test/unit/modules/alerting.test.ts
 ```
+

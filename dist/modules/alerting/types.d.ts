@@ -1,11 +1,11 @@
 /**
- * Alerting module — types, Zod schemas, DB row types, DTOs, and errors.
+ * Alerting module â€” types, Zod schemas, DB row types, DTOs, and errors.
  *
  * Conventions (matching connectors/organization modules):
  *   - Zod schemas drive request validation and enum parity with Postgres.
  *   - DB rows are snake_case; response DTOs are camelCase.
  *   - Module errors extend the shared AppError for uniform HTTP mapping.
- *   - Enums match migrations2/003_add_alerting_module.up.sql exactly.
+ *   - Enums match migrations2/003_alerting_create_core_schema.up.sql exactly.
  */
 import { z } from 'zod';
 import { AppError } from '../../shared/errors/app-error.js';

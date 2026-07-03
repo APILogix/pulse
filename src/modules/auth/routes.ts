@@ -9,10 +9,11 @@
  *   - Map AuthError -> HTTP responses without leaking internals.
  *
  * Refresh-token transport:
- *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie
- *     named `__Host-refresh_token` with Path=/. This forces the browser to
- *     require Secure + no Domain attribute, blocking sibling-subdomain
- *     overwrite attacks.
+ *   - The refresh JWT lives in an httpOnly, signed, SameSite=None cookie.
+ *   - Production/staging use `__Host-refresh_token` with Path=/, which forces
+ *     Secure + no Domain attribute and blocks sibling-subdomain overwrite.
+ *   - Development falls back to `refresh_token` because browsers reject
+ *     `__Host-` cookies over plain HTTP.
  *
  * Rate limiting:
  *   - Scoped in-process LRU limits (rate-limits.ts) on sensitive auth routes.
@@ -72,7 +73,12 @@ import {
   tokenConfirmRateLimit,
   verifyEmailRateLimit,
 } from './rate-limits.js';
-import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from './utils.js';
+import {
+  getRefreshCookieNames,
+  getRefreshCookieOptions,
+  getRefreshCookieValue,
+  REFRESH_COOKIE_NAME,
+} from './utils.js';
 
 interface RequestWithUser extends FastifyRequest {
   user: {
@@ -83,6 +89,13 @@ interface RequestWithUser extends FastifyRequest {
     mfaVerified: boolean;
     stepUpFresh: boolean;
   };
+}
+
+function clearRefreshCookies(reply: FastifyReply): void {
+  const options = getRefreshCookieOptions();
+  for (const name of getRefreshCookieNames()) {
+    reply.clearCookie(name, options);
+  }
 }
 
 // ============================================================================
@@ -997,7 +1010,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
           r.user.id,
           r.user.sessionId,
         );
-        reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+        clearRefreshCookies(reply);
         return reply.send({ data: { revoked: count } });
       } catch (error) {
         return handleAuthError(error, reply, request);
@@ -1045,7 +1058,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
     try {
       const ci = getClientInfo(request);
 
-      const raw = request.cookies?.[REFRESH_COOKIE_NAME];
+      const raw = getRefreshCookieValue(request.cookies);
       if (!raw) {
         return reply.status(401).send({
           error: {
@@ -1056,7 +1069,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
       }
       const unsigned = request.unsignCookie(raw);
       if (!unsigned.valid || !unsigned.value) {
-        reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+        clearRefreshCookies(reply);
         return reply.status(401).send({
           error: {
             code: 'INVALID_REFRESH_TOKEN',
@@ -1096,7 +1109,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
           error.code === AuthErrorCodes.SESSION_EXPIRED ||
           error.code === AuthErrorCodes.SESSION_INVALID)
       ) {
-        reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+        clearRefreshCookies(reply);
       }
       return handleAuthError(error, reply, request);
     }
@@ -1116,7 +1129,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
           ip,
           r.id,
         );
-        reply.clearCookie(REFRESH_COOKIE_NAME, getRefreshCookieOptions());
+        clearRefreshCookies(reply);
         return reply.send({ data: result });
       } catch (error) {
         return handleAuthError(error, reply, request);

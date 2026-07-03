@@ -4,8 +4,9 @@
  * Register these exact URLs in Google, GitHub, Microsoft, and enterprise IdP consoles.
  */
 import { env } from '../../config/env.js';
+import type { LinkableProvider } from './identity-link.config.js';
 
-function apiBaseUrl(): string {
+export function apiBaseUrl(): string {
   return (env.API_PUBLIC_URL || env.APP_URL).replace(/\/+$/, '');
 }
 
@@ -17,8 +18,13 @@ export function getApiSocialLoginCallbackUrl(): string {
   return env.SOCIAL_LOGIN_CALLBACK_URL || `${apiBaseUrl()}/auth/login/social/callback`;
 }
 
-export function getApiIdentityLinkCallbackUrl(): string {
-  return env.IDENTITY_LINK_CALLBACK_URL || `${apiBaseUrl()}/auth/identity-providers/callback`;
+export function getApiProviderAuthorizeUrl(
+  provider: LinkableProvider,
+  flow: 'login' | 'link',
+): string {
+  return flow === 'login'
+    ? `${apiBaseUrl()}/auth/login/social/${provider}/authorize`
+    : `${apiBaseUrl()}/auth/identity-providers/${provider}/authorize`;
 }
 
 export function buildConfiguredCallbackUrl(

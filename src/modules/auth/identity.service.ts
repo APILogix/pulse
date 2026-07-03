@@ -1,5 +1,5 @@
 /**
- * Phase 3 identity flows: email change, account unlock, GDPR export,
+ * Phase 3 identity flows: account unlock, GDPR export,
  * delayed deletion, SSO discovery, MFA recovery intake, admin audit read.
  */
 import { createHash } from 'crypto';
@@ -10,10 +10,9 @@ import { authEmail } from './auth-email.js';
 import {
   accountDeletionConfirmTemplate,
   accountUnlockTemplate,
-  emailChangeConfirmTemplate,
 } from '../../shared/email/templates.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
-import { verifyPassword } from '../../shared/utils/encryption.js';
+import { buildSessionDeviceLabel } from '../../shared/utils/request.js';
 
 import { revokeAllUserTokens as cacheRevokeAllUserTokens } from './cache.js';
 import {
@@ -32,8 +31,6 @@ import {
   type AccountUnlockRequestInput,
   type AdminAuditLogsQueryInput,
   type AuditLogEntryPublic,
-  type EmailChangeConfirmInput,
-  type EmailChangeRequestInput,
   type MfaRecoveryRequestInput,
   type SsoDiscoveryQueryInput,
   type SsoDiscoveryResult,
@@ -45,7 +42,6 @@ import {
   ACCOUNT_DELETION_GRACE_SECONDS,
   ACCOUNT_DELETION_TOKEN_TTL_SECONDS,
   ACCOUNT_UNLOCK_TTL_SECONDS,
-  EMAIL_CHANGE_TTL_SECONDS,
   generateEmailFlowToken,
   hashEmailFlowToken,
   normalizeEmail,
@@ -72,12 +68,23 @@ function emailToHash(email: string): string {
   return createHash('sha256').update(normalizeEmail(email)).digest('hex');
 }
 
-function getBaseUrl(value: string | undefined, fallback: string): string {
-  return (value || fallback).replace(/\/+$/, '');
+function getExportSessionDeviceName(session: {
+  device_name: string | null;
+  device_type: string | null;
+  user_agent: string | null;
+}): string {
+  if (
+    session.device_name &&
+    !/mozilla\/|chrome\/|safari\/|firefox\/|edg\/|android|iphone|ipad/i.test(session.device_name)
+  ) {
+    return session.device_name;
+  }
+
+  return buildSessionDeviceLabel(session.user_agent || 'unknown', session.device_type);
 }
 
-function buildEmailChangeUrl(token: string): string {
-  return `${getBaseUrl(config.FRONTEND_URL, config.APP_URL)}/security/email/confirm?token=${encodeURIComponent(token)}`;
+function getBaseUrl(value: string | undefined, fallback: string): string {
+  return (value || fallback).replace(/\/+$/, '');
 }
 
 function buildAccountUnlockUrl(token: string): string {
@@ -94,152 +101,6 @@ function toMinutes(seconds: number): number {
 
 const GENERIC_UNLOCK_MESSAGE =
   'If the account exists and is locked, an unlock email has been sent';
-
-export async function requestEmailChange(
-  userId: string,
-  input: EmailChangeRequestInput,
-  ipAddress: string,
-  requestId: string,
-): Promise<{ message: string }> {
-  const user = await repository.findUserById(userId);
-  if (!user) {
-    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
-  }
-  if (!user.password_hash) {
-    throw new AuthError(
-      'Password verification required',
-      AuthErrorCodes.PASSWORD_REQUIRED,
-      400,
-    );
-  }
-  const valid = await verifyPassword(input.current_password, user.password_hash);
-  if (!valid) {
-    throw new AuthError(
-      'Current password is incorrect',
-      AuthErrorCodes.PASSWORD_INCORRECT,
-      401,
-    );
-  }
-
-  const newEmail = normalizeEmail(input.new_email);
-  if (newEmail === normalizeEmail(user.email)) {
-    throw new AuthError(
-      'New email must differ from current email',
-      AuthErrorCodes.VALIDATION_ERROR,
-      400,
-    );
-  }
-
-  const collision = await repository.findUserByEmailHash(emailToHash(newEmail));
-  if (collision && collision.id !== userId) {
-    throw new AuthError(
-      'Email address is not available',
-      AuthErrorCodes.EMAIL_IN_USE,
-      409,
-    );
-  }
-
-  const token = generateEmailFlowToken();
-  await repository.createEmailVerification({
-    user_id: userId,
-    email: newEmail,
-    token_hash: hashEmailFlowToken('email_change', token),
-    purpose: 'email_change',
-    expires_at: new Date(Date.now() + EMAIL_CHANGE_TTL_SECONDS * 1000),
-  });
-
-  await authEmail.send({
-    to: newEmail,
-    ...emailChangeConfirmTemplate({
-      appName: config.APP_NAME,
-      userName: user.full_name,
-      newEmail,
-      actionUrl: buildEmailChangeUrl(token),
-      expiresInMinutes: toMinutes(EMAIL_CHANGE_TTL_SECONDS),
-    }),
-  });
-
-  logAudit({
-    user_id: userId,
-    org_id: null,
-    action: 'user.email_change_requested',
-    resource_type: 'user',
-    resource_id: userId,
-    ip_address: ipAddress,
-    request_id: requestId,
-    metadata: { new_email_domain: newEmail.split('@')[1] },
-  });
-
-  return {
-    message:
-      'Confirmation email sent to the new address. Your current email remains active until you confirm.',
-  };
-}
-
-export async function confirmEmailChange(
-  input: EmailChangeConfirmInput,
-  ipAddress: string,
-  requestId: string,
-): Promise<{ message: string }> {
-  const tokenHash = hashEmailFlowToken('email_change', input.token);
-
-  let userId: string | null = null;
-
-  await repository.withTransaction(async (client) => {
-    const consumed = await repository.consumeEmailVerificationToken(
-      tokenHash,
-      'email_change',
-      client,
-    );
-    if (!consumed) {
-      throw new AuthError(
-        'Invalid or expired email change token',
-        AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
-        400,
-      );
-    }
-
-    const collision = await repository.findUserByEmailHash(
-      emailToHash(consumed.email),
-      client,
-    );
-    if (collision && collision.id !== consumed.user_id) {
-      throw new AuthError(
-        'Email address is no longer available',
-        AuthErrorCodes.EMAIL_IN_USE,
-        409,
-      );
-    }
-
-    const updated = await repository.updateUserEmail(
-      consumed.user_id,
-      consumed.email,
-      emailToHash(consumed.email),
-      client,
-    );
-    if (!updated) {
-      throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
-    }
-    userId = updated.id;
-  });
-
-  if (userId) {
-    cacheRevokeAllUserTokens(userId);
-    await repository.revokeAllUserSessions(userId, 'Email address changed');
-
-    logAudit({
-      user_id: userId,
-      org_id: null,
-      action: 'user.email_changed',
-      resource_type: 'user',
-      resource_id: userId,
-      ip_address: ipAddress,
-      request_id: requestId,
-    });
-  }
-
-  return { message: 'Email address updated successfully' };
-}
 
 export async function requestAccountUnlock(
   input: AccountUnlockRequestInput,
@@ -484,7 +345,7 @@ export async function exportUserData(userId: string): Promise<UserDataExport> {
     })),
     sessions: sessions.map((s) => ({
       id: s.id,
-      device_name: s.device_name,
+      device_name: getExportSessionDeviceName(s),
       device_type: s.device_type,
       ip_address: s.ip_address,
       ip_geo_country: s.ip_geo_country,

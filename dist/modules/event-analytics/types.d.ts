@@ -1,8 +1,8 @@
 /**
- * Event-analytics module — types, Zod schemas, DTOs, and errors.
+ * Event-analytics module â€” types, Zod schemas, DTOs, and errors.
  *
  * Operates on the Pulse SDK event tables created in
- * migrations2/004_add_analytics_module (events_*, analytics_*).
+ * migrations2/004_analytics_create_core_schema (events_*, analytics_*).
  *
  * Distinct from the existing project-scoped `analytics` module (telemetry).
  * This module is organization-scoped and read-optimized for dashboards.

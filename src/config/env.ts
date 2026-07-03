@@ -13,6 +13,13 @@ const envSchema = z.object({
   API_PUBLIC_URL: z.string().url().optional(),
   // Primary Database (PostgreSQL)
   DATABASE_URL: z.string(),
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+  DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
+  DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
+  DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
+  DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
+  DB_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+  DB_KEEPALIVE_INITIAL_DELAY_MS: z.coerce.number().int().min(0).default(10000),
 
   // Log Database (Primary + Replica)
   LOG_DB_PRIMARY: z.string().optional(),
@@ -35,6 +42,15 @@ const envSchema = z.object({
   // silently dropping idle pooled connections mid-flight.
   LOG_DB_KEEPALIVE_MS: z.coerce.number().int().min(0).default(10000),
   LOG_DB_SLOW_QUERY_MS: z.coerce.number().int().min(1).default(1000),
+  // Controls TLS for the dedicated log database. When unset, SSL is inferred
+  // from the connection string (`sslmode=require|verify-*`) and otherwise disabled.
+  LOG_DB_SSL_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return value === 'true';
+    }),
   // Reject unauthorized TLS in production unless explicitly relaxed (some
   // managed providers serve certs that need this off).
   LOG_DB_SSL_REJECT_UNAUTHORIZED: z
@@ -83,12 +99,11 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM_EMAIL: z.string().email().default('security@example.com'),
-  SMTP_FROM_NAME: z.string().default('API Monitoring Security'),
+  SMTP_FROM_NAME: z.string().default('pulsiv Security'),
 
   // Auth callbacks / SSO / WebAuthn
   OIDC_CALLBACK_URL: z.string().url().optional(),
   SOCIAL_LOGIN_CALLBACK_URL: z.string().url().optional(),
-  IDENTITY_LINK_CALLBACK_URL: z.string().url().optional(),
   SAML_SP_ENTITY_ID: z.string().url().optional(),
   SAML_SP_ACS_URL: z.string().url().optional(),
   SAML_SP_SLO_URL: z.string().url().optional(),
@@ -102,9 +117,6 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
-  MICROSOFT_CLIENT_ID: z.string().optional(),
-  MICROSOFT_CLIENT_SECRET: z.string().optional(),
-  MICROSOFT_TENANT_ID: z.string().optional(),
 
   // AI
   OPENAI_API_KEY: z.string().optional(),

@@ -177,7 +177,7 @@ Response drives the UI:
 | `sso_available` | List of org providers (metadata for picker) |
 | `social_login_ready` | Google/GitHub/Microsoft configured on server |
 | `linked_social_providers` | Which social buttons this **email** can use (already linked) |
-| `configured_link_providers` | Which providers exist globally (for “link account” settings) |
+| `configured_link_providers` | Which social providers are configured on this deployment |
 
 ```mermaid
 flowchart LR
@@ -255,7 +255,7 @@ sequenceDiagram
 
 ## 8. Social login (passwordless)
 
-**Prerequisite:** User already linked provider via identity linking (while logged in).
+**Prerequisite:** User already has a linked social identity in `user_linked_identities`.
 
 ```mermaid
 sequenceDiagram
@@ -284,33 +284,9 @@ sequenceDiagram
 
 ---
 
-## 9. Identity linking (authenticated)
+## 9. Session refresh and logout
 
-Used from account settings — **not** a login method by itself.
-
-```mermaid
-sequenceDiagram
-  participant U as Logged-in user
-  participant API as API
-  participant IL as identity-link.service
-  participant LRU as identityLinkStateCache
-
-  U->>API: POST /auth/identity-providers/google/link (+ step-up)
-  IL->>LRU: userId, verifier, state
-  IL-->>U: authorization_url
-  Note over U: OAuth completes
-  U->>API: GET /auth/identity-providers/callback
-  IL->>DB: INSERT user_linked_identities
-  API-->>U: link confirmed
-```
-
-**Callback URL:** `{API_PUBLIC_URL}/auth/identity-providers/callback`
-
----
-
-## 10. Session refresh and logout
-
-### 10.1 Refresh
+### 9.1 Refresh
 
 ```mermaid
 sequenceDiagram
@@ -326,7 +302,7 @@ sequenceDiagram
   API-->>U: new access_token + new cookie
 ```
 
-### 10.2 Logout (password / OIDC / social session)
+### 9.2 Logout (password / OIDC / social session)
 
 ```mermaid
 sequenceDiagram
@@ -348,7 +324,7 @@ sequenceDiagram
   API->>API: Clear refresh cookie
 ```
 
-### 10.3 SAML single logout (IdP-initiated)
+### 9.3 SAML single logout (IdP-initiated)
 
 IdP POSTs `SAMLRequest` to `POST /auth/saml/slo`:
 
@@ -359,9 +335,9 @@ IdP POSTs `SAMLRequest` to `POST /auth/saml/slo`:
 
 ---
 
-## 11. Step-up MFA (in-session sensitive actions)
+## 10. Step-up MFA (in-session sensitive actions)
 
-Required for: password change, MFA disable, device removal, email change, account deletion export, identity link/unlink, etc.
+Required for: password change, MFA disable, device removal, account deletion export, etc.
 
 ```mermaid
 flowchart TD
@@ -428,7 +404,6 @@ sequenceDiagram
 |------|-------|---------|---------|
 | Forgot password | `POST /auth/password/forgot` | `POST /auth/password/reset` | New password; all sessions revoked |
 | Account unlock | `POST /auth/account/unlock/request` | `POST /auth/account/unlock/confirm` | Clears `locked_until` |
-| Email change | `POST /auth/email/change/request` (+ step-up) | `POST /auth/email/change/confirm` | Updates email |
 | Account deletion | `POST /auth/users/me/delete/request` | `POST /auth/users/me/delete/confirm` | Schedules deletion (7-day grace); worker purges |
 | MFA recovery | `POST /auth/mfa/recovery/request` | Manual support | Security event + audit only |
 

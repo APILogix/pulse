@@ -48,16 +48,44 @@ export const MFA_DISABLE_TOKEN_TTL_SECONDS = 30 * 60; // 30 min; user must
 // detection kicks in and revokes the entire session family.
 export const REFRESH_GRACE_WINDOW_MS = 30 * 1000;
 
-// Refresh-token cookie name. The `__Host-` prefix forces the browser to
-// require Secure + Path=/ + no Domain attribute; sibling subdomains cannot
-// overwrite this cookie.
-export const REFRESH_COOKIE_NAME = '__Host-refresh_token';
+const SECURE_REFRESH_COOKIE_NAME = '__Host-refresh_token';
+const DEV_REFRESH_COOKIE_NAME = 'refresh_token';
+const LEGACY_REFRESH_COOKIE_NAMES = [
+  SECURE_REFRESH_COOKIE_NAME,
+  DEV_REFRESH_COOKIE_NAME,
+  '_HOST_refresh_token',
+] as const;
+
+function useSecureRefreshCookiePrefix(): boolean {
+  return env.NODE_ENV !== 'development';
+}
+
+// Refresh-token cookie name. We only use the `__Host-` prefix when Secure is
+// also enabled; browsers reject `__Host-` cookies over plain HTTP.
+export const REFRESH_COOKIE_NAME = useSecureRefreshCookiePrefix()
+  ? SECURE_REFRESH_COOKIE_NAME
+  : DEV_REFRESH_COOKIE_NAME;
+
+export function getRefreshCookieNames(): readonly string[] {
+  return LEGACY_REFRESH_COOKIE_NAMES;
+}
+
+export function getRefreshCookieValue(
+  cookies: Record<string, string | undefined> | undefined,
+): string | undefined {
+  if (!cookies) return undefined;
+  for (const name of LEGACY_REFRESH_COOKIE_NAMES) {
+    const value = cookies[name];
+    if (value) return value;
+  }
+  return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // JWT issuer / audience claims (defense-in-depth against token confusion)
 // ---------------------------------------------------------------------------
-const JWT_ISSUER = 'api-monitoring-backend';
-const JWT_AUDIENCE = 'api-monitoring-clients';
+const JWT_ISSUER = 'pulsiv';
+const JWT_AUDIENCE = 'pulsiv';
 
 // ---------------------------------------------------------------------------
 // Cryptographic helpers
@@ -90,12 +118,10 @@ export type EmailFlowPurpose =
   | 'email_verification'
   | 'password_reset'
   | 'mfa_disable'
-  | 'email_change'
   | 'account_unlock'
   | 'account_deletion';
 
 /** TTLs for additional email-bound flows (seconds). */
-export const EMAIL_CHANGE_TTL_SECONDS = 60 * 60;
 export const ACCOUNT_UNLOCK_TTL_SECONDS = 60 * 60;
 export const ACCOUNT_DELETION_GRACE_SECONDS = 7 * 24 * 60 * 60;
 export const ACCOUNT_DELETION_TOKEN_TTL_SECONDS = 60 * 60;
@@ -207,11 +233,14 @@ export function verifyRefreshToken(token: string): RefreshTokenClaims {
 /**
  * Refresh-token cookie configuration.
  *
- * The cookie name is `__Host-refresh_token` (returned by REFRESH_COOKIE_NAME),
- * which the browser only accepts when:
+ * In secure environments the cookie name is `__Host-refresh_token`, which the
+ * browser only accepts when:
  *   - Secure is set
  *   - Path is "/"
  *   - Domain attribute is absent
+ *
+ * In development we fall back to `refresh_token` because browsers reject
+ * `__Host-` cookies over plain HTTP.
  *
  * In development we relax `secure` so tests work over plain HTTP. In every
  * other environment Secure is mandatory.
@@ -219,10 +248,11 @@ export function verifyRefreshToken(token: string): RefreshTokenClaims {
 export function getRefreshCookieOptions(maxAgeSeconds?: number) {
   const maxAge =
     (maxAgeSeconds ?? REFRESH_TOKEN_TTL_SECONDS) * 1000;
+  const secure = useSecureRefreshCookiePrefix();
   return {
     httpOnly: true,
-    secure: env.NODE_ENV !== 'development',
-    sameSite: 'none' as const,
+    secure,
+    sameSite: (secure ? 'none' : 'lax') as 'none' | 'lax',
     maxAge,
     path: '/',
     signed: true,

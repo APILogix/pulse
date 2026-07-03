@@ -1,14 +1,14 @@
-/**
- * SDK Remote Config types — DB rows, DTOs, and Zod validators.
+﻿/**
+ * SDK Remote Config types â€” DB rows, DTOs, and Zod validators.
  *
- * Mirrors migrations2/007_add_sdk_config_module.up.sql. Snake_case Row types
+ * Mirrors migrations2/007_organizations_create_sdk_config_schema.up.sql. Snake_case Row types
  * match columns; camelCase DTOs are what the API returns.
  */
 import { z } from "zod";
 
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ENUMS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export const ConfigTypeSchema = z.enum(["json", "yaml", "env", "feature_flag"]);
 export type ConfigType = z.infer<typeof ConfigTypeSchema>;
@@ -24,9 +24,9 @@ export type DeploymentStatus = z.infer<typeof DeploymentStatusSchema>;
 
 export type ChangeType = "create" | "update" | "rollback" | "delete";
 
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PARAM / QUERY / BODY SCHEMAS
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const Uuid = z.string().uuid();
 
@@ -86,9 +86,9 @@ export const ResolveSdkConfigQuerySchema = z.object({
   sdkVersion: z.string().max(50).optional(),
 });
 
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DB ROW TYPES
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export interface SdkConfigRow {
   id: string;
@@ -146,9 +146,9 @@ export interface SdkConfigDeploymentRow {
   updated_at: Date;
 }
 
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // RESPONSE DTOs
-// ═══════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export interface SdkConfigDto {
   id: string;
@@ -212,3 +212,4 @@ export interface SdkConfigResolvedDto {
   environment: string;
   targetPlatforms: string[] | null;
 }
+

@@ -11,6 +11,13 @@ declare const envSchema: z.ZodObject<{
     APP_URL: z.ZodDefault<z.ZodString>;
     API_PUBLIC_URL: z.ZodOptional<z.ZodString>;
     DATABASE_URL: z.ZodString;
+    DB_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_POOL_MIN: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_IDLE_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_CONNECTION_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_STATEMENT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_QUERY_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_KEEPALIVE_INITIAL_DELAY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_PRIMARY: z.ZodOptional<z.ZodString>;
     LOG_DB_REPLICA: z.ZodOptional<z.ZodString>;
     LOG_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -22,6 +29,7 @@ declare const envSchema: z.ZodObject<{
     LOG_DB_CONNECTION_TIMEOUT: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_KEEPALIVE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_SLOW_QUERY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    LOG_DB_SSL_ENABLED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
     LOG_DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     LOG_DB_ENABLE_TIMESCALE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     LOG_DB_CHUNK_INTERVAL: z.ZodDefault<z.ZodString>;
@@ -45,7 +53,6 @@ declare const envSchema: z.ZodObject<{
     SMTP_FROM_NAME: z.ZodDefault<z.ZodString>;
     OIDC_CALLBACK_URL: z.ZodOptional<z.ZodString>;
     SOCIAL_LOGIN_CALLBACK_URL: z.ZodOptional<z.ZodString>;
-    IDENTITY_LINK_CALLBACK_URL: z.ZodOptional<z.ZodString>;
     SAML_SP_ENTITY_ID: z.ZodOptional<z.ZodString>;
     SAML_SP_ACS_URL: z.ZodOptional<z.ZodString>;
     SAML_SP_SLO_URL: z.ZodOptional<z.ZodString>;
@@ -57,9 +64,6 @@ declare const envSchema: z.ZodObject<{
     GOOGLE_CLIENT_SECRET: z.ZodOptional<z.ZodString>;
     GITHUB_CLIENT_ID: z.ZodOptional<z.ZodString>;
     GITHUB_CLIENT_SECRET: z.ZodOptional<z.ZodString>;
-    MICROSOFT_CLIENT_ID: z.ZodOptional<z.ZodString>;
-    MICROSOFT_CLIENT_SECRET: z.ZodOptional<z.ZodString>;
-    MICROSOFT_TENANT_ID: z.ZodOptional<z.ZodString>;
     OPENAI_API_KEY: z.ZodOptional<z.ZodString>;
     INGESTION_MAX_BATCH_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_DEFAULT_RATE_PER_SECOND: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -98,6 +102,13 @@ export declare const env: {
     APP_NAME: string;
     APP_URL: string;
     DATABASE_URL: string;
+    DB_POOL_MAX: number;
+    DB_POOL_MIN: number;
+    DB_IDLE_TIMEOUT_MS: number;
+    DB_CONNECTION_TIMEOUT_MS: number;
+    DB_STATEMENT_TIMEOUT_MS: number;
+    DB_QUERY_TIMEOUT_MS: number;
+    DB_KEEPALIVE_INITIAL_DELAY_MS: number;
     LOG_POOL_MAX: number;
     LOG_POOL_MIN: number;
     LOG_QUERY_TIMEOUT: number;
@@ -107,6 +118,7 @@ export declare const env: {
     LOG_DB_CONNECTION_TIMEOUT: number;
     LOG_DB_KEEPALIVE_MS: number;
     LOG_DB_SLOW_QUERY_MS: number;
+    LOG_DB_SSL_ENABLED: boolean | undefined;
     LOG_DB_SSL_REJECT_UNAUTHORIZED: boolean;
     LOG_DB_ENABLE_TIMESCALE: boolean;
     LOG_DB_CHUNK_INTERVAL: string;
@@ -160,7 +172,6 @@ export declare const env: {
     SMTP_PASS?: string | undefined;
     OIDC_CALLBACK_URL?: string | undefined;
     SOCIAL_LOGIN_CALLBACK_URL?: string | undefined;
-    IDENTITY_LINK_CALLBACK_URL?: string | undefined;
     SAML_SP_ENTITY_ID?: string | undefined;
     SAML_SP_ACS_URL?: string | undefined;
     SAML_SP_SLO_URL?: string | undefined;
@@ -172,9 +183,6 @@ export declare const env: {
     GOOGLE_CLIENT_SECRET?: string | undefined;
     GITHUB_CLIENT_ID?: string | undefined;
     GITHUB_CLIENT_SECRET?: string | undefined;
-    MICROSOFT_CLIENT_ID?: string | undefined;
-    MICROSOFT_CLIENT_SECRET?: string | undefined;
-    MICROSOFT_TENANT_ID?: string | undefined;
     OPENAI_API_KEY?: string | undefined;
     INGESTION_ENDPOINT?: string | undefined;
     TIMESCALEDB_URL?: string | undefined;

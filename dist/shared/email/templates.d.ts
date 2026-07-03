@@ -23,9 +23,6 @@ export declare function mfaCodeTemplate(input: MfaCodeTemplateInput): EmailTempl
 export declare function mfaStatusTemplate(input: TemplateInput & {
     enabled: boolean;
 }): EmailTemplate;
-export declare function emailChangeConfirmTemplate(input: ActionTemplateInput & {
-    newEmail: string;
-}): EmailTemplate;
 export declare function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate;
 export declare function accountDeletionConfirmTemplate(input: ActionTemplateInput & {
     scheduledFor: string;

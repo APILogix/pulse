@@ -2,11 +2,12 @@ import { Pool } from 'pg';
 /**
  * Primary PostgreSQL connection pool.
  *
- * Tuned for enterprise workloads:
- * - max 20 connections (matches typical PG max_connections / app-instance ratio)
- * - 5 min connections kept warm to avoid cold-start latency
- * - 5s connection timeout to fail fast on network issues
- * - 10s statement/query timeout to prevent runaway queries
+ * Tuned for managed Postgres / Neon-style poolers:
+ * - env-driven pool size so API, workers, and log DB pools do not over-subscribe
+ * - no required warm idle clients by default; serverless poolers can close idle sockets
+ * - server-side statement timeout bounds runaway SQL
+ * - client-side query timeout is disabled by default because it can abort healthy
+ *   remote queries during cold starts or transient network latency
  */
 export declare const pool: Pool;
 /**

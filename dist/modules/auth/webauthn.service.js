@@ -13,11 +13,13 @@ import { createHash, randomBytes } from 'crypto';
 import { promisify } from 'util';
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse, } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
+import { logger } from '../../config/logger.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 import { loginMfaChallengeCache, mfaBackupTempCache, recordStepUpFreshness, stepUpChallengeCache, webauthnChallengeCache, } from './cache.js';
 import * as repository from './repository.js';
 import { assertLoginAllowedByOrgPolicy, assertMfaEnrollmentAllowed, } from './policy.service.js';
 import { issueSessionForUser } from './service.js';
+import { trustCurrentDevice } from './trusted-device.service.js';
 import { AuthError, AuthErrorCodes, } from './types.js';
 import { webauthnConfig } from './webauthn.config.js';
 const randomBytesAsync = promisify(randomBytes);
@@ -238,6 +240,11 @@ export async function verifyLoginMfaWebAuthn(input, ipAddress, userAgent, client
         mfaVerified: true,
         rememberMe: loginChallenge.rememberMe,
     });
+    if (loginChallenge.trustDevice) {
+        await trustCurrentDevice(user.id, ipAddress, userAgent, loginChallenge.deviceName, requestId).catch((err) => {
+            logger.warn({ err, userId: user.id }, 'Failed to trust device after WebAuthn MFA login');
+        });
+    }
     await repository.recordLogin(user.id, ipAddress, userAgent);
     logAudit({
         user_id: user.id,
@@ -248,7 +255,12 @@ export async function verifyLoginMfaWebAuthn(input, ipAddress, userAgent, client
         ip_address: ipAddress,
         user_agent: userAgent,
         request_id: requestId,
-        metadata: { session_id: session.sessionId, mfa_required: true, webauthn: true },
+        metadata: {
+            session_id: session.sessionId,
+            mfa_required: true,
+            webauthn: true,
+            trusted_device_added: loginChallenge.trustDevice,
+        },
     });
     return {
         access_token: session.accessToken,

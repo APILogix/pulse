@@ -72,6 +72,7 @@ class LogDatabaseManager {
      * applied per-statement via `SET LOCAL`, scoped to the read path only.
      */
     createPool(connectionString, appName) {
+        const ssl = this.resolveSslConfig(connectionString, appName);
         const config = {
             connectionString,
             max: env.LOG_POOL_MAX,
@@ -82,13 +83,35 @@ class LogDatabaseManager {
             keepAlive: env.LOG_DB_KEEPALIVE_MS > 0,
             keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
             allowExitOnIdle: false,
-            ssl: env.NODE_ENV === 'production'
-                ? { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED }
-                : false,
+            ssl,
         };
         const pool = new Pool(config);
         this.setupPoolMonitoring(pool, appName);
         return pool;
+    }
+    resolveSslConfig(connectionString, appName) {
+        if (env.LOG_DB_SSL_ENABLED !== undefined) {
+            return env.LOG_DB_SSL_ENABLED
+                ? { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED }
+                : false;
+        }
+        try {
+            const url = new URL(connectionString);
+            const sslMode = url.searchParams.get('sslmode')?.toLowerCase();
+            if (sslMode === 'disable')
+                return false;
+            if (sslMode === 'require' ||
+                sslMode === 'verify-ca' ||
+                sslMode === 'verify-full' ||
+                sslMode === 'prefer' ||
+                sslMode === 'allow') {
+                return { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED };
+            }
+        }
+        catch {
+            dbLogger.warn({ appName }, 'Invalid log DB connection string while inferring SSL; defaulting to SSL disabled');
+        }
+        return false;
     }
     setupPoolMonitoring(pool, name) {
         pool.on('connect', () => {

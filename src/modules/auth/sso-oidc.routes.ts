@@ -27,6 +27,7 @@ import {
   getRefreshCookieOptions,
   REFRESH_COOKIE_NAME,
 } from './utils.js';
+import { env } from '../../config/env.js';
 import {
   SsoCallbackQuerySchema,
   SsoLoginSchema,
@@ -57,6 +58,11 @@ function setRefreshCookie(
     ...getRefreshCookieOptions(),
     expires: expiresAt,
   });
+}
+
+function frontendAuthCallbackUrl(): string {
+  const base = (env.FRONTEND_URL || env.APP_URL).replace(/\/+$/, '');
+  return `${base}/auth/callback`;
 }
 
 export default async function ssoOidcRoutes(fastify: FastifyInstance) {
@@ -108,7 +114,7 @@ export default async function ssoOidcRoutes(fastify: FastifyInstance) {
           request.id,
         );
         setRefreshCookie(reply, tokens.refresh_token, tokens.expires_at);
-        return reply.send({ data: tokens });
+        return reply.redirect(frontendAuthCallbackUrl());
       } catch (error) {
         return handleAuthError(error, reply, request);
       }

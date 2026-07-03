@@ -1,7 +1,7 @@
 /**
- * SDK Remote Config types — DB rows, DTOs, and Zod validators.
+ * SDK Remote Config types â€” DB rows, DTOs, and Zod validators.
  *
- * Mirrors migrations2/007_add_sdk_config_module.up.sql. Snake_case Row types
+ * Mirrors migrations2/007_organizations_create_sdk_config_schema.up.sql. Snake_case Row types
  * match columns; camelCase DTOs are what the API returns.
  */
 import { z } from "zod";

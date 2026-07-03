@@ -104,8 +104,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    // origin: buildCorsOrigin(),
-    origin:true,
+    origin: buildCorsOrigin(),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
@@ -127,18 +126,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     runFirst: true,
   });
 
-  // Rate limit globally disabled
-  // await app.register(fastifyRateLimit, {
-  //   max: 100,
-  //   timeWindow: '1 minute',
-  //   keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
-  //   skipOnError: false,
-  //   errorResponseBuilder: (_req, context) => ({
-  //     statusCode: 429,
-  //     error: 'Too Many Requests',
-  //     message: `Rate limit exceeded, retry in ${context.after}`,
-  //   }),
-  // });
+  await app.register(fastifyRateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+    keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
+    skipOnError: false,
+    errorResponseBuilder: (_req, context) => ({
+      statusCode: 429,
+      error: 'Too Many Requests',
+      message: `Rate limit exceeded, retry in ${context.after}`,
+    }),
+  });
 
   await app.register(sensible);
 
@@ -176,17 +174,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.addHook('onResponse', async (request, reply) => {
     const duration = Date.now() - request.startTime;
-    const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
-    appLogger[logLevel](
+    // const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
+    appLogger["debug"](
       {
-        reqId: request.id,
-        method: request.method,
-        url: request.url,
-        statusCode: reply.statusCode,
+       
         durationMs: duration,
-        ip: request.ip,
-      },
-      'Request completed',
+      }
     );
   });
 

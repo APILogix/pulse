@@ -5,7 +5,7 @@ export interface OAuthProfile {
     email: string | null;
     displayName: string | null;
 }
-export declare function buildOidcClient(provider: 'google' | 'microsoft'): Promise<import("openid-client").Configuration>;
+export declare function buildOidcClient(provider: 'google'): Promise<import("openid-client").Configuration>;
 export declare function buildOAuthAuthorizationUrl(options: {
     provider: LinkableProvider;
     redirectUri: string;
