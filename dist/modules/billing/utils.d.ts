@@ -23,7 +23,7 @@ export declare function calculateProration(currentPrice: number, newPrice: numbe
     net: number;
 };
 export declare function calculateTaxAmount(subtotal: number, taxRate: number): number;
-export declare function calculateDiscount(amount: number, discountType: 'percentage' | 'fixed_amount', discountValue: number): number;
+export declare function calculateDiscount(amount: number, discountType: 'percentage' | 'fixed_amount' | 'percent' | 'fixed', discountValue: number): number;
 export declare function calculateMrr(basePrice: number, interval: BillingInterval): number;
 export declare function formatCurrency(amount: number, currency?: string): string;
 export declare function formatInvoiceNumber(prefix: string | null, number: number): string;

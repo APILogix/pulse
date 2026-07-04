@@ -33,6 +33,32 @@ function cursorPage<T extends { created_at: Date }>(
   };
 }
 
+export interface OrganizationProvisioningResult {
+  organization: OrganizationRow;
+  subscriptionId: string;
+  planId: string;
+}
+
+export interface BillingEntitlementsRow {
+  subscription_id: string;
+  subscription_status: string;
+  plan_id: string;
+  plan_key: string;
+  plan_tier: string;
+  feature_config: Record<string, unknown>;
+  event_limit_monthly: string | number;
+  hard_cap: boolean;
+}
+
+export interface OrganizationUsageCounts {
+  activeMembers: number;
+  pendingInvitations: number;
+  environments: number;
+  apiKeys: number;
+  ssoProviders: number;
+  scimTokens: number;
+}
+
 export class OrganizationRepository {
   private readonly db = pool;
 
@@ -57,7 +83,7 @@ export class OrganizationRepository {
       description?: string; industry?: string; companySize?: string;
       country?: string; timezone?: string; billingEmail?: string;
     }
-  ): Promise<OrganizationRow> {
+  ): Promise<OrganizationProvisioningResult> {
     return this.withTransaction(async (client) => {
       const dup = await client.query<{ x: boolean }>(
         `SELECT EXISTS(SELECT 1 FROM organizations WHERE owner_user_id=$1 AND deleted_at IS NULL) AS x`, [ownerUserId]
@@ -90,7 +116,76 @@ export class OrganizationRepository {
         [org.id, ownerUserId]
       );
 
-      return org;
+      const plan = await client.query<{ id: string }>(
+        `SELECT id
+         FROM plans
+         WHERE tier = 'free' AND is_active = TRUE
+         ORDER BY version DESC, sort_order ASC
+         LIMIT 1
+         FOR SHARE`,
+      );
+      const freePlanId = plan.rows[0]?.id;
+      if (!freePlanId) throw new NotFoundError("Free billing plan");
+
+      const periodStart = new Date();
+      const periodEnd = new Date(periodStart);
+      periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+
+      const subscription = await client.query<{ id: string }>(
+        `INSERT INTO organization_subscriptions (
+           org_id,
+           plan_id,
+           status,
+           billing_provider,
+           billing_interval,
+           current_period_start,
+           current_period_end,
+           cancel_at_period_end,
+           seats
+         )
+         VALUES ($1,$2,'active','system','monthly',$3,$4,FALSE,1)
+         RETURNING id`,
+        [org.id, freePlanId, periodStart, periodEnd],
+      );
+      const subscriptionId = subscription.rows[0]!.id;
+
+      await client.query(
+        `INSERT INTO subscription_events (
+           org_id,
+           subscription_id,
+           event_type,
+           new_plan_id,
+           actor,
+           metadata
+         )
+         VALUES ($1,$2,'created',$3,'system',$4)`,
+        [
+          org.id,
+          subscriptionId,
+          freePlanId,
+          JSON.stringify({ reason: "organization_created", provisionedBy: "organization.create" }),
+        ],
+      );
+
+      await client.query(
+        `INSERT INTO usage_daily_counters (
+           org_id,
+           project_id,
+           date,
+           events_count,
+           ai_analyses_count
+         )
+         VALUES ($1,NULL,CURRENT_DATE,0,0)
+         ON CONFLICT (
+           org_id,
+           (COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+           date
+         )
+         DO NOTHING`,
+        [org.id],
+      );
+
+      return { organization: org, subscriptionId, planId: freePlanId };
     });
   }
 
@@ -108,6 +203,70 @@ export class OrganizationRepository {
        FROM organizations WHERE slug=$1 AND deleted_at IS NULL`, [slug]
     );
     return r.rows[0] ?? null;
+  }
+
+  async getBillingEntitlements(orgId: string): Promise<BillingEntitlementsRow | null> {
+    const r = await this.db.query<BillingEntitlementsRow>(
+      `SELECT
+         s.id AS subscription_id,
+         s.status AS subscription_status,
+         p.id AS plan_id,
+         p.key AS plan_key,
+         p.tier AS plan_tier,
+         p.feature_config,
+         p.event_limit_monthly,
+         p.hard_cap
+       FROM organization_subscriptions s
+       JOIN plans p ON p.id = s.plan_id
+       WHERE s.org_id = $1
+         AND s.status IN ('trialing','active','past_due')
+         AND p.is_active = TRUE
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
+      [orgId],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async getOrganizationUsageCounts(orgId: string): Promise<OrganizationUsageCounts> {
+    const r = await this.db.query<{
+      active_members: string;
+      pending_invitations: string;
+      environments: string;
+      api_keys: string;
+      sso_providers: string;
+      scim_tokens: string;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::text
+          FROM organization_members
+          WHERE org_id = $1 AND status = 'active') AS active_members,
+         (SELECT COUNT(*)::text
+          FROM organization_invitations
+          WHERE org_id = $1 AND status = 'pending' AND expires_at > NOW()) AS pending_invitations,
+         (SELECT COUNT(*)::text
+          FROM organization_environments
+          WHERE org_id = $1) AS environments,
+         (SELECT COUNT(*)::text
+          FROM organization_api_keys
+          WHERE org_id = $1 AND revoked_at IS NULL) AS api_keys,
+         (SELECT COUNT(*)::text
+          FROM organization_sso_providers
+          WHERE org_id = $1 AND is_active = TRUE) AS sso_providers,
+         (SELECT COUNT(*)::text
+          FROM organization_scim_tokens
+          WHERE org_id = $1 AND revoked_at IS NULL) AS scim_tokens`,
+      [orgId],
+    );
+    const row = r.rows[0]!;
+    return {
+      activeMembers: Number(row.active_members ?? 0),
+      pendingInvitations: Number(row.pending_invitations ?? 0),
+      environments: Number(row.environments ?? 0),
+      apiKeys: Number(row.api_keys ?? 0),
+      ssoProviders: Number(row.sso_providers ?? 0),
+      scimTokens: Number(row.scim_tokens ?? 0),
+    };
   }
 
   async updateOrg(id: string, data: Record<string, unknown>): Promise<OrganizationRow> {
@@ -417,8 +576,83 @@ export class OrganizationRepository {
     if (r.rowCount === 0) throw new NotFoundError("Invitation");
   }
 
-  async declineInvitation(id: string): Promise<void> {
-    const r = await this.db.query(`UPDATE organization_invitations SET status='declined',declined_at=NOW() WHERE id=$1 AND status='pending'`, [id]);
+  async acceptInvitationAndAddMember(tokenHash: string, userId: string, maxActiveMembers: number | null): Promise<void> {
+    return this.withTransaction(async (client) => {
+      const invite = await client.query<{ id: string; org_id: string; role: string; invited_by: string }>(
+        `SELECT id, org_id, role, invited_by
+         FROM organization_invitations
+         WHERE token_hash = $1
+           AND status = 'pending'
+           AND expires_at > NOW()
+         LIMIT 1
+         FOR UPDATE`,
+        [tokenHash],
+      );
+      const inv = invite.rows[0];
+      if (!inv) throw new NotFoundError("Invitation");
+
+      await client.query(
+        `SELECT id
+         FROM organizations
+         WHERE id = $1 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [inv.org_id],
+      );
+
+      if (maxActiveMembers !== null && Number.isFinite(maxActiveMembers)) {
+        const memberCount = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM organization_members
+           WHERE org_id = $1 AND status = 'active'`,
+          [inv.org_id],
+        );
+        if (Number(memberCount.rows[0]?.count ?? 0) >= maxActiveMembers) {
+          throw new ConflictError("Member limit exceeded for current billing plan");
+        }
+      }
+
+      await client.query(
+        `UPDATE organization_invitations
+         SET status = 'accepted',
+             accepted_at = NOW(),
+             accepted_by = $1
+         WHERE id = $2 AND status = 'pending'`,
+        [userId, inv.id],
+      );
+
+      await client.query(
+        `INSERT INTO organization_members (
+           org_id,
+           user_id,
+           role,
+           status,
+           invited_by,
+           invited_at,
+           joined_at,
+           joined_method,
+           last_active_at
+         )
+         VALUES ($1,$2,$3,'active',$4,NOW(),NOW(),'invite',NOW())
+         ON CONFLICT (org_id,user_id)
+         DO UPDATE SET
+           status = 'active',
+           role = $3,
+           joined_at = NOW(),
+           deactivated_at = NULL,
+           deactivated_by = NULL,
+           deactivation_reason = NULL`,
+        [inv.org_id, userId, inv.role, inv.invited_by],
+      );
+    });
+  }
+
+  async declineInvitation(id: string, _userId: string): Promise<void> {
+    const r = await this.db.query(
+      `UPDATE organization_invitations
+       SET status='declined',declined_at=NOW()
+       WHERE id=$1 AND status='pending'`,
+      [id],
+    );
     if (r.rowCount === 0) throw new NotFoundError("Invitation");
   }
 

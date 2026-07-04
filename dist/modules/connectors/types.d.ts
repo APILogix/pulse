@@ -11,11 +11,11 @@ import { AppError } from '../../shared/errors/app-error.js';
 export declare const ConnectorTypeSchema: z.ZodEnum<{
     sms: "sms";
     email: "email";
+    webhook: "webhook";
     slack: "slack";
     discord: "discord";
     teams: "teams";
     pagerduty: "pagerduty";
-    webhook: "webhook";
 }>;
 export type ConnectorType = z.infer<typeof ConnectorTypeSchema>;
 export declare const ConnectorStatusSchema: z.ZodEnum<{
@@ -262,11 +262,11 @@ export declare const CreateConnectorSchema: z.ZodObject<{
     type: z.ZodEnum<{
         sms: "sms";
         email: "email";
+        webhook: "webhook";
         slack: "slack";
         discord: "discord";
         teams: "teams";
         pagerduty: "pagerduty";
-        webhook: "webhook";
     }>;
     description: z.ZodOptional<z.ZodString>;
     config: z.ZodRecord<z.ZodString, z.ZodUnknown>;
@@ -300,11 +300,11 @@ export declare const ListConnectorsQuerySchema: z.ZodObject<{
     type: z.ZodOptional<z.ZodEnum<{
         sms: "sms";
         email: "email";
+        webhook: "webhook";
         slack: "slack";
         discord: "discord";
         teams: "teams";
         pagerduty: "pagerduty";
-        webhook: "webhook";
     }>>;
     status: z.ZodOptional<z.ZodEnum<{
         error: "error";

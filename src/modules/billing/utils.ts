@@ -96,10 +96,10 @@ export function calculateTaxAmount(subtotal: number, taxRate: number): number {
 
 export function calculateDiscount(
   amount: number,
-  discountType: 'percentage' | 'fixed_amount',
+  discountType: 'percentage' | 'fixed_amount' | 'percent' | 'fixed',
   discountValue: number
 ): number {
-  if (discountType === 'percentage') {
+  if (discountType === 'percentage' || discountType === 'percent') {
     return Math.round(amount * (discountValue / 100) * 100) / 100;
   }
   return Math.min(discountValue, amount);

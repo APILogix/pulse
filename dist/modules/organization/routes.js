@@ -1,5 +1,5 @@
 import { authenticate } from '../../shared/middleware/auth.js';
-import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
 import { registerSdkConfigRoutes } from './sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
     if (error instanceof OrganizationError) {
@@ -183,12 +183,12 @@ export async function organizationRoutes(fastify, _options) {
         });
     }));
     fastify.post('/:orgId/invitations/:invitationId/resend', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, invitationId } = request.params;
+        const { orgId, invitationId } = InvitationIdParamsSchema.parse(request.params);
         const result = await svc.resendInvitation(buildMeta(request), orgId, invitationId);
         return reply.send({ success: true, data: result });
     }));
     fastify.delete('/:orgId/invitations/:invitationId', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, invitationId } = request.params;
+        const { orgId, invitationId } = InvitationIdParamsSchema.parse(request.params);
         await svc.revokeInvitation(buildMeta(request), orgId, invitationId);
         return reply.code(204).send();
     }));
@@ -348,6 +348,16 @@ export async function organizationRoutes(fastify, _options) {
     // ═══════════════════════════════════════════════
     // UTILITY
     // ═══════════════════════════════════════════════
+    fastify.get('/:orgId/billing-summary', auth, withErrorHandling(async (request, reply) => {
+        const { orgId } = OrgIdParamsSchema.parse(request.params);
+        const result = await svc.getBillingSummary(orgId, asAuth(request).user.id);
+        return reply.send({ success: true, data: result });
+    }));
+    fastify.get('/:orgId/usage-limits', auth, withErrorHandling(async (request, reply) => {
+        const { orgId } = OrgIdParamsSchema.parse(request.params);
+        const result = await svc.getUsageLimits(orgId, asAuth(request).user.id);
+        return reply.send({ success: true, data: result });
+    }));
     fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {
         const { slug } = SlugParamsSchema.parse(request.params);
         const result = await svc.checkSlugAvailability(slug);

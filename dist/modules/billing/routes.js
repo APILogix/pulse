@@ -10,7 +10,8 @@
  * Webhook endpoints intentionally skip authenticate because payment providers
  * call them directly; provider signature validation belongs in the service.
  */
-import { BillingInterval, UsageMetricType, InvoiceStatus } from './types.js';
+import { ZodError } from 'zod';
+import { BillingInterval, UsageMetricType, InvoiceStatus, AddPaymentMethodSchema, ApplyCouponSchema, BillingAddressSchema, BillingEmailSchema, CancelSubscriptionSchema, ChangeIntervalSchema, ChangePlanSchema, CheckoutSessionSchema, CreateSubscriptionSchema, CreditsSchema, EstimatePricingSchema, IdParamsSchema, ListInvoicesQuerySchema, PlanIdParamsSchema, PreviewChangeSchema, ProviderParamsSchema, QuotaIncreaseSchema, QuotaTypeParamsSchema, TaxSettingsSchema, UpdateBillingSettingsSchema, UsageExportQuerySchema, UsageHistoryQuerySchema, UsageQuerySchema, WaiveInvoiceSchema } from './types.js';
 import { BillingError, BillingErrorCodes } from './utils.js';
 import { authenticate } from '../../shared/middleware/auth.js';
 export async function billingRoutes(fastify, options) {
@@ -31,11 +32,20 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.get('/plans/public', async (request, reply) => {
+        try {
+            const result = await service.listPlans();
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.get('/plans/:planId', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { planId } = request.params;
+            const { planId } = PlanIdParamsSchema.parse(request.params);
             const result = await service.getPlan(planId);
             return reply.send(result);
         }
@@ -58,7 +68,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { planId, interval, couponCode } = request.body;
+            const { planId, interval, couponCode } = EstimatePricingSchema.parse(request.body);
             const result = await service.estimatePricing(planId, interval, couponCode);
             return reply.send(result);
         }
@@ -80,13 +90,70 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.get('/subscription/history', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getSubscriptionHistory(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.get('/subscription/usage', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getCurrentUsage(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.get('/subscription/invoices', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.listInvoices(getOrgId(request), {});
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.post('/subscription', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const body = request.body;
+            const body = CreateSubscriptionSchema.parse(request.body);
             const result = await service.createSubscription(getOrgId(request), body);
             return reply.code(201).send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.post('/subscription/start-trial', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const body = CreateSubscriptionSchema.parse(request.body);
+            const result = await service.createSubscription(getOrgId(request), body);
+            return reply.code(201).send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.post('/subscription/checkout', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const { planId } = CheckoutSessionSchema.parse(request.body);
+            const result = await service.createCheckoutSession(getOrgId(request), planId);
+            return reply.send(result);
         }
         catch (error) {
             return handleBillingError(error, reply);
@@ -96,8 +163,34 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const body = request.body;
+            const body = ChangePlanSchema.parse(request.body);
             const result = await service.changePlan(getOrgId(request), body);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    for (const path of ['/subscription/change-plan', '/subscription/upgrade', '/subscription/downgrade']) {
+        fastify.post(path, {
+            preHandler: [authenticate],
+        }, async (request, reply) => {
+            try {
+                const body = ChangePlanSchema.parse(request.body);
+                const result = await service.changePlan(getOrgId(request), body);
+                return reply.send(result);
+            }
+            catch (error) {
+                return handleBillingError(error, reply);
+            }
+        });
+    }
+    fastify.post('/subscription/change-interval', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const { interval } = ChangeIntervalSchema.parse(request.body);
+            const result = await service.changeInterval(getOrgId(request), interval);
             return reply.send(result);
         }
         catch (error) {
@@ -108,7 +201,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const body = request.body;
+            const body = CancelSubscriptionSchema.parse(request.body);
             const result = await service.cancelSubscription(getOrgId(request), body);
             return reply.send(result);
         }
@@ -127,12 +220,60 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.post('/subscription/resume', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.reactivateSubscription(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.post('/subscription/preview-change', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { newPlanId } = request.body;
+            const { newPlanId } = PreviewChangeSchema.parse(request.body);
             const result = await service.previewProration(getOrgId(request), newPlanId);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    for (const path of ['/subscription/preview-upgrade', '/subscription/preview-downgrade']) {
+        fastify.post(path, {
+            preHandler: [authenticate],
+        }, async (request, reply) => {
+            try {
+                const { newPlanId } = PreviewChangeSchema.parse(request.body);
+                const result = await service.previewProration(getOrgId(request), newPlanId);
+                return reply.send(result);
+            }
+            catch (error) {
+                return handleBillingError(error, reply);
+            }
+        });
+    }
+    fastify.post('/subscription/apply-coupon', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const { code } = ApplyCouponSchema.parse(request.body);
+            const result = await service.applyCoupon(getOrgId(request), code);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.delete('/subscription/remove-coupon', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.removeCoupon(getOrgId(request));
             return reply.send(result);
         }
         catch (error) {
@@ -157,7 +298,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const body = request.body;
+            const body = AddPaymentMethodSchema.parse(request.body);
             const result = await service.addPaymentMethod(getOrgId(request), body);
             return reply.code(201).send(result);
         }
@@ -169,7 +310,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.setDefaultPaymentMethod(getOrgId(request), id);
             return reply.send(result);
         }
@@ -181,7 +322,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const updates = request.body;
             const result = await service.updatePaymentMethod(id, getOrgId(request), updates);
             return reply.send(result);
@@ -194,7 +335,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.removePaymentMethod(id, getOrgId(request));
             return reply.send(result);
         }
@@ -206,7 +347,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.verifyPaymentMethod(id, getOrgId(request));
             return reply.send(result);
         }
@@ -221,7 +362,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const query = request.query;
+            const query = ListInvoicesQuerySchema.parse(request.query);
             const options = {};
             if (query.status)
                 options.status = query.status;
@@ -240,11 +381,22 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.post('/invoices/sync', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.forceSyncBilling(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.get('/invoices/:id', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.getInvoice(id, getOrgId(request));
             return reply.send(result);
         }
@@ -256,7 +408,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.downloadInvoicePdf(id, getOrgId(request));
             if (result.data) {
                 return reply.redirect(result.data);
@@ -271,7 +423,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
+            const { id } = IdParamsSchema.parse(request.params);
             const result = await service.payInvoice(id, getOrgId(request));
             return reply.send(result);
         }
@@ -304,11 +456,55 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.get('/usage/current', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getCurrentUsage(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.get('/usage/monthly', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getDetailedUsage(getOrgId(request), { granularity: 'daily' });
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.get('/usage/projects', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getDetailedUsage(getOrgId(request), { granularity: 'daily' });
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.get('/usage/limits', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getQuotaStatus(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.get('/usage/detailed', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const query = request.query;
+            const query = UsageQuerySchema.parse(request.query);
             const result = await service.getDetailedUsage(getOrgId(request), query);
             return reply.send(result);
         }
@@ -320,7 +516,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { type } = request.query;
+            const { type } = UsageHistoryQuerySchema.parse(request.query);
             const result = await service.getUsageHistory(getOrgId(request), type);
             return reply.send(result);
         }
@@ -343,7 +539,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { format } = request.query;
+            const { format } = UsageExportQuerySchema.parse(request.query);
             const result = await service.exportUsageReport(getOrgId(request), format);
             return reply.send(result);
         }
@@ -369,7 +565,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { type } = request.params;
+            const { type } = QuotaTypeParamsSchema.parse(request.params);
             const result = await service.getQuotaDetails(getOrgId(request), type);
             return reply.send(result);
         }
@@ -381,8 +577,8 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { type } = request.params;
-            const body = request.body;
+            const { type } = QuotaTypeParamsSchema.parse(request.params);
+            const body = QuotaIncreaseSchema.parse(request.body);
             const result = await service.requestQuotaIncrease(getOrgId(request), type, body);
             return reply.code(201).send(result);
         }
@@ -419,7 +615,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const body = request.body;
+            const body = UpdateBillingSettingsSchema.parse(request.body);
             const result = await service.updateBillingSettings(getOrgId(request), body);
             return reply.send(result);
         }
@@ -431,7 +627,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { email } = request.body;
+            const { email } = BillingEmailSchema.parse(request.body);
             const result = await service.updateBillingEmail(getOrgId(request), email);
             return reply.send(result);
         }
@@ -443,7 +639,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { address } = request.body;
+            const { address } = BillingAddressSchema.parse(request.body);
             const result = await service.updateBillingAddress(getOrgId(request), address);
             return reply.send(result);
         }
@@ -455,7 +651,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { taxId } = request.body;
+            const { taxId } = TaxSettingsSchema.parse(request.body);
             const result = await service.updateTaxSettings(getOrgId(request), taxId);
             return reply.send(result);
         }
@@ -470,7 +666,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { code } = request.body;
+            const { code } = ApplyCouponSchema.parse(request.body);
             const result = await service.applyCoupon(getOrgId(request), code);
             return reply.send(result);
         }
@@ -493,7 +689,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { code } = request.body;
+            const { code } = ApplyCouponSchema.parse(request.body);
             const result = await service.validateCoupon(code);
             return reply.send(result);
         }
@@ -526,9 +722,19 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.post('/webhooks/razorpay', async (request, reply) => {
+        try {
+            const payload = request.body;
+            const result = await service.handlePaymentWebhook('razorpay', payload);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.post('/webhooks/:provider', async (request, reply) => {
         try {
-            const { provider } = request.params;
+            const { provider } = ProviderParamsSchema.parse(request.params);
             const payload = request.body;
             const result = await service.handlePaymentWebhook(provider, payload);
             return reply.send(result);
@@ -567,7 +773,7 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { amount, reason } = request.body;
+            const { amount, reason } = CreditsSchema.parse(request.body);
             const result = await service.grantComplimentaryCredits(getOrgId(request), amount, reason);
             return reply.send(result);
         }
@@ -579,8 +785,8 @@ export async function billingRoutes(fastify, options) {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { id } = request.params;
-            const { reason } = request.body;
+            const { id } = IdParamsSchema.parse(request.params);
+            const { reason } = WaiveInvoiceSchema.parse(request.body);
             const result = await service.waiveInvoice(id, getOrgId(request), reason);
             return reply.send(result);
         }
@@ -614,12 +820,58 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.get('/stripe/customer-portal', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.createPortalSession(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.post('/checkout/session', {
         preHandler: [authenticate],
     }, async (request, reply) => {
         try {
-            const { planId } = request.body;
+            const { planId } = CheckoutSessionSchema.parse(request.body);
             const result = await service.createCheckoutSession(getOrgId(request), planId);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.post('/stripe/create-checkout-session', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const { planId } = CheckoutSessionSchema.parse(request.body);
+            const result = await service.createCheckoutSession(getOrgId(request), planId);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.post('/razorpay/create-order', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const { planId } = CheckoutSessionSchema.parse(request.body);
+            const result = await service.createCheckoutSession(getOrgId(request), planId);
+            return reply.send({ ...result, data: { ...result.data, provider: 'razorpay' } });
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
+    fastify.post('/razorpay/verify-payment', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.handlePaymentWebhook('razorpay', request.body);
             return reply.send(result);
         }
         catch (error) {
@@ -633,6 +885,16 @@ export async function billingRoutes(fastify, options) {
 function handleBillingError(error, reply) {
     // BillingError carries client-safe status, code, message, and optional details.
     // Unknown errors are logged and collapsed into a generic 500 response.
+    if (error instanceof ZodError) {
+        return reply.code(400).send({
+            success: false,
+            error: {
+                code: BillingErrorCodes.VALIDATION_ERROR,
+                message: 'Invalid billing request',
+                details: error.issues
+            }
+        });
+    }
     if (error instanceof BillingError) {
         return reply.code(error.statusCode).send({
             success: false,

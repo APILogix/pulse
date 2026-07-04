@@ -100,22 +100,27 @@ export class BillingService {
         }
         return { success: true, data: billing };
     }
+    async getSubscriptionHistory(orgId) {
+        const events = await this.repository.listSubscriptionEvents(orgId);
+        return { success: true, data: events };
+    }
     async createSubscription(orgId, body) {
         // Subscription creation is transactional because it validates existing
         // billing state, reads the plan, and inserts the new billing profile.
         return this.repository.withTransaction(async (client) => {
-            const existing = await this.repository.getOrganizationBilling(orgId);
+            const existing = await this.repository.getOrganizationBillingForUpdate(orgId, client);
             if (existing && existing.status !== SubscriptionStatus.CANCELED) {
                 throw new BillingError(BillingErrorCodes.BILLING_ERROR, 'Organization already has an active subscription', 409);
             }
-            const plan = await this.repository.getPlanById(body.planId);
+            const plan = await this.repository.getPlanById(body.planId, client);
             if (!plan) {
                 throw new BillingError(BillingErrorCodes.PLAN_NOT_FOUND, 'Plan not found', 404);
             }
             const now = new Date();
             const trialDays = plan.trialDays;
-            const periodStart = trialDays > 0 ? addDays(now, trialDays) : now;
-            const periodEnd = addMonths(periodStart, 1);
+            const trialEnd = trialDays > 0 ? addDays(now, trialDays) : null;
+            const periodStart = now;
+            const periodEnd = trialEnd ?? addMonths(periodStart, 1);
             const mrr = calculateMrr(plan.basePriceMonthly, body.billingInterval || BillingInterval.MONTHLY);
             const billing = await this.repository.createOrganizationBilling({
                 orgId,
@@ -124,9 +129,20 @@ export class BillingService {
                 currentPeriodStart: periodStart,
                 currentPeriodEnd: periodEnd,
                 billingCycleAnchor: periodStart,
+                billingInterval: body.billingInterval || BillingInterval.MONTHLY,
+                trialStart: trialDays > 0 ? now : null,
+                trialEnd,
                 defaultPaymentMethodId: body.paymentMethodId || null,
                 mrr,
                 taxRate: 0
+            }, client);
+            await this.repository.createSubscriptionEvent({
+                orgId,
+                subscriptionId: billing.id,
+                eventType: 'created',
+                newPlanId: body.planId,
+                actor: 'user',
+                metadata: { trialDays, billingInterval: body.billingInterval || BillingInterval.MONTHLY }
             }, client);
             logger.info('Subscription created', { orgId, planId: body.planId });
             return { success: true, data: billing };
@@ -136,15 +152,15 @@ export class BillingService {
         // Plan changes calculate proration against the current period before
         // updating the subscription record.
         return this.repository.withTransaction(async (client) => {
-            const currentBilling = await this.repository.getOrganizationBilling(orgId);
+            const currentBilling = await this.repository.getOrganizationBillingForUpdate(orgId, client);
             if (!currentBilling) {
                 throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
             }
-            const newPlan = await this.repository.getPlanById(body.planId);
+            const newPlan = await this.repository.getPlanById(body.planId, client);
             if (!newPlan) {
                 throw new BillingError(BillingErrorCodes.PLAN_NOT_FOUND, 'New plan not found', 404);
             }
-            const currentPlan = await this.repository.getPlanById(currentBilling.planId);
+            const currentPlan = await this.repository.getPlanById(currentBilling.planId, client);
             if (!currentPlan) {
                 throw new BillingError(BillingErrorCodes.PLAN_NOT_FOUND, 'Current plan not found', 404);
             }
@@ -156,43 +172,94 @@ export class BillingService {
                 planId: body.planId,
                 mrr: newMrr
             }, client);
+            await this.repository.createSubscriptionEvent({
+                orgId,
+                subscriptionId: currentBilling.id,
+                eventType: newPlan.basePriceMonthly >= currentPlan.basePriceMonthly ? 'upgraded' : 'downgraded',
+                oldPlanId: currentPlan.id,
+                newPlanId: newPlan.id,
+                actor: 'user',
+                metadata: { proration, prorationBehavior: body.prorationBehavior ?? 'create_prorations' }
+            }, client);
             logger.info('Plan changed', { orgId, from: currentPlan.id, to: newPlan.id });
             return { success: true, data: updated };
         });
     }
     async cancelSubscription(orgId, body) {
-        const billing = await this.repository.getOrganizationBilling(orgId);
-        if (!billing) {
-            throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
-        }
-        const updates = {
-            cancelAtPeriodEnd: !body.immediate,
-            cancellationReason: body.reason || null
-        };
-        if (body.immediate) {
-            updates.status = SubscriptionStatus.CANCELED;
-            updates.canceledAt = new Date();
-        }
-        const updated = await this.repository.updateOrganizationBilling(orgId, updates);
-        logger.info('Subscription cancelled', { orgId, immediate: body.immediate });
-        return { success: true, data: updated };
+        return this.repository.withTransaction(async (client) => {
+            const billing = await this.repository.getOrganizationBillingForUpdate(orgId, client);
+            if (!billing) {
+                throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
+            }
+            const updates = {
+                cancelAtPeriodEnd: !body.immediate,
+                cancellationReason: body.reason || null
+            };
+            if (body.immediate) {
+                updates.status = SubscriptionStatus.CANCELED;
+                updates.canceledAt = new Date();
+            }
+            const updated = await this.repository.updateOrganizationBilling(orgId, updates, client);
+            await this.repository.createSubscriptionEvent({
+                orgId,
+                subscriptionId: billing.id,
+                eventType: 'canceled',
+                oldPlanId: billing.planId,
+                newPlanId: billing.planId,
+                actor: 'user',
+                metadata: { immediate: body.immediate === true, reason: body.reason ?? null }
+            }, client);
+            logger.info('Subscription cancelled', { orgId, immediate: body.immediate });
+            return { success: true, data: updated };
+        });
+    }
+    async changeInterval(orgId, interval) {
+        return this.repository.withTransaction(async (client) => {
+            const billing = await this.repository.getOrganizationBillingForUpdate(orgId, client);
+            if (!billing) {
+                throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
+            }
+            const updated = await this.repository.updateOrganizationBilling(orgId, {
+                billingInterval: interval
+            }, client);
+            await this.repository.createSubscriptionEvent({
+                orgId,
+                subscriptionId: billing.id,
+                eventType: 'interval_changed',
+                oldPlanId: billing.planId,
+                newPlanId: billing.planId,
+                actor: 'user',
+                metadata: { oldInterval: billing.billingInterval, newInterval: interval }
+            }, client);
+            return { success: true, data: updated };
+        });
     }
     async reactivateSubscription(orgId) {
-        const billing = await this.repository.getOrganizationBilling(orgId);
-        if (!billing) {
-            throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
-        }
-        if (billing.status !== SubscriptionStatus.CANCELED && !billing.cancelAtPeriodEnd) {
-            throw new BillingError(BillingErrorCodes.BILLING_ERROR, 'Subscription is already active', 400);
-        }
-        const updated = await this.repository.updateOrganizationBilling(orgId, {
-            status: SubscriptionStatus.ACTIVE,
-            cancelAtPeriodEnd: false,
-            canceledAt: null,
-            cancellationReason: null
+        return this.repository.withTransaction(async (client) => {
+            const billing = await this.repository.getOrganizationBillingForUpdate(orgId, client);
+            if (!billing) {
+                throw new BillingError(BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 'No subscription found', 404);
+            }
+            if (billing.status !== SubscriptionStatus.CANCELED && !billing.cancelAtPeriodEnd) {
+                throw new BillingError(BillingErrorCodes.BILLING_ERROR, 'Subscription is already active', 400);
+            }
+            const updated = await this.repository.updateOrganizationBilling(orgId, {
+                status: SubscriptionStatus.ACTIVE,
+                cancelAtPeriodEnd: false,
+                canceledAt: null,
+                cancellationReason: null
+            }, client);
+            await this.repository.createSubscriptionEvent({
+                orgId,
+                subscriptionId: billing.id,
+                eventType: 'reactivated',
+                oldPlanId: billing.planId,
+                newPlanId: billing.planId,
+                actor: 'user',
+            }, client);
+            logger.info('Subscription reactivated', { orgId });
+            return { success: true, data: updated };
         });
-        logger.info('Subscription reactivated', { orgId });
-        return { success: true, data: updated };
     }
     async previewProration(orgId, newPlanId) {
         const billing = await this.repository.getOrganizationBilling(orgId);
@@ -313,9 +380,9 @@ export class BillingService {
         const metrics = [
             {
                 type: UsageMetricType.API_REQUESTS,
-                name: 'API Requests',
+                name: 'Events',
                 used: counter?.apiRequestsThisPeriod || 0,
-                limit: plan.limits.apiRequestsPerMin * 60 * 24 * 30,
+                limit: plan.eventLimitMonthly === -1 ? null : plan.eventLimitMonthly ?? null,
                 percentage: 0,
                 overage: 0,
                 projected: 0
@@ -342,7 +409,7 @@ export class BillingService {
         const daysElapsed = Math.max(1, daysBetween(billing.currentPeriodStart, now));
         const daysInPeriod = daysBetween(billing.currentPeriodStart, billing.currentPeriodEnd);
         metrics.forEach(metric => {
-            if (metric.limit) {
+            if (metric.limit !== null) {
                 const check = checkLimitExceeded(metric.used, metric.limit);
                 metric.percentage = check.percentage;
                 metric.overage = check.exceeded ? metric.used - metric.limit : 0;
@@ -362,11 +429,14 @@ export class BillingService {
         };
     }
     async getDetailedUsage(orgId, params) {
-        const records = await this.repository.getUsageRecords(orgId, {
-            startDate: params.startDate ? new Date(params.startDate) : undefined,
-            endDate: params.endDate ? new Date(params.endDate) : undefined,
-            granularity: params.granularity
-        });
+        const options = {};
+        if (params.startDate)
+            options.startDate = new Date(params.startDate);
+        if (params.endDate)
+            options.endDate = new Date(params.endDate);
+        if (params.granularity)
+            options.granularity = params.granularity;
+        const records = await this.repository.getUsageRecords(orgId, options);
         return { success: true, data: records };
     }
     async getUsageHistory(orgId, metricType, days = 30) {
@@ -483,7 +553,19 @@ export class BillingService {
         if (coupon.maxRedemptions && coupon.timesRedeemed >= coupon.maxRedemptions) {
             throw new BillingError(BillingErrorCodes.COUPON_INVALID, 'Coupon usage limit reached', 400);
         }
-        await this.repository.incrementCouponUsage(code);
+        await this.repository.withTransaction(async (client) => {
+            const lockedCoupon = await this.repository.getCouponByCode(code, client);
+            if (!lockedCoupon) {
+                throw new BillingError(BillingErrorCodes.COUPON_INVALID, 'Invalid coupon code', 400);
+            }
+            if (lockedCoupon.redeemBy && new Date() > lockedCoupon.redeemBy) {
+                throw new BillingError(BillingErrorCodes.COUPON_EXPIRED, 'Coupon has expired', 400);
+            }
+            if (lockedCoupon.maxRedemptions && lockedCoupon.timesRedeemed >= lockedCoupon.maxRedemptions) {
+                throw new BillingError(BillingErrorCodes.COUPON_INVALID, 'Coupon usage limit reached', 400);
+            }
+            await this.repository.redeemCoupon(lockedCoupon.id, orgId, client);
+        });
         return { success: true, data: { coupon, applied: true } };
     }
     async removeCoupon(orgId) {

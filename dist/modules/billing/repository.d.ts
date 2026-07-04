@@ -1,65 +1,28 @@
-/**
- * Billing repository.
- *
- * Flow:
- * 1. Read plan, subscription, payment method, invoice, usage, coupon, and quota
- *    data from PostgreSQL.
- * 2. Use optional PoolClient parameters so services can wrap related writes in
- *    transactions.
- * 3. Build dynamic UPDATE and filter queries from trusted internal field maps.
- * 4. Map database rows into billing module domain objects.
- */
 import type { Pool, PoolClient } from 'pg';
-import { PlanTier, SubscriptionStatus, InvoiceStatus, UsageMetricType } from './types.js';
-import type { BillingPlan, OrganizationBilling, PaymentMethod, Invoice, UsageRecord, UsageCounter, QuotaRequest, Coupon } from "./types.js";
+import { InvoiceStatus, PlanTier, UsageMetricType } from './types.js';
+import type { BillingPlan, Coupon, Invoice, OrganizationBilling, PaymentMethod, QuotaRequest, UsageCounter, UsageRecord } from './types.js';
+type Db = Pool | PoolClient;
 export declare class BillingRepository {
-    private pool;
-    constructor(poolInstance?: Pool);
+    private readonly db;
+    constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     getAllPlans(includeHidden?: boolean): Promise<BillingPlan[]>;
-    getPlanById(planId: string): Promise<BillingPlan | null>;
-    getPlanByTier(tier: PlanTier): Promise<BillingPlan | null>;
-    getOrganizationById(orgId: string): Promise<{
-        id: string;
-        name: string;
-        slug: string;
-        ownerUserId: string;
-        billingEmail: string;
-        billingName: string | null;
-        billingAddress: Record<string, any> | null;
-        planId: string;
-        status: string;
-        deletedAt: Date | null;
-        createdAt: Date;
-        updatedAt: Date;
-    } | null>;
-    getOrganizationMembership(orgId: string, userId: string): Promise<{
-        role: string;
-        permissions: Record<string, boolean> | null;
-        isActive: boolean;
-        joinedAt: Date | null;
-    } | null>;
-    updateOrganizationPlan(orgId: string, planId: string, client?: PoolClient): Promise<void>;
-    updateOrganizationBillingProfile(orgId: string, updates: {
-        billingEmail?: string;
-        billingName?: string | null;
-        billingAddress?: Record<string, any> | null;
-    }, client?: PoolClient): Promise<void>;
-    seedDefaultPlans(): Promise<void>;
-    private mapPlanFromDb;
-    getOrganizationBilling(orgId: string): Promise<OrganizationBilling | null>;
-    createOrganizationBilling(billing: Partial<OrganizationBilling>, client?: PoolClient): Promise<OrganizationBilling>;
-    updateOrganizationBilling(orgId: string, updates: Partial<OrganizationBilling>, client?: PoolClient): Promise<OrganizationBilling>;
-    updateSubscriptionStatus(orgId: string, status: SubscriptionStatus, client?: PoolClient): Promise<void>;
-    private mapBillingFromDb;
-    getPaymentMethods(orgId: string): Promise<PaymentMethod[]>;
-    getPaymentMethodById(id: string, orgId: string): Promise<PaymentMethod | null>;
-    getDefaultPaymentMethod(orgId: string): Promise<PaymentMethod | null>;
-    createPaymentMethod(paymentMethod: Partial<PaymentMethod>, client?: PoolClient): Promise<PaymentMethod>;
-    setDefaultPaymentMethod(orgId: string, paymentMethodId: string, client?: PoolClient): Promise<void>;
-    updatePaymentMethod(id: string, orgId: string, updates: Partial<PaymentMethod>): Promise<PaymentMethod>;
-    deletePaymentMethod(id: string, orgId: string): Promise<void>;
-    private mapPaymentMethodFromDb;
+    getPlanById(planId: string, db?: Db): Promise<BillingPlan | null>;
+    getPlanByTier(tier: PlanTier, db?: Db): Promise<BillingPlan | null>;
+    getOrganizationBilling(orgId: string, db?: Db): Promise<OrganizationBilling | null>;
+    getOrganizationBillingForUpdate(orgId: string, db: PoolClient): Promise<OrganizationBilling | null>;
+    createOrganizationBilling(billing: Partial<OrganizationBilling>, db?: Db): Promise<OrganizationBilling>;
+    updateOrganizationBilling(orgId: string, updates: Partial<OrganizationBilling>, db?: Db): Promise<OrganizationBilling>;
+    createSubscriptionEvent(event: {
+        orgId: string;
+        subscriptionId: string;
+        eventType: string;
+        oldPlanId?: string | null;
+        newPlanId?: string | null;
+        actor: 'user' | 'system' | 'admin' | 'webhook';
+        metadata?: Record<string, unknown>;
+    }, db?: Db): Promise<void>;
+    listSubscriptionEvents(orgId: string): Promise<Array<Record<string, unknown>>>;
     getInvoices(orgId: string, options?: {
         status?: InvoiceStatus;
         limit?: number;
@@ -71,31 +34,31 @@ export declare class BillingRepository {
         total: number;
     }>;
     getInvoiceById(id: string, orgId: string): Promise<Invoice | null>;
-    getInvoiceByNumber(invoiceNumber: string, orgId: string): Promise<Invoice | null>;
-    createInvoice(invoice: Partial<Invoice>, client?: PoolClient): Promise<Invoice>;
+    createInvoice(invoice: Partial<Invoice>, db?: Db): Promise<Invoice>;
     updateInvoiceStatus(id: string, status: InvoiceStatus, paymentDetails?: {
         paidAt: Date;
         paymentIntentId: string;
         amountPaid: number;
-    }, client?: PoolClient): Promise<Invoice>;
+    }, db?: Db): Promise<Invoice>;
     getUpcomingInvoice(orgId: string): Promise<Partial<Invoice> | null>;
-    private mapInvoiceFromDb;
-    recordUsage(usage: Partial<UsageRecord>, client?: PoolClient): Promise<UsageRecord>;
     getUsageRecords(orgId: string, options?: {
-        metricType?: UsageMetricType | undefined;
-        startDate?: Date | undefined;
-        endDate?: Date | undefined;
-        granularity?: 'hourly' | 'daily' | 'monthly' | undefined;
+        startDate?: Date;
+        endDate?: Date;
+        granularity?: 'hourly' | 'daily' | 'monthly';
+        metricType?: UsageMetricType;
     }): Promise<UsageRecord[]>;
     getUsageCounter(orgId: string): Promise<UsageCounter | null>;
-    incrementUsageCounter(orgId: string, metric: keyof Omit<UsageCounter, 'orgId' | 'currentPeriodStart' | 'lastUpdatedAt' | 'limitWarning80SentAt' | 'limitWarning100SentAt' | 'updatedAt'>, amount?: number, client?: PoolClient): Promise<void>;
-    private mapUsageRecordFromDb;
-    private mapUsageCounterFromDb;
-    getCouponByCode(code: string): Promise<Coupon | null>;
-    incrementCouponUsage(code: string, client?: PoolClient): Promise<void>;
-    private mapCouponFromDb;
+    getCouponByCode(code: string, db?: Db): Promise<Coupon | null>;
+    redeemCoupon(couponId: string, orgId: string, db?: Db): Promise<void>;
+    incrementCouponUsage(code: string, db?: Db): Promise<void>;
     createQuotaRequest(request: Partial<QuotaRequest>): Promise<QuotaRequest>;
     getQuotaRequests(orgId: string): Promise<QuotaRequest[]>;
-    private mapQuotaRequestFromDb;
+    getPaymentMethods(_orgId: string): Promise<PaymentMethod[]>;
+    getPaymentMethodById(_id: string, _orgId: string): Promise<PaymentMethod | null>;
+    createPaymentMethod(paymentMethod: Partial<PaymentMethod>): Promise<PaymentMethod>;
+    setDefaultPaymentMethod(_orgId: string, _paymentMethodId: string): Promise<void>;
+    updatePaymentMethod(_id: string, orgId: string, updates: Partial<PaymentMethod>): Promise<PaymentMethod>;
+    deletePaymentMethod(_id: string, _orgId: string): Promise<void>;
 }
+export {};
 //# sourceMappingURL=repository.d.ts.map

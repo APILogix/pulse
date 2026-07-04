@@ -393,7 +393,7 @@ export interface RequestMeta {
 }
 
 // ═══════════════════════════════════════════════════
-// AUDIT LOG TYPES — matches enterprise audit_logs schema
+// AUDIT LOG TYPES — matches enterprise organization_audit_logs schema
 // ═══════════════════════════════════════════════════
 
 export interface CreateAuditLogRecord {

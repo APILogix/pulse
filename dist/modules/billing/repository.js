@@ -1,30 +1,119 @@
 /**
- * Billing repository.
- *
- * Flow:
- * 1. Read plan, subscription, payment method, invoice, usage, coupon, and quota
- *    data from PostgreSQL.
- * 2. Use optional PoolClient parameters so services can wrap related writes in
- *    transactions.
- * 3. Build dynamic UPDATE and filter queries from trusted internal field maps.
- * 4. Map database rows into billing module domain objects.
+ * Billing repository backed by the canonical migrations2 billing tables.
  */
 import { pool } from '../../config/database.js';
-import { PlanTier, BillingInterval, SubscriptionStatus, InvoiceStatus, PaymentMethodType, UsageMetricType } from './types.js';
-import { getDefaultPlanLimits, getDefaultPlanFeatures, formatInvoiceNumber, BillingError, BillingErrorCodes, createBillingLogger } from './utils.js';
-const logger = createBillingLogger('Repository');
+import { BillingInterval, InvoiceStatus, PaymentMethodType, PlanTier, SubscriptionStatus, UsageMetricType, } from './types.js';
+const PLAN_COLUMNS = `
+  id,
+  key,
+  version,
+  name,
+  description,
+  tier,
+  is_public,
+  sort_order,
+  event_limit_monthly,
+  hard_cap,
+  price_inr_monthly,
+  price_usd_monthly,
+  price_inr_annual,
+  price_usd_annual,
+  overage_price_per_1k_inr,
+  overage_price_per_1k_usd,
+  feature_config,
+  is_active,
+  created_at,
+  updated_at
+`;
+const SUBSCRIPTION_COLUMNS = `
+  id,
+  org_id,
+  plan_id,
+  status,
+  billing_provider,
+  provider_customer_id,
+  provider_subscription_id,
+  billing_interval,
+  current_period_start,
+  current_period_end,
+  trial_start,
+  trial_end,
+  cancel_at_period_end,
+  canceled_at,
+  seats,
+  created_at,
+  updated_at
+`;
+const SUBSCRIPTION_EVENT_COLUMNS = `
+  id,
+  org_id,
+  subscription_id,
+  event_type,
+  old_plan_id,
+  new_plan_id,
+  actor,
+  metadata,
+  created_at
+`;
+const INVOICE_COLUMNS = `
+  id,
+  org_id,
+  subscription_id,
+  provider,
+  provider_invoice_id,
+  status,
+  amount_due,
+  amount_paid,
+  currency,
+  period_start,
+  period_end,
+  overage_events,
+  overage_amount,
+  pdf_url,
+  paid_at,
+  created_at
+`;
+const USAGE_DAILY_COUNTER_COLUMNS = `
+  id,
+  org_id,
+  project_id,
+  date,
+  events_count,
+  ai_analyses_count,
+  updated_at
+`;
+const COUPON_COLUMNS = `
+  id,
+  code,
+  discount_type,
+  discount_value,
+  max_redemptions,
+  redemption_count,
+  valid_from,
+  valid_until,
+  is_active,
+  created_at
+`;
+const QUOTA_REQUEST_COLUMNS = `
+  id,
+  org_id,
+  quota_type,
+  requested_limit,
+  current_limit,
+  reason,
+  status,
+  reviewed_by,
+  reviewed_at,
+  notes,
+  created_at
+`;
 export class BillingRepository {
-    pool;
-    constructor(poolInstance = pool) {
-        this.pool = poolInstance;
+    db;
+    constructor(db = pool) {
+        this.db = db;
     }
-    // ============================================
-    // TRANSACTION HELPERS
-    // ============================================
     async withTransaction(callback) {
-        // Shared transaction helper for service workflows that need multiple billing
-        // writes to commit atomically.
-        const client = await this.pool.connect();
+        const client = await this.db.connect();
         try {
             await client.query('BEGIN');
             const result = await callback(client);
@@ -39,808 +128,567 @@ export class BillingRepository {
             client.release();
         }
     }
-    // ============================================
-    // BILLING PLANS
-    // ============================================
     async getAllPlans(includeHidden = false) {
-        const query = includeHidden
-            ? 'SELECT * FROM billing_plans WHERE is_active = true ORDER BY sort_order ASC'
-            : 'SELECT * FROM billing_plans WHERE is_active = true AND is_public = true ORDER BY sort_order ASC';
-        const result = await this.pool.query(query);
-        return result.rows.map(this.mapPlanFromDb);
+        const result = await this.db.query(includeHidden
+            ? `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE ORDER BY sort_order ASC, key ASC, version DESC`
+            : `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE AND is_public = TRUE ORDER BY sort_order ASC, key ASC, version DESC`);
+        return result.rows.map(mapPlanFromDb);
     }
-    async getPlanById(planId) {
-        const result = await this.pool.query('SELECT * FROM billing_plans WHERE id = $1', [planId]);
-        return result.rows.length > 0 ? this.mapPlanFromDb(result.rows[0]) : null;
+    async getPlanById(planId, db = this.db) {
+        const result = await db.query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE id = $1`, [planId]);
+        return result.rows[0] ? mapPlanFromDb(result.rows[0]) : null;
     }
-    async getPlanByTier(tier) {
-        const result = await this.pool.query('SELECT * FROM billing_plans WHERE tier = $1 AND is_active = true LIMIT 1', [tier]);
-        return result.rows.length > 0 ? this.mapPlanFromDb(result.rows[0]) : null;
+    async getPlanByTier(tier, db = this.db) {
+        const result = await db.query(`SELECT ${PLAN_COLUMNS} FROM plans
+       WHERE tier = $1 AND is_active = TRUE
+       ORDER BY version DESC
+       LIMIT 1`, [tier]);
+        return result.rows[0] ? mapPlanFromDb(result.rows[0]) : null;
     }
-    // ============================================
-    // ORGANIZATION ACCESS / BILLING PROFILE
-    // ============================================
-    async getOrganizationById(orgId) {
-        const result = await this.pool.query(`SELECT
-        id,
-        name,
-        slug,
-        owner_user_id,
-        billing_email,
-        billing_name,
-        billing_address,
-        plan_id,
-        status,
-        deleted_at,
-        created_at,
-        updated_at
-      FROM organizations
-      WHERE id = $1 AND deleted_at IS NULL`, [orgId]);
-        if (result.rows.length === 0) {
-            return null;
-        }
-        const row = result.rows[0];
-        return {
-            id: row.id,
-            name: row.name,
-            slug: row.slug,
-            ownerUserId: row.owner_user_id,
-            billingEmail: row.billing_email,
-            billingName: row.billing_name,
-            billingAddress: row.billing_address,
-            planId: row.plan_id,
-            status: row.status,
-            deletedAt: row.deleted_at,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-        };
+    async getOrganizationBilling(orgId, db = this.db) {
+        const result = await db.query(`SELECT ${prefixColumns(SUBSCRIPTION_COLUMNS, 's')}
+       FROM organization_subscriptions s
+       JOIN plans p ON p.id = s.plan_id
+       WHERE s.org_id = $1
+         AND s.status IN ('trialing','active','past_due')
+       ORDER BY s.created_at DESC
+       LIMIT 1`, [orgId]);
+        return result.rows[0] ? mapSubscriptionFromDb(result.rows[0]) : null;
     }
-    async getOrganizationMembership(orgId, userId) {
-        const result = await this.pool.query(`SELECT role, permissions, is_active, joined_at
-       FROM organization_members
-       WHERE org_id = $1 AND user_id = $2
-       LIMIT 1`, [orgId, userId]);
-        if (result.rows.length === 0) {
-            return null;
-        }
-        const row = result.rows[0];
-        return {
-            role: row.role,
-            permissions: row.permissions,
-            isActive: row.is_active,
-            joinedAt: row.joined_at
-        };
+    async getOrganizationBillingForUpdate(orgId, db) {
+        const result = await db.query(`SELECT ${SUBSCRIPTION_COLUMNS}
+       FROM organization_subscriptions
+       WHERE org_id = $1
+         AND status IN ('trialing','active','past_due')
+       ORDER BY created_at DESC
+       LIMIT 1
+       FOR UPDATE`, [orgId]);
+        return result.rows[0] ? mapSubscriptionFromDb(result.rows[0]) : null;
     }
-    async updateOrganizationPlan(orgId, planId, client) {
-        const db = client || this.pool;
-        await db.query(`UPDATE organizations
-       SET plan_id = $1, plan_started_at = NOW(), updated_at = NOW()
-       WHERE id = $2 AND deleted_at IS NULL`, [planId, orgId]);
-    }
-    async updateOrganizationBillingProfile(orgId, updates, client) {
-        const db = client || this.pool;
-        await db.query(`UPDATE organizations
-       SET billing_email = COALESCE($1, billing_email),
-           billing_name = COALESCE($2, billing_name),
-           billing_address = COALESCE($3, billing_address),
-           updated_at = NOW()
-       WHERE id = $4 AND deleted_at IS NULL`, [
-            updates.billingEmail ?? null,
-            updates.billingName ?? null,
-            updates.billingAddress ? JSON.stringify(updates.billingAddress) : null,
-            orgId
-        ]);
-    }
-    async seedDefaultPlans() {
-        // Idempotent seed operation. Existing plans are updated in place so local
-        // setup and migrations can run repeatedly.
-        const plans = [
-            {
-                id: 'starter',
-                name: 'Starter',
-                tier: PlanTier.STARTER,
-                basePriceMonthly: 0,
-                basePriceYearly: 0,
-                limits: {
-                    ...getDefaultPlanLimits(),
-                    maxProjects: 3,
-                    maxMembers: 2,
-                    maxApplications: 5,
-                    dataRetentionDays: 7,
-                    apiRequestsPerMin: 100
-                },
-                features: {
-                    ...getDefaultPlanFeatures(),
-                    slackIntegration: false,
-                    pagerdutyIntegration: false
-                }
-            },
-            {
-                id: 'professional',
-                name: 'Professional',
-                tier: PlanTier.PROFESSIONAL,
-                basePriceMonthly: 29,
-                basePriceYearly: 290,
-                limits: {
-                    ...getDefaultPlanLimits(),
-                    maxProjects: 10,
-                    maxMembers: 10,
-                    maxApplications: 50,
-                    maxMetricsPerApp: 500,
-                    dataRetentionDays: 90,
-                    apiRequestsPerMin: 10000,
-                    alertRules: 50,
-                    dashboards: 10,
-                    integrations: 10,
-                    supportLevel: 'email',
-                    advancedAnalytics: true,
-                    customDomains: 1,
-                    slaUptime: '99.9%'
-                },
-                features: {
-                    ...getDefaultPlanFeatures(),
-                    slackIntegration: true,
-                    customWebhooks: true,
-                    logRetentionExtended: true,
-                    auditLogs: true
-                }
-            },
-            {
-                id: 'enterprise',
-                name: 'Enterprise',
-                tier: PlanTier.ENTERPRISE,
-                basePriceMonthly: 99,
-                basePriceYearly: 990,
-                limits: {
-                    ...getDefaultPlanLimits(),
-                    maxProjects: 100,
-                    maxMembers: 100,
-                    maxApplications: 500,
-                    maxMetricsPerApp: 2000,
-                    dataRetentionDays: 365,
-                    apiRequestsPerMin: 100000,
-                    alertRules: 999,
-                    dashboards: 100,
-                    integrations: 50,
-                    supportLevel: 'priority',
-                    ssoEnabled: true,
-                    advancedAnalytics: true,
-                    customDomains: 10,
-                    slaUptime: '99.99%'
-                },
-                features: {
-                    ...getDefaultPlanFeatures(),
-                    slackIntegration: true,
-                    pagerdutyIntegration: true,
-                    customWebhooks: true,
-                    logRetentionExtended: true,
-                    auditLogs: true,
-                    dedicatedSupport: true,
-                    customContract: true
-                }
-            }
-        ];
-        for (const plan of plans) {
-            await this.pool.query(`INSERT INTO billing_plans (
-          id, name, tier, base_price_monthly, base_price_yearly, 
-          limits, features, is_public, sort_order
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          base_price_monthly = EXCLUDED.base_price_monthly,
-          base_price_yearly = EXCLUDED.base_price_yearly,
-          limits = EXCLUDED.limits,
-          features = EXCLUDED.features,
-          updated_at = NOW()`, [
-                plan.id,
-                plan.name,
-                plan.tier,
-                plan.basePriceMonthly,
-                plan.basePriceYearly,
-                JSON.stringify(plan.limits),
-                JSON.stringify(plan.features),
-                plans.indexOf(plan)
-            ]);
-        }
-        logger.info('Default plans seeded successfully');
-    }
-    mapPlanFromDb(row) {
-        return {
-            id: row.id,
-            name: row.name,
-            description: row.description,
-            tier: row.tier,
-            isPublic: row.is_public,
-            sortOrder: row.sort_order,
-            basePriceMonthly: parseFloat(row.base_price_monthly),
-            basePriceYearly: row.base_price_yearly ? parseFloat(row.base_price_yearly) : null,
-            currency: row.currency,
-            billingInterval: row.billing_interval,
-            limits: row.limits,
-            features: row.features,
-            trialDays: row.trial_days,
-            gracePeriodDays: row.grace_period_days,
-            isActive: row.is_active,
-            deprecatedAt: row.deprecated_at,
-            replacedBy: row.replaced_by,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-        };
-    }
-    // ============================================
-    // ORGANIZATION BILLING (SUBSCRIPTIONS)
-    // ============================================
-    async getOrganizationBilling(orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_billing WHERE org_id = $1', [orgId]);
-        return result.rows.length > 0 ? this.mapBillingFromDb(result.rows[0]) : null;
-    }
-    async createOrganizationBilling(billing, client) {
-        const db = client || this.pool;
-        const result = await db.query(`INSERT INTO organization_billing (
-        org_id, plan_id, status, current_period_start, current_period_end,
-        billing_cycle_anchor, default_payment_method_id, payment_method_type,
-        stripe_customer_id, stripe_subscription_id, mrr, tax_rate
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING *`, [
+    async createOrganizationBilling(billing, db = this.db) {
+        const result = await db.query(`INSERT INTO organization_subscriptions (
+         org_id, plan_id, status, billing_provider, provider_customer_id,
+         provider_subscription_id, billing_interval, current_period_start,
+         current_period_end, trial_start, trial_end, cancel_at_period_end,
+         canceled_at, seats
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING ${SUBSCRIPTION_COLUMNS}`, [
             billing.orgId,
             billing.planId,
-            billing.status || SubscriptionStatus.TRIALING,
+            billing.status ?? SubscriptionStatus.TRIALING,
+            billing.billingProvider ?? 'system',
+            billing.providerCustomerId ?? null,
+            billing.providerSubscriptionId ?? null,
+            billing.billingInterval ?? BillingInterval.MONTHLY,
             billing.currentPeriodStart,
             billing.currentPeriodEnd,
-            billing.billingCycleAnchor,
-            billing.defaultPaymentMethodId,
-            billing.paymentMethodType || PaymentMethodType.CARD,
-            billing.stripeCustomerId,
-            billing.stripeSubscriptionId,
-            billing.mrr || 0,
-            billing.taxRate || 0
+            billing.trialStart ?? null,
+            billing.trialEnd ?? null,
+            billing.cancelAtPeriodEnd ?? false,
+            billing.canceledAt ?? null,
+            billing.seats ?? null,
         ]);
-        return this.mapBillingFromDb(result.rows[0]);
+        return mapSubscriptionFromDb(result.rows[0]);
     }
-    async updateOrganizationBilling(orgId, updates, client) {
-        // Dynamic update keeps PATCH semantics for billing profiles. Only supplied
-        // fields are changed, and updated_at is always refreshed.
-        const db = client || this.pool;
-        const setClauses = [];
+    async updateOrganizationBilling(orgId, updates, db = this.db) {
+        const fields = [];
         const values = [];
-        let paramIndex = 1;
-        if (updates.planId !== undefined) {
-            setClauses.push(`plan_id = $${paramIndex++}`);
-            values.push(updates.planId);
-        }
-        if (updates.status !== undefined) {
-            setClauses.push(`status = $${paramIndex++}`);
-            values.push(updates.status);
-        }
-        if (updates.currentPeriodEnd !== undefined) {
-            setClauses.push(`current_period_end = $${paramIndex++}`);
-            values.push(updates.currentPeriodEnd);
-        }
-        if (updates.defaultPaymentMethodId !== undefined) {
-            setClauses.push(`default_payment_method_id = $${paramIndex++}`);
-            values.push(updates.defaultPaymentMethodId);
-        }
-        if (updates.mrr !== undefined) {
-            setClauses.push(`mrr = $${paramIndex++}`);
-            values.push(updates.mrr);
-        }
-        if (updates.cancelAtPeriodEnd !== undefined) {
-            setClauses.push(`cancel_at_period_end = $${paramIndex++}`);
-            values.push(updates.cancelAtPeriodEnd);
-        }
-        if (updates.canceledAt !== undefined) {
-            setClauses.push(`canceled_at = $${paramIndex++}`);
-            values.push(updates.canceledAt);
-        }
-        if (updates.cancellationReason !== undefined) {
-            setClauses.push(`cancellation_reason = $${paramIndex++}`);
-            values.push(updates.cancellationReason);
-        }
-        if (updates.totalPaidToDate !== undefined) {
-            setClauses.push(`total_paid_to_date = $${paramIndex++}`);
-            values.push(updates.totalPaidToDate);
-        }
-        if (updates.invoicePrefix !== undefined) {
-            setClauses.push(`invoice_prefix = $${paramIndex++}`);
-            values.push(updates.invoicePrefix);
-        }
-        if (updates.nextInvoiceNumber !== undefined) {
-            setClauses.push(`next_invoice_number = $${paramIndex++}`);
-            values.push(updates.nextInvoiceNumber);
-        }
-        if (updates.invoiceNotes !== undefined) {
-            setClauses.push(`invoice_notes = $${paramIndex++}`);
-            values.push(updates.invoiceNotes);
-        }
-        if (updates.netTermsDays !== undefined) {
-            setClauses.push(`net_terms_days = $${paramIndex++}`);
-            values.push(updates.netTermsDays);
-        }
-        if (updates.usageBillingEnabled !== undefined) {
-            setClauses.push(`usage_billing_enabled = $${paramIndex++}`);
-            values.push(updates.usageBillingEnabled);
-        }
-        if (updates.overageRatePerUnit !== undefined) {
-            setClauses.push(`overage_rate_per_unit = $${paramIndex++}`);
-            values.push(updates.overageRatePerUnit);
-        }
-        if (updates.taxExempt !== undefined) {
-            setClauses.push(`tax_exempt = $${paramIndex++}`);
-            values.push(updates.taxExempt);
-        }
-        if (updates.taxId !== undefined) {
-            setClauses.push(`tax_id = $${paramIndex++}`);
-            values.push(updates.taxId);
-        }
-        if (updates.taxRate !== undefined) {
-            setClauses.push(`tax_rate = $${paramIndex++}`);
-            values.push(updates.taxRate);
-        }
-        setClauses.push(`updated_at = NOW()`);
+        let i = 1;
+        const add = (column, value) => {
+            fields.push(`${column} = $${i++}`);
+            values.push(value);
+        };
+        if (updates.planId !== undefined)
+            add('plan_id', updates.planId);
+        if (updates.status !== undefined)
+            add('status', updates.status);
+        if (updates.billingProvider !== undefined)
+            add('billing_provider', updates.billingProvider);
+        if (updates.providerCustomerId !== undefined)
+            add('provider_customer_id', updates.providerCustomerId);
+        if (updates.providerSubscriptionId !== undefined)
+            add('provider_subscription_id', updates.providerSubscriptionId);
+        if (updates.billingInterval !== undefined)
+            add('billing_interval', updates.billingInterval);
+        if (updates.currentPeriodStart !== undefined)
+            add('current_period_start', updates.currentPeriodStart);
+        if (updates.currentPeriodEnd !== undefined)
+            add('current_period_end', updates.currentPeriodEnd);
+        if (updates.trialStart !== undefined)
+            add('trial_start', updates.trialStart);
+        if (updates.trialEnd !== undefined)
+            add('trial_end', updates.trialEnd);
+        if (updates.cancelAtPeriodEnd !== undefined)
+            add('cancel_at_period_end', updates.cancelAtPeriodEnd);
+        if (updates.canceledAt !== undefined)
+            add('canceled_at', updates.canceledAt);
+        if (updates.seats !== undefined)
+            add('seats', updates.seats);
+        fields.push('updated_at = NOW()');
         values.push(orgId);
-        const query = `
-      UPDATE organization_billing 
-      SET ${setClauses.join(', ')}
-      WHERE org_id = $${paramIndex}
-      RETURNING *
-    `;
-        const result = await db.query(query, values);
-        return this.mapBillingFromDb(result.rows[0]);
+        const result = await db.query(`UPDATE organization_subscriptions
+       SET ${fields.join(', ')}
+       WHERE org_id = $${i}
+         AND status IN ('trialing','active','past_due')
+       RETURNING ${SUBSCRIPTION_COLUMNS}`, values);
+        if (!result.rows[0]) {
+            throw new Error('No active subscription found to update');
+        }
+        return mapSubscriptionFromDb(result.rows[0]);
     }
-    async updateSubscriptionStatus(orgId, status, client) {
-        const db = client || this.pool;
-        await db.query('UPDATE organization_billing SET status = $1, updated_at = NOW() WHERE org_id = $2', [status, orgId]);
-    }
-    mapBillingFromDb(row) {
-        return {
-            id: row.id,
-            orgId: row.org_id,
-            planId: row.plan_id,
-            status: row.status,
-            currentPeriodStart: row.current_period_start,
-            currentPeriodEnd: row.current_period_end,
-            billingCycleAnchor: row.billing_cycle_anchor,
-            defaultPaymentMethodId: row.default_payment_method_id,
-            paymentMethodType: row.payment_method_type,
-            stripeCustomerId: row.stripe_customer_id,
-            stripeSubscriptionId: row.stripe_subscription_id,
-            invoicePrefix: row.invoice_prefix,
-            nextInvoiceNumber: row.next_invoice_number,
-            invoiceNotes: row.invoice_notes,
-            netTermsDays: row.net_terms_days,
-            usageBillingEnabled: row.usage_billing_enabled,
-            overageRatePerUnit: row.overage_rate_per_unit ? parseFloat(row.overage_rate_per_unit) : null,
-            mrr: parseFloat(row.mrr),
-            arr: parseFloat(row.arr),
-            totalPaidToDate: parseFloat(row.total_paid_to_date),
-            cancelAtPeriodEnd: row.cancel_at_period_end,
-            canceledAt: row.canceled_at,
-            cancellationReason: row.cancellation_reason,
-            gracePeriodStart: row.grace_period_start,
-            gracePeriodEnd: row.grace_period_end,
-            taxExempt: row.tax_exempt,
-            taxId: row.tax_id,
-            taxRate: parseFloat(row.tax_rate),
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-        };
-    }
-    // ============================================
-    // PAYMENT METHODS
-    // ============================================
-    async getPaymentMethods(orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_payment_methods WHERE org_id = $1 AND is_active = true ORDER BY is_default DESC, created_at DESC', [orgId]);
-        return result.rows.map(this.mapPaymentMethodFromDb);
-    }
-    async getPaymentMethodById(id, orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_payment_methods WHERE id = $1 AND org_id = $2', [id, orgId]);
-        return result.rows.length > 0 ? this.mapPaymentMethodFromDb(result.rows[0]) : null;
-    }
-    async getDefaultPaymentMethod(orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_payment_methods WHERE org_id = $1 AND is_default = true AND is_active = true LIMIT 1', [orgId]);
-        return result.rows.length > 0 ? this.mapPaymentMethodFromDb(result.rows[0]) : null;
-    }
-    async createPaymentMethod(paymentMethod, client) {
-        // First active payment method becomes default automatically to keep checkout
-        // and invoice payment flows usable without a second request.
-        const db = client || this.pool;
-        // If this is the first payment method, make it default
-        const existingCount = await db.query('SELECT COUNT(*) FROM organization_payment_methods WHERE org_id = $1 AND is_active = true', [paymentMethod.orgId]);
-        const isDefault = parseInt(existingCount.rows[0].count) === 0 || paymentMethod.isDefault;
-        const result = await db.query(`INSERT INTO organization_payment_methods (
-        org_id, type, is_default, card_brand, card_last4, card_exp_month, card_exp_year,
-        bank_account_last4, bank_name, stripe_payment_method_id, paypal_email, billing_details
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-      RETURNING *`, [
-            paymentMethod.orgId,
-            paymentMethod.type,
-            isDefault,
-            paymentMethod.cardBrand,
-            paymentMethod.cardLast4,
-            paymentMethod.cardExpMonth,
-            paymentMethod.cardExpYear,
-            paymentMethod.bankAccountLast4,
-            paymentMethod.bankName,
-            paymentMethod.stripePaymentMethodId,
-            paymentMethod.paypalEmail,
-            paymentMethod.billingDetails ? JSON.stringify(paymentMethod.billingDetails) : null
+    async createSubscriptionEvent(event, db = this.db) {
+        await db.query(`INSERT INTO subscription_events (
+         org_id, subscription_id, event_type, old_plan_id, new_plan_id, actor, metadata
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`, [
+            event.orgId,
+            event.subscriptionId,
+            event.eventType,
+            event.oldPlanId ?? null,
+            event.newPlanId ?? null,
+            event.actor,
+            JSON.stringify(event.metadata ?? {}),
         ]);
-        return this.mapPaymentMethodFromDb(result.rows[0]);
     }
-    async setDefaultPaymentMethod(orgId, paymentMethodId, client) {
-        const db = client || this.pool;
-        await db.query('UPDATE organization_payment_methods SET is_default = false WHERE org_id = $1', [orgId]);
-        await db.query('UPDATE organization_payment_methods SET is_default = true WHERE id = $1 AND org_id = $2', [paymentMethodId, orgId]);
+    async listSubscriptionEvents(orgId) {
+        const result = await this.db.query(`SELECT ${SUBSCRIPTION_EVENT_COLUMNS}
+       FROM subscription_events
+       WHERE org_id = $1
+       ORDER BY created_at DESC`, [orgId]);
+        return result.rows;
     }
-    async updatePaymentMethod(id, orgId, updates) {
-        const result = await this.pool.query(`UPDATE organization_payment_methods SET
-        billing_details = COALESCE($1, billing_details),
-        is_active = COALESCE($2, is_active),
-        updated_at = NOW()
-      WHERE id = $3 AND org_id = $4
-      RETURNING *`, [
-            updates.billingDetails ? JSON.stringify(updates.billingDetails) : null,
-            updates.isActive,
-            id,
-            orgId
-        ]);
-        return this.mapPaymentMethodFromDb(result.rows[0]);
-    }
-    async deletePaymentMethod(id, orgId) {
-        await this.pool.query('UPDATE organization_payment_methods SET is_active = false, updated_at = NOW() WHERE id = $1 AND org_id = $2', [id, orgId]);
-    }
-    mapPaymentMethodFromDb(row) {
-        return {
-            id: row.id,
-            orgId: row.org_id,
-            type: row.type,
-            isDefault: row.is_default,
-            cardBrand: row.card_brand,
-            cardLast4: row.card_last4,
-            cardExpMonth: row.card_exp_month,
-            cardExpYear: row.card_exp_year,
-            bankAccountLast4: row.bank_account_last4,
-            bankName: row.bank_name,
-            stripePaymentMethodId: row.stripe_payment_method_id,
-            paypalEmail: row.paypal_email,
-            billingDetails: row.billing_details,
-            isActive: row.is_active,
-            createdAt: row.created_at
-        };
-    }
-    // ============================================
-    // INVOICES
-    // ============================================
     async getInvoices(orgId, options = {}) {
-        let whereClause = 'WHERE org_id = $1';
+        const where = ['org_id = $1'];
         const values = [orgId];
-        let paramIndex = 2;
+        let i = 2;
         if (options.status) {
-            whereClause += ` AND status = $${paramIndex++}`;
+            where.push(`status = $${i++}`);
             values.push(options.status);
         }
         if (options.startDate) {
-            whereClause += ` AND invoice_date >= $${paramIndex++}`;
+            where.push(`created_at >= $${i++}`);
             values.push(options.startDate);
         }
         if (options.endDate) {
-            whereClause += ` AND invoice_date <= $${paramIndex++}`;
+            where.push(`created_at <= $${i++}`);
             values.push(options.endDate);
         }
-        const countResult = await this.pool.query(`SELECT COUNT(*) FROM organization_invoices ${whereClause}`, values);
-        const total = parseInt(countResult.rows[0].count);
-        let query = `SELECT * FROM organization_invoices ${whereClause} ORDER BY invoice_date DESC`;
-        if (options.limit) {
-            query += ` LIMIT $${paramIndex++}`;
+        const whereSql = where.join(' AND ');
+        const count = await this.db.query(`SELECT COUNT(*)::int AS count FROM invoices WHERE ${whereSql}`, values);
+        let sql = `SELECT ${INVOICE_COLUMNS} FROM invoices WHERE ${whereSql} ORDER BY created_at DESC`;
+        if (options.limit !== undefined) {
+            sql += ` LIMIT $${i++}`;
             values.push(options.limit);
         }
-        if (options.offset) {
-            query += ` OFFSET $${paramIndex++}`;
+        if (options.offset !== undefined) {
+            sql += ` OFFSET $${i++}`;
             values.push(options.offset);
         }
-        const result = await this.pool.query(query, values);
-        return {
-            invoices: result.rows.map(this.mapInvoiceFromDb),
-            total
-        };
+        const result = await this.db.query(sql, values);
+        return { invoices: result.rows.map(mapInvoiceFromDb), total: count.rows[0]?.count ?? 0 };
     }
     async getInvoiceById(id, orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_invoices WHERE id = $1 AND org_id = $2', [id, orgId]);
-        return result.rows.length > 0 ? this.mapInvoiceFromDb(result.rows[0]) : null;
+        const result = await this.db.query(`SELECT ${INVOICE_COLUMNS} FROM invoices WHERE id = $1 AND org_id = $2`, [id, orgId]);
+        return result.rows[0] ? mapInvoiceFromDb(result.rows[0]) : null;
     }
-    async getInvoiceByNumber(invoiceNumber, orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_invoices WHERE invoice_number = $1 AND org_id = $2', [invoiceNumber, orgId]);
-        return result.rows.length > 0 ? this.mapInvoiceFromDb(result.rows[0]) : null;
-    }
-    async createInvoice(invoice, client) {
-        // Invoice number generation locks the billing row with FOR UPDATE so two
-        // invoice writers cannot reuse the same invoice number.
-        const db = client || this.pool;
-        // Generate invoice number
-        const billing = await db.query('SELECT invoice_prefix, next_invoice_number FROM organization_billing WHERE org_id = $1 FOR UPDATE', [invoice.orgId]);
-        const prefix = billing.rows[0]?.invoice_prefix || 'INV';
-        const number = billing.rows[0]?.next_invoice_number || 1;
-        const invoiceNumber = formatInvoiceNumber(prefix, number);
-        // Increment invoice number
-        await db.query('UPDATE organization_billing SET next_invoice_number = next_invoice_number + 1 WHERE org_id = $1', [invoice.orgId]);
-        const result = await db.query(`INSERT INTO organization_invoices (
-        org_id, invoice_number, status, invoice_date, due_date,
-        period_start, period_end, subtotal, discount_amount, discount_code,
-        tax_amount, tax_rate, total, currency, line_items, payment_method
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-      RETURNING *`, [
+    async createInvoice(invoice, db = this.db) {
+        const result = await db.query(`INSERT INTO invoices (
+         org_id, subscription_id, provider, provider_invoice_id, status,
+         amount_due, amount_paid, currency, period_start, period_end,
+         overage_events, overage_amount, pdf_url, paid_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING ${INVOICE_COLUMNS}`, [
             invoice.orgId,
-            invoiceNumber,
-            invoice.status || InvoiceStatus.DRAFT,
-            invoice.invoiceDate,
-            invoice.dueDate,
+            invoice.subscriptionId,
+            invoice.provider ?? 'manual',
+            invoice.providerInvoiceId ?? `manual_${Date.now()}`,
+            invoice.status ?? InvoiceStatus.DRAFT,
+            invoice.amountDue ?? invoice.total ?? 0,
+            invoice.amountPaid ?? 0,
+            invoice.currency ?? 'USD',
             invoice.periodStart,
             invoice.periodEnd,
-            invoice.subtotal,
-            invoice.discountAmount || 0,
-            invoice.discountCode,
-            invoice.taxAmount || 0,
-            invoice.taxRate || 0,
-            invoice.total,
-            invoice.currency || 'USD',
-            JSON.stringify(invoice.lineItems || []),
-            invoice.paymentMethod
+            invoice.overageEvents ?? 0,
+            invoice.overageAmount ?? 0,
+            invoice.pdfUrl ?? null,
+            invoice.paidAt ?? null,
         ]);
-        return this.mapInvoiceFromDb(result.rows[0]);
+        return mapInvoiceFromDb(result.rows[0]);
     }
-    async updateInvoiceStatus(id, status, paymentDetails, client) {
-        const db = client || this.pool;
-        let query = 'UPDATE organization_invoices SET status = $1';
-        const values = [status];
-        let paramIndex = 2;
-        if (paymentDetails) {
-            query += `, paid_at = $${paramIndex++}, payment_intent_id = $${paramIndex++}, amount_paid = $${paramIndex++}`;
-            values.push(paymentDetails.paidAt, paymentDetails.paymentIntentId, paymentDetails.amountPaid);
-        }
-        query += `, updated_at = NOW() WHERE id = $${paramIndex} RETURNING *`;
-        values.push(id);
-        const result = await db.query(query, values);
-        return this.mapInvoiceFromDb(result.rows[0]);
+    async updateInvoiceStatus(id, status, paymentDetails, db = this.db) {
+        const result = await db.query(`UPDATE invoices
+       SET status = $1,
+           paid_at = COALESCE($2, paid_at),
+           amount_paid = COALESCE($3, amount_paid)
+       WHERE id = $4
+       RETURNING ${INVOICE_COLUMNS}`, [status, paymentDetails?.paidAt ?? null, paymentDetails?.amountPaid ?? null, id]);
+        return mapInvoiceFromDb(result.rows[0]);
     }
     async getUpcomingInvoice(orgId) {
-        const billing = await this.getOrganizationBilling(orgId);
-        if (!billing)
+        const subscription = await this.getOrganizationBilling(orgId);
+        if (!subscription)
             return null;
-        const plan = await this.getPlanById(billing.planId);
+        const plan = await this.getPlanById(subscription.planId);
         if (!plan)
             return null;
-        // Calculate upcoming invoice based on current period
-        const periodStart = billing.currentPeriodEnd;
-        const periodEnd = new Date(periodStart);
-        periodEnd.setMonth(periodEnd.getMonth() + 1);
-        const subtotal = billing.mrr;
-        const taxAmount = (subtotal * billing.taxRate) / 100;
-        const total = subtotal + taxAmount;
+        const amountDue = subscription.billingInterval === BillingInterval.ANNUAL
+            ? plan.priceUsdAnnual ?? 0
+            : plan.priceUsdMonthly ?? 0;
         return {
             orgId,
+            subscriptionId: subscription.id,
+            provider: subscription.billingProvider ?? 'system',
+            providerInvoiceId: `upcoming_${subscription.id}`,
+            invoiceNumber: `upcoming_${subscription.id}`,
             status: InvoiceStatus.DRAFT,
-            periodStart,
-            periodEnd,
-            subtotal,
-            taxAmount,
-            taxRate: billing.taxRate,
-            total,
+            invoiceDate: new Date(),
+            dueDate: subscription.currentPeriodEnd,
+            paidAt: null,
+            periodStart: subscription.currentPeriodStart,
+            periodEnd: subscription.currentPeriodEnd,
+            subtotal: amountDue,
+            discountAmount: 0,
+            discountCode: null,
+            taxAmount: 0,
+            taxRate: 0,
+            total: amountDue,
+            amountPaid: 0,
+            amountDue,
             currency: 'USD',
             lineItems: [{
-                    description: `${plan.name} - Monthly Subscription`,
-                    amount: subtotal,
+                    description: `${plan.name} - ${subscription.billingInterval ?? BillingInterval.MONTHLY}`,
+                    amount: amountDue,
                     quantity: 1,
-                    unitPrice: subtotal,
-                    type: 'plan'
-                }]
+                    unitPrice: amountDue,
+                    type: 'plan',
+                }],
+            paymentMethod: null,
+            paymentIntentId: null,
+            stripeInvoiceId: null,
+            pdfUrl: null,
+            footerNote: null,
+            memo: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
         };
-    }
-    mapInvoiceFromDb(row) {
-        return {
-            id: row.id,
-            orgId: row.org_id,
-            invoiceNumber: row.invoice_number,
-            status: row.status,
-            invoiceDate: row.invoice_date,
-            dueDate: row.due_date,
-            paidAt: row.paid_at,
-            periodStart: row.period_start,
-            periodEnd: row.period_end,
-            subtotal: parseFloat(row.subtotal),
-            discountAmount: parseFloat(row.discount_amount),
-            discountCode: row.discount_code,
-            taxAmount: parseFloat(row.tax_amount),
-            taxRate: parseFloat(row.tax_rate),
-            total: parseFloat(row.total),
-            amountPaid: parseFloat(row.amount_paid),
-            amountDue: parseFloat(row.amount_due),
-            currency: row.currency,
-            lineItems: row.line_items,
-            paymentMethod: row.payment_method,
-            paymentIntentId: row.payment_intent_id,
-            stripeInvoiceId: row.stripe_invoice_id,
-            pdfUrl: row.pdf_url,
-            footerNote: row.footer_note,
-            memo: row.memo,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-        };
-    }
-    // ============================================
-    // USAGE RECORDS
-    // ============================================
-    async recordUsage(usage, client) {
-        const db = client || this.pool;
-        const result = await db.query(`INSERT INTO organization_usage (
-        org_id, metric_type, metric_name, period_start, period_end,
-        granularity, usage_count, usage_limit, unit_cost, details
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      ON CONFLICT (org_id, metric_type, period_start, granularity) 
-      DO UPDATE SET
-        usage_count = organization_usage.usage_count + EXCLUDED.usage_count,
-        updated_at = NOW()
-      RETURNING *`, [
-            usage.orgId,
-            usage.metricType,
-            usage.metricName,
-            usage.periodStart,
-            usage.periodEnd,
-            usage.granularity || 'daily',
-            usage.usageCount,
-            usage.usageLimit,
-            usage.unitCost,
-            usage.details ? JSON.stringify(usage.details) : null
-        ]);
-        return this.mapUsageRecordFromDb(result.rows[0]);
     }
     async getUsageRecords(orgId, options = {}) {
-        // Usage filters are optional and additive, enabling summary and drill-down
-        // queries from the same method.
-        let whereClause = 'WHERE org_id = $1';
         const values = [orgId];
-        let paramIndex = 2;
-        if (options.metricType) {
-            whereClause += ` AND metric_type = $${paramIndex++}`;
-            values.push(options.metricType);
-        }
+        let i = 2;
+        const where = ['org_id = $1'];
         if (options.startDate) {
-            whereClause += ` AND period_start >= $${paramIndex++}`;
+            where.push(`date >= $${i++}`);
             values.push(options.startDate);
         }
         if (options.endDate) {
-            whereClause += ` AND period_end <= $${paramIndex++}`;
+            where.push(`date <= $${i++}`);
             values.push(options.endDate);
         }
-        if (options.granularity) {
-            whereClause += ` AND granularity = $${paramIndex++}`;
-            values.push(options.granularity);
-        }
-        const result = await this.pool.query(`SELECT * FROM organization_usage ${whereClause} ORDER BY period_start DESC`, values);
-        return result.rows.map(this.mapUsageRecordFromDb);
+        const result = await this.db.query(`SELECT ${USAGE_DAILY_COUNTER_COLUMNS}
+       FROM usage_daily_counters
+       WHERE ${where.join(' AND ')}
+       ORDER BY date DESC`, values);
+        return result.rows.map((row) => mapUsageRecordFromDb(row, options.metricType ?? UsageMetricType.API_REQUESTS));
     }
     async getUsageCounter(orgId) {
-        const result = await this.pool.query('SELECT * FROM organization_usage_counters WHERE org_id = $1', [orgId]);
-        return result.rows.length > 0 ? this.mapUsageCounterFromDb(result.rows[0]) : null;
+        const result = await this.db.query(`SELECT
+         org_id,
+         date_trunc('month', NOW()) AS current_period_start,
+         COALESCE(SUM(events_count), 0)::bigint AS events_count,
+         COALESCE(SUM(ai_analyses_count), 0)::bigint AS ai_analyses_count,
+         MAX(updated_at) AS last_updated_at
+       FROM usage_daily_counters
+       WHERE org_id = $1
+         AND date_trunc('month', date::timestamp) = date_trunc('month', NOW())
+       GROUP BY org_id`, [orgId]);
+        if (!result.rows[0])
+            return null;
+        return mapUsageCounterFromDb(result.rows[0]);
     }
-    async incrementUsageCounter(orgId, metric, amount = 1, client) {
-        // Metric names are mapped to trusted columns before SQL is built. Unknown
-        // metric keys fail fast instead of producing unsafe SQL.
-        const db = client || this.pool;
-        const columnMap = {
-            apiRequestsThisPeriod: 'api_requests_this_period',
-            metricsIngestedThisPeriod: 'metrics_ingested_this_period',
-            storageGbThisPeriod: 'storage_gb_this_period',
-            notificationsSentThisPeriod: 'notifications_sent_this_period',
-            totalApiRequestsAllTime: 'total_api_requests_all_time',
-            totalMetricsIngestedAllTime: 'total_metrics_ingested_all_time'
-        };
-        const column = columnMap[metric];
-        if (!column)
-            throw new Error(`Unknown metric: ${metric}`);
-        await db.query(`INSERT INTO organization_usage_counters (org_id, current_period_start, ${column})
-      VALUES ($1, DATE_TRUNC('month', NOW()), $2)
-      ON CONFLICT (org_id) 
-      DO UPDATE SET
-        ${column} = organization_usage_counters.${column} + EXCLUDED.${column},
-        last_updated_at = NOW(),
-        updated_at = NOW()`, [orgId, amount]);
+    async getCouponByCode(code, db = this.db) {
+        const result = await db.query(`SELECT ${COUPON_COLUMNS}
+       FROM coupons
+       WHERE code = $1 AND is_active = TRUE
+       LIMIT 1
+       FOR UPDATE`, [code.toUpperCase()]);
+        return result.rows[0] ? mapCouponFromDb(result.rows[0]) : null;
     }
-    mapUsageRecordFromDb(row) {
-        return {
-            id: row.id,
-            orgId: row.org_id,
-            metricType: row.metric_type,
-            metricName: row.metric_name,
-            periodStart: row.period_start,
-            periodEnd: row.period_end,
-            granularity: row.granularity,
-            usageCount: parseInt(row.usage_count),
-            usageLimit: row.usage_limit ? parseInt(row.usage_limit) : null,
-            overageCount: parseInt(row.overage_count),
-            unitCost: row.unit_cost ? parseFloat(row.unit_cost) : null,
-            totalCost: parseFloat(row.total_cost),
-            details: row.details,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at
-        };
+    async redeemCoupon(couponId, orgId, db = this.db) {
+        await db.query(`INSERT INTO coupon_redemptions (coupon_id, org_id)
+       VALUES ($1, $2)
+       ON CONFLICT (coupon_id, org_id) DO NOTHING`, [couponId, orgId]);
+        await db.query(`UPDATE coupons
+       SET redemption_count = redemption_count + 1,
+           updated_at = NOW()
+       WHERE id = $1`, [couponId]);
     }
-    mapUsageCounterFromDb(row) {
-        return {
-            orgId: row.org_id,
-            currentPeriodStart: row.current_period_start,
-            apiRequestsThisPeriod: parseInt(row.api_requests_this_period),
-            metricsIngestedThisPeriod: parseInt(row.metrics_ingested_this_period),
-            storageGbThisPeriod: parseFloat(row.storage_gb_this_period),
-            notificationsSentThisPeriod: parseInt(row.notifications_sent_this_period),
-            totalApiRequestsAllTime: parseInt(row.total_api_requests_all_time),
-            totalMetricsIngestedAllTime: parseInt(row.total_metrics_ingested_all_time),
-            lastUpdatedAt: row.last_updated_at,
-            limitWarning80SentAt: row.limit_warning_80_sent_at,
-            limitWarning100SentAt: row.limit_warning_100_sent_at,
-            updatedAt: row.updated_at
-        };
+    async incrementCouponUsage(code, db = this.db) {
+        await db.query(`UPDATE coupons
+       SET redemption_count = redemption_count + 1,
+           updated_at = NOW()
+       WHERE code = $1`, [code.toUpperCase()]);
     }
-    // ============================================
-    // COUPONS
-    // ============================================
-    async getCouponByCode(code) {
-        const result = await this.pool.query('SELECT * FROM coupons WHERE code = $1 AND is_active = true', [code.toUpperCase()]);
-        return result.rows.length > 0 ? this.mapCouponFromDb(result.rows[0]) : null;
-    }
-    async incrementCouponUsage(code, client) {
-        const db = client || this.pool;
-        await db.query('UPDATE coupons SET times_redeemed = times_redeemed + 1 WHERE code = $1', [code.toUpperCase()]);
-    }
-    mapCouponFromDb(row) {
-        return {
-            id: row.id,
-            code: row.code,
-            description: row.description,
-            discountType: row.discount_type,
-            discountValue: parseFloat(row.discount_value),
-            currency: row.currency,
-            duration: row.duration,
-            durationInMonths: row.duration_in_months,
-            maxRedemptions: row.max_redemptions,
-            redeemBy: row.redeem_by,
-            timesRedeemed: row.times_redeemed,
-            isActive: row.is_active,
-            createdAt: row.created_at
-        };
-    }
-    // ============================================
-    // QUOTA REQUESTS
-    // ============================================
     async createQuotaRequest(request) {
-        const result = await this.pool.query(`INSERT INTO quota_requests (org_id, quota_type, requested_limit, current_limit, reason)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *`, [
-            request.orgId,
-            request.quotaType,
-            request.requestedLimit,
-            request.currentLimit,
-            request.reason
-        ]);
-        return this.mapQuotaRequestFromDb(result.rows[0]);
+        const result = await this.db.query(`INSERT INTO quota_requests (org_id, quota_type, requested_limit, current_limit, reason)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING ${QUOTA_REQUEST_COLUMNS}`, [request.orgId, request.quotaType, request.requestedLimit, request.currentLimit, request.reason]);
+        return mapQuotaRequestFromDb(result.rows[0]);
     }
     async getQuotaRequests(orgId) {
-        const result = await this.pool.query('SELECT * FROM quota_requests WHERE org_id = $1 ORDER BY created_at DESC', [orgId]);
-        return result.rows.map(this.mapQuotaRequestFromDb);
+        const result = await this.db.query(`SELECT ${QUOTA_REQUEST_COLUMNS} FROM quota_requests WHERE org_id = $1 ORDER BY created_at DESC`, [orgId]);
+        return result.rows.map(mapQuotaRequestFromDb);
     }
-    mapQuotaRequestFromDb(row) {
+    async getPaymentMethods(_orgId) {
+        return [];
+    }
+    async getPaymentMethodById(_id, _orgId) {
+        return null;
+    }
+    async createPaymentMethod(paymentMethod) {
         return {
-            id: row.id,
-            orgId: row.org_id,
-            quotaType: row.quota_type,
-            requestedLimit: row.requested_limit,
-            currentLimit: row.current_limit,
-            reason: row.reason,
-            status: row.status,
-            reviewedBy: row.reviewed_by,
-            reviewedAt: row.reviewed_at,
-            notes: row.notes,
-            createdAt: row.created_at
+            id: paymentMethod.id ?? 'not-persisted',
+            orgId: paymentMethod.orgId ?? '',
+            type: paymentMethod.type ?? PaymentMethodType.CARD,
+            isDefault: false,
+            cardBrand: null,
+            cardLast4: null,
+            cardExpMonth: null,
+            cardExpYear: null,
+            bankAccountLast4: null,
+            bankName: null,
+            stripePaymentMethodId: paymentMethod.stripePaymentMethodId ?? null,
+            paypalEmail: paymentMethod.paypalEmail ?? null,
+            billingDetails: paymentMethod.billingDetails ?? null,
+            isActive: false,
+            createdAt: new Date(),
         };
     }
+    async setDefaultPaymentMethod(_orgId, _paymentMethodId) { }
+    async updatePaymentMethod(_id, orgId, updates) {
+        return this.createPaymentMethod({ ...updates, orgId });
+    }
+    async deletePaymentMethod(_id, _orgId) { }
+}
+function mapPlanFromDb(row) {
+    const featureConfig = row.feature_config ?? {};
+    return {
+        id: row.id,
+        key: row.key,
+        version: Number(row.version ?? 1),
+        name: row.name,
+        description: row.description,
+        tier: row.tier,
+        isPublic: row.is_public,
+        sortOrder: row.sort_order,
+        eventLimitMonthly: Number(row.event_limit_monthly),
+        hardCap: row.hard_cap,
+        priceInrMonthly: row.price_inr_monthly,
+        priceUsdMonthly: row.price_usd_monthly,
+        priceInrAnnual: row.price_inr_annual,
+        priceUsdAnnual: row.price_usd_annual,
+        overagePricePer1kInr: row.overage_price_per_1k_inr,
+        overagePricePer1kUsd: row.overage_price_per_1k_usd,
+        featureConfig,
+        basePriceMonthly: Number(row.price_usd_monthly ?? 0),
+        basePriceYearly: row.price_usd_annual === null ? null : Number(row.price_usd_annual),
+        currency: 'USD',
+        billingInterval: BillingInterval.MONTHLY,
+        limits: {
+            maxProjects: Number(featureConfig.max_projects ?? 0),
+            maxMembers: Number(featureConfig.max_team_members ?? 0),
+            maxApplications: Number(featureConfig.max_projects ?? 0),
+            maxMetricsPerApp: -1,
+            dataRetentionDays: Number(featureConfig.log_retention_days ?? 0),
+            apiRequestsPerMin: -1,
+            alertRules: Number(featureConfig.alert_rules_max ?? 0),
+            dashboards: -1,
+            integrations: Number(featureConfig.notification_channels_max ?? 0),
+            supportLevel: featureConfig.priority_support ? 'priority' : 'standard',
+            ssoEnabled: featureConfig.sso_saml === true,
+            advancedAnalytics: featureConfig.metrics_collection === true,
+            customDomains: 0,
+            slaUptime: featureConfig.sla_uptime_guarantee ? 'custom' : 'none',
+        },
+        features: {
+            realTimeAlerts: Number(featureConfig.alert_rules_max ?? 0) !== 0,
+            emailNotifications: featureConfig.email_alerts === true,
+            slackIntegration: featureConfig.slack_integration === true,
+            pagerdutyIntegration: featureConfig.pagerduty_integration === true,
+            customWebhooks: Number(featureConfig.custom_webhooks_max ?? 0) !== 0,
+            logRetentionExtended: Number(featureConfig.log_retention_days ?? 0) > 7,
+            auditLogs: Number(featureConfig.audit_log_retention_days ?? 0) > 7,
+            dedicatedSupport: featureConfig.priority_support === true,
+            customContract: row.tier === PlanTier.ENTERPRISE,
+        },
+        trialDays: 7,
+        gracePeriodDays: 7,
+        isActive: row.is_active,
+        deprecatedAt: null,
+        replacedBy: null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+function prefixColumns(columns, alias) {
+    return columns
+        .split(',')
+        .map((column) => column.trim())
+        .filter(Boolean)
+        .map((column) => `${alias}.${column}`)
+        .join(', ');
+}
+function mapSubscriptionFromDb(row) {
+    return {
+        id: row.id,
+        orgId: row.org_id,
+        planId: row.plan_id,
+        status: row.status,
+        billingProvider: row.billing_provider,
+        providerCustomerId: row.provider_customer_id,
+        providerSubscriptionId: row.provider_subscription_id,
+        billingInterval: row.billing_interval,
+        currentPeriodStart: row.current_period_start,
+        currentPeriodEnd: row.current_period_end,
+        trialStart: row.trial_start,
+        trialEnd: row.trial_end,
+        cancelAtPeriodEnd: row.cancel_at_period_end,
+        canceledAt: row.canceled_at,
+        seats: row.seats,
+        billingCycleAnchor: row.current_period_start,
+        defaultPaymentMethodId: null,
+        paymentMethodType: PaymentMethodType.CARD,
+        stripeCustomerId: row.billing_provider === 'stripe' ? row.provider_customer_id : null,
+        stripeSubscriptionId: row.billing_provider === 'stripe' ? row.provider_subscription_id : null,
+        invoicePrefix: null,
+        nextInvoiceNumber: 1,
+        invoiceNotes: null,
+        netTermsDays: 0,
+        usageBillingEnabled: true,
+        overageRatePerUnit: null,
+        mrr: 0,
+        arr: 0,
+        totalPaidToDate: 0,
+        cancellationReason: null,
+        gracePeriodStart: null,
+        gracePeriodEnd: null,
+        taxExempt: false,
+        taxId: null,
+        taxRate: 0,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+function mapInvoiceFromDb(row) {
+    return {
+        id: row.id,
+        orgId: row.org_id,
+        subscriptionId: row.subscription_id,
+        provider: row.provider,
+        providerInvoiceId: row.provider_invoice_id,
+        invoiceNumber: row.provider_invoice_id,
+        status: row.status,
+        invoiceDate: row.created_at,
+        dueDate: row.period_end,
+        paidAt: row.paid_at,
+        periodStart: row.period_start,
+        periodEnd: row.period_end,
+        subtotal: Number(row.amount_due ?? 0),
+        discountAmount: 0,
+        discountCode: null,
+        taxAmount: 0,
+        taxRate: 0,
+        total: Number(row.amount_due ?? 0),
+        amountPaid: Number(row.amount_paid ?? 0),
+        amountDue: Number(row.amount_due ?? 0),
+        currency: row.currency,
+        lineItems: [],
+        paymentMethod: null,
+        paymentIntentId: null,
+        stripeInvoiceId: row.provider === 'stripe' ? row.provider_invoice_id : null,
+        pdfUrl: row.pdf_url,
+        footerNote: null,
+        memo: null,
+        overageEvents: Number(row.overage_events ?? 0),
+        overageAmount: Number(row.overage_amount ?? 0),
+        createdAt: row.created_at,
+        updatedAt: row.created_at,
+    };
+}
+function mapUsageRecordFromDb(row, metricType) {
+    const usageCount = metricType === UsageMetricType.METRICS_INGESTED
+        ? Number(row.ai_analyses_count ?? 0)
+        : Number(row.events_count ?? 0);
+    return {
+        id: row.id,
+        orgId: row.org_id,
+        projectId: row.project_id,
+        metricType,
+        metricName: metricType,
+        periodStart: row.date,
+        periodEnd: row.date,
+        granularity: 'daily',
+        usageCount,
+        usageLimit: null,
+        overageCount: 0,
+        unitCost: null,
+        totalCost: 0,
+        details: null,
+        createdAt: row.updated_at,
+        updatedAt: row.updated_at,
+    };
+}
+function mapUsageCounterFromDb(row) {
+    return {
+        orgId: row.org_id,
+        currentPeriodStart: row.current_period_start,
+        apiRequestsThisPeriod: Number(row.events_count ?? 0),
+        metricsIngestedThisPeriod: Number(row.events_count ?? 0),
+        storageGbThisPeriod: 0,
+        notificationsSentThisPeriod: 0,
+        totalApiRequestsAllTime: Number(row.events_count ?? 0),
+        totalMetricsIngestedAllTime: Number(row.events_count ?? 0),
+        aiAnalysesThisPeriod: Number(row.ai_analyses_count ?? 0),
+        lastUpdatedAt: row.last_updated_at,
+        limitWarning80SentAt: null,
+        limitWarning100SentAt: null,
+        updatedAt: row.last_updated_at,
+    };
+}
+function mapCouponFromDb(row) {
+    return {
+        id: row.id,
+        code: row.code,
+        description: null,
+        discountType: row.discount_type,
+        discountValue: Number(row.discount_value),
+        currency: null,
+        duration: 'once',
+        durationInMonths: null,
+        maxRedemptions: row.max_redemptions,
+        redeemBy: row.valid_until,
+        timesRedeemed: row.redemption_count,
+        redemptionCount: row.redemption_count,
+        validFrom: row.valid_from,
+        validUntil: row.valid_until,
+        isActive: row.is_active,
+        createdAt: row.created_at,
+    };
+}
+function mapQuotaRequestFromDb(row) {
+    return {
+        id: row.id,
+        orgId: row.org_id,
+        quotaType: row.quota_type,
+        requestedLimit: Number(row.requested_limit),
+        currentLimit: Number(row.current_limit),
+        reason: row.reason,
+        status: row.status,
+        reviewedBy: row.reviewed_by,
+        reviewedAt: row.reviewed_at,
+        notes: row.notes,
+        createdAt: row.created_at,
+    };
 }
 //# sourceMappingURL=repository.js.map

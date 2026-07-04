@@ -12,7 +12,7 @@ function getRouteIds(request) {
     };
 }
 async function getMembership(orgId, userId) {
-    const result = await pool.query(`SELECT role, is_active
+    const result = await pool.query(`SELECT role, (status = 'active') AS is_active
      FROM organization_members
      WHERE org_id = $1 AND user_id = $2
      LIMIT 1`, [orgId, userId]);

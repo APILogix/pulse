@@ -24,9 +24,11 @@ export declare class BillingService {
     comparePlans(): Promise<ServiceResponse<any>>;
     estimatePricing(planId: string, interval: BillingInterval, couponCode?: string): Promise<ServiceResponse<any>>;
     getSubscription(orgId: string): Promise<ServiceResponse<OrganizationBilling>>;
+    getSubscriptionHistory(orgId: string): Promise<ServiceResponse<Array<Record<string, unknown>>>>;
     createSubscription(orgId: string, body: CreateSubscriptionBody): Promise<ServiceResponse<OrganizationBilling>>;
     changePlan(orgId: string, body: ChangePlanBody): Promise<ServiceResponse<OrganizationBilling>>;
     cancelSubscription(orgId: string, body: CancelSubscriptionBody): Promise<ServiceResponse<OrganizationBilling>>;
+    changeInterval(orgId: string, interval: BillingInterval): Promise<ServiceResponse<OrganizationBilling>>;
     reactivateSubscription(orgId: string): Promise<ServiceResponse<OrganizationBilling>>;
     previewProration(orgId: string, newPlanId: string): Promise<ServiceResponse<any>>;
     listPaymentMethods(orgId: string): Promise<ServiceResponse<PaymentMethod[]>>;

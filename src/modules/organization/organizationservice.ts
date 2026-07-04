@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import { OrganizationRepository } from "./repository.js";
+import type { BillingEntitlementsRow, OrganizationUsageCounts } from "./repository.js";
 import { generateToken, hashToken } from "./utils.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
 import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
@@ -36,6 +37,7 @@ function toInviteDto(r: OrgInvitationRow): InvitationDto {
 
 // ── Invitation helpers ──────────────────────────
 const INVITE_EXPIRY_DAYS = 7;
+const BILLING_MUTABLE_STATUSES = new Set(["trialing", "active"]);
 
 const ROLE_LABELS: Record<string, string> = {
   owner: "Owner",
@@ -123,10 +125,94 @@ export class OrganizationService {
     return org;
   }
 
+  private limitFrom(entitlements: BillingEntitlementsRow, keys: string[], fallback = Number.POSITIVE_INFINITY): number {
+    const config = entitlements.feature_config ?? {};
+    for (const key of keys) {
+      const raw = config[key];
+      if (typeof raw === "number") return raw;
+      if (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw))) return Number(raw);
+    }
+    return fallback;
+  }
+
+  private featureAllowed(entitlements: BillingEntitlementsRow, keys: string[], fallback = true): boolean {
+    const config = entitlements.feature_config ?? {};
+    for (const key of keys) {
+      const raw = config[key];
+      if (typeof raw === "boolean") return raw;
+      if (typeof raw === "string") return raw.toLowerCase() === "true";
+    }
+    return fallback;
+  }
+
+  private assertWithinLimit(name: string, used: number, limit: number): void {
+    if (limit >= 0 && Number.isFinite(limit) && used >= limit) {
+      throw new ForbiddenError(`${name} limit exceeded for current billing plan`);
+    }
+  }
+
+  private async requireBillingEntitlements(orgId: string): Promise<{ entitlements: BillingEntitlementsRow; counts: OrganizationUsageCounts }> {
+    const entitlements = await this.repo.getBillingEntitlements(orgId);
+    if (!entitlements) throw new ForbiddenError("Organization has no active billing subscription");
+    if (!BILLING_MUTABLE_STATUSES.has(entitlements.subscription_status)) {
+      throw new ForbiddenError(`Billing subscription is ${entitlements.subscription_status}. This action is not permitted.`);
+    }
+    const counts = await this.repo.getOrganizationUsageCounts(orgId);
+    return { entitlements, counts };
+  }
+
+  private async enforceBillingLimit(
+    orgId: string,
+    capability: "member" | "environment" | "apiKey" | "sso" | "scim",
+  ): Promise<{ entitlements: BillingEntitlementsRow; counts: OrganizationUsageCounts; maxMembers?: number }> {
+    const { entitlements, counts } = await this.requireBillingEntitlements(orgId);
+    if (capability === "member") {
+      const maxMembers = this.limitFrom(entitlements, ["max_team_members", "max_members"]);
+      this.assertWithinLimit("Member", counts.activeMembers + counts.pendingInvitations, maxMembers);
+      return { entitlements, counts, maxMembers };
+    }
+    if (capability === "environment") {
+      this.assertWithinLimit("Environment", counts.environments, this.limitFrom(entitlements, ["max_environments", "environments_max"]));
+    }
+    if (capability === "apiKey") {
+      this.assertWithinLimit("API key", counts.apiKeys, this.limitFrom(entitlements, ["max_api_keys", "api_keys_max"]));
+    }
+    if (capability === "sso") {
+      if (!this.featureAllowed(entitlements, ["sso_saml", "sso_enabled", "saml_sso"], false)) {
+        throw new ForbiddenError("SSO is not enabled for current billing plan");
+      }
+      this.assertWithinLimit("SSO provider", counts.ssoProviders, this.limitFrom(entitlements, ["max_sso_providers", "sso_providers_max"], 1));
+    }
+    if (capability === "scim") {
+      if (!this.featureAllowed(entitlements, ["scim", "scim_enabled"], false)) {
+        throw new ForbiddenError("SCIM is not enabled for current billing plan");
+      }
+      this.assertWithinLimit("SCIM token", counts.scimTokens, this.limitFrom(entitlements, ["max_scim_tokens", "scim_tokens_max"], 1));
+    }
+    return { entitlements, counts };
+  }
+
   // ── Organization CRUD ─────────────────────────
   async createOrganization(meta: RequestMeta, data: { name:string; description?:string; industry?:string; companySize?:string; country?:string; timezone?:string; billingEmail?:string }) {
-    const org = await this.repo.createOrg(data.name, meta.actorUserId, data);
-    await this.audit(meta, { orgId:org.id, action:"org.created", entityType:"organization", entityId:org.id, entityName:org.name, newValues:{ name:org.name, slug:org.slug } });
+    const provisioned = await this.repo.createOrg(data.name, meta.actorUserId, data);
+    const org = provisioned.organization;
+    await this.audit(meta, {
+      orgId:org.id,
+      action:"org.created",
+      entityType:"organization",
+      entityId:org.id,
+      entityName:org.name,
+      newValues:{
+        name:org.name,
+        slug:org.slug,
+        billing:{
+          planId: provisioned.planId,
+          subscriptionId: provisioned.subscriptionId,
+          provider: "system",
+          status: "active"
+        }
+      }
+    });
     return toOrgDto(org);
   }
 
@@ -269,6 +355,7 @@ export class OrganizationService {
   async inviteMember(meta: RequestMeta, orgId: string, email: string, role: OrgRole) {
     const org = await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "admin");
+    await this.enforceBillingLimit(orgId, "member");
 
     const token = generateToken();
     const tokenHash = hashToken(token);
@@ -374,15 +461,21 @@ export class OrganizationService {
       throw new ValidationError("Invitation has expired");
     }
 
-    await this.repo.acceptInvitation(tokenHash, meta.actorUserId);
-    await this.repo.addMember(inv.org_id, meta.actorUserId, inv.role, inv.invited_by, "invite");
+    const { maxMembers } = await this.enforceBillingLimit(inv.org_id, "member");
+    await this.repo.acceptInvitationAndAddMember(tokenHash, meta.actorUserId, maxMembers ?? null);
+    invalidateMembershipCache(inv.org_id, meta.actorUserId);
     await this.audit(meta, { orgId:inv.org_id, action:"invitation.accepted", entityType:"invitation", entityId:inv.id });
   }
 
   async declineInvitation(meta: RequestMeta, invitationId: string) {
     const inv = await this.repo.findInvitationById(invitationId);
     if (!inv) throw new NotFoundError("Invitation");
-    await this.repo.declineInvitation(invitationId);
+    const invitedEmail = inv.email.trim().toLowerCase();
+    const actorEmail = (meta.actorEmail ?? "").trim().toLowerCase();
+    if (!actorEmail || actorEmail !== invitedEmail) {
+      throw new ForbiddenError("This invitation was issued to a different email address");
+    }
+    await this.repo.declineInvitation(invitationId, meta.actorUserId);
     await this.audit(meta, { orgId:inv.org_id, action:"invitation.declined", entityType:"invitation", entityId:invitationId });
   }
 
@@ -396,6 +489,7 @@ export class OrganizationService {
   async createEnvironment(meta: RequestMeta, orgId: string, data: { name:string; description?:string; isProduction?:boolean }) {
     await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "admin");
+    await this.enforceBillingLimit(orgId, "environment");
     const env = await this.repo.createEnvironment(orgId, data.name, data.description??null, data.isProduction??false, meta.actorUserId);
     await this.audit(meta, { orgId, action:"environment.created", entityType:"environment", entityId:env.id, entityName:env.name });
     return { id:env.id, name:env.name, slug:env.slug, description:env.description, isProduction:env.is_production, createdAt:env.created_at } as EnvironmentDto;
@@ -419,6 +513,7 @@ export class OrganizationService {
   async createApiKey(meta: RequestMeta, orgId: string, data: { name:string; role?:OrgRole; environmentId?:string; expiresInDays?:number }) {
     await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "admin");
+    await this.enforceBillingLimit(orgId, "apiKey");
     const rawKey = generateToken();
     const prefix = rawKey.substring(0, 8);
     const hashed = hashToken(rawKey);
@@ -444,6 +539,7 @@ export class OrganizationService {
   async createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>) {
     await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.enforceBillingLimit(orgId, "sso");
     const sso = await this.repo.createSsoProvider(orgId, data);
     await this.audit(meta, { orgId, action:"sso.created", entityType:"sso_provider", entityId:sso.id, isSensitive:true });
     return { id:sso.id, providerName:sso.provider_name, providerType:sso.provider_type, entityId:sso.entity_id, ssoUrl:sso.sso_url, domain:sso.domain, isActive:sso.is_active, createdAt:sso.created_at } as SsoProviderDto;
@@ -466,6 +562,7 @@ export class OrganizationService {
   async createScimToken(meta: RequestMeta, orgId: string) {
     await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "owner");
+    await this.enforceBillingLimit(orgId, "scim");
     const rawToken = generateToken();
     const hashed = hashToken(rawToken);
     const expiresAt = new Date(Date.now() + 365 * 86400000);
@@ -520,6 +617,66 @@ export class OrganizationService {
     await this.requireMember(orgId, userId, "admin");
     const result = await this.repo.listQuotaRequests(orgId, q);
     return { data: result.data.map(qr => ({ id:qr.id, quotaType:qr.quota_type, currentLimit:qr.current_limit, requestedLimit:qr.requested_limit, reason:qr.reason, status:qr.status, reviewedAt:qr.reviewed_at, notes:qr.notes, createdAt:qr.created_at }) as QuotaRequestDto), meta: result.meta };
+  }
+
+  async getBillingSummary(orgId: string, userId: string) {
+    const { entitlements, counts } = await this.requireBillingEntitlements(orgId);
+    await this.requireMember(orgId, userId, "billing");
+    return {
+      subscription: {
+        id: entitlements.subscription_id,
+        status: entitlements.subscription_status,
+      },
+      plan: {
+        id: entitlements.plan_id,
+        key: entitlements.plan_key,
+        tier: entitlements.plan_tier,
+        eventLimitMonthly: Number(entitlements.event_limit_monthly ?? 0),
+        hardCap: entitlements.hard_cap,
+        features: entitlements.feature_config,
+      },
+      usage: counts,
+    };
+  }
+
+  async getUsageLimits(orgId: string, userId: string) {
+    const { entitlements, counts } = await this.requireBillingEntitlements(orgId);
+    await this.requireMember(orgId, userId);
+    const normalizeLimit = (limit: number) => Number.isFinite(limit) ? limit : null;
+    return {
+      subscriptionStatus: entitlements.subscription_status,
+      planKey: entitlements.plan_key,
+      limits: {
+        members: {
+          used: counts.activeMembers,
+          pending: counts.pendingInvitations,
+          limit: normalizeLimit(this.limitFrom(entitlements, ["max_team_members", "max_members"])),
+        },
+        environments: {
+          used: counts.environments,
+          limit: normalizeLimit(this.limitFrom(entitlements, ["max_environments", "environments_max"])),
+        },
+        apiKeys: {
+          used: counts.apiKeys,
+          limit: normalizeLimit(this.limitFrom(entitlements, ["max_api_keys", "api_keys_max"])),
+        },
+        ssoProviders: {
+          used: counts.ssoProviders,
+          limit: normalizeLimit(this.limitFrom(entitlements, ["max_sso_providers", "sso_providers_max"], 1)),
+          enabled: this.featureAllowed(entitlements, ["sso_saml", "sso_enabled", "saml_sso"], false),
+        },
+        scimTokens: {
+          used: counts.scimTokens,
+          limit: normalizeLimit(this.limitFrom(entitlements, ["max_scim_tokens", "scim_tokens_max"], 1)),
+          enabled: this.featureAllowed(entitlements, ["scim", "scim_enabled"], false),
+        },
+        eventsMonthly: {
+          used: null,
+          limit: Number(entitlements.event_limit_monthly ?? 0),
+          hardCap: entitlements.hard_cap,
+        },
+      },
+    };
   }
 
   // ── User Organizations ────────────────────────

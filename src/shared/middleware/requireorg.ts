@@ -26,7 +26,7 @@ async function getMembership(orgId: string, userId: string) {
     role: OrgRole;
     is_active: boolean;
   }>(
-    `SELECT role, is_active
+    `SELECT role, (status = 'active') AS is_active
      FROM organization_members
      WHERE org_id = $1 AND user_id = $2
      LIMIT 1`,

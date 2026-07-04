@@ -1,13 +1,17 @@
 import type { FastifyRequest } from 'fastify';
+import { z } from 'zod';
 export declare enum PlanTier {
-    STARTER = "starter",
-    PROFESSIONAL = "professional",
+    FREE = "free",
+    PRO = "pro",
+    STARTER = "free",
+    PROFESSIONAL = "pro",
     ENTERPRISE = "enterprise",
     CUSTOM = "custom"
 }
 export declare enum BillingInterval {
     MONTHLY = "monthly",
-    YEARLY = "yearly",
+    ANNUAL = "annual",
+    YEARLY = "annual",
     CUSTOM = "custom"
 }
 export declare enum SubscriptionStatus {
@@ -46,6 +50,8 @@ export declare enum UsageMetricType {
 }
 export interface BillingPlan {
     id: string;
+    key?: string;
+    version?: number;
     name: string;
     description: string | null;
     tier: PlanTier;
@@ -53,6 +59,15 @@ export interface BillingPlan {
     sortOrder: number;
     basePriceMonthly: number;
     basePriceYearly: number | null;
+    eventLimitMonthly?: number;
+    hardCap?: boolean;
+    priceInrMonthly?: number | null;
+    priceUsdMonthly?: number | null;
+    priceInrAnnual?: number | null;
+    priceUsdAnnual?: number | null;
+    overagePricePer1kInr?: number | null;
+    overagePricePer1kUsd?: number | null;
+    featureConfig?: Record<string, any>;
     currency: string;
     billingInterval: BillingInterval;
     limits: PlanLimits;
@@ -97,8 +112,15 @@ export interface OrganizationBilling {
     orgId: string;
     planId: string;
     status: SubscriptionStatus;
+    billingProvider?: 'stripe' | 'razorpay' | 'manual' | 'system';
+    providerCustomerId?: string | null;
+    providerSubscriptionId?: string | null;
+    billingInterval?: BillingInterval;
     currentPeriodStart: Date;
     currentPeriodEnd: Date;
+    trialStart?: Date | null;
+    trialEnd?: Date | null;
+    seats?: number | null;
     billingCycleAnchor: Date;
     defaultPaymentMethodId: string | null;
     paymentMethodType: PaymentMethodType;
@@ -144,6 +166,9 @@ export interface PaymentMethod {
 export interface Invoice {
     id: string;
     orgId: string;
+    subscriptionId?: string;
+    provider?: 'stripe' | 'razorpay' | 'manual' | 'system';
+    providerInvoiceId?: string;
     invoiceNumber: string;
     status: InvoiceStatus;
     invoiceDate: Date;
@@ -165,6 +190,8 @@ export interface Invoice {
     paymentIntentId: string | null;
     stripeInvoiceId: string | null;
     pdfUrl: string | null;
+    overageEvents?: number;
+    overageAmount?: number;
     footerNote: string | null;
     memo: string | null;
     createdAt: Date;
@@ -181,6 +208,7 @@ export interface InvoiceLineItem {
 export interface UsageRecord {
     id: string;
     orgId: string;
+    projectId?: string;
     metricType: UsageMetricType;
     metricName: string;
     periodStart: Date;
@@ -200,6 +228,7 @@ export interface UsageCounter {
     currentPeriodStart: Date;
     apiRequestsThisPeriod: number;
     metricsIngestedThisPeriod: number;
+    aiAnalysesThisPeriod?: number;
     storageGbThisPeriod: number;
     notificationsSentThisPeriod: number;
     totalApiRequestsAllTime: number;
@@ -226,7 +255,7 @@ export interface Coupon {
     id: string;
     code: string;
     description: string | null;
-    discountType: 'percentage' | 'fixed_amount';
+    discountType: 'percentage' | 'fixed_amount' | 'percent' | 'fixed';
     discountValue: number;
     currency: string | null;
     duration: 'once' | 'repeating' | 'forever';
@@ -234,6 +263,9 @@ export interface Coupon {
     maxRedemptions: number | null;
     redeemBy: Date | null;
     timesRedeemed: number;
+    redemptionCount?: number;
+    validFrom?: Date;
+    validUntil?: Date | null;
     isActive: boolean;
     createdAt: Date;
 }
@@ -436,4 +468,172 @@ export interface WebhookHandlerResponse {
     processed: boolean;
     eventId: string;
 }
+export declare const BillingUuidSchema: z.ZodString;
+export declare const BillingIntervalSchema: z.ZodEnum<{
+    monthly: "monthly";
+    annual: "annual";
+}>;
+export declare const InvoiceStatusSchema: z.ZodEnum<{
+    void: "void";
+    draft: "draft";
+    open: "open";
+    paid: "paid";
+    uncollectible: "uncollectible";
+}>;
+export declare const UsageMetricTypeSchema: z.ZodEnum<{
+    api_requests: "api_requests";
+    metrics_ingested: "metrics_ingested";
+    storage_gb: "storage_gb";
+    alert_notifications: "alert_notifications";
+    dashboard_views: "dashboard_views";
+    members_active: "members_active";
+    projects_active: "projects_active";
+    applications_monitored: "applications_monitored";
+    integrations_active: "integrations_active";
+    custom_metrics: "custom_metrics";
+}>;
+export declare const PlanIdParamsSchema: z.ZodObject<{
+    planId: z.ZodString;
+}, z.core.$strip>;
+export declare const IdParamsSchema: z.ZodObject<{
+    id: z.ZodString;
+}, z.core.$strip>;
+export declare const ProviderParamsSchema: z.ZodObject<{
+    provider: z.ZodEnum<{
+        stripe: "stripe";
+        razorpay: "razorpay";
+    }>;
+}, z.core.$strip>;
+export declare const EstimatePricingSchema: z.ZodObject<{
+    planId: z.ZodString;
+    interval: z.ZodEnum<{
+        monthly: "monthly";
+        annual: "annual";
+    }>;
+    couponCode: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const CreateSubscriptionSchema: z.ZodObject<{
+    planId: z.ZodString;
+    paymentMethodId: z.ZodOptional<z.ZodString>;
+    billingInterval: z.ZodOptional<z.ZodEnum<{
+        monthly: "monthly";
+        annual: "annual";
+    }>>;
+    couponCode: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const ChangePlanSchema: z.ZodObject<{
+    planId: z.ZodString;
+    prorationBehavior: z.ZodOptional<z.ZodEnum<{
+        none: "none";
+        create_prorations: "create_prorations";
+        always_invoice: "always_invoice";
+    }>>;
+}, z.core.$strip>;
+export declare const ChangeIntervalSchema: z.ZodObject<{
+    interval: z.ZodEnum<{
+        monthly: "monthly";
+        annual: "annual";
+    }>;
+}, z.core.$strip>;
+export declare const PreviewChangeSchema: z.ZodObject<{
+    newPlanId: z.ZodString;
+}, z.core.$strip>;
+export declare const CancelSubscriptionSchema: z.ZodObject<{
+    reason: z.ZodOptional<z.ZodString>;
+    immediate: z.ZodOptional<z.ZodBoolean>;
+}, z.core.$strip>;
+export declare const AddPaymentMethodSchema: z.ZodObject<{
+    type: z.ZodEnum<typeof PaymentMethodType>;
+    stripePaymentMethodId: z.ZodOptional<z.ZodString>;
+    paypalEmail: z.ZodOptional<z.ZodString>;
+    billingDetails: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
+}, z.core.$strip>;
+export declare const ListInvoicesQuerySchema: z.ZodObject<{
+    page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    limit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    status: z.ZodOptional<z.ZodEnum<{
+        void: "void";
+        draft: "draft";
+        open: "open";
+        paid: "paid";
+        uncollectible: "uncollectible";
+    }>>;
+    startDate: z.ZodOptional<z.ZodString>;
+    endDate: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const UsageQuerySchema: z.ZodObject<{
+    startDate: z.ZodOptional<z.ZodString>;
+    endDate: z.ZodOptional<z.ZodString>;
+    granularity: z.ZodOptional<z.ZodEnum<{
+        monthly: "monthly";
+        hourly: "hourly";
+        daily: "daily";
+    }>>;
+}, z.core.$strip>;
+export declare const UsageHistoryQuerySchema: z.ZodObject<{
+    type: z.ZodEnum<{
+        api_requests: "api_requests";
+        metrics_ingested: "metrics_ingested";
+        storage_gb: "storage_gb";
+        alert_notifications: "alert_notifications";
+        dashboard_views: "dashboard_views";
+        members_active: "members_active";
+        projects_active: "projects_active";
+        applications_monitored: "applications_monitored";
+        integrations_active: "integrations_active";
+        custom_metrics: "custom_metrics";
+    }>;
+}, z.core.$strip>;
+export declare const UsageExportQuerySchema: z.ZodObject<{
+    format: z.ZodOptional<z.ZodEnum<{
+        csv: "csv";
+        json: "json";
+    }>>;
+}, z.core.$strip>;
+export declare const QuotaTypeParamsSchema: z.ZodObject<{
+    type: z.ZodEnum<{
+        api_requests: "api_requests";
+        metrics_ingested: "metrics_ingested";
+        storage_gb: "storage_gb";
+        alert_notifications: "alert_notifications";
+        dashboard_views: "dashboard_views";
+        members_active: "members_active";
+        projects_active: "projects_active";
+        applications_monitored: "applications_monitored";
+        integrations_active: "integrations_active";
+        custom_metrics: "custom_metrics";
+    }>;
+}, z.core.$strip>;
+export declare const QuotaIncreaseSchema: z.ZodObject<{
+    requestedLimit: z.ZodCoercedNumber<unknown>;
+    reason: z.ZodString;
+}, z.core.$strip>;
+export declare const UpdateBillingSettingsSchema: z.ZodObject<{
+    billingEmail: z.ZodOptional<z.ZodString>;
+    billingAddress: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
+    taxId: z.ZodOptional<z.ZodString>;
+    netTermsDays: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strip>;
+export declare const BillingEmailSchema: z.ZodObject<{
+    email: z.ZodString;
+}, z.core.$strip>;
+export declare const BillingAddressSchema: z.ZodObject<{
+    address: z.ZodRecord<z.ZodString, z.ZodAny>;
+}, z.core.$strip>;
+export declare const TaxSettingsSchema: z.ZodObject<{
+    taxId: z.ZodString;
+}, z.core.$strip>;
+export declare const ApplyCouponSchema: z.ZodObject<{
+    code: z.ZodString;
+}, z.core.$strip>;
+export declare const WaiveInvoiceSchema: z.ZodObject<{
+    reason: z.ZodString;
+}, z.core.$strip>;
+export declare const CreditsSchema: z.ZodObject<{
+    amount: z.ZodCoercedNumber<unknown>;
+    reason: z.ZodString;
+}, z.core.$strip>;
+export declare const CheckoutSessionSchema: z.ZodObject<{
+    planId: z.ZodString;
+}, z.core.$strip>;
 //# sourceMappingURL=types.d.ts.map

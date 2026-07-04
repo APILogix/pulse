@@ -1,3 +1,4 @@
+import type { OrganizationUsageCounts } from "./repository.js";
 import { type OrgRole, type RequestMeta, type OrganizationDto, type OrgSettingsDto, type MemberDto, type InvitationDto, type EnvironmentDto, type ApiKeyDto, type SsoProviderDto, type ScimTokenDto, type SecurityEventDto, type AuditLogDto, type QuotaRequestDto, type UserOrganizationDto, type OrganizationServiceDependencies, type CursorPaginationQuery } from "./types.js";
 export declare class OrganizationService {
     private repo;
@@ -10,6 +11,11 @@ export declare class OrganizationService {
     private sendInvitationEmail;
     private requireMember;
     private requireMutableOrg;
+    private limitFrom;
+    private featureAllowed;
+    private assertWithinLimit;
+    private requireBillingEntitlements;
+    private enforceBillingLimit;
     createOrganization(meta: RequestMeta, data: {
         name: string;
         description?: string;
@@ -158,6 +164,55 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+        };
+    }>;
+    getBillingSummary(orgId: string, userId: string): Promise<{
+        subscription: {
+            id: string;
+            status: string;
+        };
+        plan: {
+            id: string;
+            key: string;
+            tier: string;
+            eventLimitMonthly: number;
+            hardCap: boolean;
+            features: Record<string, unknown>;
+        };
+        usage: OrganizationUsageCounts;
+    }>;
+    getUsageLimits(orgId: string, userId: string): Promise<{
+        subscriptionStatus: string;
+        planKey: string;
+        limits: {
+            members: {
+                used: number;
+                pending: number;
+                limit: number | null;
+            };
+            environments: {
+                used: number;
+                limit: number | null;
+            };
+            apiKeys: {
+                used: number;
+                limit: number | null;
+            };
+            ssoProviders: {
+                used: number;
+                limit: number | null;
+                enabled: boolean;
+            };
+            scimTokens: {
+                used: number;
+                limit: number | null;
+                enabled: boolean;
+            };
+            eventsMonthly: {
+                used: null;
+                limit: number;
+                hardCap: boolean;
+            };
         };
     }>;
     listUserOrganizations(userId: string, q: CursorPaginationQuery): Promise<{

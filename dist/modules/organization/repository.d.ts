@@ -1,5 +1,28 @@
 import type { PoolClient } from "pg";
 import { type OrganizationRow, type OrgSettingsRow, type OrgMemberRow, type OrgInvitationRow, type AuditLogRow, type OrgEnvironmentRow, type OrgApiKeyRow, type OrgSsoProviderRow, type OrgScimTokenRow, type SecurityEventRow, type QuotaRequestRow, type UserOrgRow, type CreateAuditLogRecord, type CursorPaginationQuery, type CursorPaginatedResponse, type AlertThresholdRow } from "./types.js";
+export interface OrganizationProvisioningResult {
+    organization: OrganizationRow;
+    subscriptionId: string;
+    planId: string;
+}
+export interface BillingEntitlementsRow {
+    subscription_id: string;
+    subscription_status: string;
+    plan_id: string;
+    plan_key: string;
+    plan_tier: string;
+    feature_config: Record<string, unknown>;
+    event_limit_monthly: string | number;
+    hard_cap: boolean;
+}
+export interface OrganizationUsageCounts {
+    activeMembers: number;
+    pendingInvitations: number;
+    environments: number;
+    apiKeys: number;
+    ssoProviders: number;
+    scimTokens: number;
+}
 export declare class OrganizationRepository {
     private readonly db;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
@@ -10,9 +33,11 @@ export declare class OrganizationRepository {
         country?: string;
         timezone?: string;
         billingEmail?: string;
-    }): Promise<OrganizationRow>;
+    }): Promise<OrganizationProvisioningResult>;
     findOrgById(id: string, includeDeleted?: boolean): Promise<OrganizationRow | null>;
     findOrgBySlug(slug: string): Promise<OrganizationRow | null>;
+    getBillingEntitlements(orgId: string): Promise<BillingEntitlementsRow | null>;
+    getOrganizationUsageCounts(orgId: string): Promise<OrganizationUsageCounts>;
     updateOrg(id: string, data: Record<string, unknown>): Promise<OrganizationRow>;
     softDeleteOrg(id: string): Promise<void>;
     /** Collect every project API-key hash for an org so the service can evict the
@@ -60,7 +85,8 @@ export declare class OrganizationRepository {
     }) | null>;
     listInvitations(orgId: string, q: CursorPaginationQuery, status?: string): Promise<CursorPaginatedResponse<OrgInvitationRow>>;
     acceptInvitation(tokenHash: string, userId: string): Promise<void>;
-    declineInvitation(id: string): Promise<void>;
+    acceptInvitationAndAddMember(tokenHash: string, userId: string, maxActiveMembers: number | null): Promise<void>;
+    declineInvitation(id: string, _userId: string): Promise<void>;
     revokeInvitation(id: string, by: string): Promise<void>;
     incrementResentCount(id: string): Promise<void>;
     /**
