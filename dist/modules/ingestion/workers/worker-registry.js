@@ -8,6 +8,7 @@ import { UsageCounter } from '../usage/usage-counter.js';
 import { LogDatabase } from '../logging/log-database.js';
 import { AdminLogger } from '../logging/admin-logger.js';
 import { TelemetryMaintenanceWorker } from '../../../workers/telemetry-maintenance.processor.js';
+import { BackpressureGauge } from '../../../lib/gauge.js';
 export class WorkerRegistry {
     pool;
     log;
@@ -19,8 +20,10 @@ export class WorkerRegistry {
     logDb;
     adminLogger;
     maintenance;
+    gauge;
     generalPool = [];
     specializedPool = [];
+    gaugeBatchCounter = 0;
     retryTimer = null;
     started = false;
     opts;
@@ -53,6 +56,7 @@ export class WorkerRegistry {
         });
         this.writer = new TelemetryWriter(this.pool);
         this.logDb = new LogDatabase(this.log);
+        this.gauge = new BackpressureGauge(this.pool);
         this.usage = new UsageCounter(this.pool, this.log, {
             flushIntervalMs: env.INGESTION_USAGE_FLUSH_MS,
             bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
@@ -86,6 +90,7 @@ export class WorkerRegistry {
                 busyPollMs: this.opts.busyPollMs,
                 idlePollMs: this.opts.idlePollMs,
                 enableMaintenance: false,
+                onBatchComplete: ({ workerId }) => this.updateGauge(workerId),
             });
             w.start();
             this.generalPool.push(w);
@@ -101,6 +106,7 @@ export class WorkerRegistry {
                 busyPollMs: this.opts.busyPollMs,
                 idlePollMs: this.opts.idlePollMs,
                 enableMaintenance: false,
+                onBatchComplete: ({ workerId }) => this.updateGauge(workerId),
             });
             w.start();
             this.specializedPool.push(w);
@@ -164,12 +170,25 @@ export class WorkerRegistry {
                     pollCycles: s.pollCycles,
                 });
             }
-            // Queue-depth metric snapshot.
-            void this.generalQueue
-                .pendingDepth()
-                .then((depth) => this.logDb.writeMetric('queue.pending_depth', depth))
+            // Queue-depth metric snapshot comes from the gauge, not a request-time count.
+            void this.gauge
+                .read()
+                .then((state) => {
+                if (!state)
+                    return;
+                void this.logDb.writeMetric('queue.pending_depth', state.pendingDepth);
+                void this.logDb.writeMetric('backpressure_gauge.age_ms', Date.now() - state.updatedAt.getTime());
+            })
                 .catch(() => { });
         }
+    }
+    async updateGauge(workerId) {
+        this.gaugeBatchCounter++;
+        if (this.gaugeBatchCounter % env.GAUGE_UPDATE_INTERVAL_BATCHES !== 0)
+            return;
+        const pendingDepth = await this.generalQueue.pendingDepthEstimate();
+        await this.gauge.update(pendingDepth, workerId);
+        this.log.debug({ workerId, pendingDepth }, 'Backpressure gauge updated');
     }
     workerId(type, index) {
         return `${type}-${process.pid}-${index}-${randomUUID().slice(0, 8)}`;

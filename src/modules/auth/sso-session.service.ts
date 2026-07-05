@@ -40,6 +40,7 @@ export async function finalizeEnterpriseSsoLogin(options: {
 
   const ssoContext: SessionSsoContext = {
     providerId: options.provider.id,
+    providerType: options.method,
     loginMethod: options.method,
     ...(options.samlNameId !== undefined ? { samlNameId: options.samlNameId } : {}),
     ...(options.samlSessionIndex !== undefined

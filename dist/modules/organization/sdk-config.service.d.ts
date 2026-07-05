@@ -42,6 +42,7 @@ export declare class SdkConfigService {
     }): Promise<SdkConfigDto[]>;
     getConfig(orgId: string, userId: string, configId: string): Promise<SdkConfigDto>;
     updateConfig(meta: RequestMeta, orgId: string, configId: string, input: UpdateConfigInput): Promise<SdkConfigDto>;
+    updateProjectConfig(meta: RequestMeta, orgId: string, projectId: string, configId: string, input: UpdateConfigInput): Promise<SdkConfigDto>;
     rollbackConfig(meta: RequestMeta, orgId: string, configId: string, toVersion: number, reason: string): Promise<SdkConfigDto>;
     listVersions(orgId: string, userId: string, configId: string): Promise<SdkConfigVersionDto[]>;
     getVersion(orgId: string, userId: string, configId: string, version: number): Promise<SdkConfigVersionDto>;

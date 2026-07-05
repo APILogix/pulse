@@ -6,6 +6,7 @@
  */
 import { SAML, ValidateInResponseTo } from '@node-saml/node-saml';
 import { randomState } from 'openid-client';
+import { env } from '../../config/env.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 import { samlLoginStateCache } from './cache.js';
 import * as repository from './repository.js';
@@ -117,7 +118,17 @@ export async function completeSamlAcs(body, ipAddress, userAgent, requestId) {
             ? profile.nameId
             : email;
     const sessionIndex = typeof profile.sessionIndex === 'string' ? profile.sessionIndex : undefined;
-    return finalizeEnterpriseSsoLogin({
+    const issuer = typeof profile.issuer === 'string'
+        ? profile.issuer
+        : typeof profile['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/issuer'] === 'string'
+            ? String(profile['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/issuer'])
+            : provider.entity_id;
+    const nameIdFormat = typeof profile.nameIDFormat === 'string'
+        ? profile.nameIDFormat
+        : typeof profile.nameIdFormat === 'string'
+            ? profile.nameIdFormat
+            : null;
+    const tokens = await finalizeEnterpriseSsoLogin({
         user,
         provider,
         flow,
@@ -128,6 +139,16 @@ export async function completeSamlAcs(body, ipAddress, userAgent, requestId) {
         samlNameId: nameId,
         ...(sessionIndex !== undefined ? { samlSessionIndex: sessionIndex } : {}),
     });
+    await repository.createSamlSession({
+        sessionId: tokens.session_id,
+        providerId: provider.id,
+        samlNameId: nameId,
+        samlNameIdFormat: nameIdFormat,
+        samlSessionIndex: sessionIndex ?? null,
+        issuer,
+        expiresAt: new Date(Date.now() + env.SAML_SESSION_TTL_HOURS * 60 * 60 * 1000),
+    });
+    return tokens;
 }
 export function generateSpMetadata() {
     if (!samlSpConfig.certificate) {

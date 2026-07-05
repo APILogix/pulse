@@ -591,6 +591,71 @@ export class BillingService {
     };
   }
 
+  async getUsageOverview(orgId: string): Promise<ServiceResponse<{
+    orgId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    generatedAt: Date;
+    summary: {
+      todayEvents: number;
+      monthToDateEvents: number;
+      eventLimitMonthly: number | null;
+      remainingEvents: number | null;
+      percentUsed: number;
+      projectedMonthEndEvents: number;
+    };
+    metrics: UsageSummary['metrics'];
+    activity: {
+      date: Date;
+      events: number;
+      aiAnalyses: number;
+    }[];
+  }>> {
+    const currentUsage = await this.getCurrentUsage(orgId);
+    const periodStart = currentUsage.data!.periodStart;
+    const periodEnd = currentUsage.data!.periodEnd;
+    const activity = await this.repository.getUsageRecords(orgId, {
+      startDate: periodStart,
+      endDate: periodEnd,
+      granularity: 'daily',
+      metricType: UsageMetricType.API_REQUESTS,
+    });
+    const usageCounter = await this.repository.getUsageCounter(orgId);
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayRecord = activity.find((record) => record.periodStart.toISOString().slice(0, 10) === todayIso);
+    const todayEvents = todayRecord?.usageCount ?? 0;
+    const monthToDateEvents = usageCounter?.apiRequestsThisPeriod ?? 0;
+    const eventMetric = currentUsage.data!.metrics.find((metric) => metric.type === UsageMetricType.API_REQUESTS);
+    const eventLimitMonthly = eventMetric?.limit ?? null;
+    const remainingEvents = eventLimitMonthly === null ? null : Math.max(eventLimitMonthly - monthToDateEvents, 0);
+
+    return {
+      success: true,
+      data: {
+        orgId,
+        periodStart,
+        periodEnd,
+        generatedAt: new Date(),
+        summary: {
+          todayEvents,
+          monthToDateEvents,
+          eventLimitMonthly,
+          remainingEvents,
+          percentUsed: eventMetric?.percentage ?? 0,
+          projectedMonthEndEvents: eventMetric?.projected ?? monthToDateEvents,
+        },
+        metrics: currentUsage.data!.metrics,
+        activity: activity
+          .map((record) => ({
+            date: record.periodStart,
+            events: record.usageCount,
+            aiAnalyses: Number((record.details as { aiAnalysesCount?: number } | null)?.aiAnalysesCount ?? 0),
+          }))
+          .sort((a, b) => a.date.getTime() - b.date.getTime()),
+      },
+    };
+  }
+
   async getDetailedUsage(
     orgId: string,
     params: {

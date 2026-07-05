@@ -1,1 +1,1 @@
-{"version":3,"file":"scim.routes.d.ts","sourceRoot":"","sources":["../../../src/modules/scim/scim.routes.ts"],"names":[],"mappings":"AAAA;;GAEG;AACH,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAC;AAO/C,wBAAsB,kBAAkB,CAAC,OAAO,EAAE,eAAe,GAAG,OAAO,CAAC,IAAI,CAAC,CA8GhF"}
+{"version":3,"file":"scim.routes.d.ts","sourceRoot":"","sources":["../../../src/modules/scim/scim.routes.ts"],"names":[],"mappings":"AAAA;;GAEG;AACH,OAAO,KAAK,EAAE,eAAe,EAAE,MAAM,SAAS,CAAC;AAO/C,wBAAsB,kBAAkB,CAAC,OAAO,EAAE,eAAe,GAAG,OAAO,CAAC,IAAI,CAAC,CA0LhF"}

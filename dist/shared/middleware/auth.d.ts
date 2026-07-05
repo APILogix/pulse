@@ -32,6 +32,7 @@ declare module 'fastify' {
             id: string;
             email: string;
             isAdmin: boolean;
+            currentOrgId?: string | null;
             sessionId: string;
             mfaVerified: boolean;
             stepUpFresh: boolean;

@@ -195,6 +195,7 @@ export declare function createSession(data: {
     mfa_verified_at?: Date | null;
     mfa_expires_at?: Date | null;
     sso_provider_id?: string | null;
+    sso_provider_type?: string | null;
     login_method?: string | null;
     saml_name_id?: string | null;
     saml_session_index?: string | null;
@@ -357,12 +358,46 @@ export declare function createLinkedIdentity(data: {
     provider_email: string | null;
     profile_metadata?: Record<string, unknown>;
 }, client?: PoolClient): Promise<LinkedIdentityRow>;
-export declare function findScimTokenByHash(tokenHash: string, orgId: string, client?: PoolClient): Promise<{
+export interface ScimTokenAuthRow {
     id: string;
     org_id: string;
-} | null>;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+    grace_period_ends_at: Date | null;
+    scopes: string[] | null;
+}
+export declare function findScimTokenByHash(tokenHash: string, orgId: string, client?: PoolClient): Promise<ScimTokenAuthRow | null>;
+export declare function isScimTokenIpAllowed(tokenId: string, ipAddress: string, client?: PoolClient): Promise<boolean>;
 export declare function touchScimToken(tokenId: string, client?: PoolClient): Promise<void>;
 export declare function upsertScimUserMapping(orgId: string, userId: string, externalId: string, client?: PoolClient): Promise<void>;
+export declare function listScimTokenScopes(tokenId: string, client?: PoolClient): Promise<string[]>;
+export declare function listScimTokenIps(tokenId: string, client?: PoolClient): Promise<string[]>;
+export declare function createScimToken(data: {
+    orgId: string;
+    tokenHash: string;
+    createdBy: string;
+    expiresAt: Date | null;
+}, client?: PoolClient): Promise<{
+    id: string;
+}>;
+export declare function insertScimTokenScopes(tokenId: string, scopes: string[], client?: PoolClient): Promise<void>;
+export declare function insertScimTokenIps(tokenId: string, ipCidrs: string[], client?: PoolClient): Promise<void>;
+export declare function findScimTokenById(tokenId: string, client?: PoolClient): Promise<{
+    id: string;
+    org_id: string;
+    revoked_at: Date | null;
+} | null>;
+export declare function rotateScimToken(tokenId: string, newTokenId: string, gracePeriodEndsAt: Date, client?: PoolClient): Promise<void>;
+export declare function revokeScimToken(tokenId: string, client?: PoolClient): Promise<void>;
+export declare function listScimTokensForOrg(orgId: string, client?: PoolClient): Promise<Array<{
+    id: string;
+    created_at: Date;
+    last_used_at: Date | null;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+    scopes: string[];
+    allowed_ips: string[];
+}>>;
 export declare function findScimMappingByExternalId(orgId: string, externalId: string, client?: PoolClient): Promise<{
     user_id: string;
 } | null>;
@@ -391,6 +426,70 @@ export declare function findActiveOrgMember(orgId: string, userId: string, clien
 } | null>;
 export declare function updateLinkedIdentityLastUsed(linkId: string, client?: PoolClient): Promise<void>;
 export declare function findActiveSessionBySamlNameId(nameId: string, client?: PoolClient): Promise<UserSession | null>;
+export declare function createSamlSession(data: {
+    sessionId: string;
+    providerId: string;
+    samlNameId: string;
+    samlNameIdFormat?: string | null;
+    samlSessionIndex?: string | null;
+    issuer: string;
+    expiresAt: Date;
+}, client?: PoolClient): Promise<void>;
+export declare function findLatestSamlSessionByProviderAndNameId(providerId: string, nameId: string, client?: PoolClient): Promise<{
+    session_id: string;
+    provider_id: string;
+    saml_name_id: string;
+    saml_session_index: string | null;
+    issuer: string;
+    user_id: string;
+} | null>;
+export declare function listActiveSamlSessionsForLogout(providerId: string, nameId: string, sessionIndex?: string, client?: PoolClient): Promise<Array<{
+    session_id: string;
+    user_id: string;
+}>>;
+export declare function expireSamlSessionsBySessionIds(sessionIds: string[], client?: PoolClient): Promise<void>;
+export declare function findScimGroupById(orgId: string, groupId: string, client?: PoolClient): Promise<{
+    id: string;
+    external_id: string;
+    display_name: string;
+    meta_version: number;
+    meta_created: Date;
+    meta_last_modified: Date;
+    active: boolean;
+} | null>;
+export declare function findScimGroupByExternalId(orgId: string, externalId: string, client?: PoolClient): Promise<{
+    id: string;
+} | null>;
+export declare function createScimGroup(orgId: string, externalId: string, displayName: string, client?: PoolClient): Promise<{
+    id: string;
+    external_id: string;
+    display_name: string;
+    meta_version: number;
+    meta_created: Date;
+    meta_last_modified: Date;
+    active: boolean;
+}>;
+export declare function updateScimGroup(orgId: string, groupId: string, displayName: string | null, client?: PoolClient): Promise<void>;
+export declare function deleteScimGroup(orgId: string, groupId: string, client?: PoolClient): Promise<void>;
+export declare function listScimGroups(orgId: string, startIndex: number, count: number, filter?: string, client?: PoolClient): Promise<{
+    rows: Array<{
+        id: string;
+        external_id: string;
+        display_name: string;
+        meta_version: number;
+        meta_created: Date;
+        meta_last_modified: Date;
+        active: boolean;
+    }>;
+    total: number;
+}>;
+export declare function listScimGroupMembers(groupId: string, client?: PoolClient): Promise<Array<{
+    value: string;
+    display: string;
+}>>;
+export declare function replaceScimGroupMembers(orgId: string, groupId: string, userIds: string[], client?: PoolClient): Promise<void>;
+export declare function addScimGroupMember(orgId: string, groupId: string, userId: string, client?: PoolClient): Promise<void>;
+export declare function removeScimGroupMember(groupId: string, userId: string, client?: PoolClient): Promise<void>;
 export declare function revokeLinkedIdentity(userId: string, linkId: string, client?: PoolClient): Promise<boolean>;
 export declare function revokeTrustedDevice(userId: string, deviceId: string, client?: PoolClient): Promise<boolean>;
 export declare function revokeAllTrustedDevices(userId: string, _reason: string, client?: PoolClient): Promise<number>;

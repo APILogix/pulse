@@ -13,7 +13,7 @@
  * Soft delete: projects set deleted_at; all reads filter deleted_at IS NULL.
  */
 import type { Pool, PoolClient } from "pg";
-import type { ApiKeyType, ListApiKeysQuery, ListProjectsQuery, OrganizationMembership, Project, ProjectApiKey, ProjectApiKeyRecord, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectStatus } from "./types.js";
+import type { ApiKeyType, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrganizationMembership, Project, ProjectActivityResult, ProjectApiKey, ProjectApiKeyRecord, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectStatus } from "./types.js";
 export interface ProjectUpdateInput {
     name?: string;
     description?: string | null;
@@ -57,6 +57,11 @@ export interface ApiKeyUpdateInput {
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;
 }
+export interface ProjectModuleUsageCounts {
+    projects: number;
+    environments: number;
+    apiKeys: number;
+}
 export declare class ProjectsRepository {
     private readonly db;
     constructor(db?: Pool);
@@ -79,14 +84,23 @@ export declare class ProjectsRepository {
     }, client?: PoolClient): Promise<Project>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
+    findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     updateProject(orgId: string, projectId: string, input: ProjectUpdateInput, client?: PoolClient): Promise<Project>;
     /** Soft-delete: stamp deleted_at + deleted_by; row is retained for audit. */
     softDeleteProject(orgId: string, projectId: string, deletedBy: string, client?: PoolClient): Promise<void>;
+    restoreProject(orgId: string, projectId: string, client?: PoolClient): Promise<Project>;
     getProjectStats(projectId: string, client?: PoolClient): Promise<{
+        totalRequests: number;
         apiKeysCount: number;
         activeKeysCount: number;
         environmentCount: number;
     }>;
+    getProjectUsageCounters(projectId: string, client?: PoolClient): Promise<ProjectUsageCounter[]>;
+    listProjectActivity(orgId: string, projectId: string, query: ListProjectActivityQuery, client?: PoolClient): Promise<ProjectActivityResult>;
+    getProjectModuleUsageCounts(orgId: string, client?: PoolClient): Promise<ProjectModuleUsageCounts>;
+    findSdkConfigPlanKey(orgId: string, client?: PoolClient): Promise<string>;
+    createDefaultEnvironments(project: Project, createdBy: string, client?: PoolClient): Promise<ProjectEnvironmentConfig[]>;
+    createDefaultSdkConfigs(project: Project, createdBy: string, planKey: string, client?: PoolClient): Promise<number>;
     listEnvironments(projectId: string, client?: PoolClient): Promise<ProjectEnvironmentConfig[]>;
     findEnvironment(projectId: string, environment: ProjectEnvironment, client?: PoolClient): Promise<ProjectEnvironmentConfig | null>;
     createEnvironment(input: {

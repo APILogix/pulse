@@ -1100,6 +1100,7 @@ async function sessionRoutes(fastify: FastifyInstance) {
           expires_at: result.expiresAt,
           session_id: result.sessionId,
           token_type: 'Bearer',
+          current_org_id: result.currentOrgId,
         },
       });
     } catch (error) {

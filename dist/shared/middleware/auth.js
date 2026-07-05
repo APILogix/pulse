@@ -82,6 +82,7 @@ export async function authenticate(request, reply) {
             id: user.id,
             email: user.email,
             isAdmin: user.is_admin === true,
+            currentOrgId: user.current_org_id ?? null,
             sessionId: decoded.jti,
             mfaVerified: decoded.mfa_verified === true,
             stepUpFresh: hasFreshStepUp(decoded.jti),

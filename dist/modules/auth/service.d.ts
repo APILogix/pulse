@@ -12,6 +12,7 @@ export interface IssuedSession {
  */
 export interface SessionSsoContext {
     providerId?: string;
+    providerType?: string;
     loginMethod?: string;
     samlNameId?: string;
     samlSessionIndex?: string;
@@ -224,6 +225,7 @@ export declare function refreshAccessToken(refreshToken: string, ipAddress: stri
     refreshToken: string;
     expiresAt: Date;
     sessionId: string;
+    currentOrgId: string | null;
 }>;
 export declare function logout(userId: string, sessionId: string, ipAddress: string, requestId: string): Promise<{
     saml_logout_url: string | null;

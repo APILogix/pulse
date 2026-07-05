@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- 008_projects_create_core_schema.up.sql
 -- ----------------------------------------------------------------------------
 -- Canonical, idempotent, safe-to-run-on-fresh-DB snapshot of the PROJECT
@@ -192,6 +192,23 @@ CREATE TRIGGER trg_projects_updated_at BEFORE UPDATE ON projects
 
 COMMENT ON TABLE projects IS
   'Enterprise project records scoped to an organization. Holds rate-limit, ingestion, security and alert config consumed by the ingestion + alerting modules.';
+
+-- sdk_configs is created in migration 007, before projects exists in this
+-- lineage. Attach the project FK here once projects is available.
+DO $$
+BEGIN
+  IF to_regclass('public.sdk_configs') IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1
+         FROM pg_constraint
+        WHERE conname = 'fk_sdk_configs_project'
+          AND conrelid = 'public.sdk_configs'::regclass
+     ) THEN
+    ALTER TABLE sdk_configs
+      ADD CONSTRAINT fk_sdk_configs_project
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 COMMIT;
 

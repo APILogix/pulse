@@ -49,11 +49,11 @@ export declare const ConditionOperatorSchema: z.ZodEnum<{
 }>;
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export declare const ActionTypeSchema: z.ZodEnum<{
+    group: "group";
     webhook: "webhook";
     notify: "notify";
     suppress: "suppress";
     escalate: "escalate";
-    group: "group";
 }>;
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 export declare const DeliveryAttemptStatusSchema: z.ZodEnum<{
@@ -163,11 +163,11 @@ export declare const RuleConditionSchema: z.ZodObject<{
 export type RuleConditionInput = z.infer<typeof RuleConditionSchema>;
 export declare const RuleActionSchema: z.ZodObject<{
     actionType: z.ZodDefault<z.ZodEnum<{
+        group: "group";
         webhook: "webhook";
         notify: "notify";
         suppress: "suppress";
         escalate: "escalate";
-        group: "group";
     }>>;
     priority: z.ZodDefault<z.ZodNumber>;
     orderIndex: z.ZodDefault<z.ZodNumber>;
@@ -239,11 +239,11 @@ export declare const CreateRuleSchema: z.ZodObject<{
     }, z.core.$strip>>>;
     actions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
+            group: "group";
             webhook: "webhook";
             notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
-            group: "group";
         }>>;
         priority: z.ZodDefault<z.ZodNumber>;
         orderIndex: z.ZodDefault<z.ZodNumber>;
@@ -316,11 +316,11 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     }, z.core.$strip>>>;
     actions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
+            group: "group";
             webhook: "webhook";
             notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
-            group: "group";
         }>>;
         priority: z.ZodDefault<z.ZodNumber>;
         orderIndex: z.ZodDefault<z.ZodNumber>;

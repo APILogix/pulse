@@ -169,6 +169,38 @@ export class SdkConfigService {
         });
         return toConfigDto(row);
     }
+    async updateProjectConfig(meta, orgId, projectId, configId, input) {
+        await this.requireMember(orgId, meta.actorUserId);
+        const current = await this.repo.findById(orgId, configId);
+        if (!current || current.project_id !== projectId)
+            throw new NotFoundError("SDK config");
+        const newValue = input.configValue ?? current.config_value;
+        const hash = versionHash(newValue);
+        const valueChanged = hash !== current.version_hash;
+        const diff = valueChanged ? diffKeys(current.config_value, newValue) : null;
+        const row = await this.repo.update(orgId, configId, {
+            configValue: newValue,
+            versionHash: hash,
+            newVersion: current.version + 1,
+            schemaVersion: input.schemaVersion,
+            environment: input.environment,
+            targetSdkVersions: input.targetSdkVersions,
+            targetPlatforms: input.targetPlatforms,
+            rolloutPercentage: input.rolloutPercentage,
+            isActive: input.isActive,
+            changeType: "update",
+            changeSummary: input.changeSummary ?? null,
+            changeDiff: diff,
+            updatedBy: meta.actorUserId,
+        });
+        evictSdkConfigCache(orgId);
+        await this.audit(meta, orgId, "sdk_config.project_updated", configId, {
+            oldValues: { version: current.version, projectId },
+            newValues: { version: row.version, projectId },
+            changedFields: diff ? diff.changedKeys : [],
+        });
+        return toConfigDto(row);
+    }
     async rollbackConfig(meta, orgId, configId, toVersion, reason) {
         await this.requireAdmin(orgId, meta.actorUserId);
         const current = await this.repo.findById(orgId, configId);

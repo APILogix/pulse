@@ -9,6 +9,7 @@
  */
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import { authenticate } from '../../shared/middleware/auth.js';
+import { ACCESS_TOKEN_TTL_SECONDS, generateAccessToken } from '../auth/utils.js';
 import {
   AcceptInvitationSchema,
   ApiKeyParamsSchema,
@@ -17,6 +18,7 @@ import {
   CreateEnvironmentSchema,
   CreateInvitationSchema,
   CreateOrganizationSchema,
+  CreateScimTokenSchema,
   CreateQuotaRequestSchema,
   CreateSsoProviderSchema,
   CursorPaginationSchema,
@@ -38,6 +40,7 @@ import {
   SlugParamsSchema,
   SsoProviderParamsSchema,
   SuspendMemberSchema,
+  SwitchOrganizationSchema,
   TransferOwnershipSchema,
   UpdateEnvironmentSchema,
   UpdateMemberRoleSchema,
@@ -53,6 +56,7 @@ type AuthenticatedRequest = FastifyRequest & {
 };
 
 function handleOrganizationError(error: unknown, reply: FastifyReply) {
+  console.log('[organization.handleError]', error);
   if (error instanceof OrganizationError) {
     return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
   }
@@ -106,6 +110,23 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     const body = CreateOrganizationSchema.parse(request.body);
     const result = await svc.createOrganization(buildMeta(request), strip(body) as any);
     return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.post('/switch', auth, withErrorHandling(async (request, reply) => {
+    const body = SwitchOrganizationSchema.parse(request.body);
+    const user = asAuth(request).user;
+    await svc.switchOrganization(buildMeta(request), body.orgId);
+
+    const accessToken = generateAccessToken(user.id, user.sessionId, user.mfaVerified);
+    return reply.send({
+      data: {
+        access_token: accessToken,
+        expires_at: new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000),
+        session_id: user.sessionId,
+        token_type: 'Bearer',
+        current_org_id: body.orgId,
+      },
+    });
   }));
 
   fastify.get('/', auth, withErrorHandling(async (request, reply) => {
@@ -247,9 +268,15 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     return reply.code(201).send({
       success: true,
       data: {
-        invitation: result,
-        token: result.token,
-        inviteUrl: result.inviteUrl,
+        invitation: {
+          id: result.id,
+          email: result.email,
+          role: result.role,
+          status: result.status,
+          expiresAt: result.expiresAt,
+          invitedAt: result.invitedAt,
+          invitedBy: result.invitedBy,
+        },
         accountExists: result.accountExists,
         emailSent: result.emailSent,
       },
@@ -259,7 +286,7 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   fastify.post('/:orgId/invitations/:invitationId/resend', auth, withErrorHandling(async (request, reply) => {
     const { orgId, invitationId } = InvitationIdParamsSchema.parse(request.params);
     const result = await svc.resendInvitation(buildMeta(request), orgId, invitationId);
-    return reply.send({ success: true, data: result });
+    return reply.send({ success: true, data: { accountExists: result.accountExists } });
   }));
 
   fastify.delete('/:orgId/invitations/:invitationId', auth, withErrorHandling(async (request, reply) => {
@@ -382,8 +409,20 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
 
   fastify.post('/:orgId/scim-tokens', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const result = await svc.createScimToken(buildMeta(request), orgId);
+    const body = CreateScimTokenSchema.parse(request.body ?? {});
+    const input = {
+      scopes: body.scopes,
+      ...(body.allowedIps !== undefined ? { allowedIps: body.allowedIps } : {}),
+      ...(body.expiresInDays !== undefined ? { expiresInDays: body.expiresInDays } : {}),
+    };
+    const result = await svc.createScimToken(buildMeta(request), orgId, input);
     return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/scim-tokens/:tokenId/rotate', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, tokenId } = ScimTokenParamsSchema.parse(request.params);
+    const result = await svc.rotateScimToken(buildMeta(request), orgId, tokenId);
+    return reply.send({ success: true, data: result });
   }));
 
   fastify.delete('/:orgId/scim-tokens/:tokenId', auth, withErrorHandling(async (request, reply) => {

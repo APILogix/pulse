@@ -1,5 +1,6 @@
 import { OrganizationRepository } from "./repository.js";
 import { generateToken, hashToken } from "./utils.js";
+import { ScimTokenService } from "../scim/scim-token.service.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
 import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
 import { env } from "../../config/env.js";
@@ -52,10 +53,12 @@ export class OrganizationService {
     repo;
     log;
     emitEvent;
+    scimTokenService;
     constructor(deps) {
         this.repo = deps.repository;
         this.log = deps.logger;
         this.emitEvent = deps.emitEvent;
+        this.scimTokenService = deps.scimTokenService;
     }
     // ── Helpers ───────────────────────────────────
     async audit(meta, data) {
@@ -183,6 +186,22 @@ export class OrganizationService {
                     status: "active"
                 }
             }
+        });
+        return toOrgDto(org);
+    }
+    async switchOrganization(meta, orgId) {
+        await this.requireMember(orgId, meta.actorUserId);
+        const org = await this.repo.findOrgById(orgId);
+        if (!org)
+            throw new NotFoundError("Organization");
+        await this.repo.setUserCurrentOrg(meta.actorUserId, orgId);
+        await this.audit(meta, {
+            orgId,
+            action: "org.switched",
+            entityType: "organization",
+            entityId: orgId,
+            entityName: org.name,
+            newValues: { currentOrgId: orgId },
         });
         return toOrgDto(org);
     }
@@ -513,21 +532,43 @@ export class OrganizationService {
         await this.audit(meta, { orgId, action: "sso.deleted", entityType: "sso_provider", entityId: ssoId, isSensitive: true });
     }
     // ── SCIM ──────────────────────────────────────
-    async createScimToken(meta, orgId) {
+    async createScimToken(meta, orgId, data) {
         await this.requireMutableOrg(orgId);
         await this.requireMember(orgId, meta.actorUserId, "owner");
         await this.enforceBillingLimit(orgId, "scim");
-        const rawToken = generateToken();
-        const hashed = hashToken(rawToken);
-        const expiresAt = new Date(Date.now() + 365 * 86400000);
-        const t = await this.repo.createScimToken(orgId, hashed, expiresAt, meta.actorUserId);
-        await this.audit(meta, { orgId, action: "scim_token.created", entityType: "scim_token", entityId: t.id, isSensitive: true });
-        return { ...{ id: t.id, lastUsedAt: t.last_used_at, expiresAt: t.expires_at, revokedAt: t.revoked_at, createdAt: t.created_at }, rawToken };
+        const payload = {
+            orgId,
+            createdBy: meta.actorUserId,
+            scopes: data?.scopes?.length ? data.scopes : ["read", "write", "delete"],
+            ...(data?.allowedIps !== undefined ? { allowedIps: data.allowedIps } : {}),
+            ...(data?.expiresInDays !== undefined ? { expiresInDays: data.expiresInDays } : {}),
+        };
+        const created = await this.scimTokenService.createToken(payload);
+        const tokens = await this.scimTokenService.listTokens(orgId);
+        const token = tokens.find((item) => item.id === created.tokenId);
+        if (!token)
+            throw new NotFoundError("SCIM token");
+        return { ...this.toScimTokenDto(token), rawToken: created.rawToken };
     }
     async revokeScimToken(meta, orgId, tokenId) {
         await this.requireMember(orgId, meta.actorUserId, "owner");
-        await this.repo.revokeScimToken(orgId, tokenId);
-        await this.audit(meta, { orgId, action: "scim_token.revoked", entityType: "scim_token", entityId: tokenId, isSensitive: true });
+        const tokens = await this.scimTokenService.listTokens(orgId);
+        if (!tokens.some((item) => item.id === tokenId))
+            throw new NotFoundError("SCIM token");
+        await this.scimTokenService.revokeToken(tokenId, meta.actorUserId);
+    }
+    async rotateScimToken(meta, orgId, tokenId) {
+        await this.requireMutableOrg(orgId);
+        await this.requireMember(orgId, meta.actorUserId, "owner");
+        const tokens = await this.scimTokenService.listTokens(orgId);
+        if (!tokens.some((item) => item.id === tokenId))
+            throw new NotFoundError("SCIM token");
+        const rotated = await this.scimTokenService.rotateToken(tokenId, meta.actorUserId);
+        const updatedTokens = await this.scimTokenService.listTokens(orgId);
+        const token = updatedTokens.find((item) => item.id === rotated.newTokenId);
+        if (!token)
+            throw new NotFoundError("SCIM token");
+        return { ...this.toScimTokenDto(token), rawToken: rotated.rawToken };
     }
     // ── Security & Audit ──────────────────────────
     async listSecurityEvents(orgId, userId, q, filters) {
@@ -642,6 +683,7 @@ export class OrganizationService {
         // render sign-in vs. create-account when the link is opened directly.
         const existingUser = await this.repo.findUserByEmail(inv.email);
         return {
+            id: inv.id,
             valid: true,
             email: inv.email,
             role: inv.role,
@@ -697,8 +739,19 @@ export class OrganizationService {
     // ── List SCIM Tokens ──────────────────────────
     async listScimTokens(orgId, userId) {
         await this.requireMember(orgId, userId, "owner");
-        const rows = await this.repo.listScimTokens(orgId);
-        return rows.map(t => ({ id: t.id, lastUsedAt: t.last_used_at, expiresAt: t.expires_at, revokedAt: t.revoked_at, createdAt: t.created_at }));
+        const rows = await this.scimTokenService.listTokens(orgId);
+        return rows.map((token) => this.toScimTokenDto(token));
+    }
+    toScimTokenDto(token) {
+        return {
+            id: token.id,
+            lastUsedAt: token.last_used_at,
+            expiresAt: token.expires_at,
+            revokedAt: token.revoked_at,
+            createdAt: token.created_at,
+            scopes: token.scopes ?? [],
+            allowedIps: token.allowed_ips ?? [],
+        };
     }
 }
 //# sourceMappingURL=organizationservice.js.map

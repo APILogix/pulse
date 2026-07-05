@@ -56,8 +56,10 @@ export declare class WorkerRegistry {
     private readonly logDb;
     private readonly adminLogger;
     private readonly maintenance;
+    private readonly gauge;
     private readonly generalPool;
     private readonly specializedPool;
+    private gaugeBatchCounter;
     private retryTimer;
     private started;
     private readonly opts;
@@ -70,6 +72,7 @@ export declare class WorkerRegistry {
      * logging database.
      */
     private retryCycle;
+    private updateGauge;
     private workerId;
     /** Drain all workers and close logging resources. */
     stop(): Promise<void>;

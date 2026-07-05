@@ -23,8 +23,8 @@ async function writeAudit(entry, attempt = 1) {
         await pool.query(`INSERT INTO audit_logs (
          user_id, org_id, action, resource_type, resource_id,
          ip_address, user_agent, request_id, metadata,
-         impersonated_by, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`, [
+         impersonated_by, actor_type, actor_id, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`, [
             entry.user_id,
             entry.org_id,
             entry.action,
@@ -35,6 +35,8 @@ async function writeAudit(entry, attempt = 1) {
             entry.request_id,
             entry.metadata ? JSON.stringify(entry.metadata) : null,
             entry.impersonated_by || null,
+            entry.actor_type ?? null,
+            entry.actor_id ?? null,
         ]);
     }
     catch (error) {

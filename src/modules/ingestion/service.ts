@@ -31,6 +31,7 @@ import type { Pool } from 'pg';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { apiKeyCache, type CachedProjectConfig } from '../../config/lrucashe.js';
+import { BackpressureGauge } from '../../lib/gauge.js';
 import { PgQueue } from './queue/pg-queue.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionRateLimiter } from './rate-limiter.js';
@@ -102,6 +103,9 @@ interface ResolvedProject {
   rateLimitPerMinute: number;
   isActive: boolean;
   apiKeyId: string;
+  permissions: string[];
+  allowedEndpoints: string[];
+  blockedEndpoints: string[];
 }
 
 const DEFAULT_BACKPRESSURE: BackpressureConfig = {
@@ -115,15 +119,16 @@ export class IngestionService {
   private readonly queue: PgQueue;
   private readonly rateLimiter: IngestionRateLimiter;
   private readonly usage: UsageCounter;
+  private readonly gauge: BackpressureGauge;
   private readonly backpressure: BackpressureConfig;
   private readonly replayMaxEvents: number;
   private readonly maxBatchSize: number;
   private readonly defaultRatePerSecond: number;
   private readonly defaultRatePerMinute: number;
 
-  // Cached pending-depth probe so we don't hit the DB on every request.
-  private cachedDepth = 0;
-  private cachedDepthAt = 0;
+  // Cached gauge read so request-path backpressure remains O(1) and scan-free.
+  private cachedGaugeDepth = 0;
+  private cachedGaugeAt = 0;
 
   constructor(
     private readonly pool: Pool,
@@ -136,6 +141,7 @@ export class IngestionService {
     this.backpressure = config.backpressure ?? DEFAULT_BACKPRESSURE;
     this.replayMaxEvents = config.replayMaxEvents ?? env.INGESTION_REPLAY_MAX_EVENTS;
     this.queue = new PgQueue(pool, { queue: 'ingestion' });
+    this.gauge = new BackpressureGauge(pool);
     this.rateLimiter = new IngestionRateLimiter({
       ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
       sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
@@ -165,6 +171,9 @@ export class IngestionService {
         rateLimitPerMinute: cached.rateLimitPerMinute,
         isActive: cached.isActive,
         apiKeyId: cached.apiKeyId,
+        permissions: cached.permissions ?? [],
+        allowedEndpoints: cached.allowedEndpoints ?? ['*'],
+        blockedEndpoints: cached.blockedEndpoints ?? [],
       };
     }
 
@@ -175,10 +184,13 @@ export class IngestionService {
       id: auth.projectId,
       orgId: auth.orgId,
       environment: auth.environment,
-      rateLimitPerSecond: this.defaultRatePerSecond,
-      rateLimitPerMinute: this.defaultRatePerMinute,
+      rateLimitPerSecond: auth.rateLimitPerSecond ?? this.defaultRatePerSecond,
+      rateLimitPerMinute: auth.rateLimitPerMinute ?? this.defaultRatePerMinute,
       isActive: auth.isActive && auth.projectStatus === 'active',
       apiKeyId: auth.apiKeyId,
+      permissions: auth.permissions,
+      allowedEndpoints: auth.allowedEndpoints.length ? auth.allowedEndpoints : ['*'],
+      blockedEndpoints: auth.blockedEndpoints,
     };
 
     apiKeyCache.set(keyHash, {
@@ -189,6 +201,9 @@ export class IngestionService {
       rateLimitPerSecond: resolved.rateLimitPerSecond,
       rateLimitPerMinute: resolved.rateLimitPerMinute,
       allowedEventTypes: ['request', 'error', 'log', 'metric', 'custom'],
+      permissions: resolved.permissions,
+      allowedEndpoints: resolved.allowedEndpoints,
+      blockedEndpoints: resolved.blockedEndpoints,
       isActive: resolved.isActive,
       apiKeyId: resolved.apiKeyId,
     });
@@ -199,20 +214,21 @@ export class IngestionService {
     return resolved;
   }
 
-  /** Cached pending-depth probe (refreshed at most every 2s). */
-  private async pendingDepth(): Promise<number> {
+  /** Cached gauge probe (refreshed at most every 1s). */
+  private async pressureDepth(): Promise<number> {
     const now = Date.now();
-    if (now - this.cachedDepthAt > 2000) {
+    if (now - this.cachedGaugeAt > 1000) {
       try {
-        this.cachedDepth = await this.queue.pendingDepth();
+        const state = await this.gauge.read();
+        this.cachedGaugeDepth = state?.pendingDepth ?? 0;
       } catch (err) {
         // On probe failure keep the last good value; don't toggle backpressure
         // on a transient DB error.
-        svcLogger.warn({ err }, 'pendingDepth probe failed; using cached value');
+        svcLogger.warn({ err }, 'backpressure gauge probe failed; using cached value');
       }
-      this.cachedDepthAt = now;
+      this.cachedGaugeAt = now;
     }
-    return this.cachedDepth;
+    return this.cachedGaugeDepth;
   }
 
   /** Decide whether to shed an event given current queue pressure. */
@@ -282,6 +298,7 @@ export class IngestionService {
     const project = await this.resolveProject(apiKey);
     if (!project) throw new Error('INVALID_API_KEY');
     if (!project.isActive) throw new Error('PROJECT_INACTIVE');
+    this.assertKeyCanUseEndpoint(project, expectedType);
 
     if (!Array.isArray(events) || events.length === 0) throw new Error('EMPTY_BATCH');
     if (events.length > this.maxBatchSize) throw new Error('BATCH_TOO_LARGE');
@@ -294,7 +311,7 @@ export class IngestionService {
     );
     if (!decision.allowed) throw new Error('RATE_LIMIT_EXCEEDED');
 
-    const depth = await this.pendingDepth();
+    const depth = await this.pressureDepth();
     const batchId = randomUUID();
     const errors: Array<{ eventId: string; reason: string }> = [];
 
@@ -417,13 +434,29 @@ export class IngestionService {
     return randomUUID();
   }
 
+  private assertKeyCanUseEndpoint(project: ResolvedProject, expectedType: SdkEventType | null): void {
+    if (!project.permissions.includes('ingest:write')) {
+      throw new Error('API_KEY_PERMISSION_DENIED');
+    }
+
+    const endpoint = expectedType ? `ingest:${expectedType}` : 'ingest:batch';
+    const allowed = project.allowedEndpoints.length === 0 ||
+      project.allowedEndpoints.includes('*') ||
+      project.allowedEndpoints.includes(endpoint);
+    const blocked = project.blockedEndpoints.includes('*') ||
+      project.blockedEndpoints.includes(endpoint);
+
+    if (!allowed || blocked) {
+      throw new Error('API_KEY_ENDPOINT_DENIED');
+    }
+  }
+
   // ── Health / observability ────────────────────────────────────────────────
   async getHealth(): Promise<HealthStatus> {
     const database = await this.writer.healthCheck();
     let queue = false;
     try {
-      await this.queue.pendingDepth();
-      queue = true;
+      queue = (await this.gauge.read()) !== null;
     } catch {
       queue = false;
     }

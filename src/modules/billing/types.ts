@@ -429,6 +429,27 @@ export interface UsageSummary {
   lastUpdated: Date;
 }
 
+export interface UsageOverview {
+  orgId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  generatedAt: Date;
+  summary: {
+    todayEvents: number;
+    monthToDateEvents: number;
+    eventLimitMonthly: number | null;
+    remainingEvents: number | null;
+    percentUsed: number;
+    projectedMonthEndEvents: number;
+  };
+  metrics: UsageSummary['metrics'];
+  activity: {
+    date: Date;
+    events: number;
+    aiAnalyses: number;
+  }[];
+}
+
 export interface SubscriptionPreview {
   currentPlan: BillingPlan;
   newPlan: BillingPlan;

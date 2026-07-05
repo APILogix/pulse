@@ -8,6 +8,9 @@ export interface CachedProjectConfig {
   rateLimitPerSecond: number;
   rateLimitPerMinute: number;
   allowedEventTypes: string[];
+  permissions: string[];
+  allowedEndpoints: string[];
+  blockedEndpoints: string[];
   isActive: boolean;
   apiKeyId: string;
 }

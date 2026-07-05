@@ -24,8 +24,8 @@ export declare const MemberStatusSchema: z.ZodEnum<{
 }>;
 export declare const OrgRoleSchema: z.ZodEnum<{
     security: "security";
-    member: "member";
     admin: "admin";
+    member: "member";
     owner: "owner";
     billing: "billing";
     developer: "developer";
@@ -86,6 +86,9 @@ export declare const OrgIdParamsSchema: z.ZodObject<{
 export declare const IdParamsSchema: z.ZodObject<{
     id: z.ZodString;
 }, z.core.$strip>;
+export declare const SwitchOrganizationSchema: z.ZodObject<{
+    orgId: z.ZodString;
+}, z.core.$strip>;
 export declare const MemberParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     userId: z.ZodString;
@@ -113,6 +116,7 @@ export declare const ScimTokenParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     tokenId: z.ZodString;
 }, z.core.$strip>;
+export declare const ScimTokenIpSchema: z.ZodString;
 export declare const QuotaRequestParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     requestId: z.ZodString;
@@ -182,8 +186,8 @@ export declare const UpdateSettingsSchema: z.ZodObject<{
 export declare const UpdateMemberRoleSchema: z.ZodObject<{
     role: z.ZodEnum<{
         security: "security";
-        member: "member";
         admin: "admin";
+        member: "member";
         billing: "billing";
         developer: "developer";
         viewer: "viewer";
@@ -207,8 +211,8 @@ export declare const MembersListQuerySchema: z.ZodObject<{
     }>>;
     role: z.ZodOptional<z.ZodEnum<{
         security: "security";
-        member: "member";
         admin: "admin";
+        member: "member";
         owner: "owner";
         billing: "billing";
         developer: "developer";
@@ -225,8 +229,8 @@ export declare const CreateInvitationSchema: z.ZodObject<{
     email: z.ZodString;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
-        member: "member";
         admin: "admin";
+        member: "member";
         billing: "billing";
         developer: "developer";
         viewer: "viewer";
@@ -270,8 +274,8 @@ export declare const CreateApiKeySchema: z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
     role: z.ZodDefault<z.ZodEnum<{
         security: "security";
-        member: "member";
         admin: "admin";
+        member: "member";
         billing: "billing";
         developer: "developer";
         viewer: "viewer";
@@ -281,8 +285,8 @@ export declare const CreateApiKeySchema: z.ZodObject<{
 export declare const CreateSsoProviderSchema: z.ZodObject<{
     providerName: z.ZodString;
     providerType: z.ZodEnum<{
-        oidc: "oidc";
         saml: "saml";
+        oidc: "oidc";
     }>;
     entityId: z.ZodOptional<z.ZodString>;
     ssoUrl: z.ZodOptional<z.ZodString>;
@@ -296,6 +300,20 @@ export declare const UpdateSsoProviderSchema: z.ZodObject<{
     x509Certificate: z.ZodOptional<z.ZodString>;
     domain: z.ZodOptional<z.ZodString>;
     isActive: z.ZodOptional<z.ZodBoolean>;
+}, z.core.$strip>;
+export declare const ScimScopeSchema: z.ZodEnum<{
+    read: "read";
+    write: "write";
+    delete: "delete";
+}>;
+export declare const CreateScimTokenSchema: z.ZodObject<{
+    scopes: z.ZodDefault<z.ZodArray<z.ZodEnum<{
+        read: "read";
+        write: "write";
+        delete: "delete";
+    }>>>;
+    allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    expiresInDays: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export declare const CreateQuotaRequestSchema: z.ZodObject<{
     quotaType: z.ZodString;
@@ -683,6 +701,8 @@ export interface ScimTokenDto {
     expiresAt: Date | null;
     revokedAt: Date | null;
     createdAt: Date;
+    scopes: string[];
+    allowedIps: string[];
 }
 export interface SecurityEventDto {
     id: string;
@@ -761,6 +781,7 @@ export interface OrganizationServiceDependencies {
     repository: OrganizationRepository;
     logger: FastifyBaseLogger;
     emitEvent: (event: string, payload: Record<string, unknown>) => Promise<void>;
+    scimTokenService: import("../scim/scim-token.service.js").ScimTokenService;
 }
 export type OrganizationRepository = import("./repository.js").OrganizationRepository;
 export declare class OrganizationError extends Error {

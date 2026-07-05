@@ -1,4 +1,4 @@
-﻿-- ============================================================================
+-- ============================================================================
 -- 008_projects_create_core_schema.down.sql
 -- Reverses 008_projects_create_core_schema.up.sql. Drops in FK-dependency order.
 --

@@ -136,5 +136,7 @@ export declare class PgQueue {
     metrics(): Promise<QueueMetrics>;
     /** Approximate pending depth — cheap backpressure probe. */
     pendingDepth(): Promise<number>;
+    /** O(1) queue pressure estimate for worker-driven backpressure gauge updates. */
+    pendingDepthEstimate(): Promise<number>;
 }
 //# sourceMappingURL=pg-queue.d.ts.map

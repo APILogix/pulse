@@ -16,11 +16,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import { ZodError } from "zod";
 const ROLE_HIERARCHY = {
-    owner: 5,
-    admin: 4,
-    billing: 3,
-    member: 2,
-    viewer: 1,
+    owner: 100,
+    admin: 80,
+    developer: 60,
+    security: 50,
+    billing: 50,
+    member: 40,
+    viewer: 20,
 };
 // Status codes for every domain error the module raises. Centralized so routes
 // and tests share one source of truth.
@@ -54,8 +56,23 @@ export class ProjectError extends Error {
         this.name = "ProjectError";
     }
 }
+function isHttpDomainError(error) {
+    return error instanceof Error
+        && typeof error.code === "string"
+        && typeof error.statusCode === "number";
+}
 export function handleProjectError(error, reply) {
     if (error instanceof ProjectError) {
+        return reply.code(error.statusCode).send({
+            success: false,
+            error: {
+                code: error.code,
+                message: error.message,
+                ...(error.details ? { details: error.details } : {}),
+            },
+        });
+    }
+    if (isHttpDomainError(error)) {
         return reply.code(error.statusCode).send({
             success: false,
             error: {

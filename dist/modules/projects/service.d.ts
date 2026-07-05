@@ -15,7 +15,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../organization/repository.js";
 import { ProjectsRepository } from "./repository.js";
-import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, Project, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -41,11 +41,14 @@ export declare class ProjectsService {
     getProject(orgId: string, projectId: string, userId: string): Promise<Project>;
     updateProject(orgId: string, projectId: string, userId: string, body: UpdateProjectBody, meta: RequestMeta): Promise<Project>;
     deleteProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<void>;
+    restoreProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     archiveProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     unarchiveProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     pauseProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     resumeProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     getProjectStats(orgId: string, projectId: string, userId: string): Promise<ProjectWithStats>;
+    getProjectUsage(orgId: string, projectId: string, userId: string): Promise<ProjectUsageCounter[]>;
+    listProjectActivity(orgId: string, projectId: string, userId: string, query: ListProjectActivityQuery): Promise<ProjectActivityResult>;
     listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]>;
     getEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string): Promise<ProjectEnvironmentConfig>;
     createEnvironment(orgId: string, projectId: string, userId: string, body: CreateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
@@ -78,8 +81,11 @@ export declare class ProjectsService {
     validateApiKey(rawKey: string): Promise<ValidatedApiKey | null>;
     private requireOrganizationAccess;
     private requireProjectAccess;
+    private limitFrom;
+    private assertWithinLimit;
+    private requireMutableBilling;
+    private enforceProjectModuleLimit;
     private assignProjectConfig;
-    private provisionDefaultEnvironments;
     private generateUniqueSlug;
     private assertFutureExpiry;
     private publicApiKey;

@@ -52,6 +52,26 @@ export declare class BillingService {
     payInvoice(id: string, orgId: string): Promise<ServiceResponse<Invoice>>;
     getUpcomingInvoice(orgId: string): Promise<ServiceResponse<Partial<Invoice>>>;
     getCurrentUsage(orgId: string): Promise<ServiceResponse<UsageSummary>>;
+    getUsageOverview(orgId: string): Promise<ServiceResponse<{
+        orgId: string;
+        periodStart: Date;
+        periodEnd: Date;
+        generatedAt: Date;
+        summary: {
+            todayEvents: number;
+            monthToDateEvents: number;
+            eventLimitMonthly: number | null;
+            remainingEvents: number | null;
+            percentUsed: number;
+            projectedMonthEndEvents: number;
+        };
+        metrics: UsageSummary['metrics'];
+        activity: {
+            date: Date;
+            events: number;
+            aiAnalyses: number;
+        }[];
+    }>>;
     getDetailedUsage(orgId: string, params: {
         startDate?: string;
         endDate?: string;

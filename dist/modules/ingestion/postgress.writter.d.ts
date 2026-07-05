@@ -13,6 +13,11 @@ export interface ProjectAuthResult {
     apiKeyId: string;
     isActive: boolean;
     expiresAt: Date | null;
+    permissions: string[];
+    allowedEndpoints: string[];
+    blockedEndpoints: string[];
+    rateLimitPerSecond: number | null;
+    rateLimitPerMinute: number | null;
 }
 export declare class PostgresWriter {
     readonly pool: Pool;

@@ -1,6 +1,6 @@
 import { apiKeyCache } from "../../config/lrucashe.js";
 import { ProjectsRepository, } from "./repository.js";
-import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "./utils.js";
+import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "./utils.js";
 // Per-key defaults used when warming the cache. Aligned with the ingestion
 // service defaults so a key gets the same limit regardless of which path warmed
 // the cache. A per-key override (if set) takes precedence.
@@ -11,6 +11,8 @@ const DEFAULT_API_KEY_RATE_LIMITS = {
 const MAX_ACTIVE_KEYS_ON_CREATE = 5;
 const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
 const DEFAULT_GRACE_PERIOD_HOURS = 24;
+const DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT = 3;
+const BILLING_MUTABLE_STATUSES = new Set(["trialing", "active"]);
 export class ProjectsService {
     repository;
     logger;
@@ -31,26 +33,29 @@ export class ProjectsService {
         return { ...result, limit: query.limit, offset };
     }
     async createProject(orgId, userId, body, meta) {
-        await this.requireOrganizationAccess(orgId, userId);
+        await this.requireOrganizationAccess(orgId, userId, "admin");
+        const entitlements = await this.enforceProjectModuleLimit(orgId, "project");
+        await this.enforceProjectModuleLimit(orgId, "environment", DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT);
         const slug = await this.generateUniqueSlug(orgId, body.name);
         const prefixes = buildApiPrefixes();
         const config = {};
         this.assignProjectConfig(config, body);
-        const project = await this.repository.createProject({
-            orgId,
-            name: body.name,
-            slug,
-            description: body.description ?? null,
-            environment: body.environment,
-            productionApiPrefix: body.productionApiPrefix ?? prefixes.productionApiPrefix,
-            developmentApiPrefix: body.developmentApiPrefix ?? prefixes.developmentApiPrefix,
-            stagingApiPrefix: body.stagingApiPrefix ?? prefixes.stagingApiPrefix,
-            config,
+        const project = await this.repository.withTransaction(async (client) => {
+            const created = await this.repository.createProject({
+                orgId,
+                name: body.name,
+                slug,
+                description: body.description ?? null,
+                environment: body.environment,
+                productionApiPrefix: body.productionApiPrefix ?? prefixes.productionApiPrefix,
+                developmentApiPrefix: body.developmentApiPrefix ?? prefixes.developmentApiPrefix,
+                stagingApiPrefix: body.stagingApiPrefix ?? prefixes.stagingApiPrefix,
+                config,
+            }, client);
+            await this.repository.createDefaultEnvironments(created, userId, client);
+            await this.repository.createDefaultSdkConfigs(created, userId, entitlements.plan_key, client);
+            return created;
         });
-        // Provision the three default environments so per-env overrides have a row
-        // to attach to. Failure here is non-fatal — the project still works off its
-        // project-level config.
-        await this.provisionDefaultEnvironments(project, userId).catch((err) => this.logger.warn({ err, projectId: project.id }, "default environment provisioning failed"));
         await this.audit(meta, {
             orgId,
             action: "project.created",
@@ -70,6 +75,9 @@ export class ProjectsService {
         if (body.status && body.status !== current.status &&
             !validateStatusTransition(current.status, body.status)) {
             throw new ProjectError("PROJECT_INVALID_TRANSITION", `Cannot transition project from ${current.status} to ${body.status}`, 400);
+        }
+        if (body.status === "active" && current.status !== "active") {
+            await this.requireMutableBilling(orgId);
         }
         const updates = {};
         if (body.name !== undefined)
@@ -127,6 +135,25 @@ export class ProjectsService {
         });
         this.logger.warn({ orgId, projectId, userId }, "Project soft-deleted");
     }
+    async restoreProject(orgId, projectId, userId, meta) {
+        await this.requireOrganizationAccess(orgId, userId, "owner");
+        const project = await this.repository.findProjectByIdIncludingDeleted(orgId, projectId);
+        if (!project)
+            throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+        if (!project.deletedAt)
+            return project;
+        await this.enforceProjectModuleLimit(orgId, "project");
+        const restored = await this.repository.restoreProject(orgId, projectId);
+        await this.audit(meta, {
+            orgId,
+            action: "project.restored",
+            entityType: "project",
+            entityId: restored.id,
+            entityName: restored.name,
+            newValues: { status: restored.status },
+        });
+        return restored;
+    }
     async archiveProject(orgId, projectId, userId, meta) {
         const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
         if (project.status === "archived")
@@ -159,12 +186,20 @@ export class ProjectsService {
         return {
             ...project,
             stats: {
-                totalRequests: 0,
+                totalRequests: stats.totalRequests,
                 apiKeysCount: stats.apiKeysCount,
                 activeKeysCount: stats.activeKeysCount,
                 environmentCount: stats.environmentCount,
             },
         };
+    }
+    async getProjectUsage(orgId, projectId, userId) {
+        await this.requireProjectAccess(orgId, projectId, userId, "member");
+        return this.repository.getProjectUsageCounters(projectId);
+    }
+    async listProjectActivity(orgId, projectId, userId, query) {
+        await this.requireProjectAccess(orgId, projectId, userId, "member");
+        return this.repository.listProjectActivity(orgId, projectId, query);
     }
     // ── Environments ─────────────────────────────────────────────────────────
     async listEnvironments(orgId, projectId, userId) {
@@ -180,6 +215,7 @@ export class ProjectsService {
     }
     async createEnvironment(orgId, projectId, userId, body, meta) {
         await this.requireProjectAccess(orgId, projectId, userId, "admin");
+        await this.enforceProjectModuleLimit(orgId, "environment");
         const env = await this.repository.createEnvironment({
             projectId,
             orgId,
@@ -243,7 +279,7 @@ export class ProjectsService {
             orgId,
             action: "project.environment_deleted",
             entityType: "project_environment",
-            entityId: `${projectId}:${environment}`,
+            metadata: { projectId, environment },
             isSensitive: true,
         });
     }
@@ -257,6 +293,7 @@ export class ProjectsService {
     async createApiKey(orgId, projectId, userId, body, meta) {
         const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
         this.assertFutureExpiry(body.expiresAt);
+        await this.enforceProjectModuleLimit(orgId, "apiKey");
         const activeKeys = await this.repository.countActiveApiKeys(projectId, body.environment);
         if (activeKeys >= MAX_ACTIVE_KEYS_ON_CREATE) {
             throw new ProjectError("API_KEY_LIMIT_EXCEEDED", `Maximum ${MAX_ACTIVE_KEYS_ON_CREATE} active API keys are allowed per environment`, 400);
@@ -429,6 +466,7 @@ export class ProjectsService {
         if (currentKey.expiresAt && currentKey.expiresAt <= new Date()) {
             throw new ProjectError("API_KEY_EXPIRED", "Expired API keys cannot be re-enabled", 400);
         }
+        await this.enforceProjectModuleLimit(orgId, "apiKey");
         const activeKeys = await this.repository.countActiveApiKeys(projectId, currentKey.environment);
         if (activeKeys >= MAX_ACTIVE_KEYS_ON_ENABLE) {
             throw new ProjectError("API_KEY_LIMIT_EXCEEDED", `Maximum ${MAX_ACTIVE_KEYS_ON_ENABLE} active API keys are allowed per environment`, 400);
@@ -545,23 +583,65 @@ export class ProjectsService {
         return null;
     }
     // ── Authorization ───────────────────────────────────────────────────────────
-    async requireOrganizationAccess(orgId, userId) {
+    async requireOrganizationAccess(orgId, userId, requiredRole = "viewer") {
         const membership = await this.repository.findOrganizationMembership(orgId, userId);
         if (!membership || !membership.isActive) {
             throw new ProjectError("INSUFFICIENT_PERMISSIONS", "You do not have access to this organization", 403);
         }
+        if (!hasRequiredRole(membership.role, requiredRole)) {
+            throw new ProjectError("INSUFFICIENT_PERMISSIONS", `Requires ${requiredRole} role or higher`, 403);
+        }
         return membership;
     }
-    async requireProjectAccess(orgId, projectId, userId, _requiredRole) {
-        // Tenant isolation root check: caller MUST be an active org member AND the
-        // project MUST belong to that org. Role enforcement is intentionally
-        // membership-only for now; _requiredRole is retained so role gating can be
-        // re-enabled here in one place later.
-        await this.requireOrganizationAccess(orgId, userId);
+    async requireProjectAccess(orgId, projectId, userId, requiredRole) {
+        // Tenant isolation root check: caller MUST be an active org member with the
+        // required role AND the project MUST belong to that org.
+        await this.requireOrganizationAccess(orgId, userId, requiredRole);
         const project = await this.repository.findProjectById(orgId, projectId);
         if (!project)
             throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
         return project;
+    }
+    limitFrom(entitlements, keys, fallback = Number.POSITIVE_INFINITY) {
+        const config = entitlements.feature_config ?? {};
+        for (const key of keys) {
+            const raw = config[key];
+            if (typeof raw === "number" && Number.isFinite(raw))
+                return raw;
+            if (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw))) {
+                return Number(raw);
+            }
+        }
+        return fallback;
+    }
+    assertWithinLimit(name, used, limit, increment = 1) {
+        if (limit >= 0 && Number.isFinite(limit) && used + increment > limit) {
+            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `${name} limit exceeded for current billing plan`, 403, { used, limit, requested: increment });
+        }
+    }
+    async requireMutableBilling(orgId) {
+        const entitlements = await this.orgRepo.getBillingEntitlements(orgId);
+        if (!entitlements) {
+            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", "Organization has no active billing subscription", 403);
+        }
+        if (!BILLING_MUTABLE_STATUSES.has(entitlements.subscription_status)) {
+            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `Billing subscription is ${entitlements.subscription_status}. This action is not permitted.`, 403);
+        }
+        return entitlements;
+    }
+    async enforceProjectModuleLimit(orgId, capability, increment = 1) {
+        const entitlements = await this.requireMutableBilling(orgId);
+        const counts = await this.repository.getProjectModuleUsageCounts(orgId);
+        if (capability === "project") {
+            this.assertWithinLimit("Project", counts.projects, this.limitFrom(entitlements, ["max_projects", "projects_max"]), increment);
+        }
+        if (capability === "environment") {
+            this.assertWithinLimit("Project environment", counts.environments, this.limitFrom(entitlements, ["max_project_environments", "max_environments", "environments_max"]), increment);
+        }
+        if (capability === "apiKey") {
+            this.assertWithinLimit("Project API key", counts.apiKeys, this.limitFrom(entitlements, ["max_project_api_keys", "max_api_keys", "api_keys_max"]), increment);
+        }
+        return entitlements;
     }
     // ── Internal helpers ────────────────────────────────────────────────────────
     assignProjectConfig(target, body) {
@@ -605,16 +685,6 @@ export class ProjectsService {
             target.metadata = body.metadata;
         if (body.settings !== undefined)
             target.settings = body.settings;
-    }
-    async provisionDefaultEnvironments(project, userId) {
-        const envs = ["development", "staging", "production"];
-        for (const environment of envs) {
-            await this.repository
-                .createEnvironment({ projectId: project.id, orgId: project.orgId, environment, createdBy: userId })
-                .catch(() => {
-                /* unique-violation => already exists; ignore */
-            });
-        }
     }
     async generateUniqueSlug(orgId, name) {
         const baseSlug = slugifyProjectName(name);
@@ -660,6 +730,9 @@ export class ProjectsService {
             rateLimitPerSecond: key.rateLimitPerSecond ?? project.rateLimitPerSecond ?? DEFAULT_API_KEY_RATE_LIMITS.perSecond,
             rateLimitPerMinute: key.rateLimitPerMinute ?? project.rateLimitPerMinute ?? DEFAULT_API_KEY_RATE_LIMITS.perMinute,
             allowedEventTypes: project.allowedEventTypes.length ? project.allowedEventTypes : ["*"],
+            permissions: key.permissions,
+            allowedEndpoints: key.allowedEndpoints.length ? key.allowedEndpoints : ["*"],
+            blockedEndpoints: key.blockedEndpoints,
             isActive: project.status === "active" && key.isActive,
             apiKeyId: key.id,
         };
@@ -724,6 +797,8 @@ export class ProjectsService {
                 record.changedFields = data.changedFields;
             if (data.isSensitive !== undefined)
                 record.isSensitive = data.isSensitive;
+            if (data.metadata !== undefined)
+                record.metadata = data.metadata;
             await this.orgRepo.createAuditLog(record);
         }
         catch (err) {

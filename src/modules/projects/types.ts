@@ -111,7 +111,9 @@ export const ApiKeyTypeSchema = z.enum([
 export const OrgRoleSchema = z.enum([
   "owner",
   "admin",
+  "developer",
   "billing",
+  "security",
   "member",
   "viewer",
 ]);
@@ -152,6 +154,10 @@ export const OrgIdParamsSchema = z.object({
 export const ProjectParamsSchema = z.object({
   orgId: z.string().uuid(),
   projectId: z.string().uuid(),
+});
+
+export const ProjectSdkConfigParamsSchema = ProjectParamsSchema.extend({
+  configId: z.string().uuid(),
 });
 
 export const ApiKeyParamsSchema = z.object({
@@ -196,6 +202,15 @@ export const ListApiKeysQuerySchema = z.preprocess(
     page: z.coerce.number().int().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(20),
     offset: z.coerce.number().int().min(0).optional(),
+  }),
+);
+
+export const ListProjectActivityQuerySchema = z.preprocess(
+  normalizeObjectKeys,
+  z.object({
+    cursor: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    action: z.string().min(1).max(100).optional(),
   }),
 );
 
@@ -388,6 +403,7 @@ export type OrgRole = z.infer<typeof OrgRoleSchema>;
 
 export type ListProjectsQuery = z.infer<typeof ListProjectsQuerySchema>;
 export type ListApiKeysQuery = z.infer<typeof ListApiKeysQuerySchema>;
+export type ListProjectActivityQuery = z.infer<typeof ListProjectActivityQuerySchema>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 export type CreateEnvironmentBody = z.infer<typeof CreateEnvironmentBodySchema>;
@@ -554,6 +570,38 @@ export interface ApiKeyUsage {
   eventsIngested: number;
   lastUsedAt: Date | null;
   requestsByDay: Array<{ date: string; count: number }>;
+}
+
+export interface ProjectUsageCounter {
+  counterType: string;
+  totalValue: number;
+  lastPeriodStart: Date | null;
+  lastPeriodEnd: Date | null;
+  lastFlushedAt: Date | null;
+}
+
+export interface ProjectActivityItem {
+  id: string;
+  actorUserId: string | null;
+  actorEmail: string | null;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  entityName: string | null;
+  changedFields: string[] | null;
+  status: string;
+  isSensitive: boolean;
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+}
+
+export interface ProjectActivityResult {
+  data: ProjectActivityItem[];
+  meta: {
+    hasMore: boolean;
+    nextCursor: string | null;
+    limit: number;
+  };
 }
 
 export interface BulkOperationResult {

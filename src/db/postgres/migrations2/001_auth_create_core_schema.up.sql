@@ -1,4 +1,4 @@
-﻿
+
 -- ============================================================================
 -- 001_auth_create_core_schema.up.sql
 -- ----------------------------------------------------------------------------
@@ -160,7 +160,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_by UUID,
     version INTEGER NOT NULL DEFAULT 1
 );
-
+ALTER TABLE users
+ADD COLUMN current_org_id UUID;
+-- (Optional but recommended) Add a foreign key constraint linking it to your organizations table.
+-- Using ON DELETE SET NULL ensures that if an organization is deleted, the user's current_org_id is just unset rather than deleting the user.
+ALTER TABLE users
+ADD CONSTRAINT fk_users_current_org
+FOREIGN KEY (current_org_id) 
+REFERENCES organizations(id) 
+ON DELETE SET NULL;
 -- Additive columns for upgraded DBs.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email_hash
   VARCHAR(64) GENERATED ALWAYS AS (encode(digest(lower(email), 'sha256'), 'hex')) STORED;

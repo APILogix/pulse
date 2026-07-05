@@ -37,10 +37,12 @@ export declare const ApiKeyTypeSchema: z.ZodEnum<{
     ingestion_only: "ingestion_only";
 }>;
 export declare const OrgRoleSchema: z.ZodEnum<{
-    member: "member";
+    security: "security";
     admin: "admin";
+    member: "member";
     owner: "owner";
     billing: "billing";
+    developer: "developer";
     viewer: "viewer";
 }>;
 export declare const ApiKeyPermissionSchema: z.ZodEnum<{
@@ -56,6 +58,11 @@ export declare const OrgIdParamsSchema: z.ZodObject<{
 export declare const ProjectParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     projectId: z.ZodString;
+}, z.core.$strip>;
+export declare const ProjectSdkConfigParamsSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    projectId: z.ZodString;
+    configId: z.ZodString;
 }, z.core.$strip>;
 export declare const ApiKeyParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
@@ -89,8 +96,8 @@ export declare const ListProjectsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, 
     offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     sortBy: z.ZodDefault<z.ZodEnum<{
         name: "name";
-        created_at: "created_at";
         updated_at: "updated_at";
+        created_at: "created_at";
     }>>;
     sortOrder: z.ZodDefault<z.ZodEnum<{
         asc: "asc";
@@ -121,6 +128,11 @@ export declare const ListApiKeysQuerySchema: z.ZodPipe<z.ZodTransform<unknown, u
     page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strip>>;
+export declare const ListProjectActivityQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    cursor: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    action: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>>;
 export declare const CreateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     rateLimitPerSecond: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
@@ -312,6 +324,7 @@ export type ApiKeyPermission = z.infer<typeof ApiKeyPermissionSchema>;
 export type OrgRole = z.infer<typeof OrgRoleSchema>;
 export type ListProjectsQuery = z.infer<typeof ListProjectsQuerySchema>;
 export type ListApiKeysQuery = z.infer<typeof ListApiKeysQuerySchema>;
+export type ListProjectActivityQuery = z.infer<typeof ListProjectActivityQuerySchema>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 export type CreateEnvironmentBody = z.infer<typeof CreateEnvironmentBodySchema>;
@@ -467,6 +480,35 @@ export interface ApiKeyUsage {
         date: string;
         count: number;
     }>;
+}
+export interface ProjectUsageCounter {
+    counterType: string;
+    totalValue: number;
+    lastPeriodStart: Date | null;
+    lastPeriodEnd: Date | null;
+    lastFlushedAt: Date | null;
+}
+export interface ProjectActivityItem {
+    id: string;
+    actorUserId: string | null;
+    actorEmail: string | null;
+    action: string;
+    entityType: string;
+    entityId: string | null;
+    entityName: string | null;
+    changedFields: string[] | null;
+    status: string;
+    isSensitive: boolean;
+    metadata: Record<string, unknown>;
+    createdAt: Date;
+}
+export interface ProjectActivityResult {
+    data: ProjectActivityItem[];
+    meta: {
+        hasMore: boolean;
+        nextCursor: string | null;
+        limit: number;
+    };
 }
 export interface BulkOperationResult {
     total: number;

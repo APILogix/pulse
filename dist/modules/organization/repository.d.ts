@@ -34,6 +34,7 @@ export declare class OrganizationRepository {
         timezone?: string;
         billingEmail?: string;
     }): Promise<OrganizationProvisioningResult>;
+    setUserCurrentOrg(userId: string, orgId: string): Promise<void>;
     findOrgById(id: string, includeDeleted?: boolean): Promise<OrganizationRow | null>;
     findOrgBySlug(slug: string): Promise<OrganizationRow | null>;
     getBillingEntitlements(orgId: string): Promise<BillingEntitlementsRow | null>;

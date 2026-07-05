@@ -9,6 +9,8 @@ export interface AuditLogEntry {
     request_id: string;
     metadata?: Record<string, unknown>;
     impersonated_by?: string | null;
+    actor_type?: 'user' | 'system' | 'scim' | 'saml' | 'api' | 'admin' | null;
+    actor_id?: string | null;
 }
 /**
  * Schedule an audit-log write without blocking the caller. Always emits a

@@ -9,6 +9,7 @@ export async function finalizeEnterpriseSsoLogin(options) {
     await assertLoginAllowedByOrgPolicy(options.user);
     const ssoContext = {
         providerId: options.provider.id,
+        providerType: options.method,
         loginMethod: options.method,
         ...(options.samlNameId !== undefined ? { samlNameId: options.samlNameId } : {}),
         ...(options.samlSessionIndex !== undefined

@@ -10,9 +10,12 @@ import { serializerCompiler, validatorCompiler, } from 'fastify-type-provider-zo
 import fastifyRawBody from 'fastify-raw-body';
 import { randomUUID } from 'crypto';
 import { env } from './config/env.js';
+import { pool } from './config/database.js';
 import { logger } from './config/logger.js';
 import { registerHealthPlugin } from './config/plugins.js';
 import { registerMetricsPlugin } from './config/metrics.js';
+import { BackpressureGauge } from './lib/gauge.js';
+import { registerHealthChecks } from './lib/health.js';
 import { registerAuthModule } from './modules/auth/auth.module.js';
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
@@ -85,10 +88,11 @@ export async function buildApp() {
         hsts: env.NODE_ENV === 'production' ? { maxAge: 31536000 } : false,
     });
     await app.register(cors, {
-        origin: buildCorsOrigin(),
+        // origin: buildCorsOrigin(),
+        origin: true,
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id'],
         exposedHeaders: ['X-Request-ID'],
     });
     await app.register(compress, {
@@ -118,6 +122,20 @@ export async function buildApp() {
     await app.register(sensible);
     // ── Health & Readiness Probes ──────────────────────────────────────
     await app.register(registerHealthPlugin);
+    await registerHealthChecks(app, {
+        gauge: new BackpressureGauge(pool),
+        maxQueueDepth: env.MAX_QUEUE_DEPTH,
+        maxGaugeAgeMs: env.MAX_GAUGE_AGE_MS,
+        customReadyCheck: async () => {
+            try {
+                await pool.query('SELECT 1');
+                return { healthy: true };
+            }
+            catch {
+                return { healthy: false, reason: 'database_unavailable' };
+            }
+        },
+    });
     // ── Prometheus Metrics ─────────────────────────────────────────────
     await app.register(registerMetricsPlugin);
     // ── Business Modules ───────────────────────────────────────────────

@@ -14,14 +14,17 @@ import { SdkConfigRepository } from './sdk-config.repository.js';
 import { SdkConfigService } from './sdk-config.service.js';
 import { organizationRoutes } from './routes.js';
 import { createOrganizationLogger } from './utils.js';
+import { ScimTokenService } from '../scim/scim-token.service.js';
 const orgLogger = createOrganizationLogger('Module');
 async function organizationModule(fastify, _options) {
     // Repository owns SQL; service owns membership, role, invitation, and audit
     // rules. Both are registered once per app instance.
     const repository = new OrganizationRepository();
+    const scimTokenService = new ScimTokenService();
     const service = new OrganizationService({
         repository,
         logger: fastify.log,
+        scimTokenService,
         emitEvent: async (event, payload) => {
             fastify.log.info({ event, payload }, 'Organization event emitted');
         }

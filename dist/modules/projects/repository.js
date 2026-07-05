@@ -31,6 +31,7 @@ const ENV_COLUMNS = `
   require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
   created_by, created_at, updated_at
 `;
+const DEFAULT_PROJECT_ENVIRONMENTS = ["development", "staging", "production"];
 export class ProjectsRepository {
     db;
     constructor(db = pool) {
@@ -192,6 +193,13 @@ export class ProjectsRepository {
         LIMIT 1`, [orgId, projectId]);
         return result.rows[0] ? this.mapProject(result.rows[0]) : null;
     }
+    async findProjectByIdIncludingDeleted(orgId, projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
+        WHERE org_id = $1 AND id = $2
+        LIMIT 1`, [orgId, projectId]);
+        return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+    }
     async updateProject(orgId, projectId, input, client) {
         const db = client ?? this.db;
         const { assignments, values } = this.buildProjectAssignments(input);
@@ -224,18 +232,333 @@ export class ProjectsRepository {
             throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
         }
     }
+    async restoreProject(orgId, projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`UPDATE projects
+          SET deleted_at = NULL,
+              deleted_by = NULL,
+              archived_at = NULL,
+              status = 'active'
+        WHERE org_id = $1
+          AND id = $2
+          AND deleted_at IS NOT NULL
+        RETURNING ${PROJECT_COLUMNS}`, [orgId, projectId]);
+        if (result.rowCount === 0) {
+            throw new ProjectError("PROJECT_NOT_FOUND", "Deleted project not found", 404);
+        }
+        return this.mapProject(result.rows[0]);
+    }
     async getProjectStats(projectId, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT
          (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1)::text AS api_keys_count,
          (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND is_active = TRUE)::text AS active_keys_count,
-         (SELECT COUNT(*) FROM project_environments WHERE project_id = $1)::text AS environment_count`, [projectId]);
+         (SELECT COUNT(*) FROM project_environments WHERE project_id = $1)::text AS environment_count,
+         GREATEST(
+           COALESCE((SELECT SUM(request_count) FROM project_api_key_usage WHERE project_id = $1),0),
+           COALESCE((SELECT SUM(usage_count) FROM project_api_keys WHERE project_id = $1),0)
+         )::text AS total_requests`, [projectId]);
         const row = result.rows[0];
         return {
+            totalRequests: Number.parseInt(row?.total_requests ?? "0", 10),
             apiKeysCount: Number.parseInt(row?.api_keys_count ?? "0", 10),
             activeKeysCount: Number.parseInt(row?.active_keys_count ?? "0", 10),
             environmentCount: Number.parseInt(row?.environment_count ?? "0", 10),
         };
+    }
+    async getProjectUsageCounters(projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT
+         counter_type,
+         COALESCE(SUM(total_value),0)::text AS total_value,
+         MAX(period_start) AS last_period_start,
+         MAX(period_end) AS last_period_end,
+         MAX(last_flushed_at) AS last_flushed_at
+       FROM project_usage_realtime
+       WHERE project_id = $1
+       GROUP BY counter_type
+       ORDER BY counter_type ASC`, [projectId]);
+        return result.rows.map((row) => ({
+            counterType: row.counter_type,
+            totalValue: Number.parseInt(row.total_value ?? "0", 10),
+            lastPeriodStart: row.last_period_start,
+            lastPeriodEnd: row.last_period_end,
+            lastFlushedAt: row.last_flushed_at,
+        }));
+    }
+    async listProjectActivity(orgId, projectId, query, client) {
+        const db = client ?? this.db;
+        const params = [orgId, projectId];
+        const whereClauses = [
+            "a.org_id = $1",
+            `(
+        (a.entity_type = 'project' AND a.entity_id = $2::uuid)
+        OR a.metadata ->> 'projectId' = $2
+        OR a.new_values ->> 'projectId' = $2
+        OR a.old_values ->> 'projectId' = $2
+        OR (a.entity_type = 'api_key' AND EXISTS (
+          SELECT 1 FROM project_api_keys k WHERE k.id = a.entity_id AND k.project_id = $2::uuid
+        ))
+        OR (a.entity_type = 'project_environment' AND EXISTS (
+          SELECT 1 FROM project_environments e WHERE e.id = a.entity_id AND e.project_id = $2::uuid
+        ))
+      )`,
+        ];
+        if (query.action) {
+            params.push(query.action);
+            whereClauses.push(`a.action = $${params.length}`);
+        }
+        if (query.cursor) {
+            params.push(query.cursor);
+            whereClauses.push(`a.created_at < $${params.length}`);
+        }
+        params.push(query.limit + 1);
+        const result = await db.query(`SELECT
+         a.id,
+         a.actor_user_id,
+         a.actor_email,
+         a.action,
+         a.entity_type,
+         a.entity_id,
+         a.entity_name,
+         a.changed_fields,
+         a.status,
+         a.is_sensitive,
+         a.metadata,
+         a.created_at
+       FROM organization_audit_logs a
+       WHERE ${whereClauses.join(" AND ")}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT $${params.length}`, params);
+        const hasMore = result.rows.length > query.limit;
+        const rows = hasMore ? result.rows.slice(0, query.limit) : result.rows;
+        return {
+            data: rows.map((row) => ({
+                id: row.id,
+                actorUserId: row.actor_user_id,
+                actorEmail: row.actor_email,
+                action: row.action,
+                entityType: row.entity_type,
+                entityId: row.entity_id,
+                entityName: row.entity_name,
+                changedFields: row.changed_fields,
+                status: row.status,
+                isSensitive: row.is_sensitive,
+                metadata: row.metadata ?? {},
+                createdAt: row.created_at,
+            })),
+            meta: {
+                hasMore,
+                nextCursor: hasMore && rows.length > 0 ? rows[rows.length - 1].created_at.toISOString() : null,
+                limit: query.limit,
+            },
+        };
+    }
+    async getProjectModuleUsageCounts(orgId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT
+         (SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL)::text AS projects,
+         (SELECT COUNT(*) FROM project_environments WHERE org_id = $1)::text AS environments,
+         (SELECT COUNT(*) FROM project_api_keys WHERE org_id = $1 AND is_active = TRUE)::text AS api_keys`, [orgId]);
+        const row = result.rows[0];
+        return {
+            projects: Number.parseInt(row?.projects ?? "0", 10),
+            environments: Number.parseInt(row?.environments ?? "0", 10),
+            apiKeys: Number.parseInt(row?.api_keys ?? "0", 10),
+        };
+    }
+    async findSdkConfigPlanKey(orgId, client) {
+        const db = client ?? this.db;
+        try {
+            const result = await db.query(`SELECT p.key AS plan_key
+           FROM organization_subscriptions s
+           INNER JOIN plans p ON p.id = s.plan_id
+          WHERE s.org_id = $1
+            AND s.status IN ('trialing','active','past_due')
+            AND p.is_active = TRUE
+          ORDER BY s.current_period_end DESC, s.created_at DESC
+          LIMIT 1`, [orgId]);
+            return result.rows[0]?.plan_key ?? "free";
+        }
+        catch (error) {
+            if (error.code === "42P01")
+                return "free";
+            throw error;
+        }
+    }
+    async createDefaultEnvironments(project, createdBy, client) {
+        const envs = [];
+        for (const environment of DEFAULT_PROJECT_ENVIRONMENTS) {
+            envs.push(await this.createEnvironment({
+                projectId: project.id,
+                orgId: project.orgId,
+                environment,
+                createdBy,
+            }, client));
+        }
+        return envs;
+    }
+    async createDefaultSdkConfigs(project, createdBy, planKey, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`WITH matching_templates AS (
+         SELECT
+           t.environment,
+           t.config_key,
+           t.config_type,
+           t.config_value,
+           t.schema_version,
+           t.target_sdk_versions,
+           t.target_platforms,
+           t.rollout_percentage
+         FROM sdk_config_templates t
+         WHERE t.plan_key = $4
+           AND t.environment = ANY($5::text[])
+           AND t.is_active = TRUE
+       ),
+       selected_templates AS (
+         SELECT
+           environment,
+           config_key,
+           config_type,
+           config_value,
+           schema_version,
+           target_sdk_versions,
+           target_platforms,
+           rollout_percentage
+         FROM matching_templates
+         UNION ALL
+         SELECT
+           f.environment,
+           f.config_key,
+           f.config_type,
+           f.config_value,
+           f.schema_version,
+           f.target_sdk_versions,
+           f.target_platforms,
+           f.rollout_percentage
+         FROM sdk_config_templates f
+         WHERE f.plan_key = 'free'
+           AND f.environment = ANY($5::text[])
+           AND f.is_active = TRUE
+           AND NOT EXISTS (SELECT 1 FROM matching_templates)
+       ),
+       prepared_configs AS (
+         SELECT
+           $1::uuid AS org_id,
+           $2::uuid AS project_id,
+           s.config_key,
+           s.config_type,
+           jsonb_set(
+             jsonb_set(
+               COALESCE(s.config_value, '{}'::jsonb),
+               '{sdk,projectId}',
+               to_jsonb($2::text),
+               TRUE
+             ),
+             '{sdk,environment}',
+             to_jsonb(s.environment),
+             TRUE
+           ) AS config_value,
+           s.schema_version,
+           s.environment,
+           s.target_sdk_versions,
+           s.target_platforms,
+           s.rollout_percentage
+         FROM selected_templates s
+       ),
+       inserted_configs AS (
+         INSERT INTO sdk_configs (
+           org_id,
+           project_id,
+           config_key,
+           config_type,
+           version,
+           version_hash,
+           is_latest,
+           config_value,
+           schema_version,
+           environment,
+           target_sdk_versions,
+           target_platforms,
+           rollout_percentage,
+           is_active,
+           is_encrypted,
+           created_by,
+           updated_by
+         )
+         SELECT
+           p.org_id,
+           p.project_id,
+           p.config_key,
+           p.config_type,
+           1,
+           encode(digest(p.config_value::text, 'sha256'), 'hex'),
+           TRUE,
+           p.config_value,
+           p.schema_version,
+           p.environment,
+           p.target_sdk_versions,
+           p.target_platforms,
+           p.rollout_percentage,
+           TRUE,
+           FALSE,
+           $3::uuid,
+           $3::uuid
+         FROM prepared_configs p
+         ON CONFLICT (
+           org_id,
+           (COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+           config_key,
+           environment
+         ) WHERE is_latest = TRUE DO NOTHING
+         RETURNING id, version, version_hash, config_value, rollout_percentage
+       ),
+       inserted_versions AS (
+         INSERT INTO sdk_config_versions (
+           config_id,
+           version,
+           version_hash,
+           config_value,
+           change_type,
+           change_summary,
+           created_by
+         )
+         SELECT
+           id,
+           version,
+           version_hash,
+           config_value,
+           'create',
+           'Initial project SDK config',
+           $3::uuid
+         FROM inserted_configs
+         RETURNING id
+       ),
+       inserted_deployments AS (
+         INSERT INTO sdk_config_deployments (
+           config_id,
+           version,
+           status,
+           rollout_percentage,
+           started_at
+         )
+         SELECT
+           id,
+           version,
+           'deploying',
+           rollout_percentage,
+           NOW()
+         FROM inserted_configs
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS inserted_count FROM inserted_configs`, [
+            project.orgId,
+            project.id,
+            createdBy,
+            planKey,
+            DEFAULT_PROJECT_ENVIRONMENTS,
+        ]);
+        return Number.parseInt(result.rows[0]?.inserted_count ?? "0", 10);
     }
     // ── Environments ─────────────────────────────────────────────────────────
     async listEnvironments(projectId, client) {

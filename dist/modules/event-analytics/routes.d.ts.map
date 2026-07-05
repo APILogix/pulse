@@ -1,1 +1,1 @@
-{"version":3,"file":"routes.d.ts","sourceRoot":"","sources":["../../../src/modules/event-analytics/routes.ts"],"names":[],"mappings":"AAAA;;;;;;;GAOG;AACH,OAAO,KAAK,EAAE,eAAe,EAAgC,MAAM,SAAS,CAAC;AAuD7E,wBAAsB,oBAAoB,CAAC,OAAO,EAAE,eAAe,GAAG,OAAO,CAAC,IAAI,CAAC,CA8MlF"}
+{"version":3,"file":"routes.d.ts","sourceRoot":"","sources":["../../../src/modules/event-analytics/routes.ts"],"names":[],"mappings":"AAAA;;;;;;;GAOG;AACH,OAAO,KAAK,EAAE,eAAe,EAAgC,MAAM,SAAS,CAAC;AAwD7E,wBAAsB,oBAAoB,CAAC,OAAO,EAAE,eAAe,GAAG,OAAO,CAAC,IAAI,CAAC,CA8MlF"}

@@ -20,6 +20,11 @@ export interface ProjectAuthResult {
   apiKeyId: string;
   isActive: boolean;
   expiresAt: Date | null;
+  permissions: string[];
+  allowedEndpoints: string[];
+  blockedEndpoints: string[];
+  rateLimitPerSecond: number | null;
+  rateLimitPerMinute: number | null;
 }
 
 export class PostgresWriter {
@@ -40,13 +45,22 @@ export class PostgresWriter {
         k.environment,
         k.id as key_id,
         k.is_active,
-        k.expires_at
+        k.expires_at,
+        k.permissions,
+        k.allowed_endpoints,
+        k.blocked_endpoints,
+        COALESCE(k.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
+        COALESCE(k.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       WHERE k.key_hash = $1
-        AND k.is_active = true
+        AND (
+          k.is_active = TRUE
+          OR (k.status = 'rotated' AND k.grace_period_ends_at IS NOT NULL AND k.grace_period_ends_at > NOW())
+        )
         AND (k.expires_at IS NULL OR k.expires_at > NOW())
         AND p.status = 'active'
+        AND p.deleted_at IS NULL
       LIMIT 1
     `,
       [keyHash],
@@ -64,12 +78,23 @@ export class PostgresWriter {
       apiKeyId: row.key_id,
       isActive: row.is_active,
       expiresAt: row.expires_at,
+      permissions: row.permissions ?? [],
+      allowedEndpoints: row.allowed_endpoints ?? [],
+      blockedEndpoints: row.blocked_endpoints ?? [],
+      rateLimitPerSecond: row.rate_limit_per_second ?? null,
+      rateLimitPerMinute: row.rate_limit_per_minute ?? null,
     };
   }
 
   async updateApiKeyLastUsed(apiKeyId: string): Promise<void> {
     await this.pool
-      .query('UPDATE project_api_keys SET last_used_at = NOW() WHERE id = $1', [apiKeyId])
+      .query(
+        `UPDATE project_api_keys
+            SET last_used_at = NOW(),
+                usage_count = usage_count + 1
+          WHERE id = $1`,
+        [apiKeyId],
+      )
       .catch(() => {});
   }
 

@@ -18,6 +18,7 @@ function buildMeta(request) {
     };
 }
 function handleError(error, reply) {
+    console.log('[organization.sdkConfig.handleError]', error);
     if (error instanceof OrganizationError) {
         return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
     }

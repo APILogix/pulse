@@ -634,7 +634,10 @@ function mapUsageRecordFromDb(row, metricType) {
         overageCount: 0,
         unitCost: null,
         totalCost: 0,
-        details: null,
+        details: {
+            eventsCount: Number(row.events_count ?? 0),
+            aiAnalysesCount: Number(row.ai_analyses_count ?? 0),
+        },
         createdAt: row.updated_at,
         updatedAt: row.updated_at,
     };

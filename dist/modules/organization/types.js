@@ -103,6 +103,7 @@ export function isReadableOrg(status) {
 export const UuidSchema = z.string().uuid();
 export const OrgIdParamsSchema = z.object({ orgId: UuidSchema });
 export const IdParamsSchema = z.object({ id: UuidSchema });
+export const SwitchOrganizationSchema = z.object({ orgId: UuidSchema });
 export const MemberParamsSchema = z.object({ orgId: UuidSchema, userId: UuidSchema });
 export const InvitationIdParamsSchema = z.object({ orgId: UuidSchema, invitationId: UuidSchema });
 export const InvitationParamsSchema = z.object({ id: UuidSchema });
@@ -110,6 +111,7 @@ export const EnvironmentParamsSchema = z.object({ orgId: UuidSchema, envId: Uuid
 export const ApiKeyParamsSchema = z.object({ orgId: UuidSchema, keyId: UuidSchema });
 export const SsoProviderParamsSchema = z.object({ orgId: UuidSchema, ssoId: UuidSchema });
 export const ScimTokenParamsSchema = z.object({ orgId: UuidSchema, tokenId: UuidSchema });
+export const ScimTokenIpSchema = z.string().trim().min(1).max(64);
 export const QuotaRequestParamsSchema = z.object({ orgId: UuidSchema, requestId: UuidSchema });
 export const SlugParamsSchema = z.object({ slug: z.string().min(1).max(255) });
 export const GlobalInvitationParamsSchema = z.object({ id: UuidSchema });
@@ -234,6 +236,12 @@ export const UpdateSsoProviderSchema = z.object({
     x509Certificate: z.string().optional(),
     domain: z.string().max(255).optional(),
     isActive: z.boolean().optional(),
+});
+export const ScimScopeSchema = z.enum(["read", "write", "delete"]);
+export const CreateScimTokenSchema = z.object({
+    scopes: z.array(ScimScopeSchema).min(1).default(["read", "write", "delete"]),
+    allowedIps: z.array(ScimTokenIpSchema).max(32).optional(),
+    expiresInDays: z.coerce.number().int().min(1).max(3650).optional(),
 });
 // ═══════════════════════════════════════════════════
 // QUOTA SCHEMAS

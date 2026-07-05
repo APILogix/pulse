@@ -48,6 +48,14 @@ export interface PgQueueWorkerOptions {
   enableMaintenance?: boolean;
   /** Logical worker type label for performance reporting (e.g. 'general'). */
   workerType?: string;
+  /** Invoked after a claimed batch completes; errors are logged and ignored. */
+  onBatchComplete?: (summary: {
+    workerId: string;
+    workerType: string;
+    claimed: number;
+    processed: number;
+    failed: number;
+  }) => Promise<void>;
 }
 
 /** Rolling per-worker processing stats, drained for performance reporting. */
@@ -78,6 +86,7 @@ export class PgQueueWorker {
   private readonly handlerConcurrency: number;
   private readonly jobTypes: readonly string[] | undefined;
   private readonly enableMaintenance: boolean;
+  private readonly onBatchComplete: PgQueueWorkerOptions['onBatchComplete'];
 
   // Rolling stats since the last drainStats() call.
   private jobsProcessed = 0;
@@ -103,6 +112,7 @@ export class PgQueueWorker {
     this.handlerConcurrency = opts.handlerConcurrency ?? 8;
     this.jobTypes = opts.jobTypes && opts.jobTypes.length > 0 ? opts.jobTypes : undefined;
     this.enableMaintenance = opts.enableMaintenance ?? true;
+    this.onBatchComplete = opts.onBatchComplete;
   }
 
   start(): void {
@@ -147,11 +157,18 @@ export class PgQueueWorker {
       const jobs = await this.queue.claim(this.workerId, this.batchSize, this.jobTypes);
       if (jobs.length > 0) {
         nextDelay = this.busyPollMs;
+        const beforeProcessed = this.jobsProcessed;
+        const beforeFailed = this.jobsFailed;
         // Process the claimed batch with BOUNDED concurrency. An unbounded
         // Promise.all over a large batch can open more DB connections than the
         // pool allows (pool max ~20), causing connection-timeout failures under
         // load. We cap in-flight handlers per poll cycle.
         await this.runBounded(jobs, this.handlerConcurrency);
+        await this.notifyBatchComplete({
+          claimed: jobs.length,
+          processed: this.jobsProcessed - beforeProcessed,
+          failed: this.jobsFailed - beforeFailed,
+        });
       }
     } catch (err) {
       this.log.error({ err, workerId: this.workerId }, 'Poll cycle failed');
@@ -161,6 +178,23 @@ export class PgQueueWorker {
     if (this.running && !this.draining) {
       this.pollTimer = setTimeout(() => void this.loop(), nextDelay);
       this.pollTimer.unref?.();
+    }
+  }
+
+  private async notifyBatchComplete(summary: {
+    claimed: number;
+    processed: number;
+    failed: number;
+  }): Promise<void> {
+    if (!this.onBatchComplete) return;
+    try {
+      await this.onBatchComplete({
+        workerId: this.workerId,
+        workerType: this.workerType,
+        ...summary,
+      });
+    } catch (err) {
+      this.log.warn({ err, workerId: this.workerId }, 'Batch completion hook failed');
     }
   }
 

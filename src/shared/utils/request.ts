@@ -51,6 +51,7 @@ export interface RequestWithUser extends FastifyRequest {
     id: string;
     email: string;
     isAdmin: boolean;
+    currentOrgId: string | null;
     sessionId: string;
     mfaVerified: boolean;
     stepUpFresh: boolean;

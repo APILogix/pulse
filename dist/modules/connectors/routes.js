@@ -12,6 +12,7 @@ function buildMeta(request) {
     };
 }
 function handleError(error, reply) {
+    console.log('[connectors.handleError]', error);
     if (error instanceof AppError) {
         return reply.code(error.statusCode).send({
             success: false,

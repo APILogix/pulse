@@ -31,6 +31,8 @@ export interface AuditLogEntry {
   request_id: string;
   metadata?: Record<string, unknown>;
   impersonated_by?: string | null;
+  actor_type?: 'user' | 'system' | 'scim' | 'saml' | 'api' | 'admin' | null;
+  actor_id?: string | null;
 }
 
 async function writeAudit(entry: AuditLogEntry, attempt = 1): Promise<void> {
@@ -39,8 +41,8 @@ async function writeAudit(entry: AuditLogEntry, attempt = 1): Promise<void> {
       `INSERT INTO audit_logs (
          user_id, org_id, action, resource_type, resource_id,
          ip_address, user_agent, request_id, metadata,
-         impersonated_by, created_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+         impersonated_by, actor_type, actor_id, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())`,
       [
         entry.user_id,
         entry.org_id,
@@ -52,6 +54,8 @@ async function writeAudit(entry: AuditLogEntry, attempt = 1): Promise<void> {
         entry.request_id,
         entry.metadata ? JSON.stringify(entry.metadata) : null,
         entry.impersonated_by || null,
+        entry.actor_type ?? null,
+        entry.actor_id ?? null,
       ],
     );
   } catch (error) {

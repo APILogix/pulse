@@ -46,6 +46,14 @@ export interface PgQueueWorkerOptions {
     enableMaintenance?: boolean;
     /** Logical worker type label for performance reporting (e.g. 'general'). */
     workerType?: string;
+    /** Invoked after a claimed batch completes; errors are logged and ignored. */
+    onBatchComplete?: (summary: {
+        workerId: string;
+        workerType: string;
+        claimed: number;
+        processed: number;
+        failed: number;
+    }) => Promise<void>;
 }
 /** Rolling per-worker processing stats, drained for performance reporting. */
 export interface WorkerStats {
@@ -76,6 +84,7 @@ export declare class PgQueueWorker {
     private readonly handlerConcurrency;
     private readonly jobTypes;
     private readonly enableMaintenance;
+    private readonly onBatchComplete;
     private jobsProcessed;
     private jobsFailed;
     private pollCycles;
@@ -85,6 +94,7 @@ export declare class PgQueueWorker {
     /** Drain and reset rolling stats (called periodically for perf reporting). */
     drainStats(): WorkerStats;
     private loop;
+    private notifyBatchComplete;
     /** Run handlers over jobs with a bounded number in flight at once. */
     private runBounded;
     private process;

@@ -90,9 +90,14 @@ export class TelemetryReader {
     }
     async getEventById(eventId, projectId) {
         for (const { type, table } of REPLAY_TYPE_TABLES) {
-            const result = await this.pool.query(`SELECT * FROM ${table} WHERE id = $1 AND project_id = $2 LIMIT 1`, [eventId, projectId]);
+            const result = await this.pool.query(`SELECT e.id, e.organization_id, e.project_id, e.event_id,
+                e.timestamp, e.created_at, to_jsonb(e) AS details
+         FROM ${table} e
+         WHERE e.id = $1 AND e.project_id = $2
+         LIMIT 1`, [eventId, projectId]);
             if (result.rows.length > 0) {
-                return { type, ...result.rows[0], details: result.rows[0] };
+                const details = result.rows[0].details;
+                return { type, ...details, details };
             }
         }
         return null;
@@ -109,27 +114,30 @@ export class TelemetryReader {
             if (collected.length >= safeMax)
                 break;
             const remaining = safeMax - collected.length;
-            const rows = await this.pool.query(`SELECT * FROM ${table}
-         WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-         ORDER BY timestamp ASC
+            const rows = await this.pool.query(`SELECT e.id, e.organization_id, e.project_id, e.event_id,
+                e.timestamp, e.created_at, to_jsonb(e) AS details
+         FROM ${table} e
+         WHERE e.project_id = $1 AND e.timestamp BETWEEN $2 AND $3
+         ORDER BY e.timestamp ASC
          LIMIT $4`, [projectId, startTime, endTime, remaining]);
             for (const row of rows.rows) {
-                const normalized = this.rowToNormalizedEvent(type, row);
+                const details = row.details;
+                const normalized = this.rowToNormalizedEvent(type, details);
                 if (!normalized)
                     continue;
                 const item = {
-                    id: String(row.id),
+                    id: String(details.id),
                     type,
                     projectId,
-                    orgId: row.organization_id ? String(row.organization_id) : '',
+                    orgId: details.organization_id ? String(details.organization_id) : '',
                     receivedAt: Date.now(),
                     batchId: `replay-${Date.now()}`,
                     payload: normalized,
                 };
-                if (row.request_id)
-                    item.requestId = String(row.request_id);
-                if (row.created_at) {
-                    item.ingestedAt = new Date(row.created_at).toISOString();
+                if (details.request_id)
+                    item.requestId = String(details.request_id);
+                if (details.created_at) {
+                    item.ingestedAt = new Date(details.created_at).toISOString();
                 }
                 collected.push(item);
             }

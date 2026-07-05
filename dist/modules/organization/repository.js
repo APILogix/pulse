@@ -57,9 +57,10 @@ export class OrganizationRepository {
             await client.query(`INSERT INTO organization_settings (org_id) VALUES ($1)`, [org.id]);
             await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,joined_at,joined_method,last_active_at)
          VALUES ($1,$2,'owner','active',NOW(),'admin_add',NOW())`, [org.id, ownerUserId]);
+            await client.query(`UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`, [org.id, ownerUserId]);
             const plan = await client.query(`SELECT id
          FROM plans
-         WHERE tier = 'free' AND is_active = TRUE
+         WHERE tier = 'enterprise' AND is_active = TRUE
          ORDER BY version DESC, sort_order ASC
          LIMIT 1
          FOR SHARE`);
@@ -113,6 +114,9 @@ export class OrganizationRepository {
          DO NOTHING`, [org.id]);
             return { organization: org, subscriptionId, planId: freePlanId };
         });
+    }
+    async setUserCurrentOrg(userId, orgId) {
+        await this.db.query(`UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`, [orgId, userId]);
     }
     async findOrgById(id, includeDeleted = false) {
         const r = await this.db.query(`SELECT id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at

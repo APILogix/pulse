@@ -12,7 +12,6 @@ const LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse';
 function emailToHash(email) {
     return createHash('sha256').update(email.toLowerCase()).digest('hex');
 }
-const SCIM_GROUP_ROLES = ['member', 'admin', 'owner'];
 function memberRoleFromScimRole(role) {
     const normalized = role?.toLowerCase();
     if (normalized === 'admin' || normalized === 'owner') {
@@ -141,7 +140,7 @@ export async function getUser(orgId, externalId) {
     }
     return userToScimResource(orgId, mapping.user_id, externalId);
 }
-export async function createUser(orgId, body) {
+export async function createUser(orgId, body, actor) {
     const externalId = body.externalId ||
         body.id ||
         randomUUID();
@@ -173,16 +172,18 @@ export async function createUser(orgId, body) {
     logAudit({
         user_id: null,
         org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor?.tokenId ?? null,
         action: 'scim.user.created',
         resource_type: 'user',
         resource_id: user.id,
-        ip_address: 'scim',
-        request_id: 'scim',
+        ip_address: actor?.ipAddress ?? '0.0.0.0',
+        request_id: `scim:${actor?.tokenId ?? 'system'}`,
         metadata: { external_id: externalId },
     });
     return userToScimResource(orgId, user.id, externalId);
 }
-export async function patchUser(orgId, externalId, body) {
+export async function patchUser(orgId, externalId, body, actor) {
     const mapping = await repository.findScimMappingByExternalId(orgId, externalId);
     if (!mapping) {
         throw new AuthError('SCIM user not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
@@ -233,9 +234,21 @@ export async function patchUser(orgId, externalId, body) {
             await repository.updateUser(user.id, { full_name: formatted });
         }
     }
+    logAudit({
+        user_id: null,
+        org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor?.tokenId ?? null,
+        action: 'scim.user.updated',
+        resource_type: 'user',
+        resource_id: user.id,
+        ip_address: actor?.ipAddress ?? '0.0.0.0',
+        request_id: `scim:${actor?.tokenId ?? 'system'}`,
+        metadata: { external_id: externalId },
+    });
     return userToScimResource(orgId, user.id, externalId);
 }
-export async function replaceUser(orgId, externalId, body) {
+export async function replaceUser(orgId, externalId, body, actor) {
     const mapping = await repository.findScimMappingByExternalId(orgId, externalId);
     if (!mapping) {
         throw new AuthError('SCIM user not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
@@ -248,9 +261,9 @@ export async function replaceUser(orgId, externalId, body) {
     if (roles?.[0]?.value) {
         await repository.updateOrgMemberRole(orgId, mapping.user_id, memberRoleFromScimRole(roles[0].value));
     }
-    return patchUser(orgId, externalId, patchBody);
+    return patchUser(orgId, externalId, patchBody, actor);
 }
-export async function deleteUser(orgId, externalId) {
+export async function deleteUser(orgId, externalId, actor) {
     const mapping = await repository.findScimMappingByExternalId(orgId, externalId);
     if (!mapping) {
         throw new AuthError('SCIM user not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
@@ -260,43 +273,209 @@ export async function deleteUser(orgId, externalId) {
     logAudit({
         user_id: null,
         org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor?.tokenId ?? null,
         action: 'scim.user.deleted',
         resource_type: 'user',
         resource_id: mapping.user_id,
-        ip_address: 'scim',
-        request_id: 'scim',
+        ip_address: actor?.ipAddress ?? '0.0.0.0',
+        request_id: `scim:${actor?.tokenId ?? 'system'}`,
         metadata: { external_id: externalId },
     });
 }
-async function groupToScimResource(orgId, role) {
-    const members = await repository.listOrgMemberScimIdsByRole(orgId, role);
+async function groupToScimResource(orgId, group) {
+    const members = await repository.listScimGroupMembers(group.id);
     return {
         schemas: [GROUP_SCHEMA],
-        id: role,
-        displayName: role,
-        members: members.map((userId) => ({ value: userId, display: userId })),
-        meta: { resourceType: 'Group' },
+        id: group.id,
+        externalId: group.external_id,
+        displayName: group.display_name,
+        members,
+        meta: {
+            resourceType: 'Group',
+            created: group.meta_created.toISOString(),
+            lastModified: group.meta_last_modified.toISOString(),
+            version: `W/"${group.meta_version}"`,
+        },
+        active: group.active,
     };
 }
-export async function listGroups(orgId) {
+export async function listGroups(orgId, options) {
+    const startIndex = options?.startIndex ?? 1;
+    const count = Math.min(options?.count ?? 100, 200);
+    const { rows, total } = await repository.listScimGroups(orgId, startIndex, count, options?.filter);
     const resources = [];
-    for (const role of SCIM_GROUP_ROLES) {
-        const members = await repository.listOrgMemberScimIdsByRole(orgId, role);
-        if (members.length > 0) {
-            resources.push(await groupToScimResource(orgId, role));
-        }
+    for (const row of rows) {
+        resources.push(await groupToScimResource(orgId, row));
     }
     return {
         schemas: [LIST_SCHEMA],
-        totalResults: resources.length,
+        totalResults: total,
+        startIndex,
+        itemsPerPage: resources.length,
         Resources: resources,
     };
 }
 export async function getGroup(orgId, groupId) {
-    if (!SCIM_GROUP_ROLES.includes(groupId)) {
+    const group = await repository.findScimGroupById(orgId, groupId);
+    if (!group) {
         throw new AuthError('SCIM group not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
     }
-    return groupToScimResource(orgId, groupId);
+    return groupToScimResource(orgId, group);
+}
+function parseGroupPatchMemberReference(path) {
+    if (!path)
+        return null;
+    const value = path.match(/\[value eq "([^"]+)"\]/i)?.[1];
+    return value ?? null;
+}
+async function resolveScimMemberUserId(orgId, memberValue) {
+    const mapping = await repository.findScimMappingByExternalId(orgId, memberValue);
+    if (mapping) {
+        return mapping.user_id;
+    }
+    const direct = await repository.findActiveOrgMember(orgId, memberValue);
+    if (direct) {
+        return direct.user_id;
+    }
+    throw new AuthError('SCIM user not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
+}
+export async function createGroup(orgId, body, actor) {
+    const externalId = body.externalId ||
+        body.id ||
+        randomUUID();
+    const displayName = body.displayName?.trim();
+    if (!displayName) {
+        throw new AuthError('displayName is required', AuthErrorCodes.VALIDATION_ERROR, 400);
+    }
+    const existing = await repository.findScimGroupByExternalId(orgId, externalId);
+    if (existing) {
+        throw new AuthError('SCIM group already exists', AuthErrorCodes.SCIM_CONFLICT, 409);
+    }
+    const group = await repository.createScimGroup(orgId, externalId, displayName);
+    const members = Array.isArray(body.members)
+        ? body.members
+        : [];
+    if (members.length > 0) {
+        const userIds = await Promise.all(members
+            .map((member) => member.value?.trim())
+            .filter((value) => Boolean(value))
+            .map((value) => resolveScimMemberUserId(orgId, value)));
+        await repository.replaceScimGroupMembers(orgId, group.id, userIds);
+    }
+    logAudit({
+        user_id: null,
+        org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor.tokenId,
+        action: 'scim.group.created',
+        resource_type: 'group',
+        resource_id: group.id,
+        ip_address: actor.ipAddress,
+        request_id: `scim:${actor.tokenId}`,
+        metadata: { external_id: externalId, display_name: displayName },
+    });
+    return getGroup(orgId, group.id);
+}
+export async function replaceGroup(orgId, groupId, body, actor) {
+    const existing = await repository.findScimGroupById(orgId, groupId);
+    if (!existing) {
+        throw new AuthError('SCIM group not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
+    }
+    const displayName = body.displayName?.trim();
+    if (!displayName) {
+        throw new AuthError('displayName is required', AuthErrorCodes.VALIDATION_ERROR, 400);
+    }
+    await repository.updateScimGroup(orgId, groupId, displayName);
+    const members = Array.isArray(body.members)
+        ? body.members
+        : [];
+    const userIds = await Promise.all(members
+        .map((member) => member.value?.trim())
+        .filter((value) => Boolean(value))
+        .map((value) => resolveScimMemberUserId(orgId, value)));
+    await repository.replaceScimGroupMembers(orgId, groupId, userIds);
+    logAudit({
+        user_id: null,
+        org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor.tokenId,
+        action: 'scim.group.updated',
+        resource_type: 'group',
+        resource_id: groupId,
+        ip_address: actor.ipAddress,
+        request_id: `scim:${actor.tokenId}`,
+    });
+    return getGroup(orgId, groupId);
+}
+export async function patchGroup(orgId, groupId, body, actor) {
+    const existing = await repository.findScimGroupById(orgId, groupId);
+    if (!existing) {
+        throw new AuthError('SCIM group not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
+    }
+    const operations = body.Operations;
+    if (!operations?.length) {
+        throw new AuthError('Operations are required', AuthErrorCodes.VALIDATION_ERROR, 400);
+    }
+    let patchedDisplayName = null;
+    for (const op of operations) {
+        const operation = op.op?.toLowerCase();
+        if (operation === 'replace' && op.path === 'displayName' && typeof op.value === 'string') {
+            patchedDisplayName = op.value.trim();
+            continue;
+        }
+        if (operation === 'add' && op.path === 'members' && Array.isArray(op.value)) {
+            for (const member of op.value) {
+                if (!member.value)
+                    continue;
+                const userId = await resolveScimMemberUserId(orgId, member.value);
+                await repository.addScimGroupMember(orgId, groupId, userId);
+            }
+            continue;
+        }
+        if (operation === 'remove') {
+            if (op.path === 'members') {
+                await repository.replaceScimGroupMembers(orgId, groupId, []);
+                continue;
+            }
+            const reference = parseGroupPatchMemberReference(op.path);
+            if (reference) {
+                const userId = await resolveScimMemberUserId(orgId, reference);
+                await repository.removeScimGroupMember(groupId, userId);
+            }
+        }
+    }
+    await repository.updateScimGroup(orgId, groupId, patchedDisplayName);
+    logAudit({
+        user_id: null,
+        org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor.tokenId,
+        action: 'scim.group.patched',
+        resource_type: 'group',
+        resource_id: groupId,
+        ip_address: actor.ipAddress,
+        request_id: `scim:${actor.tokenId}`,
+    });
+    return getGroup(orgId, groupId);
+}
+export async function deleteGroup(orgId, groupId, actor) {
+    const existing = await repository.findScimGroupById(orgId, groupId);
+    if (!existing) {
+        throw new AuthError('SCIM group not found', AuthErrorCodes.SCIM_NOT_FOUND, 404);
+    }
+    await repository.deleteScimGroup(orgId, groupId);
+    logAudit({
+        user_id: null,
+        org_id: orgId,
+        actor_type: 'scim',
+        actor_id: actor.tokenId,
+        action: 'scim.group.deleted',
+        resource_type: 'group',
+        resource_id: groupId,
+        ip_address: actor.ipAddress,
+        request_id: `scim:${actor.tokenId}`,
+    });
 }
 export function handleScimError(error, reply) {
     if (error instanceof AuthError) {

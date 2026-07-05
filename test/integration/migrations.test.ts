@@ -59,12 +59,24 @@ describe('canonical migrations bootstrap', () => {
       organizations_exists: boolean;
       auth_email_outbox_exists: boolean;
       organization_sso_providers_exists: boolean;
+      sdk_configs_exists: boolean;
+      sdk_config_versions_exists: boolean;
+      sdk_config_deployments_exists: boolean;
+      sdk_config_field_policies_exists: boolean;
+      sdk_config_templates_exists: boolean;
+      sdk_config_client_view_exists: boolean;
     }>(
       `SELECT
          to_regclass('public.users') IS NOT NULL AS users_exists,
          to_regclass('public.organizations') IS NOT NULL AS organizations_exists,
          to_regclass('public.auth_email_outbox') IS NOT NULL AS auth_email_outbox_exists,
-         to_regclass('public.organization_sso_providers') IS NOT NULL AS organization_sso_providers_exists`,
+         to_regclass('public.organization_sso_providers') IS NOT NULL AS organization_sso_providers_exists,
+         to_regclass('public.sdk_configs') IS NOT NULL AS sdk_configs_exists,
+         to_regclass('public.sdk_config_versions') IS NOT NULL AS sdk_config_versions_exists,
+         to_regclass('public.sdk_config_deployments') IS NOT NULL AS sdk_config_deployments_exists,
+         to_regclass('public.sdk_config_field_policies') IS NOT NULL AS sdk_config_field_policies_exists,
+         to_regclass('public.sdk_config_templates') IS NOT NULL AS sdk_config_templates_exists,
+         to_regclass('public.sdk_config_client_view') IS NOT NULL AS sdk_config_client_view_exists`,
     );
 
     expect(existence.rows[0]).toMatchObject({
@@ -72,7 +84,22 @@ describe('canonical migrations bootstrap', () => {
       organizations_exists: true,
       auth_email_outbox_exists: true,
       organization_sso_providers_exists: true,
+      sdk_configs_exists: true,
+      sdk_config_versions_exists: true,
+      sdk_config_deployments_exists: true,
+      sdk_config_field_policies_exists: true,
+      sdk_config_templates_exists: true,
+      sdk_config_client_view_exists: true,
     });
+
+    const sdkClientView = await db.query<{ definition: string }>(
+      `SELECT pg_get_viewdef('public.sdk_config_client_view'::regclass, TRUE) AS definition`,
+    );
+    const sdkClientViewDefinition = sdkClientView.rows[0]?.definition ?? '';
+    expect(sdkClientViewDefinition).toContain('jsonb_build_object');
+    expect(sdkClientViewDefinition).not.toContain('transport');
+    expect(sdkClientViewDefinition).not.toContain('hmacSecret');
+    expect(sdkClientViewDefinition).not.toContain('encryptionKey');
 
     const oidcColumns = await db.query<{ column_name: string }>(
       `SELECT column_name

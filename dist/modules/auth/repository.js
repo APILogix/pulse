@@ -575,11 +575,11 @@ export async function createSession(data, client) {
        id, user_id, refresh_token_hash, access_token_jti, device_fingerprint,
        device_name, device_type, ip_address, user_agent, expires_at,
        absolute_expires_at, mfa_verified_at, mfa_expires_at,
-       sso_provider_id, login_method, saml_name_id, saml_session_index, status
+       sso_provider_id, sso_provider_type, login_method, saml_name_id, saml_session_index, status
      ) VALUES (
        $1, $2, $3, $4, $5,
        $6, $7, $8::inet, $9, $10,
-       $11, $12, $13, $14, $15, $16, $17, 'active'
+       $11, $12, $13, $14, $15, $16, $17, $18, 'active'
      )
      RETURNING *`, [
         data.id,
@@ -596,6 +596,7 @@ export async function createSession(data, client) {
         data.mfa_verified_at || null,
         data.mfa_expires_at || null,
         data.sso_provider_id ?? null,
+        data.sso_provider_type ?? null,
         data.login_method ?? null,
         data.saml_name_id ?? null,
         data.saml_session_index ?? null,
@@ -1024,10 +1025,37 @@ export async function createLinkedIdentity(data, client) {
 }
 export async function findScimTokenByHash(tokenHash, orgId, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT id, org_id FROM organization_scim_tokens
-     WHERE org_id = $2 AND token_hash = $1 AND revoked_at IS NULL
-       AND (expires_at IS NULL OR expires_at > NOW())`, [tokenHash, orgId]);
+    const result = await db.query(`SELECT t.id,
+            t.org_id,
+            t.expires_at,
+            t.revoked_at,
+            t.grace_period_ends_at,
+            COALESCE(
+              array_agg(DISTINCT s.scope) FILTER (WHERE s.scope IS NOT NULL),
+              ARRAY[]::varchar[]
+            ) AS scopes
+     FROM organization_scim_tokens t
+     LEFT JOIN organization_scim_token_scopes s ON s.token_id = t.id
+     WHERE t.org_id = $2 AND t.token_hash = $1
+     GROUP BY t.id, t.org_id, t.expires_at, t.revoked_at, t.grace_period_ends_at`, [tokenHash, orgId]);
     return result.rows[0] || null;
+}
+export async function isScimTokenIpAllowed(tokenId, ipAddress, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT
+       EXISTS(
+         SELECT 1 FROM organization_scim_token_ips
+         WHERE token_id = $1
+       ) AS has_rules,
+       EXISTS(
+         SELECT 1 FROM organization_scim_token_ips
+         WHERE token_id = $1
+           AND $2::inet <<= ip_cidr
+       ) AS allowed`, [tokenId, ipAddress]);
+    const row = result.rows[0];
+    if (!row)
+        return true;
+    return row.has_rules ? row.allowed : true;
 }
 export async function touchScimToken(tokenId, client) {
     const db = client || pool;
@@ -1040,6 +1068,96 @@ export async function upsertScimUserMapping(orgId, userId, externalId, client) {
      ON CONFLICT (org_id, external_id) DO UPDATE SET
        user_id = EXCLUDED.user_id,
        updated_at = NOW()`, [orgId, userId, externalId]);
+}
+export async function listScimTokenScopes(tokenId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT scope
+     FROM organization_scim_token_scopes
+     WHERE token_id = $1
+     ORDER BY scope ASC`, [tokenId]);
+    return result.rows.map((row) => row.scope);
+}
+export async function listScimTokenIps(tokenId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT text(ip_cidr) AS ip_cidr
+     FROM organization_scim_token_ips
+     WHERE token_id = $1
+     ORDER BY ip_cidr ASC`, [tokenId]);
+    return result.rows.map((row) => row.ip_cidr);
+}
+export async function createScimToken(data, client) {
+    const db = client || pool;
+    const result = await db.query(`INSERT INTO organization_scim_tokens (org_id, token_hash, expires_at, created_by)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`, [data.orgId, data.tokenHash, data.expiresAt, data.createdBy]);
+    return result.rows[0];
+}
+export async function insertScimTokenScopes(tokenId, scopes, client) {
+    if (scopes.length === 0)
+        return;
+    const db = client || pool;
+    const values = scopes.map((_, index) => `($1, $${index + 2})`).join(', ');
+    await db.query(`INSERT INTO organization_scim_token_scopes (token_id, scope)
+     VALUES ${values}
+     ON CONFLICT (token_id, scope) DO NOTHING`, [tokenId, ...scopes]);
+}
+export async function insertScimTokenIps(tokenId, ipCidrs, client) {
+    if (ipCidrs.length === 0)
+        return;
+    const db = client || pool;
+    const values = ipCidrs.map((_, index) => `($1, $${index + 2}::cidr)`).join(', ');
+    await db.query(`INSERT INTO organization_scim_token_ips (token_id, ip_cidr)
+     VALUES ${values}
+     ON CONFLICT (token_id, ip_cidr) DO NOTHING`, [tokenId, ...ipCidrs]);
+}
+export async function findScimTokenById(tokenId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT id, org_id, revoked_at
+     FROM organization_scim_tokens
+     WHERE id = $1`, [tokenId]);
+    return result.rows[0] || null;
+}
+export async function rotateScimToken(tokenId, newTokenId, gracePeriodEndsAt, client) {
+    const db = client || pool;
+    await db.query(`UPDATE organization_scim_tokens
+     SET revoked_at = NOW(),
+         rotated_at = NOW(),
+         rotated_from = $2,
+         grace_period_ends_at = $3
+     WHERE id = $1`, [tokenId, newTokenId, gracePeriodEndsAt]);
+}
+export async function revokeScimToken(tokenId, client) {
+    const db = client || pool;
+    await db.query(`UPDATE organization_scim_tokens
+     SET revoked_at = NOW()
+     WHERE id = $1`, [tokenId]);
+}
+export async function listScimTokensForOrg(orgId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT t.id,
+            t.created_at,
+            t.last_used_at,
+            t.expires_at,
+            t.revoked_at,
+            COALESCE(
+              array_agg(DISTINCT s.scope) FILTER (WHERE s.scope IS NOT NULL),
+              ARRAY[]::varchar[]
+            ) AS scopes,
+            COALESCE(
+              array_agg(DISTINCT text(i.ip_cidr)) FILTER (WHERE i.ip_cidr IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS allowed_ips
+     FROM organization_scim_tokens t
+     LEFT JOIN organization_scim_token_scopes s ON s.token_id = t.id
+     LEFT JOIN organization_scim_token_ips i ON i.token_id = t.id
+     WHERE t.org_id = $1
+     GROUP BY t.id, t.created_at, t.last_used_at, t.expires_at, t.revoked_at
+     ORDER BY t.created_at DESC`, [orgId]);
+    return result.rows.map((row) => ({
+        ...row,
+        scopes: row.scopes ?? [],
+        allowed_ips: row.allowed_ips ?? [],
+    }));
 }
 export async function findScimMappingByExternalId(orgId, externalId, client) {
     const db = client || pool;
@@ -1110,6 +1228,160 @@ export async function findActiveSessionBySamlNameId(nameId, client) {
      WHERE saml_name_id = $1 AND status = 'active'
      ORDER BY last_active_at DESC LIMIT 1`, [nameId]);
     return result.rows[0] || null;
+}
+export async function createSamlSession(data, client) {
+    const db = client || pool;
+    await db.query(`INSERT INTO saml_sessions (
+       session_id, provider_id, saml_name_id, saml_name_id_format,
+       saml_session_index, issuer, expires_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)`, [
+        data.sessionId,
+        data.providerId,
+        data.samlNameId,
+        data.samlNameIdFormat ?? null,
+        data.samlSessionIndex ?? null,
+        data.issuer,
+        data.expiresAt,
+    ]);
+}
+export async function findLatestSamlSessionByProviderAndNameId(providerId, nameId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT s.session_id, s.provider_id, s.saml_name_id, s.saml_session_index, s.issuer, us.user_id
+     FROM saml_sessions s
+     JOIN user_sessions us ON us.id = s.session_id
+     WHERE s.provider_id = $1
+       AND s.saml_name_id = $2
+       AND us.status = 'active'
+       AND s.expires_at > NOW()
+     ORDER BY us.last_active_at DESC
+     LIMIT 1`, [providerId, nameId]);
+    return result.rows[0] || null;
+}
+export async function listActiveSamlSessionsForLogout(providerId, nameId, sessionIndex, client) {
+    const db = client || pool;
+    const params = [providerId, nameId];
+    const sessionIndexClause = sessionIndex
+        ? `AND s.saml_session_index = $3`
+        : '';
+    if (sessionIndex) {
+        params.push(sessionIndex);
+    }
+    const result = await db.query(`SELECT s.session_id, us.user_id
+     FROM saml_sessions s
+     JOIN user_sessions us ON us.id = s.session_id
+     WHERE s.provider_id = $1
+       AND s.saml_name_id = $2
+       ${sessionIndexClause}
+       AND us.status = 'active'
+       AND s.expires_at > NOW()`, params);
+    return result.rows;
+}
+export async function expireSamlSessionsBySessionIds(sessionIds, client) {
+    if (sessionIds.length === 0)
+        return;
+    const db = client || pool;
+    await db.query(`UPDATE saml_sessions
+     SET expires_at = NOW()
+     WHERE session_id = ANY($1::uuid[])`, [sessionIds]);
+}
+export async function findScimGroupById(orgId, groupId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT id, external_id, display_name, meta_version, meta_created, meta_last_modified, active
+     FROM scim_groups
+     WHERE org_id = $1 AND id = $2`, [orgId, groupId]);
+    return result.rows[0] || null;
+}
+export async function findScimGroupByExternalId(orgId, externalId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT id
+     FROM scim_groups
+     WHERE org_id = $1 AND external_id = $2`, [orgId, externalId]);
+    return result.rows[0] || null;
+}
+export async function createScimGroup(orgId, externalId, displayName, client) {
+    const db = client || pool;
+    const result = await db.query(`INSERT INTO scim_groups (org_id, external_id, display_name)
+     VALUES ($1, $2, $3)
+     RETURNING id, external_id, display_name, meta_version, meta_created, meta_last_modified, active`, [orgId, externalId, displayName]);
+    return result.rows[0];
+}
+export async function updateScimGroup(orgId, groupId, displayName, client) {
+    const db = client || pool;
+    await db.query(`UPDATE scim_groups
+     SET display_name = COALESCE($3, display_name),
+         meta_last_modified = NOW(),
+         meta_version = meta_version + 1
+     WHERE org_id = $1 AND id = $2`, [orgId, groupId, displayName]);
+}
+export async function deleteScimGroup(orgId, groupId, client) {
+    const db = client || pool;
+    await db.query(`DELETE FROM scim_groups
+     WHERE org_id = $1 AND id = $2`, [orgId, groupId]);
+}
+export async function listScimGroups(orgId, startIndex, count, filter, client) {
+    const db = client || pool;
+    const params = [orgId];
+    const where = [`org_id = $1`];
+    let paramIndex = 2;
+    if (filter) {
+        const displayNameMatch = filter.match(/displayName\s+eq\s+"([^"]+)"/i);
+        const externalIdMatch = filter.match(/(?:externalId|id)\s+eq\s+"([^"]+)"/i);
+        if (displayNameMatch?.[1]) {
+            where.push(`display_name = $${paramIndex++}`);
+            params.push(displayNameMatch[1]);
+        }
+        else if (externalIdMatch?.[1]) {
+            where.push(`external_id = $${paramIndex++}`);
+            params.push(externalIdMatch[1]);
+        }
+    }
+    const whereSql = where.join(' AND ');
+    const totalRes = await db.query(`SELECT COUNT(*)::text AS count
+     FROM scim_groups
+     WHERE ${whereSql}`, params);
+    const rowsRes = await db.query(`SELECT id, external_id, display_name, meta_version, meta_created, meta_last_modified, active
+     FROM scim_groups
+     WHERE ${whereSql}
+     ORDER BY display_name ASC, id ASC
+     LIMIT $${paramIndex++} OFFSET $${paramIndex++}`, [...params, count, Math.max(0, startIndex - 1)]);
+    return {
+        rows: rowsRes.rows,
+        total: parseInt(totalRes.rows[0]?.count ?? '0', 10),
+    };
+}
+export async function listScimGroupMembers(groupId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT COALESCE(m.external_id, u.id::text) AS value,
+            u.email AS display
+     FROM scim_group_memberships gm
+     JOIN users u ON u.id = gm.user_id
+     LEFT JOIN scim_user_mappings m ON m.org_id = gm.org_id AND m.user_id = gm.user_id
+     WHERE gm.group_id = $1
+     ORDER BY u.email ASC`, [groupId]);
+    return result.rows;
+}
+export async function replaceScimGroupMembers(orgId, groupId, userIds, client) {
+    const db = client || pool;
+    await db.query(`DELETE FROM scim_group_memberships WHERE group_id = $1`, [groupId]);
+    if (userIds.length === 0)
+        return;
+    const values = userIds
+        .map((_, index) => `($1, $${index + 2}, $${userIds.length + 2})`)
+        .join(', ');
+    await db.query(`INSERT INTO scim_group_memberships (group_id, user_id, org_id)
+     VALUES ${values}
+     ON CONFLICT (group_id, user_id) DO NOTHING`, [groupId, ...userIds, orgId]);
+}
+export async function addScimGroupMember(orgId, groupId, userId, client) {
+    const db = client || pool;
+    await db.query(`INSERT INTO scim_group_memberships (group_id, user_id, org_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (group_id, user_id) DO NOTHING`, [groupId, userId, orgId]);
+}
+export async function removeScimGroupMember(groupId, userId, client) {
+    const db = client || pool;
+    await db.query(`DELETE FROM scim_group_memberships
+     WHERE group_id = $1 AND user_id = $2`, [groupId, userId]);
 }
 export async function revokeLinkedIdentity(userId, linkId, client) {
     const db = client || pool;

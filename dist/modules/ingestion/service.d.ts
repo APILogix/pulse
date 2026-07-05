@@ -21,17 +21,18 @@ export declare class IngestionService {
     private readonly queue;
     private readonly rateLimiter;
     private readonly usage;
+    private readonly gauge;
     private readonly backpressure;
     private readonly replayMaxEvents;
     private readonly maxBatchSize;
     private readonly defaultRatePerSecond;
     private readonly defaultRatePerMinute;
-    private cachedDepth;
-    private cachedDepthAt;
+    private cachedGaugeDepth;
+    private cachedGaugeAt;
     constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig);
     private resolveProject;
-    /** Cached pending-depth probe (refreshed at most every 2s). */
-    private pendingDepth;
+    /** Cached gauge probe (refreshed at most every 1s). */
+    private pressureDepth;
     /** Decide whether to shed an event given current queue pressure. */
     private shouldShed;
     initializeSdk(apiKey: string): Promise<SDKInitResponse>;
@@ -47,6 +48,7 @@ export declare class IngestionService {
     private processIngest;
     /** Best-effort stable id for a single event in a batch. */
     private extractEventId;
+    private assertKeyCanUseEndpoint;
     getHealth(): Promise<HealthStatus>;
     getIngestionHealth(): Promise<unknown>;
     getLimits(apiKey: string): Promise<{

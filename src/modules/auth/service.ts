@@ -624,6 +624,7 @@ export interface IssuedSession {
  */
 export interface SessionSsoContext {
   providerId?: string;
+  providerType?: string;
   loginMethod?: string;
   samlNameId?: string;
   samlSessionIndex?: string;
@@ -690,6 +691,7 @@ export async function issueSessionForUser(options: {
       ? new Date(now + ACCESS_TOKEN_TTL_SECONDS * 1000)
       : null,
     ...(sso?.providerId !== undefined ? { sso_provider_id: sso.providerId } : {}),
+    ...(sso?.providerType !== undefined ? { sso_provider_type: sso.providerType } : {}),
     ...(sso?.loginMethod !== undefined ? { login_method: sso.loginMethod } : {}),
     ...(sso?.samlNameId !== undefined ? { saml_name_id: sso.samlNameId } : {}),
     ...(sso?.samlSessionIndex !== undefined
@@ -3210,6 +3212,7 @@ export async function refreshAccessToken(
   refreshToken: string;
   expiresAt: Date;
   sessionId: string;
+  currentOrgId: string | null;
 }> {
   let decoded;
   try {
@@ -3287,6 +3290,7 @@ export async function refreshAccessToken(
         refreshToken,
         expiresAt: new Date(session.expires_at),
         sessionId: session.id,
+        currentOrgId: user.current_org_id ?? null,
       };
     }
   }
@@ -3408,6 +3412,7 @@ export async function refreshAccessToken(
     refreshToken: newRefreshToken,
     expiresAt: finalExpiresAt,
     sessionId: session.id,
+    currentOrgId: user.current_org_id ?? null,
   };
 }
 

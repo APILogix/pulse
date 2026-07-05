@@ -24,11 +24,13 @@ import type {
 } from "./types.js";
 
 const ROLE_HIERARCHY: Record<OrgRole, number> = {
-  owner: 5,
-  admin: 4,
-  billing: 3,
-  member: 2,
-  viewer: 1,
+  owner: 100,
+  admin: 80,
+  developer: 60,
+  security: 50,
+  billing: 50,
+  member: 40,
+  viewer: 20,
 };
 
 // Status codes for every domain error the module raises. Centralized so routes
@@ -64,11 +66,32 @@ export class ProjectError extends Error {
   }
 }
 
+function isHttpDomainError(error: unknown): error is Error & {
+  code: string;
+  statusCode: number;
+  details?: Record<string, unknown>;
+} {
+  return error instanceof Error
+    && typeof (error as { code?: unknown }).code === "string"
+    && typeof (error as { statusCode?: unknown }).statusCode === "number";
+}
+
 export function handleProjectError(
   error: unknown,
   reply: FastifyReply,
 ): FastifyReply {
   if (error instanceof ProjectError) {
+    return reply.code(error.statusCode).send({
+      success: false,
+      error: {
+        code: error.code,
+        message: error.message,
+        ...(error.details ? { details: error.details } : {}),
+      },
+    });
+  }
+
+  if (isHttpDomainError(error)) {
     return reply.code(error.statusCode).send({
       success: false,
       error: {

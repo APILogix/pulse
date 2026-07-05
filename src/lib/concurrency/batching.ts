@@ -1,9 +1,13 @@
-import { createLimiter } from './limiters.js';
+import pMap from 'p-map';
 
 /**
  * Splits an array into smaller chunks (batches) of a specified size.
  */
 export function chunkArray<T>(array: T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size < 1) {
+    throw new Error('Chunk size must be a positive integer');
+  }
+
   const chunks: T[][] = [];
   for (let i = 0; i < array.length; i += size) {
     chunks.push(array.slice(i, i + size));
@@ -12,31 +16,39 @@ export function chunkArray<T>(array: T[], size: number): T[][] {
 }
 
 /**
- * Processes an array of items in batches, with a concurrency limit on how many
- * items are processed concurrently within each batch.
+ * Processes items with bounded concurrency without serial chunk barriers.
  * 
  * @param items The items to process
- * @param batchSize The size of each chunk
  * @param concurrency The maximum number of concurrent operations
  * @param processor The function to process each item
  */
 export async function processInBatches<T, R>(
   items: T[],
-  batchSize: number,
   concurrency: number,
-  processor: (item: T, index: number) => Promise<R>
+  processor: (item: T, index: number) => Promise<R>,
+  options: {
+    abortSignal?: AbortSignal;
+    onProgress?: (completed: number, total: number) => void;
+  } = {}
 ): Promise<R[]> {
-  const chunks = chunkArray(items, batchSize);
-  const limit = createLimiter(concurrency);
-  const results: R[] = [];
-
-  let globalIndex = 0;
-  for (const chunk of chunks) {
-    const chunkResults = await Promise.all(
-      chunk.map((item) => limit(() => processor(item, globalIndex++)))
-    );
-    results.push(...chunkResults);
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error('Concurrency must be a positive integer');
   }
 
-  return results;
+  let completed = 0;
+
+  return pMap(
+    items,
+    async (item, index) => {
+      const result = await processor(item, index);
+      completed += 1;
+      options.onProgress?.(completed, items.length);
+
+      return result;
+    },
+    {
+      concurrency,
+      signal: options.abortSignal,
+    }
+  );
 }

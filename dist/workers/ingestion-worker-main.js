@@ -36,9 +36,9 @@ class IngestionWorkerProcess {
         this.pool = new Pool({
             connectionString: env.DATABASE_URL,
             max: env.INGESTION_DB_POOL_SIZE,
-            idleTimeoutMillis: 10_000,
-            connectionTimeoutMillis: 30_000,
-            application_name: 'pulse_ingestion_workers',
+            idleTimeoutMillis: env.INGESTION_DB_IDLE_TIMEOUT_MS,
+            connectionTimeoutMillis: env.INGESTION_DB_CONNECTION_TIMEOUT_MS,
+            application_name: `pulse_ingestion_workers_${env.NODE_ENV}`,
             keepAlive: true,
         });
         this.pool.on('error', (err) => log.error({ err }, 'Ingestion worker pool error (idle connection lost)'));

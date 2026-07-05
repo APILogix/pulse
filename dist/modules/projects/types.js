@@ -103,7 +103,9 @@ export const ApiKeyTypeSchema = z.enum([
 export const OrgRoleSchema = z.enum([
     "owner",
     "admin",
+    "developer",
     "billing",
+    "security",
     "member",
     "viewer",
 ]);
@@ -135,6 +137,9 @@ export const OrgIdParamsSchema = z.object({
 export const ProjectParamsSchema = z.object({
     orgId: z.string().uuid(),
     projectId: z.string().uuid(),
+});
+export const ProjectSdkConfigParamsSchema = ProjectParamsSchema.extend({
+    configId: z.string().uuid(),
 });
 export const ApiKeyParamsSchema = z.object({
     orgId: z.string().uuid(),
@@ -169,6 +174,11 @@ export const ListApiKeysQuerySchema = z.preprocess(normalizeObjectKeys, z.object
     page: z.coerce.number().int().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(20),
     offset: z.coerce.number().int().min(0).optional(),
+}));
+export const ListProjectActivityQuerySchema = z.preprocess(normalizeObjectKeys, z.object({
+    cursor: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    action: z.string().min(1).max(100).optional(),
 }));
 // ─────────────────────────────────────────────────────────────────────────────
 // Project body schemas

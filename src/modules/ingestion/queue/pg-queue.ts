@@ -471,4 +471,14 @@ export class PgQueue {
     );
     return Number(r.rows[0]?.cnt ?? 0);
   }
+
+  /** O(1) queue pressure estimate for worker-driven backpressure gauge updates. */
+  async pendingDepthEstimate(): Promise<number> {
+    const r = await this.pool.query<{ estimate: string }>(
+      `SELECT GREATEST(COALESCE(n_live_tup, 0), 0)::bigint::text AS estimate
+       FROM pg_stat_user_tables
+       WHERE relname = 'ingestion_jobs'`,
+    );
+    return Number(r.rows[0]?.estimate ?? 0);
+  }
 }

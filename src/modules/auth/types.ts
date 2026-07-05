@@ -42,6 +42,7 @@ export interface User {
   status: UserStatus;
   status_reason: string | null;
   is_admin: boolean;
+  current_org_id: string | null;
   mfa_enabled: boolean;
   mfa_enforced_at: Date | null;
   mfa_backup_codes_generated_at: Date | null;
@@ -189,6 +190,7 @@ export interface UserSession {
   mfa_verified_at: Date | null;
   mfa_expires_at: Date | null;
   sso_provider_id: string | null;
+  sso_provider_type: string | null;
   login_method: string | null;
   saml_name_id: string | null;
   saml_session_index: string | null;

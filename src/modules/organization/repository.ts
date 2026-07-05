@@ -116,10 +116,15 @@ export class OrganizationRepository {
         [org.id, ownerUserId]
       );
 
+      await client.query(
+        `UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`,
+        [org.id, ownerUserId],
+      );
+
       const plan = await client.query<{ id: string }>(
         `SELECT id
          FROM plans
-         WHERE tier = 'free' AND is_active = TRUE
+         WHERE tier = 'enterprise' AND is_active = TRUE
          ORDER BY version DESC, sort_order ASC
          LIMIT 1
          FOR SHARE`,
@@ -187,6 +192,13 @@ export class OrganizationRepository {
 
       return { organization: org, subscriptionId, planId: freePlanId };
     });
+  }
+
+  async setUserCurrentOrg(userId: string, orgId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`,
+      [orgId, userId],
+    );
   }
 
   async findOrgById(id: string, includeDeleted = false): Promise<OrganizationRow | null> {

@@ -40,6 +40,7 @@ function buildMeta(request: FastifyRequest): RequestMeta {
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
+  console.log('[organization.sdkConfig.handleError]', error);
   if (error instanceof OrganizationError) {
     return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
   }

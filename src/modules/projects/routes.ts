@@ -12,6 +12,12 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
+import {
+  ListSdkConfigsQuerySchema,
+  ResolveSdkConfigQuerySchema,
+  UpdateSdkConfigSchema,
+} from "../organization/sdk-config.types.js";
+import type { RequestMeta as OrganizationRequestMeta } from "../organization/types.js";
 import type { RequestMeta } from "./service.js";
 import {
   ApiKeyParamsSchema,
@@ -22,16 +28,18 @@ import {
   CreateProjectBodySchema,
   EnvironmentParamsSchema,
   ListApiKeysQuerySchema,
+  ListProjectActivityQuerySchema,
   ListProjectsQuerySchema,
   OrgIdParamsSchema,
   ProjectParamsSchema,
+  ProjectSdkConfigParamsSchema,
   RevokeApiKeyBodySchema,
   RotateApiKeyBodySchema,
   UpdateApiKeyBodySchema,
   UpdateEnvironmentBodySchema,
   UpdateProjectBodySchema,
 } from "./types.js";
-import { handleProjectError } from "./utils.js";
+import { handleProjectError, ProjectError } from "./utils.js";
 
 function requestMeta(request: FastifyRequest): RequestMeta {
   const userAgent = request.headers["user-agent"];
@@ -40,6 +48,21 @@ function requestMeta(request: FastifyRequest): RequestMeta {
     actorUserId: user.id,
     actorEmail: user.email ?? null,
     actorSessionId: user.sessionId ?? null,
+    actorIp: request.ip ?? "0.0.0.0",
+    actorUserAgent: typeof userAgent === "string" ? userAgent : null,
+    requestId: request.id,
+    httpMethod: request.method,
+    endpoint: request.url,
+  };
+}
+
+function organizationRequestMeta(request: FastifyRequest): OrganizationRequestMeta {
+  const userAgent = request.headers["user-agent"];
+  const user = request.user!;
+  return {
+    actorUserId: user.id,
+    actorEmail: user.email ?? "",
+    actorSessionId: user.sessionId ?? "",
     actorIp: request.ip ?? "0.0.0.0",
     actorUserAgent: typeof userAgent === "string" ? userAgent : null,
     requestId: request.id,
@@ -67,6 +90,7 @@ function withErrorHandling(
 
 export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   const service = fastify.projects.service;
+  const sdkConfigService = fastify.organization.sdkConfigService;
 
   // ── Project CRUD ──────────────────────────────────────────────────────────
 
@@ -116,6 +140,27 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     }),
   );
 
+  fastify.get(
+    "/:projectId/usage",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const usage = await service.getProjectUsage(orgId, projectId, authenticatedUser(request).id);
+      return reply.send({ success: true, data: usage });
+    }),
+  );
+
+  fastify.get(
+    "/:projectId/activity",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const query = ListProjectActivityQuerySchema.parse(request.query ?? {});
+      const result = await service.listProjectActivity(orgId, projectId, authenticatedUser(request).id, query);
+      return reply.send({ success: true, data: result.data, meta: result.meta });
+    }),
+  );
+
   fastify.patch(
     "/:projectId",
     { preHandler: [authenticate] },
@@ -142,6 +187,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
     ["unarchive", "unarchiveProject"],
     ["pause", "pauseProject"],
     ["resume", "resumeProject"],
+    ["restore", "restoreProject"],
   ] as const) {
     fastify.post(
       `/:projectId/${path}`,
@@ -155,6 +201,119 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   }
 
   // ── Environments ────────────────────────────────────────────────────────────
+
+  fastify.get(
+    "/:projectId/sdk-configs",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const userId = authenticatedUser(request).id;
+      await service.getProject(orgId, projectId, userId);
+
+      const query = ListSdkConfigsQuerySchema.parse(request.query ?? {});
+      const filters: {
+        projectId: string;
+        environment?: string;
+        configKey?: string;
+        includeInactive?: boolean;
+      } = { projectId };
+      if (query.environment !== undefined) filters.environment = query.environment;
+      if (query.configKey !== undefined) filters.configKey = query.configKey;
+      if (query.includeInactive !== undefined) filters.includeInactive = query.includeInactive;
+      const result = await sdkConfigService.listConfigs(
+        orgId,
+        userId,
+        filters,
+      );
+      return reply.send({ success: true, data: result });
+    }),
+  );
+
+  fastify.get(
+    "/:projectId/sdk-configs/resolve",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const userId = authenticatedUser(request).id;
+      await service.getProject(orgId, projectId, userId);
+
+      const query = ResolveSdkConfigQuerySchema.parse(request.query ?? {});
+      const scopedQuery: {
+        projectId: string;
+        environment: string;
+        platform?: string;
+      } = {
+        projectId,
+        environment: query.environment,
+      };
+      if (query.platform !== undefined) scopedQuery.platform = query.platform;
+      const result = await sdkConfigService.resolveForSdk(
+        orgId,
+        userId,
+        scopedQuery,
+      );
+      return reply.send({ success: true, data: result });
+    }),
+  );
+
+  fastify.get(
+    "/:projectId/sdk-configs/:configId",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, configId } = ProjectSdkConfigParamsSchema.parse(request.params);
+      const userId = authenticatedUser(request).id;
+      await service.getProject(orgId, projectId, userId);
+
+      const config = await sdkConfigService.getConfig(orgId, userId, configId);
+      if (config.projectId !== projectId) {
+        throw new ProjectError(
+          "SDK_CONFIG_NOT_FOUND",
+          "SDK config not found for this project",
+          404,
+        );
+      }
+      return reply.send({ success: true, data: config });
+    }),
+  );
+
+  fastify.patch(
+    "/:projectId/sdk-configs/:configId",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, configId } = ProjectSdkConfigParamsSchema.parse(request.params);
+      const userId = authenticatedUser(request).id;
+      await service.getProject(orgId, projectId, userId);
+
+      const body = UpdateSdkConfigSchema.parse(request.body);
+      const update: {
+        configValue?: Record<string, unknown>;
+        environment?: string;
+        schemaVersion?: string | null;
+        targetSdkVersions?: string[] | null;
+        targetPlatforms?: string[] | null;
+        rolloutPercentage?: number;
+        isActive?: boolean;
+        changeSummary?: string;
+      } = {};
+      if (body.configValue !== undefined) update.configValue = body.configValue;
+      if (body.environment !== undefined) update.environment = body.environment;
+      if (body.schemaVersion !== undefined) update.schemaVersion = body.schemaVersion;
+      if (body.targetSdkVersions !== undefined) update.targetSdkVersions = body.targetSdkVersions;
+      if (body.targetPlatforms !== undefined) update.targetPlatforms = body.targetPlatforms;
+      if (body.rolloutPercentage !== undefined) update.rolloutPercentage = body.rolloutPercentage;
+      if (body.isActive !== undefined) update.isActive = body.isActive;
+      if (body.changeSummary !== undefined) update.changeSummary = body.changeSummary;
+
+      const config = await sdkConfigService.updateProjectConfig(
+        organizationRequestMeta(request),
+        orgId,
+        projectId,
+        configId,
+        update,
+      );
+      return reply.send({ success: true, data: config });
+    }),
+  );
 
   fastify.get(
     "/:projectId/environments",

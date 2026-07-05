@@ -4,6 +4,7 @@ export declare class OrganizationService {
     private repo;
     private log;
     private emitEvent;
+    private scimTokenService;
     constructor(deps: OrganizationServiceDependencies);
     private audit;
     /** Send the organization-invitation email. Throws on SMTP failure so callers
@@ -25,6 +26,7 @@ export declare class OrganizationService {
         timezone?: string;
         billingEmail?: string;
     }): Promise<OrganizationDto>;
+    switchOrganization(meta: RequestMeta, orgId: string): Promise<OrganizationDto>;
     getOrganization(orgId: string, userId: string): Promise<OrganizationDto>;
     getOrganizationBySlug(slug: string, userId: string): Promise<OrganizationDto>;
     updateOrganization(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<OrganizationDto>;
@@ -118,15 +120,31 @@ export declare class OrganizationService {
     createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
     updateSsoProvider(meta: RequestMeta, orgId: string, ssoId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
     deleteSsoProvider(meta: RequestMeta, orgId: string, ssoId: string): Promise<void>;
-    createScimToken(meta: RequestMeta, orgId: string): Promise<{
+    createScimToken(meta: RequestMeta, orgId: string, data?: {
+        scopes?: string[];
+        allowedIps?: string[];
+        expiresInDays?: number | undefined;
+    }): Promise<{
         rawToken: string;
         id: string;
         lastUsedAt: Date | null;
         expiresAt: Date | null;
         revokedAt: Date | null;
         createdAt: Date;
+        scopes: string[];
+        allowedIps: string[];
     }>;
     revokeScimToken(meta: RequestMeta, orgId: string, tokenId: string): Promise<void>;
+    rotateScimToken(meta: RequestMeta, orgId: string, tokenId: string): Promise<{
+        rawToken: string;
+        id: string;
+        lastUsedAt: Date | null;
+        expiresAt: Date | null;
+        revokedAt: Date | null;
+        createdAt: Date;
+        scopes: string[];
+        allowedIps: string[];
+    }>;
     listSecurityEvents(orgId: string, userId: string, q: CursorPaginationQuery, filters?: {
         severity?: string;
         eventType?: string;
@@ -224,9 +242,10 @@ export declare class OrganizationService {
         };
     }>;
     validateInvitationToken(token: string): Promise<{
+        id: string;
         valid: boolean;
         email: string;
-        role: "security" | "member" | "admin" | "owner" | "billing" | "developer" | "viewer";
+        role: "security" | "admin" | "member" | "owner" | "billing" | "developer" | "viewer";
         orgName: string | null;
         orgSlug: string | null;
         expiresAt: Date;
@@ -262,5 +281,6 @@ export declare class OrganizationService {
     leaveOrganization(meta: RequestMeta, orgId: string): Promise<void>;
     listSsoProviders(orgId: string, userId: string): Promise<SsoProviderDto[]>;
     listScimTokens(orgId: string, userId: string): Promise<ScimTokenDto[]>;
+    private toScimTokenDto;
 }
 //# sourceMappingURL=organizationservice.d.ts.map

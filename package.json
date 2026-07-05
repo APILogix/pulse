@@ -68,6 +68,7 @@
     "opossum": "^9.0.0",
     "otpauth": "^9.5.0",
     "p-limit": "^7.3.0",
+    "p-map": "^7.0.5",
     "passport": "^0.7.0",
     "passport-github2": "^0.1.12",
     "passport-google-oauth20": "^2.0.0",

@@ -456,6 +456,17 @@ export async function billingRoutes(fastify, options) {
             return handleBillingError(error, reply);
         }
     });
+    fastify.get('/usage/overview', {
+        preHandler: [authenticate],
+    }, async (request, reply) => {
+        try {
+            const result = await service.getUsageOverview(getOrgId(request));
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    });
     fastify.get('/usage/current', {
         preHandler: [authenticate],
     }, async (request, reply) => {
@@ -883,6 +894,7 @@ export async function billingRoutes(fastify, options) {
 // ERROR HANDLER
 // ============================================
 function handleBillingError(error, reply) {
+    console.log('[billing.handleError]', error);
     // BillingError carries client-safe status, code, message, and optional details.
     // Unknown errors are logged and collapsed into a generic 500 response.
     if (error instanceof ZodError) {

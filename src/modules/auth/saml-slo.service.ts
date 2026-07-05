@@ -99,12 +99,12 @@ export async function handleSamlSingleLogout(
 }
 
 async function resolveSamlProviderForLogout(options: {
-  session: Awaited<ReturnType<typeof repository.findActiveSessionBySamlNameId>>;
+  session: Awaited<ReturnType<typeof repository.findLatestSamlSessionByProviderAndNameId>>;
   issuer: string | null;
 }): Promise<repository.SamlProviderRow | null> {
-  if (options.session?.sso_provider_id) {
+  if (options.session?.provider_id) {
     const bySession = await repository.findSamlProviderById(
-      options.session.sso_provider_id,
+      options.session.provider_id,
     );
     if (bySession) return bySession;
   }
@@ -120,16 +120,19 @@ async function handleIdpInitiatedLogout(
   requestId: string,
 ): Promise<{ redirect_url: string | null; logged_out: boolean }> {
   const parsed = parseSamlLogoutPayload(body.SAMLRequest!);
-  const session = parsed.nameId
-    ? await repository.findActiveSessionBySamlNameId(parsed.nameId)
+  const provider = parsed.issuer
+    ? await repository.findSamlProviderByEntityId(parsed.issuer)
+    : null;
+  const session = parsed.nameId && provider
+    ? await repository.findLatestSamlSessionByProviderAndNameId(provider.id, parsed.nameId)
     : null;
 
-  const provider = await resolveSamlProviderForLogout({
+  const resolvedProvider = await resolveSamlProviderForLogout({
     session,
     issuer: parsed.issuer,
   });
 
-  if (!provider) {
+  if (!resolvedProvider) {
     throw new AuthError(
       'Cannot process SAML logout for unknown provider',
       AuthErrorCodes.SAML_RESPONSE_INVALID,
@@ -137,7 +140,7 @@ async function handleIdpInitiatedLogout(
     );
   }
 
-  const saml = buildSamlClient(provider);
+  const saml = buildSamlClient(resolvedProvider);
   const result = await saml.validatePostRequestAsync({
     SAMLRequest: body.SAMLRequest!,
   });
@@ -145,11 +148,19 @@ async function handleIdpInitiatedLogout(
   const nameId =
     result.profile?.nameID ?? parsed.nameId ?? session?.saml_name_id ?? null;
   if (nameId) {
-    await revokeSessionsBySamlNameId(nameId, ipAddress, requestId);
+    await revokeSessionsBySamlContext(
+      resolvedProvider.id,
+      nameId,
+      typeof result.profile?.sessionIndex === 'string'
+        ? result.profile.sessionIndex
+        : parsed.sessionIndex,
+      ipAddress,
+      requestId,
+    );
   }
 
   const responseUrl = await saml.getLogoutResponseUrlAsync(
-    result.profile ?? { nameID: nameId ?? '', issuer: provider.entity_id },
+    result.profile ?? { nameID: nameId ?? '', issuer: resolvedProvider.entity_id },
     body.RelayState ?? '',
     {},
     true,
@@ -164,34 +175,52 @@ async function handleSpLogoutResponse(
   requestId: string,
 ): Promise<{ redirect_url: string | null; logged_out: boolean }> {
   const parsed = parseSamlLogoutPayload(body.SAMLResponse!);
-  if (parsed.nameId) {
-    await revokeSessionsBySamlNameId(parsed.nameId, ipAddress, requestId);
+  if (parsed.nameId && parsed.issuer) {
+    const provider = await repository.findSamlProviderByEntityId(parsed.issuer);
+    if (provider) {
+      await revokeSessionsBySamlContext(
+        provider.id,
+        parsed.nameId,
+        parsed.sessionIndex,
+        ipAddress,
+        requestId,
+      );
+    }
   }
   return { redirect_url: getSamlLogoutRedirectUrl(), logged_out: true };
 }
 
-async function revokeSessionsBySamlNameId(
+async function revokeSessionsBySamlContext(
+  providerId: string,
   nameId: string,
+  sessionIndex: string | undefined | null,
   ipAddress: string,
   requestId: string,
 ): Promise<void> {
-  const { pool } = await import('../../config/database.js');
-  const sessions = await pool.query<{ id: string; user_id: string }>(
-    `SELECT id, user_id FROM user_sessions
-     WHERE saml_name_id = $1 AND status = 'active'`,
-    [nameId],
+  const sessions = await repository.listActiveSamlSessionsForLogout(
+    providerId,
+    nameId,
+    sessionIndex ?? undefined,
   );
-  for (const row of sessions.rows) {
-    await repository.revokeSession(row.id, 'SAML single logout');
-    blacklistAccessToken(row.id);
+  if (sessions.length === 0) {
+    return;
+  }
+  const sessionIds = sessions.map((row) => row.session_id);
+  await repository.expireSamlSessionsBySessionIds(sessionIds);
+  for (const row of sessions) {
+    await repository.revokeSession(row.session_id, 'SAML single logout');
+    blacklistAccessToken(row.session_id);
     logAudit({
       user_id: row.user_id,
       org_id: null,
+      actor_type: 'saml',
+      actor_id: providerId,
       action: 'user.logout_saml',
       resource_type: 'session',
-      resource_id: row.id,
+      resource_id: row.session_id,
       ip_address: ipAddress,
       request_id: requestId,
+      metadata: { saml_name_id: nameId, session_index: sessionIndex ?? null },
     });
   }
 }

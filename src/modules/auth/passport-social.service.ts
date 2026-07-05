@@ -86,42 +86,46 @@ export async function registerPassportSocialAuth(
   await fastify.register(socialPassport.initialize());
   await fastify.register(socialPassport.secureSession());
 
-  socialPassport.use(
-    'google',
-    new GoogleStrategy(
-      {
-        clientID: env.GOOGLE_CLIENT_ID!,
-        clientSecret: env.GOOGLE_CLIENT_SECRET!,
-        callbackURL: getApiSocialLoginCallbackUrl(),
-      },
-      (
-        _accessToken: string,
-        _refreshToken: string,
-        profile: GoogleProfile,
-        done: PassportDone,
-      ) => {
-        done(null, toGoogleProfile(profile));
-      },
-    ),
-  );
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+    socialPassport.use(
+      'google',
+      new GoogleStrategy(
+        {
+          clientID: env.GOOGLE_CLIENT_ID,
+          clientSecret: env.GOOGLE_CLIENT_SECRET,
+          callbackURL: getApiSocialLoginCallbackUrl(),
+        },
+        (
+          _accessToken: string,
+          _refreshToken: string,
+          profile: GoogleProfile,
+          done: PassportDone,
+        ) => {
+          done(null, toGoogleProfile(profile));
+        },
+      ),
+    );
+  }
 
-  socialPassport.use(
-    'github',
-    new GitHubStrategy(
-      {
-        clientID: env.GITHUB_CLIENT_ID!,
-        clientSecret: env.GITHUB_CLIENT_SECRET!,
-        callbackURL: getApiSocialLoginCallbackUrl(),
-        scope: ['read:user', 'user:email'],
-      },
-      (
-        _accessToken: string,
-        _refreshToken: string,
-        profile: GitHubProfile,
-        done: PassportDone,
-      ) => {
-        done(null, toGitHubProfile(profile));
-      },
-    ),
-  );
+  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
+    socialPassport.use(
+      'github',
+      new GitHubStrategy(
+        {
+          clientID: env.GITHUB_CLIENT_ID,
+          clientSecret: env.GITHUB_CLIENT_SECRET,
+          callbackURL: getApiSocialLoginCallbackUrl(),
+          scope: ['read:user', 'user:email'],
+        },
+        (
+          _accessToken: string,
+          _refreshToken: string,
+          profile: GitHubProfile,
+          done: PassportDone,
+        ) => {
+          done(null, toGitHubProfile(profile));
+        },
+      ),
+    );
+  }
 }

@@ -43,6 +43,7 @@ declare module 'fastify' {
       id: string;
       email: string;
       isAdmin: boolean;
+      currentOrgId?: string | null;
       sessionId: string;
       mfaVerified: boolean;
       stepUpFresh: boolean;
@@ -175,6 +176,7 @@ export async function authenticate(
       id: user.id,
       email: user.email,
       isAdmin: user.is_admin === true,
+      currentOrgId: user.current_org_id ?? null,
       sessionId: decoded.jti,
       mfaVerified: decoded.mfa_verified === true,
       stepUpFresh: hasFreshStepUp(decoded.jti),
