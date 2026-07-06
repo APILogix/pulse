@@ -15,7 +15,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../organization/repository.js";
 import { ProjectsRepository } from "./repository.js";
-import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -80,7 +80,7 @@ export declare class ProjectsService {
      */
     validateApiKey(rawKey: string): Promise<ValidatedApiKey | null>;
     private requireOrganizationAccess;
-    private requireProjectAccess;
+    requireProjectAccess(orgId: string, projectId: string, userId: string, requiredRole: OrgRole): Promise<Project>;
     private limitFrom;
     private assertWithinLimit;
     private requireMutableBilling;
@@ -102,6 +102,17 @@ export declare class ProjectsService {
      * Write a project/API-key lifecycle event to the organization audit trail.
      * Non-fatal: a failed audit write never breaks the originating request.
      */
-    private audit;
+    audit(meta: RequestMeta, data: {
+        orgId: string;
+        action: string;
+        entityType: string;
+        entityId?: string;
+        entityName?: string;
+        oldValues?: Record<string, unknown> | null;
+        newValues?: Record<string, unknown> | null;
+        changedFields?: string[];
+        isSensitive?: boolean;
+        metadata?: Record<string, unknown>;
+    }): Promise<void>;
 }
 //# sourceMappingURL=service.d.ts.map

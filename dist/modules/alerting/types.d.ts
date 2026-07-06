@@ -19,9 +19,9 @@ export type AlertSeverity = z.infer<typeof AlertSeveritySchema>;
 export declare const AlertEventStatusSchema: z.ZodEnum<{
     error: "error";
     pending: "pending";
-    resolved: "resolved";
     processing: "processing";
     firing: "firing";
+    resolved: "resolved";
     acknowledged: "acknowledged";
     suppressed: "suppressed";
     silenced: "silenced";
@@ -69,8 +69,8 @@ export type DeliveryAttemptStatus = z.infer<typeof DeliveryAttemptStatusSchema>;
 export declare const BatchStatusSchema: z.ZodEnum<{
     pending: "pending";
     failed: "failed";
-    completed: "completed";
     processing: "processing";
+    completed: "completed";
     partial: "partial";
 }>;
 export type BatchStatus = z.infer<typeof BatchStatusSchema>;
@@ -152,9 +152,9 @@ export declare const RuleConditionSchema: z.ZodObject<{
     aggregateFunction: z.ZodOptional<z.ZodEnum<{
         max: "max";
         min: "min";
-        count: "count";
-        sum: "sum";
         avg: "avg";
+        sum: "sum";
+        count: "count";
         p99: "p99";
     }>>;
     isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -229,9 +229,9 @@ export declare const CreateRuleSchema: z.ZodObject<{
         aggregateFunction: z.ZodOptional<z.ZodEnum<{
             max: "max";
             min: "min";
-            count: "count";
-            sum: "sum";
             avg: "avg";
+            sum: "sum";
+            count: "count";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -306,9 +306,9 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         aggregateFunction: z.ZodOptional<z.ZodEnum<{
             max: "max";
             min: "min";
-            count: "count";
-            sum: "sum";
             avg: "avg";
+            sum: "sum";
+            count: "count";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -384,9 +384,9 @@ export declare const ListEventsQuerySchema: z.ZodObject<{
     status: z.ZodOptional<z.ZodEnum<{
         error: "error";
         pending: "pending";
-        resolved: "resolved";
         processing: "processing";
         firing: "firing";
+        resolved: "resolved";
         acknowledged: "acknowledged";
         suppressed: "suppressed";
         silenced: "silenced";

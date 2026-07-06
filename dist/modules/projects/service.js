@@ -54,6 +54,18 @@ export class ProjectsService {
             }, client);
             await this.repository.createDefaultEnvironments(created, userId, client);
             await this.repository.createDefaultSdkConfigs(created, userId, entitlements.plan_key, client);
+            // [DISABLED] RemoteSDK configuration is deferred until Phase 2.
+            // The project is created without remote infrastructure provisioning.
+            // To enable: uncomment the block below and ensure RemoteSDK credentials
+            // are available in the environment.
+            /*
+            const remoteSdk = new RemoteSDK({ orgId: created.org_id });
+            await remoteSdk.configureProject({
+              projectId: created.id,
+              slug: created.slug,
+              environment: created.environment,
+            });
+            */
             return created;
         });
         await this.audit(meta, {

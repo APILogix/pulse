@@ -152,6 +152,20 @@ export class ProjectsService {
       );
       await this.repository.createDefaultEnvironments(created, userId, client);
       await this.repository.createDefaultSdkConfigs(created, userId, entitlements.plan_key, client);
+
+      // [DISABLED] RemoteSDK configuration is deferred until Phase 2.
+      // The project is created without remote infrastructure provisioning.
+      // To enable: uncomment the block below and ensure RemoteSDK credentials
+      // are available in the environment.
+      /*
+      const remoteSdk = new RemoteSDK({ orgId: created.org_id });
+      await remoteSdk.configureProject({
+        projectId: created.id,
+        slug: created.slug,
+        environment: created.environment,
+      });
+      */
+
       return created;
     });
 
@@ -894,7 +908,7 @@ export class ProjectsService {
     return membership;
   }
 
-  private async requireProjectAccess(
+  public async requireProjectAccess(
     orgId: string,
     projectId: string,
     userId: string,
@@ -1108,7 +1122,7 @@ export class ProjectsService {
    * Write a project/API-key lifecycle event to the organization audit trail.
    * Non-fatal: a failed audit write never breaks the originating request.
    */
-  private async audit(
+  public async audit(
     meta: RequestMeta,
     data: {
       orgId: string;

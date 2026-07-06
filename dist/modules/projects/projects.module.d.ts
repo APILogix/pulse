@@ -16,6 +16,10 @@ declare module 'fastify' {
         projects: {
             repository: ProjectsRepository;
             service: ProjectsService;
+            alertRoutesRepository: import('./alert-routes.repository.js').AlertRoutesRepository;
+            alertRoutesService: import('./alert-routes.service.js').ProjectAlertRouteService;
+            alertPreferencesRepository: import('./alert-preferences.repository.js').AlertPreferencesRepository;
+            alertPreferencesService: import('./alert-preferences.service.js').ProjectMemberAlertPreferenceService;
         };
     }
 }

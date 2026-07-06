@@ -189,9 +189,9 @@ export declare const MetricSeriesQuerySchema: z.ZodObject<{
     aggregate: z.ZodDefault<z.ZodEnum<{
         max: "max";
         min: "min";
-        count: "count";
-        sum: "sum";
         avg: "avg";
+        sum: "sum";
+        count: "count";
     }>>;
 }, z.core.$strip>;
 export type MetricSeriesQuery = z.infer<typeof MetricSeriesQuerySchema>;
