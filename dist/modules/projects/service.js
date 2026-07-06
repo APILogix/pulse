@@ -227,7 +227,6 @@ export class ProjectsService {
             rateLimitPerHour: body.rateLimitPerHour ?? null,
             burstLimit: body.burstLimit ?? null,
             allowedEventTypes: body.allowedEventTypes,
-            blockedEventTypes: body.blockedEventTypes,
             maxEventSizeBytes: body.maxEventSizeBytes ?? null,
             maxBatchSize: body.maxBatchSize ?? null,
             requireHttps: body.requireHttps,
@@ -254,7 +253,6 @@ export class ProjectsService {
             rateLimitPerHour: body.rateLimitPerHour,
             burstLimit: body.burstLimit,
             allowedEventTypes: body.allowedEventTypes,
-            blockedEventTypes: body.blockedEventTypes,
             maxEventSizeBytes: body.maxEventSizeBytes,
             maxBatchSize: body.maxBatchSize,
             requireHttps: body.requireHttps,
@@ -655,8 +653,6 @@ export class ProjectsService {
             target.burstLimit = body.burstLimit;
         if (body.allowedEventTypes !== undefined)
             target.allowedEventTypes = body.allowedEventTypes;
-        if (body.blockedEventTypes !== undefined)
-            target.blockedEventTypes = body.blockedEventTypes;
         if (body.maxEventSizeBytes !== undefined)
             target.maxEventSizeBytes = body.maxEventSizeBytes;
         if (body.maxBatchSize !== undefined)

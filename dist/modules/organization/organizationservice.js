@@ -535,11 +535,11 @@ export class OrganizationService {
     async createScimToken(meta, orgId, data) {
         await this.requireMutableOrg(orgId);
         await this.requireMember(orgId, meta.actorUserId, "owner");
-        await this.enforceBillingLimit(orgId, "scim");
+        // await this.enforceBillingLimit(orgId, "scim");
         const payload = {
             orgId,
             createdBy: meta.actorUserId,
-            scopes: data?.scopes?.length ? data.scopes : ["read", "write", "delete"],
+            scopes: data?.scopes?.length ? data.scopes : ["users:read", "users:write", "users:delete", "groups:read", "groups:write", "groups:delete"],
             ...(data?.allowedIps !== undefined ? { allowedIps: data.allowedIps } : {}),
             ...(data?.expiresInDays !== undefined ? { expiresInDays: data.expiresInDays } : {}),
         };

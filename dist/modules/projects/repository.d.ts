@@ -27,7 +27,6 @@ export interface ProjectUpdateInput {
     rateLimitPerHour?: number;
     burstLimit?: number;
     allowedEventTypes?: string[];
-    blockedEventTypes?: string[];
     maxEventSizeBytes?: number;
     maxBatchSize?: number;
     allowedOrigins?: string[];
@@ -114,7 +113,6 @@ export declare class ProjectsRepository {
         rateLimitPerHour?: number | null | undefined;
         burstLimit?: number | null | undefined;
         allowedEventTypes?: string[] | undefined;
-        blockedEventTypes?: string[] | undefined;
         maxEventSizeBytes?: number | null | undefined;
         maxBatchSize?: number | null | undefined;
         requireHttps?: boolean | undefined;
@@ -130,7 +128,6 @@ export declare class ProjectsRepository {
         rateLimitPerHour?: number | null | undefined;
         burstLimit?: number | null | undefined;
         allowedEventTypes?: string[] | undefined;
-        blockedEventTypes?: string[] | undefined;
         maxEventSizeBytes?: number | null | undefined;
         maxBatchSize?: number | null | undefined;
         requireHttps?: boolean | undefined;

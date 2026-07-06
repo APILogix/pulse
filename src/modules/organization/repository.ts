@@ -1126,4 +1126,56 @@ export class OrganizationRepository {
     );
     return r.rowCount ?? 0;
   }
+
+  /**
+   * Retrieves the multi-organization context for a given user.
+   * This is called during the login flow to append context to the response.
+   */
+  async getUserContextForLogin(userId: string): Promise<{
+    default_org_slug: string | null;
+    organizations: Array<{ id: string; slug: string; name: string; role: string }>;
+  }> {
+    return this.withTransaction(async (client) => {
+      const orgsResult = await client.query<{
+        id: string;
+        slug: string;
+        name: string;
+        role: string;
+      }>(
+        `SELECT o.id, o.slug, o.name, om.role
+         FROM organizations o
+         JOIN organization_members om ON o.id = om.org_id
+         WHERE om.user_id = $1
+           AND om.status = 'active'
+           AND o.status = 'active'
+           AND o.deleted_at IS NULL
+         ORDER BY o.created_at ASC`,
+        [userId]
+      );
+
+      const prefResult = await client.query<{ default_org_id: string }>(
+        `SELECT default_org_id FROM user_preferences WHERE user_id = $1`,
+        [userId]
+      );
+
+      const orgs = orgsResult.rows;
+      let default_org_slug: string | null = null;
+
+      if (orgs.length > 0) {
+        const prefOrgId = prefResult.rows[0]?.default_org_id;
+        const preferredOrg = orgs.find(o => o.id === prefOrgId);
+        
+        if (preferredOrg) {
+          default_org_slug = preferredOrg.slug;
+        } else {
+          default_org_slug = orgs[0]!.slug;
+        }
+      }
+
+      return {
+        default_org_slug,
+        organizations: orgs,
+      };
+    });
+  }
 }

@@ -40,7 +40,7 @@ const PROJECT_COLUMNS = `
   id, org_id, name, slug, description, status, environment,
   production_api_prefix, development_api_prefix, staging_api_prefix,
   rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, blocked_event_types, max_event_size_bytes, max_batch_size,
+  allowed_event_types, max_event_size_bytes, max_batch_size,
   allowed_origins, require_https, ip_allowlist, ip_blocklist,
   geo_restriction_enabled, allowed_countries,
   alert_email, alert_webhook_url, alert_on_error_rate_threshold,
@@ -63,7 +63,7 @@ const API_KEY_COLUMNS = `
 const ENV_COLUMNS = `
   id, project_id, org_id, environment, is_active,
   rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, blocked_event_types, max_event_size_bytes, max_batch_size,
+  allowed_event_types, max_event_size_bytes, max_batch_size,
   require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
   created_by, created_at, updated_at
 `;
@@ -84,7 +84,6 @@ type ProjectRow = {
   rate_limit_per_hour: number;
   burst_limit: number;
   allowed_event_types: string[] | null;
-  blocked_event_types: string[] | null;
   max_event_size_bytes: number;
   max_batch_size: number;
   allowed_origins: string[] | null;
@@ -158,7 +157,6 @@ type EnvRow = {
   rate_limit_per_hour: number | null;
   burst_limit: number | null;
   allowed_event_types: string[] | null;
-  blocked_event_types: string[] | null;
   max_event_size_bytes: number | null;
   max_batch_size: number | null;
   require_https: boolean;
@@ -208,7 +206,6 @@ export interface ProjectUpdateInput {
   rateLimitPerHour?: number;
   burstLimit?: number;
   allowedEventTypes?: string[];
-  blockedEventTypes?: string[];
   maxEventSizeBytes?: number;
   maxBatchSize?: number;
   allowedOrigins?: string[];
@@ -384,7 +381,7 @@ export class ProjectsRepository {
            org_id, name, slug, description, environment,
            production_api_prefix, development_api_prefix, staging_api_prefix,
            rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-           allowed_event_types, blocked_event_types, max_event_size_bytes, max_batch_size,
+           allowed_event_types, max_event_size_bytes, max_batch_size,
            allowed_origins, require_https, ip_allowlist, ip_blocklist,
            geo_restriction_enabled, allowed_countries,
            alert_email, alert_webhook_url, alert_on_error_rate_threshold, alert_on_latency_threshold_ms,
@@ -392,11 +389,11 @@ export class ProjectsRepository {
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,
            COALESCE($9,1000), COALESCE($10,10000), COALESCE($11,100000), COALESCE($12,2000),
-           COALESCE($13,ARRAY['*']), COALESCE($14,'{}'), COALESCE($15,1048576), COALESCE($16,100),
-           COALESCE($17,'{}'), COALESCE($18,TRUE), $19, $20,
-           COALESCE($21,FALSE), $22,
-           $23, $24, COALESCE($25,5.00), COALESCE($26,1000),
-           COALESCE($27,'{}'::jsonb), COALESCE($28,'{}'::jsonb)
+           COALESCE($13::text[],ARRAY['*']::text[]), COALESCE($14,1048576), COALESCE($15,100),
+           COALESCE($16::text[],ARRAY[]::text[]), COALESCE($17,TRUE), $18::inet[], $19::inet[],
+           COALESCE($20,FALSE), $21::char(2)[],
+           $22, $23, COALESCE($24,5.00), COALESCE($25,1000),
+           COALESCE($26,'{}'::jsonb), COALESCE($27,'{}'::jsonb)
          )
          RETURNING ${PROJECT_COLUMNS}`,
         [
@@ -413,7 +410,6 @@ export class ProjectsRepository {
           c.rateLimitPerHour ?? null,
           c.burstLimit ?? null,
           c.allowedEventTypes ?? null,
-          c.blockedEventTypes ?? null,
           c.maxEventSizeBytes ?? null,
           c.maxBatchSize ?? null,
           c.allowedOrigins ?? null,
@@ -1001,7 +997,6 @@ export class ProjectsRepository {
       rateLimitPerHour?: number | null | undefined;
       burstLimit?: number | null | undefined;
       allowedEventTypes?: string[] | undefined;
-      blockedEventTypes?: string[] | undefined;
       maxEventSizeBytes?: number | null | undefined;
       maxBatchSize?: number | null | undefined;
       requireHttps?: boolean | undefined;
@@ -1018,13 +1013,13 @@ export class ProjectsRepository {
         `INSERT INTO project_environments (
            project_id, org_id, environment, is_active,
            rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-           allowed_event_types, blocked_event_types, max_event_size_bytes, max_batch_size,
+           allowed_event_types, max_event_size_bytes, max_batch_size,
            require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url, created_by
          ) VALUES (
            $1,$2,$3,COALESCE($4,TRUE),
            $5,$6,$7,$8,
-           COALESCE($9,ARRAY['*']), COALESCE($10,'{}'), $11, $12,
-           COALESCE($13,TRUE), $14, $15, $16, $17, $18
+           COALESCE($9::text[],ARRAY['*']::text[]), $10, $11,
+           COALESCE($12,TRUE), $13::inet[], $14::inet[], $15, $16, $17
          )
          RETURNING ${ENV_COLUMNS}`,
         [
@@ -1037,7 +1032,6 @@ export class ProjectsRepository {
           input.rateLimitPerHour ?? null,
           input.burstLimit ?? null,
           input.allowedEventTypes ?? null,
-          input.blockedEventTypes ?? null,
           input.maxEventSizeBytes ?? null,
           input.maxBatchSize ?? null,
           input.requireHttps ?? null,
@@ -1071,7 +1065,6 @@ export class ProjectsRepository {
       rateLimitPerHour?: number | null | undefined;
       burstLimit?: number | null | undefined;
       allowedEventTypes?: string[] | undefined;
-      blockedEventTypes?: string[] | undefined;
       maxEventSizeBytes?: number | null | undefined;
       maxBatchSize?: number | null | undefined;
       requireHttps?: boolean | undefined;
@@ -1097,7 +1090,6 @@ export class ProjectsRepository {
     if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
     if (input.burstLimit !== undefined) set("burst_limit", input.burstLimit);
     if (input.allowedEventTypes !== undefined) set("allowed_event_types", input.allowedEventTypes);
-    if (input.blockedEventTypes !== undefined) set("blocked_event_types", input.blockedEventTypes);
     if (input.maxEventSizeBytes !== undefined) set("max_event_size_bytes", input.maxEventSizeBytes);
     if (input.maxBatchSize !== undefined) set("max_batch_size", input.maxBatchSize);
     if (input.requireHttps !== undefined) set("require_https", input.requireHttps);
@@ -1514,7 +1506,6 @@ export class ProjectsRepository {
          p.rate_limit_per_hour AS p_rate_limit_per_hour,
          p.burst_limit AS p_burst_limit,
          p.allowed_event_types AS p_allowed_event_types,
-         p.blocked_event_types AS p_blocked_event_types,
          p.max_event_size_bytes AS p_max_event_size_bytes,
          p.max_batch_size AS p_max_batch_size,
          p.allowed_origins AS p_allowed_origins,
@@ -1630,7 +1621,6 @@ export class ProjectsRepository {
     if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
     if (input.burstLimit !== undefined) set("burst_limit", input.burstLimit);
     if (input.allowedEventTypes !== undefined) set("allowed_event_types", input.allowedEventTypes);
-    if (input.blockedEventTypes !== undefined) set("blocked_event_types", input.blockedEventTypes);
     if (input.maxEventSizeBytes !== undefined) set("max_event_size_bytes", input.maxEventSizeBytes);
     if (input.maxBatchSize !== undefined) set("max_batch_size", input.maxBatchSize);
     if (input.allowedOrigins !== undefined) set("allowed_origins", input.allowedOrigins);
@@ -1668,7 +1658,6 @@ export class ProjectsRepository {
       rate_limit_per_hour: row.p_rate_limit_per_hour as number,
       burst_limit: row.p_burst_limit as number,
       allowed_event_types: row.p_allowed_event_types as string[] | null,
-      blocked_event_types: row.p_blocked_event_types as string[] | null,
       max_event_size_bytes: row.p_max_event_size_bytes as number,
       max_batch_size: row.p_max_batch_size as number,
       allowed_origins: row.p_allowed_origins as string[] | null,
@@ -1708,7 +1697,6 @@ export class ProjectsRepository {
       rateLimitPerHour: Number(row.rate_limit_per_hour ?? 0),
       burstLimit: Number(row.burst_limit ?? 0),
       allowedEventTypes: row.allowed_event_types ?? [],
-      blockedEventTypes: row.blocked_event_types ?? [],
       maxEventSizeBytes: Number(row.max_event_size_bytes ?? 0),
       maxBatchSize: Number(row.max_batch_size ?? 0),
       allowedOrigins: row.allowed_origins ?? [],
@@ -1751,7 +1739,6 @@ export class ProjectsRepository {
       rateLimitPerHour: row.rate_limit_per_hour,
       burstLimit: row.burst_limit,
       allowedEventTypes: row.allowed_event_types ?? [],
-      blockedEventTypes: row.blocked_event_types ?? [],
       maxEventSizeBytes: row.max_event_size_bytes,
       maxBatchSize: row.max_batch_size,
       requireHttps: row.require_https,

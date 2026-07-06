@@ -171,5 +171,18 @@ export declare class OrganizationRepository {
      * those even when normal operational logs roll off.
      */
     purgeExpiredAuditLogs(): Promise<number>;
+    /**
+     * Retrieves the multi-organization context for a given user.
+     * This is called during the login flow to append context to the response.
+     */
+    getUserContextForLogin(userId: string): Promise<{
+        default_org_slug: string | null;
+        organizations: Array<{
+            id: string;
+            slug: string;
+            name: string;
+            role: string;
+        }>;
+    }>;
 }
 //# sourceMappingURL=repository.d.ts.map

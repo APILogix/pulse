@@ -210,6 +210,25 @@ export declare const LoginSchema: z.ZodObject<{
     trust_device: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>;
 export type LoginInput = z.infer<typeof LoginSchema>;
+export declare const LoginResponseSchema: z.ZodObject<{
+    access_token: z.ZodString;
+    expires_at: z.ZodDate;
+    session_id: z.ZodString;
+    token_type: z.ZodLiteral<"Bearer">;
+    user: z.ZodOptional<z.ZodObject<{
+        id: z.ZodString;
+        email: z.ZodString;
+        name: z.ZodString;
+    }, z.core.$strip>>;
+    default_org_slug: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    organizations: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        slug: z.ZodString;
+        name: z.ZodString;
+        role: z.ZodString;
+    }, z.core.$strip>>>;
+}, z.core.$strip>;
+export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 export declare const LoginMFAVerifySchema: z.ZodObject<{
     challenge_id: z.ZodString;
     code: z.ZodString;

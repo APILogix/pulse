@@ -237,9 +237,9 @@ export const UpdateSsoProviderSchema = z.object({
     domain: z.string().max(255).optional(),
     isActive: z.boolean().optional(),
 });
-export const ScimScopeSchema = z.enum(["read", "write", "delete"]);
+export const ScimScopeSchema = z.enum(["users:read", "users:write", "users:delete", "groups:read", "groups:write", "groups:delete", "bulk"]);
 export const CreateScimTokenSchema = z.object({
-    scopes: z.array(ScimScopeSchema).min(1).default(["read", "write", "delete"]),
+    scopes: z.array(ScimScopeSchema).min(1).default(["users:read", "users:write", "users:delete", "groups:read", "groups:write", "groups:delete"]),
     allowedIps: z.array(ScimTokenIpSchema).max(32).optional(),
     expiresInDays: z.coerce.number().int().min(1).max(3650).optional(),
 });

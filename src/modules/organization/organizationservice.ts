@@ -199,7 +199,7 @@ export class OrganizationService {
   async createOrganization(meta: RequestMeta, data: { name: string; description?: string; industry?: string; companySize?: string; country?: string; timezone?: string; billingEmail?: string }) {
     const provisioned = await this.repo.createOrg(data.name, meta.actorUserId, data);
     const org = provisioned.organization;
-    
+
     await this.audit(meta, {
       orgId: org.id,
       action: "org.created",
@@ -583,7 +583,7 @@ export class OrganizationService {
   async createScimToken(meta: RequestMeta, orgId: string, data?: { scopes?: string[]; allowedIps?: string[]; expiresInDays?: number | undefined }) {
     await this.requireMutableOrg(orgId);
     await this.requireMember(orgId, meta.actorUserId, "owner");
-    await this.enforceBillingLimit(orgId, "scim");
+    // await this.enforceBillingLimit(orgId, "scim");
     const payload: {
       orgId: string;
       createdBy: string;
@@ -593,7 +593,7 @@ export class OrganizationService {
     } = {
       orgId,
       createdBy: meta.actorUserId,
-      scopes: data?.scopes?.length ? data.scopes : ["read", "write", "delete"],
+      scopes: data?.scopes?.length ? data.scopes : ["users:read", "users:write", "users:delete", "groups:read", "groups:write", "groups:delete"],
       ...(data?.allowedIps !== undefined ? { allowedIps: data.allowedIps } : {}),
       ...(data?.expiresInDays !== undefined ? { expiresInDays: data.expiresInDays } : {}),
     };

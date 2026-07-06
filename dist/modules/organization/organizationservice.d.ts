@@ -245,7 +245,7 @@ export declare class OrganizationService {
         id: string;
         valid: boolean;
         email: string;
-        role: "security" | "admin" | "member" | "owner" | "billing" | "developer" | "viewer";
+        role: "security" | "admin" | "member" | "owner" | "developer" | "billing" | "viewer";
         orgName: string | null;
         orgSlug: string | null;
         expiresAt: Date;

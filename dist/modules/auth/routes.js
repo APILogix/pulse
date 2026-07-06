@@ -4,6 +4,8 @@ import * as service from './service.js';
 import { AuthError, AdminLockUserSchema, AuthErrorCodes, BackupCodeLoginSchema, ChangePasswordSchema, CreateUserSchema, DeleteUserSchema, ForgotPasswordSchema, ListUsersQuerySchema, LoginMFAVerifySchema, LoginSchema, MFADeviceRemoveSchema, MFADisableRequestSchema, MFASetupSchema, MFAToggleSchema, MFAVerifySchema, MFAVerifySetupSchema, EmailMfaResendSchema, RegenerateBackupCodesSchema, ResendVerificationSchema, ResetPasswordSchema, SuspendUserSchema, UpdateUserSchema, VerifyEmailConfirmSchema, VerifyEmailQuerySchema, } from './types.js';
 import identityRoutes from './identity.routes.js';
 import ssoOidcRoutes from './sso-oidc.routes.js';
+import { OrganizationRepository } from '../organization/repository.js';
+import * as authRepo from './repository.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
@@ -46,9 +48,29 @@ export function handleAuthError(error, reply, request) {
         },
     });
 }
-function sendAuthSession(reply, payload) {
+async function sendAuthSession(reply, payload) {
     const maxAgeSeconds = Math.max(0, Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000));
     reply.setCookie(REFRESH_COOKIE_NAME, payload.refresh_token, getRefreshCookieOptions(maxAgeSeconds));
+    if (payload.user_id) {
+        const user = await authRepo.findUserById(payload.user_id);
+        const orgRepo = new OrganizationRepository();
+        const orgContext = await orgRepo.getUserContextForLogin(payload.user_id);
+        return reply.send({
+            data: {
+                access_token: payload.access_token,
+                expires_at: payload.expires_at,
+                token_type: payload.token_type,
+                session_id: payload.session_id,
+                user: user ? {
+                    id: user.id,
+                    email: user.email,
+                    name: user.full_name,
+                } : undefined,
+                default_org_slug: orgContext.default_org_slug,
+                organizations: orgContext.organizations,
+            },
+        });
+    }
     return reply.send({
         data: {
             access_token: payload.access_token,
@@ -84,7 +106,7 @@ async function credentialRoutes(fastify) {
                     },
                 });
             }
-            return sendAuthSession(reply, result);
+            return await sendAuthSession(reply, result);
         }
         catch (error) {
             return handleAuthError(error, reply, request);
@@ -96,7 +118,7 @@ async function credentialRoutes(fastify) {
             const body = LoginMFAVerifySchema.parse(request.body);
             const ci = getClientInfo(request);
             const result = await service.verifyLoginMFAChallenge(body, ci.ip, ci.userAgent, ci.device.type, request.id);
-            return sendAuthSession(reply, result);
+            return await sendAuthSession(reply, result);
         }
         catch (error) {
             return handleAuthError(error, reply, request);
@@ -123,7 +145,7 @@ async function credentialRoutes(fastify) {
             const body = BackupCodeLoginSchema.parse(request.body);
             const ci = getClientInfo(request);
             const result = await service.verifyLoginBackupCode(body, ci.ip, ci.userAgent, ci.device.type, request.id);
-            return sendAuthSession(reply, result);
+            return await sendAuthSession(reply, result);
         }
         catch (error) {
             return handleAuthError(error, reply, request);
@@ -208,7 +230,7 @@ async function passwordRoutes(fastify) {
             const body = ChangePasswordSchema.parse(r.body);
             const ci = getClientInfo(r);
             const session = await service.changePassword(r.user.id, r.user.sessionId, body, r.user.mfaVerified, ci.ip, ci.userAgent, r.id);
-            return sendAuthSession(reply, {
+            return await sendAuthSession(reply, {
                 ...session,
                 token_type: 'Bearer',
             });

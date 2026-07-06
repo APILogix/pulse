@@ -43,7 +43,6 @@ const normalizeObjectKeys = (value: unknown): unknown => {
   alias("rateLimitPerHour", "rate_limit_per_hour");
   alias("burstLimit", "burst_limit");
   alias("allowedEventTypes", "allowed_event_types");
-  alias("blockedEventTypes", "blocked_event_types");
   alias("maxEventSizeBytes", "max_event_size_bytes");
   alias("maxBatchSize", "max_batch_size");
   alias("allowedOrigins", "allowed_origins");
@@ -225,7 +224,6 @@ const projectConfigShape = {
   rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).optional(),
   burstLimit: z.coerce.number().int().min(1).max(1_000_000).optional(),
   allowedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
-  blockedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
   maxEventSizeBytes: z.coerce.number().int().min(1).max(67_108_864).optional(),
   maxBatchSize: z.coerce.number().int().min(1).max(10_000).optional(),
   allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
@@ -284,7 +282,6 @@ const environmentConfigShape = {
   rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
   burstLimit: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
   allowedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
-  blockedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
   maxEventSizeBytes: z.coerce.number().int().min(1).max(67_108_864).nullable().optional(),
   maxBatchSize: z.coerce.number().int().min(1).max(10_000).nullable().optional(),
   requireHttps: z.coerce.boolean().optional(),
@@ -435,7 +432,6 @@ export interface Project {
   rateLimitPerHour: number;
   burstLimit: number;
   allowedEventTypes: string[];
-  blockedEventTypes: string[];
   maxEventSizeBytes: number;
   maxBatchSize: number;
   allowedOrigins: string[];
@@ -484,7 +480,6 @@ export interface ProjectEnvironmentConfig {
   rateLimitPerHour: number | null;
   burstLimit: number | null;
   allowedEventTypes: string[];
-  blockedEventTypes: string[];
   maxEventSizeBytes: number | null;
   maxBatchSize: number | null;
   requireHttps: boolean;

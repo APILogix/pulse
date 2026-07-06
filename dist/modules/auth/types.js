@@ -60,6 +60,24 @@ export const LoginSchema = z.object({
     remember_me: z.boolean().optional(),
     trust_device: z.boolean().optional(),
 });
+export const LoginResponseSchema = z.object({
+    access_token: z.string(),
+    expires_at: z.date(),
+    session_id: z.string(),
+    token_type: z.literal('Bearer'),
+    user: z.object({
+        id: z.string().uuid(),
+        email: z.string().email(),
+        name: z.string(),
+    }).optional(),
+    default_org_slug: z.string().nullable().optional(),
+    organizations: z.array(z.object({
+        id: z.string().uuid(),
+        slug: z.string(),
+        name: z.string(),
+        role: z.string(),
+    })).optional(),
+});
 // Login MFA verification — TOTP or email OTP only (6 digits).
 // Backup codes use POST /auth/login/backup-code.
 export const LoginMFAVerifySchema = z.object({

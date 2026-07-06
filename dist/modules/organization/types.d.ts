@@ -27,8 +27,8 @@ export declare const OrgRoleSchema: z.ZodEnum<{
     admin: "admin";
     member: "member";
     owner: "owner";
-    billing: "billing";
     developer: "developer";
+    billing: "billing";
     viewer: "viewer";
 }>;
 export declare const InvitationStatusSchema: z.ZodEnum<{
@@ -52,10 +52,10 @@ export declare const QuotaRequestStatusSchema: z.ZodEnum<{
 }>;
 export declare const QuotaTypeSchema: z.ZodEnum<{
     events: "events";
-    members: "members";
     api_requests: "api_requests";
-    projects: "projects";
     storage: "storage";
+    projects: "projects";
+    members: "members";
     alerts: "alerts";
 }>;
 export declare const SecurityEventSeveritySchema: z.ZodEnum<{
@@ -188,8 +188,8 @@ export declare const UpdateMemberRoleSchema: z.ZodObject<{
         security: "security";
         admin: "admin";
         member: "member";
-        billing: "billing";
         developer: "developer";
+        billing: "billing";
         viewer: "viewer";
     }>;
 }, z.core.$strip>;
@@ -214,8 +214,8 @@ export declare const MembersListQuerySchema: z.ZodObject<{
         admin: "admin";
         member: "member";
         owner: "owner";
-        billing: "billing";
         developer: "developer";
+        billing: "billing";
         viewer: "viewer";
     }>>;
 }, z.core.$strip>;
@@ -231,8 +231,8 @@ export declare const CreateInvitationSchema: z.ZodObject<{
         security: "security";
         admin: "admin";
         member: "member";
-        billing: "billing";
         developer: "developer";
+        billing: "billing";
         viewer: "viewer";
     }>>;
 }, z.core.$strip>;
@@ -276,8 +276,8 @@ export declare const CreateApiKeySchema: z.ZodObject<{
         security: "security";
         admin: "admin";
         member: "member";
-        billing: "billing";
         developer: "developer";
+        billing: "billing";
         viewer: "viewer";
     }>>;
     expiresInDays: z.ZodOptional<z.ZodNumber>;
@@ -302,15 +302,23 @@ export declare const UpdateSsoProviderSchema: z.ZodObject<{
     isActive: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>;
 export declare const ScimScopeSchema: z.ZodEnum<{
-    read: "read";
-    write: "write";
-    delete: "delete";
+    "users:read": "users:read";
+    "users:write": "users:write";
+    "users:delete": "users:delete";
+    "groups:read": "groups:read";
+    "groups:write": "groups:write";
+    "groups:delete": "groups:delete";
+    bulk: "bulk";
 }>;
 export declare const CreateScimTokenSchema: z.ZodObject<{
     scopes: z.ZodDefault<z.ZodArray<z.ZodEnum<{
-        read: "read";
-        write: "write";
-        delete: "delete";
+        "users:read": "users:read";
+        "users:write": "users:write";
+        "users:delete": "users:delete";
+        "groups:read": "groups:read";
+        "groups:write": "groups:write";
+        "groups:delete": "groups:delete";
+        bulk: "bulk";
     }>>>;
     allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
     expiresInDays: z.ZodOptional<z.ZodCoercedNumber<unknown>>;

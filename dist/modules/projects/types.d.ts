@@ -15,8 +15,8 @@
 import { z } from "zod";
 export declare const ProjectStatusSchema: z.ZodEnum<{
     active: "active";
-    paused: "paused";
     archived: "archived";
+    paused: "paused";
 }>;
 export declare const ProjectEnvironmentSchema: z.ZodEnum<{
     development: "development";
@@ -41,8 +41,8 @@ export declare const OrgRoleSchema: z.ZodEnum<{
     admin: "admin";
     member: "member";
     owner: "owner";
-    billing: "billing";
     developer: "developer";
+    billing: "billing";
     viewer: "viewer";
 }>;
 export declare const ApiKeyPermissionSchema: z.ZodEnum<{
@@ -81,8 +81,8 @@ export declare const EnvironmentParamsSchema: z.ZodObject<{
 export declare const ListProjectsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
-        paused: "paused";
         archived: "archived";
+        paused: "paused";
     }>>;
     environment: z.ZodOptional<z.ZodEnum<{
         development: "development";
@@ -140,7 +140,6 @@ export declare const CreateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
     rateLimitPerHour: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     burstLimit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
     maxEventSizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     maxBatchSize: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -172,7 +171,6 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
     rateLimitPerHour: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     burstLimit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
     maxEventSizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     maxBatchSize: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -191,8 +189,8 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
-        paused: "paused";
         archived: "archived";
+        paused: "paused";
     }>>;
     environment: z.ZodOptional<z.ZodEnum<{
         development: "development";
@@ -210,7 +208,6 @@ export declare const CreateEnvironmentBodySchema: z.ZodPipe<z.ZodTransform<unkno
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     burstLimit: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
     maxEventSizeBytes: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     maxBatchSize: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
@@ -231,7 +228,6 @@ export declare const UpdateEnvironmentBodySchema: z.ZodPipe<z.ZodTransform<unkno
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     burstLimit: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
     maxEventSizeBytes: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     maxBatchSize: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
@@ -351,7 +347,6 @@ export interface Project {
     rateLimitPerHour: number;
     burstLimit: number;
     allowedEventTypes: string[];
-    blockedEventTypes: string[];
     maxEventSizeBytes: number;
     maxBatchSize: number;
     allowedOrigins: string[];
@@ -396,7 +391,6 @@ export interface ProjectEnvironmentConfig {
     rateLimitPerHour: number | null;
     burstLimit: number | null;
     allowedEventTypes: string[];
-    blockedEventTypes: string[];
     maxEventSizeBytes: number | null;
     maxBatchSize: number | null;
     requireHttps: boolean;
