@@ -11,6 +11,9 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { ProjectsRepository } from './repository.js';
+import { SettingsRepository } from './settings.repository.js';
+import { ApiKeyRepository } from './api-key.repository.js';
+import { UsageRepository } from './usage.repository.js';
 import { projectsRoutes } from './routes.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
@@ -21,6 +24,9 @@ declare module 'fastify' {
   interface FastifyInstance {
     projects: {
       repository: ProjectsRepository;
+      settingsRepository: SettingsRepository;
+      apiKeyRepository: ApiKeyRepository;
+      usageRepository: UsageRepository;
       service: ProjectsService;
       alertRoutesRepository: import('./alert-routes.repository.js').AlertRoutesRepository;
       alertRoutesService: import('./alert-routes.service.js').ProjectAlertRouteService;
@@ -35,6 +41,9 @@ async function projectsModule(
   _options: FastifyPluginOptions,
 ): Promise<void> {
   const repository = new ProjectsRepository();
+  const settingsRepository = new SettingsRepository();
+  const apiKeyRepository = new ApiKeyRepository();
+  const usageRepository = new UsageRepository();
 
   // Caching is in-process LRU only (no Redis dependency). The ingestion module
   // still owns its own caches; the projects service only warms/evicts the
@@ -48,6 +57,9 @@ async function projectsModule(
     repository,
     fastify.log,
     fastify.organization.repository,
+    settingsRepository,
+    apiKeyRepository,
+    usageRepository
   );
 
   const { AlertRoutesRepository } = await import('./alert-routes.repository.js');
@@ -77,6 +89,9 @@ async function projectsModule(
 
   fastify.decorate('projects', {
     repository,
+    settingsRepository,
+    apiKeyRepository,
+    usageRepository,
     service,
     alertRoutesRepository,
     alertRoutesService,

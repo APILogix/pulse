@@ -11,6 +11,49 @@ export const CANDIDATE_MIGRATION_DIRS = [
   path.resolve(__dirname, '../../src/db/postgres/migrations2'),
 ];
 
+export const DRAFT_MIGRATIONS_DIR = path.resolve(
+  __dirname,
+  '../../src/db/postgres/canonical_migrations_draft',
+);
+
+export function resolveMigrationDirOverride(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const explicitDir = env.MIGRATIONS_DIR?.trim();
+  if (explicitDir) {
+    return path.resolve(explicitDir);
+  }
+
+  const profile = env.MIGRATIONS_PROFILE?.trim().toLowerCase();
+  if (profile === 'draft') {
+    return DRAFT_MIGRATIONS_DIR;
+  }
+
+  return null;
+}
+
+export function resolveMigrationDirOverrideFromArgs(
+  args: string[],
+): string | null {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === '--migrations-profile') {
+      const value = args[i + 1]?.trim().toLowerCase();
+      if (value === 'draft') {
+        return DRAFT_MIGRATIONS_DIR;
+      }
+    }
+    if (arg === '--migrations-dir') {
+      const value = args[i + 1]?.trim();
+      if (value) {
+        return path.resolve(value);
+      }
+    }
+  }
+
+  return null;
+}
+
 export const LEGACY_MIGRATION_ALIASES: Record<string, string> = {
   '001_auth_create_core_schema.up.sql': '001_auth_canonical_consolidated.up.sql',
   '002_connectors_create_notification_schema.up.sql': '002_add_notification_connectors.up.sql',
@@ -26,7 +69,41 @@ export const LEGACY_MIGRATION_ALIASES: Record<string, string> = {
   '012_auth_harden_email_outbox_schema.up.sql': '012_auth_email_outbox_hardening.up.sql',
 };
 
-export async function resolveMigrationsDir(): Promise<string> {
+async function collectMigrationFiles(
+  rootDir: string,
+  currentDir: string = rootDir,
+): Promise<string[]> {
+  const entries = await fs.readdir(currentDir, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const fullPath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      return collectMigrationFiles(rootDir, fullPath);
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.up.sql')) {
+      return [];
+    }
+    return [path.relative(rootDir, fullPath).split(path.sep).join('/')];
+  }));
+
+  return files
+    .flat()
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export async function resolveMigrationsDir(
+  args: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  const override =
+    resolveMigrationDirOverrideFromArgs(args) ?? resolveMigrationDirOverride(env);
+  if (override) {
+    const stat = await fs.stat(override);
+    if (!stat.isDirectory()) {
+      throw new Error(`Migrations override is not a directory: ${override}`);
+    }
+    return override;
+  }
+
   for (const dir of CANDIDATE_MIGRATION_DIRS) {
     try {
       const stat = await fs.stat(dir);
@@ -44,11 +121,7 @@ export async function resolveMigrationsDir(): Promise<string> {
 
 export async function listMigrationFiles(migrationsDir?: string): Promise<string[]> {
   const dir = migrationsDir ?? await resolveMigrationsDir();
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.up.sql'))
-    .map((e) => e.name)
-    .sort((a, b) => a.localeCompare(b));
+  return collectMigrationFiles(dir);
 }
 
 export async function readMigrationSql(

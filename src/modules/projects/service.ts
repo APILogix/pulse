@@ -15,12 +15,16 @@
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache, type CachedProjectConfig } from "../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../organization/repository.js";
+import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "./types.js";
 import {
   ProjectsRepository,
   type ApiKeyUpdateInput,
   type ProjectModuleUsageCounts,
   type ProjectUpdateInput,
 } from "./repository.js";
+import { SettingsRepository } from "./settings.repository.js";
+import { ApiKeyRepository } from "./api-key.repository.js";
+import { UsageRepository } from "./usage.repository.js";
 import type {
   ApiKeyUsage,
   BulkOperationResult,
@@ -89,6 +93,17 @@ const DEFAULT_GRACE_PERIOD_HOURS = 24;
 const DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT = 3;
 const BILLING_MUTABLE_STATUSES = new Set(["trialing", "active"]);
 
+const ROLE_HIERARCHY: Record<ProjectMemberRole, number> = {
+  [ProjectMemberRole.OWNER]: 4,
+  [ProjectMemberRole.ADMIN]: 3,
+  [ProjectMemberRole.DEVELOPER]: 2,
+  [ProjectMemberRole.VIEWER]: 1,
+};
+
+export function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMemberRole): boolean {
+  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[required];
+}
+
 export class ProjectsService {
   constructor(
     private readonly repository: ProjectsRepository,
@@ -96,6 +111,9 @@ export class ProjectsService {
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
     private readonly orgRepo: OrganizationRepository,
+    private readonly settingsRepository: SettingsRepository,
+    private readonly apiKeyRepository: ApiKeyRepository,
+    private readonly usageRepository: UsageRepository,
   ) {}
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -183,7 +201,65 @@ export class ProjectsService {
   }
 
   async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {
-    return this.requireProjectAccess(orgId, projectId, userId, "member");
+    return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+  }
+
+  async getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings> {
+    await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+    const settings = await this.settingsRepository.findByProjectId(projectId);
+    if (!settings) throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
+    return settings;
+  }
+
+  async updateProjectSettings(
+    orgId: string,
+    projectId: string,
+    userId: string,
+    updates: Partial<Omit<ProjectSettings, "id" | "projectId" | "organizationId" | "createdAt" | "updatedAt">>,
+    meta: RequestMeta
+  ): Promise<ProjectSettings> {
+    await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+    const result = await this.settingsRepository.update(projectId, updates);
+
+    await this.audit(meta, {
+      orgId,
+      action: "project.settings.updated",
+      entityType: "project_settings",
+      entityId: result.id,
+      newValues: updates as any,
+    });
+
+    return result;
+  }
+
+  async getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto> {
+    const project = await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+    const settings = await this.settingsRepository.findByProjectId(projectId);
+    if (!settings) throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
+    
+    const members = (this.repository as any).findProjectMembers ? await (this.repository as any).findProjectMembers(orgId, projectId) : [];
+    const apiKeys = await (this.apiKeyRepository as any).listApiKeys(orgId, projectId);
+
+    const now = new Date();
+    const usage = {
+      totalEventsToday: 0,
+      totalBytesToday: 0,
+      peakHour: 0,
+      currentHourEvents: 0,
+      categoryBreakdown: {},
+      eventTypeBreakdown: {},
+      hourlyBreakdown: [],
+      dailyTrend: [],
+      heatmapData: []
+    };
+
+    return {
+      project,
+      settings,
+      memberCount: members.length,
+      apiKeyCount: apiKeys.length,
+      usage,
+    };
   }
 
   async updateProject(
@@ -912,13 +988,32 @@ export class ProjectsService {
     orgId: string,
     projectId: string,
     userId: string,
-    requiredRole: OrgRole,
+    requiredRole: OrgRole | ProjectMemberRole,
   ): Promise<Project> {
-    // Tenant isolation root check: caller MUST be an active org member with the
-    // required role AND the project MUST belong to that org.
-    await this.requireOrganizationAccess(orgId, userId, requiredRole);
     const project = await this.repository.findProjectById(orgId, projectId);
     if (!project) throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+
+    if (requiredRole === "owner" || requiredRole === "admin" || requiredRole === "member" || requiredRole === "billing") {
+      await this.requireOrganizationAccess(orgId, userId, requiredRole);
+      return project;
+    }
+
+    try {
+      await this.requireOrganizationAccess(orgId, userId);
+    } catch (err) {
+      throw err;
+    }
+
+    if ((this.repository as any).getProjectMemberRole) {
+      const userProjectRole = await (this.repository as any).getProjectMemberRole(orgId, projectId, userId);
+      if (userProjectRole) {
+         if (!hasProjectRole(userProjectRole, requiredRole as ProjectMemberRole)) {
+           throw new ProjectError("FORBIDDEN", "Insufficient project role", 403);
+         }
+         return project;
+      }
+    }
+
     return project;
   }
 

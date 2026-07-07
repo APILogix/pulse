@@ -38,6 +38,7 @@ import {
   UpdateApiKeyBodySchema,
   UpdateEnvironmentBodySchema,
   UpdateProjectBodySchema,
+  UpdateProjectSettingsBodySchema,
 } from "./types.js";
 import { handleProjectError, ProjectError } from "./utils.js";
 
@@ -199,6 +200,41 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
       }),
     );
   }
+
+
+
+  // ── Project Settings & Overview ─────────────────────────────────────────────
+
+  fastify.get(
+    "/:projectId/settings",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const settings = await service.getProjectSettings(orgId, projectId, authenticatedUser(request).id);
+      return reply.send({ success: true, data: settings });
+    }),
+  );
+
+  fastify.patch(
+    "/:projectId/settings",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const body = UpdateProjectSettingsBodySchema.parse(request.body);
+      const settings = await service.updateProjectSettings(orgId, projectId, authenticatedUser(request).id, body as any, requestMeta(request));
+      return reply.send({ success: true, data: settings });
+    }),
+  );
+
+  fastify.get(
+    "/:projectId/overview",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const overview = await service.getProjectOverview(orgId, projectId, authenticatedUser(request).id);
+      return reply.send({ success: true, data: overview });
+    }),
+  );
 
   // ── Environments ────────────────────────────────────────────────────────────
 

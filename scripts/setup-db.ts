@@ -1,9 +1,8 @@
 ﻿/**
  * Postgres migration runner.
  *
- * Reads every `*.up.sql` file in the canonical migrations directory (in
- * lexicographic
- * order, ignoring sub-folders and helper files), tracks applied filenames
+ * Reads every `*.up.sql` file in the canonical migrations directory tree (in
+ * lexicographic order, ignoring helper files), tracks applied filenames
  * in a `schema_migrations` ledger table, and applies each pending migration
  * inside its own transaction.
  *
@@ -11,6 +10,8 @@
  *
  * Usage:
  *   npm run db:migrate
+ *   MIGRATIONS_PROFILE=draft npm run db:migrate
+ *   MIGRATIONS_DIR=path/to/custom/tree npm run db:migrate
  */
 import { pool } from '../src/config/database.js';
 import { logger } from '../src/config/logger.js';

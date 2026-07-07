@@ -37,15 +37,8 @@ import { ProjectError } from "./utils.js";
 // Column list selected for every project read. Centralized so the projection
 // stays consistent across find/list/update.
 const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, environment,
-  production_api_prefix, development_api_prefix, staging_api_prefix,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  allowed_origins, require_https, ip_allowlist, ip_blocklist,
-  geo_restriction_enabled, allowed_countries,
-  alert_email, alert_webhook_url, alert_on_error_rate_threshold,
-  alert_on_latency_threshold_ms, metadata, settings,
-  archived_at, deleted_at, deleted_by, created_at, updated_at
+  id, org_id, name, slug, description, status, default_environment AS environment,
+  archived_at, deleted_at, created_at, updated_at
 `;
 
 const API_KEY_COLUMNS = `
@@ -313,7 +306,7 @@ export class ProjectsRepository {
     }
     if (query.environment) {
       params.push(query.environment);
-      whereClauses.push(`p.environment = $${params.length}`);
+      whereClauses.push(`p.default_environment = ${params.length}`);
     }
     if (query.search) {
       params.push(`%${query.search}%`);
@@ -374,26 +367,12 @@ export class ProjectsRepository {
     client?: PoolClient,
   ): Promise<Project> {
     const db = client ?? this.db;
-    const c = input.config;
     try {
       const result = await db.query<ProjectRow>(
         `INSERT INTO projects (
-           org_id, name, slug, description, environment,
-           production_api_prefix, development_api_prefix, staging_api_prefix,
-           rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-           allowed_event_types, max_event_size_bytes, max_batch_size,
-           allowed_origins, require_https, ip_allowlist, ip_blocklist,
-           geo_restriction_enabled, allowed_countries,
-           alert_email, alert_webhook_url, alert_on_error_rate_threshold, alert_on_latency_threshold_ms,
-           metadata, settings
+           org_id, name, slug, description, default_environment
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,
-           COALESCE($9,1000), COALESCE($10,10000), COALESCE($11,100000), COALESCE($12,2000),
-           COALESCE($13::text[],ARRAY['*']::text[]), COALESCE($14,1048576), COALESCE($15,100),
-           COALESCE($16::text[],ARRAY[]::text[]), COALESCE($17,TRUE), $18::inet[], $19::inet[],
-           COALESCE($20,FALSE), $21::char(2)[],
-           $22, $23, COALESCE($24,5.00), COALESCE($25,1000),
-           COALESCE($26,'{}'::jsonb), COALESCE($27,'{}'::jsonb)
+           $1,$2,$3,$4,$5
          )
          RETURNING ${PROJECT_COLUMNS}`,
         [
@@ -402,28 +381,6 @@ export class ProjectsRepository {
           input.slug,
           input.description,
           input.environment,
-          input.productionApiPrefix,
-          input.developmentApiPrefix,
-          input.stagingApiPrefix,
-          c.rateLimitPerSecond ?? null,
-          c.rateLimitPerMinute ?? null,
-          c.rateLimitPerHour ?? null,
-          c.burstLimit ?? null,
-          c.allowedEventTypes ?? null,
-          c.maxEventSizeBytes ?? null,
-          c.maxBatchSize ?? null,
-          c.allowedOrigins ?? null,
-          c.requireHttps ?? null,
-          c.ipAllowlist ?? null,
-          c.ipBlocklist ?? null,
-          c.geoRestrictionEnabled ?? null,
-          c.allowedCountries ?? null,
-          c.alertEmail ?? null,
-          c.alertWebhookUrl ?? null,
-          c.alertOnErrorRateThreshold ?? null,
-          c.alertOnLatencyThresholdMs ?? null,
-          c.metadata ? JSON.stringify(c.metadata) : null,
-          c.settings ? JSON.stringify(c.settings) : null,
         ],
       );
 
@@ -1612,33 +1569,12 @@ export class ProjectsRepository {
     if (input.name !== undefined) set("name", input.name);
     if (input.description !== undefined) set("description", input.description);
     if (input.status !== undefined) set("status", input.status);
-    if (input.environment !== undefined) set("environment", input.environment);
-    if (input.productionApiPrefix !== undefined) set("production_api_prefix", input.productionApiPrefix);
-    if (input.developmentApiPrefix !== undefined) set("development_api_prefix", input.developmentApiPrefix);
-    if (input.stagingApiPrefix !== undefined) set("staging_api_prefix", input.stagingApiPrefix);
-    if (input.rateLimitPerSecond !== undefined) set("rate_limit_per_second", input.rateLimitPerSecond);
-    if (input.rateLimitPerMinute !== undefined) set("rate_limit_per_minute", input.rateLimitPerMinute);
-    if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
-    if (input.burstLimit !== undefined) set("burst_limit", input.burstLimit);
-    if (input.allowedEventTypes !== undefined) set("allowed_event_types", input.allowedEventTypes);
-    if (input.maxEventSizeBytes !== undefined) set("max_event_size_bytes", input.maxEventSizeBytes);
-    if (input.maxBatchSize !== undefined) set("max_batch_size", input.maxBatchSize);
-    if (input.allowedOrigins !== undefined) set("allowed_origins", input.allowedOrigins);
-    if (input.requireHttps !== undefined) set("require_https", input.requireHttps);
-    if (input.ipAllowlist !== undefined) set("ip_allowlist", input.ipAllowlist);
-    if (input.ipBlocklist !== undefined) set("ip_blocklist", input.ipBlocklist);
-    if (input.geoRestrictionEnabled !== undefined) set("geo_restriction_enabled", input.geoRestrictionEnabled);
-    if (input.allowedCountries !== undefined) set("allowed_countries", input.allowedCountries);
-    if (input.alertEmail !== undefined) set("alert_email", input.alertEmail);
-    if (input.alertWebhookUrl !== undefined) set("alert_webhook_url", input.alertWebhookUrl);
-    if (input.alertOnErrorRateThreshold !== undefined) set("alert_on_error_rate_threshold", input.alertOnErrorRateThreshold);
-    if (input.alertOnLatencyThresholdMs !== undefined) set("alert_on_latency_threshold_ms", input.alertOnLatencyThresholdMs);
-    if (input.metadata !== undefined) set("metadata", JSON.stringify(input.metadata));
-    if (input.settings !== undefined) set("settings", JSON.stringify(input.settings));
+    if (input.environment !== undefined) set("default_environment", input.environment);
     if (input.archivedAt !== undefined) set("archived_at", input.archivedAt);
 
     return { assignments, values };
   }
+
 
   /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
   private prefixedProjectRow(row: Record<string, unknown>): ProjectRow {
@@ -1650,35 +1586,13 @@ export class ProjectsRepository {
       description: row.p_description as string | null,
       status: row.p_status as ProjectStatus,
       environment: row.p_environment as ProjectEnvironment,
-      production_api_prefix: row.p_production_api_prefix as string | null,
-      development_api_prefix: row.p_development_api_prefix as string | null,
-      staging_api_prefix: row.p_staging_api_prefix as string | null,
-      rate_limit_per_second: row.p_rate_limit_per_second as number,
-      rate_limit_per_minute: row.p_rate_limit_per_minute as number,
-      rate_limit_per_hour: row.p_rate_limit_per_hour as number,
-      burst_limit: row.p_burst_limit as number,
-      allowed_event_types: row.p_allowed_event_types as string[] | null,
-      max_event_size_bytes: row.p_max_event_size_bytes as number,
-      max_batch_size: row.p_max_batch_size as number,
-      allowed_origins: row.p_allowed_origins as string[] | null,
-      require_https: row.p_require_https as boolean,
-      ip_allowlist: row.p_ip_allowlist as string[] | null,
-      ip_blocklist: row.p_ip_blocklist as string[] | null,
-      geo_restriction_enabled: row.p_geo_restriction_enabled as boolean,
-      allowed_countries: row.p_allowed_countries as string[] | null,
-      alert_email: row.p_alert_email as string | null,
-      alert_webhook_url: row.p_alert_webhook_url as string | null,
-      alert_on_error_rate_threshold: row.p_alert_on_error_rate_threshold as string | number,
-      alert_on_latency_threshold_ms: row.p_alert_on_latency_threshold_ms as number,
-      metadata: row.p_metadata as Record<string, unknown> | null,
-      settings: row.p_settings as Record<string, unknown> | null,
       archived_at: row.p_archived_at as Date | null,
       deleted_at: row.p_deleted_at as Date | null,
-      deleted_by: row.p_deleted_by as string | null,
       created_at: row.p_created_at as Date,
       updated_at: row.p_updated_at as Date,
-    };
+    } as any;
   }
+
 
   private mapProject(row: ProjectRow): Project {
     return {
@@ -1689,35 +1603,36 @@ export class ProjectsRepository {
       description: row.description,
       status: row.status,
       environment: row.environment,
-      productionApiPrefix: row.production_api_prefix,
-      developmentApiPrefix: row.development_api_prefix,
-      stagingApiPrefix: row.staging_api_prefix,
-      rateLimitPerSecond: Number(row.rate_limit_per_second ?? 0),
-      rateLimitPerMinute: Number(row.rate_limit_per_minute ?? 0),
-      rateLimitPerHour: Number(row.rate_limit_per_hour ?? 0),
-      burstLimit: Number(row.burst_limit ?? 0),
-      allowedEventTypes: row.allowed_event_types ?? [],
-      maxEventSizeBytes: Number(row.max_event_size_bytes ?? 0),
-      maxBatchSize: Number(row.max_batch_size ?? 0),
-      allowedOrigins: row.allowed_origins ?? [],
-      requireHttps: row.require_https,
-      ipAllowlist: row.ip_allowlist,
-      ipBlocklist: row.ip_blocklist,
-      geoRestrictionEnabled: row.geo_restriction_enabled,
-      allowedCountries: row.allowed_countries,
-      alertEmail: row.alert_email,
-      alertWebhookUrl: row.alert_webhook_url,
-      alertOnErrorRateThreshold: Number(row.alert_on_error_rate_threshold ?? 0),
-      alertOnLatencyThresholdMs: Number(row.alert_on_latency_threshold_ms ?? 0),
-      metadata: row.metadata ?? {},
-      settings: row.settings ?? {},
+      productionApiPrefix: null,
+      developmentApiPrefix: null,
+      stagingApiPrefix: null,
+      rateLimitPerSecond: 0,
+      rateLimitPerMinute: 0,
+      rateLimitPerHour: 0,
+      burstLimit: 0,
+      allowedEventTypes: [],
+      maxEventSizeBytes: 0,
+      maxBatchSize: 0,
+      allowedOrigins: [],
+      requireHttps: false,
+      ipAllowlist: null,
+      ipBlocklist: null,
+      geoRestrictionEnabled: false,
+      allowedCountries: null,
+      alertEmail: null,
+      alertWebhookUrl: null,
+      alertOnErrorRateThreshold: 0,
+      alertOnLatencyThresholdMs: 0,
+      metadata: {},
+      settings: {},
       archivedAt: row.archived_at,
       deletedAt: row.deleted_at,
-      deletedBy: row.deleted_by,
+      deletedBy: null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
+
 
   private mapProjectWithCounts(row: ProjectRow): ProjectListItem {
     return {
