@@ -32,10 +32,10 @@ import {
   getUserRevokeCutoff,
   hasFreshStepUp,
   isAccessTokenBlacklisted,
-} from '../../modules/auth/cache.js';
-import { findSessionById, findUserById } from '../../modules/auth/repository.js';
-import { AuthErrorCodes, type User } from '../../modules/auth/types.js';
-import { verifyAccessToken } from '../../modules/auth/utils.js';
+} from '../../modules/auth/infrastructure/cache/auth.cache.js';
+import { findSessionById, findUserById } from '../../modules/auth/infrastructure/repositories/index.js';
+import { AuthErrorCodes, type User } from '../../modules/auth/domain/types.js';
+import { verifyAccessToken } from '../../modules/auth/infrastructure/crypto/jwt.js';
 
 declare module 'fastify' {
   interface FastifyRequest {

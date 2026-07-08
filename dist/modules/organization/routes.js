@@ -1,5 +1,6 @@
 import { authenticate } from '../../shared/middleware/auth.js';
-import { ACCESS_TOKEN_TTL_SECONDS, generateAccessToken } from '../auth/utils.js';
+import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
+import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateScimTokenSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
 import { registerSdkConfigRoutes } from './sdk-config.routes.js';
 function handleOrganizationError(error, reply) {

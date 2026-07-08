@@ -14,7 +14,11 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../organization/repository.js";
+import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "./types.js";
 import { ProjectsRepository } from "./repository.js";
+import { SettingsRepository } from "./settings.repository.js";
+import { ApiKeyRepository } from "./api-key.repository.js";
+import { UsageRepository } from "./usage.repository.js";
 import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 export interface RequestMeta {
     actorUserId: string;
@@ -26,11 +30,15 @@ export interface RequestMeta {
     httpMethod: string;
     endpoint: string;
 }
+export declare function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMemberRole): boolean;
 export declare class ProjectsService {
     private readonly repository;
     private readonly logger;
     private readonly orgRepo;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository);
+    private readonly settingsRepository;
+    private readonly apiKeyRepository;
+    private readonly usageRepository;
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;
@@ -39,6 +47,9 @@ export declare class ProjectsService {
     }>;
     createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<Project>;
     getProject(orgId: string, projectId: string, userId: string): Promise<Project>;
+    getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings>;
+    updateProjectSettings(orgId: string, projectId: string, userId: string, updates: Partial<Omit<ProjectSettings, "id" | "projectId" | "organizationId" | "createdAt" | "updatedAt">>, meta: RequestMeta): Promise<ProjectSettings>;
+    getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto>;
     updateProject(orgId: string, projectId: string, userId: string, body: UpdateProjectBody, meta: RequestMeta): Promise<Project>;
     deleteProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<void>;
     restoreProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
@@ -80,7 +91,7 @@ export declare class ProjectsService {
      */
     validateApiKey(rawKey: string): Promise<ValidatedApiKey | null>;
     private requireOrganizationAccess;
-    requireProjectAccess(orgId: string, projectId: string, userId: string, requiredRole: OrgRole): Promise<Project>;
+    requireProjectAccess(orgId: string, projectId: string, userId: string, requiredRole: OrgRole | ProjectMemberRole): Promise<Project>;
     private limitFrom;
     private assertWithinLimit;
     private requireMutableBilling;

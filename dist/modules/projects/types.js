@@ -308,4 +308,13 @@ export const BulkRevokeBodySchema = z.preprocess(normalizeObjectKeys, z.object({
     apiKeyIds: z.array(z.string().uuid()).min(1).max(100).optional(),
     revokedReason: z.string().min(1).max(500).optional(),
 }));
+// --- New Types for Phase 4 ---
+export var ProjectMemberRole;
+(function (ProjectMemberRole) {
+    ProjectMemberRole["OWNER"] = "owner";
+    ProjectMemberRole["ADMIN"] = "admin";
+    ProjectMemberRole["DEVELOPER"] = "developer";
+    ProjectMemberRole["VIEWER"] = "viewer";
+})(ProjectMemberRole || (ProjectMemberRole = {}));
+export const UpdateProjectSettingsBodySchema = z.object({ retentionDays: z.number().optional(), maxEventsPerSecond: z.number().optional(), autoArchive: z.boolean().optional(), alertingEnabled: z.boolean().optional(), ingestionEnabled: z.boolean().optional() });
 //# sourceMappingURL=types.js.map

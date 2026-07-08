@@ -9,7 +9,8 @@
  */
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import { authenticate } from '../../shared/middleware/auth.js';
-import { ACCESS_TOKEN_TTL_SECONDS, generateAccessToken } from '../auth/utils.js';
+import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
+import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import {
   AcceptInvitationSchema,
   ApiKeyParamsSchema,

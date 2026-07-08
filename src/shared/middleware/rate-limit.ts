@@ -15,7 +15,7 @@
 import type { FastifyRequest, preHandlerHookHandler } from 'fastify';
 
 import { redis } from '../../config/redis.js';
-import { AuthErrorCodes } from '../../modules/auth/types.js';
+import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
 
 export interface RouteRateLimitOptions {
   /** Maximum number of requests allowed per window. */

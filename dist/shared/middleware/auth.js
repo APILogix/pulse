@@ -1,8 +1,8 @@
 import jwt from 'jsonwebtoken';
-import { getUserRevokeCutoff, hasFreshStepUp, isAccessTokenBlacklisted, } from '../../modules/auth/cache.js';
-import { findSessionById, findUserById } from '../../modules/auth/repository.js';
-import { AuthErrorCodes } from '../../modules/auth/types.js';
-import { verifyAccessToken } from '../../modules/auth/utils.js';
+import { getUserRevokeCutoff, hasFreshStepUp, isAccessTokenBlacklisted, } from '../../modules/auth/infrastructure/cache/auth.cache.js';
+import { findSessionById, findUserById } from '../../modules/auth/infrastructure/repositories/index.js';
+import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
+import { verifyAccessToken } from '../../modules/auth/infrastructure/crypto/jwt.js';
 function unauthorized(reply, code, message, status = 401) {
     return reply.status(status).send({
         error: { code, message },

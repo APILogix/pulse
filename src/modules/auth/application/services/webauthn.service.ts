@@ -1,0 +1,953 @@
+/**
+
+ * WebAuthn / passkey registration and login MFA (@simplewebauthn/server).
+
+ *
+
+ * Challenges live in-process LRU (`webauthnChallengeCache`). Credentials in
+
+ * `user_mfa_devices` with `device_type = hardware_key`.
+
+ */
+
+import { createHash, randomBytes } from 'crypto';
+
+import { promisify } from 'util';
+
+import {
+
+  generateAuthenticationOptions,
+
+  generateRegistrationOptions,
+
+  verifyAuthenticationResponse,
+
+  verifyRegistrationResponse,
+
+} from '@simplewebauthn/server';
+
+import { isoBase64URL } from '@simplewebauthn/server/helpers';
+
+import type {
+
+  AuthenticationResponseJSON,
+
+  RegistrationResponseJSON,
+
+  WebAuthnCredential,
+
+} from '@simplewebauthn/server';
+
+
+
+import { logger } from '../../../../config/logger.js';
+import { logAudit } from '../../../../shared/middleware/audit-logger.js';
+
+
+
+import {
+  loginMfaChallengeCache,
+  mfaBackupTempCache,
+  recordStepUpFreshness,
+  stepUpChallengeCache,
+  webauthnChallengeCache,
+} from '../../infrastructure/cache/auth.cache.js';
+
+import * as repository from '../../infrastructure/repositories/index.js';
+
+import {
+  assertLoginAllowedByOrgPolicy,
+  assertMfaEnrollmentAllowed,
+} from '../../domain/policies.js';
+import { issueSessionForUser } from './index.js';
+import { trustCurrentDevice } from './trusted-device.service.js';
+
+import {
+
+  AuthError,
+
+  AuthErrorCodes,
+
+  type MFADevice,
+
+  type User,
+
+  type WebAuthnRegisterVerifyInput,
+
+  type WebAuthnLoginMfaVerifyInput,
+  type WebAuthnStepUpVerifyInput,
+} from '../../domain/types.js';
+
+import { webauthnConfig } from '../../infrastructure/config/webauthn.config.js';
+
+
+
+const randomBytesAsync = promisify(randomBytes);
+
+
+
+async function generateBackupCodes(): Promise<{
+
+  plain: string[];
+
+  hashed: string[];
+
+}> {
+
+  const codes: string[] = [];
+
+  for (let i = 0; i < 10; i++) {
+
+    const bytes = await randomBytesAsync(10);
+
+    codes.push(bytes.toString('hex'));
+
+  }
+
+  const hashed = codes.map((code) =>
+
+    createHash('sha256').update(code).digest('hex'),
+
+  );
+
+  return { plain: codes, hashed };
+
+}
+
+
+
+function credentialFromDevice(device: MFADevice): WebAuthnCredential {
+
+  if (!device.credential_id || !device.public_key) {
+
+    throw new AuthError(
+
+      'Passkey credential data missing',
+
+      AuthErrorCodes.MFA_DEVICE_NOT_FOUND,
+
+      500,
+
+    );
+
+  }
+
+  return {
+
+    id: device.credential_id,
+
+    publicKey: isoBase64URL.toBuffer(device.public_key),
+
+    counter: device.sign_count ?? 0,
+
+    transports: [],
+
+  };
+
+}
+
+
+
+function listHardwareKeys(devices: MFADevice[]): MFADevice[] {
+
+  return devices.filter(
+
+    (d) =>
+
+      d.device_type === 'hardware_key' &&
+
+      d.verified &&
+
+      d.is_active &&
+
+      d.credential_id,
+
+  );
+
+}
+
+
+
+export async function createWebAuthnRegistrationOptions(
+
+  userId: string,
+
+  deviceName: string,
+
+): Promise<{ options: Awaited<ReturnType<typeof generateRegistrationOptions>> }> {
+
+  const user = await repository.findUserById(userId);
+
+  if (!user) {
+
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+
+  }
+
+
+
+  const devices = await repository.findMFADevicesByUserId(userId);
+  const existing = listHardwareKeys(devices);
+
+  // Enforce org MFA policy: hardware_key (WebAuthn/passkey) must be permitted
+  // and the user must be under the per-user device cap.
+  await assertMfaEnrollmentAllowed(
+    userId,
+    'hardware_key',
+    devices.filter((d) => d.is_active).length,
+  );
+
+  const options = await generateRegistrationOptions({
+
+    rpName: webauthnConfig.rpName,
+
+    rpID: webauthnConfig.rpID,
+
+    userName: user.email,
+
+    userDisplayName: user.full_name || user.email,
+
+    userID: new TextEncoder().encode(userId),
+
+    attestationType: 'none',
+
+    excludeCredentials: existing.map((d) => ({
+
+      id: d.credential_id!,
+
+    })),
+
+    authenticatorSelection: {
+
+      residentKey: 'preferred',
+
+      userVerification: 'preferred',
+
+    },
+
+  });
+
+
+
+  webauthnChallengeCache.set(options.challenge, {
+    userId,
+    type: 'registration',
+  });
+
+
+
+  return { options };
+
+}
+
+
+
+export async function verifyWebAuthnRegistration(
+
+  userId: string,
+
+  input: WebAuthnRegisterVerifyInput,
+
+  ipAddress: string,
+
+  requestId: string,
+
+): Promise<{ device_id: string; backup_codes: string[] }> {
+
+  const state = webauthnChallengeCache.get(input.challenge);
+
+  if (!state || state.type !== 'registration' || state.userId !== userId) {
+
+    throw new AuthError(
+
+      'Registration challenge expired',
+
+      AuthErrorCodes.WEBAUTHN_CHALLENGE_INVALID,
+
+      400,
+
+    );
+
+  }
+
+  webauthnChallengeCache.delete(input.challenge);
+
+
+
+  const verification = await verifyRegistrationResponse({
+
+    response: input.response as unknown as RegistrationResponseJSON,
+
+    expectedChallenge: input.challenge,
+
+    expectedOrigin: webauthnConfig.origin,
+
+    expectedRPID: webauthnConfig.rpID,
+
+    requireUserVerification: true,
+
+  });
+
+
+
+  if (!verification.verified || !verification.registrationInfo) {
+
+    throw new AuthError(
+
+      'Passkey registration failed',
+
+      AuthErrorCodes.MFA_INVALID,
+
+      400,
+
+    );
+
+  }
+
+
+
+  const { credential } = verification.registrationInfo;
+
+  const allDevices = await repository.findMFADevicesByUserId(userId);
+
+  const hasOtherPrimary = allDevices.some((d) => d.is_primary && d.is_active);
+
+  const isPrimary = !hasOtherPrimary;
+
+
+
+  const device = await repository.createWebAuthnDevice({
+
+    user_id: userId,
+
+    device_name: input.device_name,
+
+    credential_id: credential.id,
+
+    public_key: isoBase64URL.fromBuffer(credential.publicKey),
+
+    sign_count: credential.counter,
+
+    is_primary: isPrimary,
+
+  });
+
+
+
+  const { plain, hashed } = await generateBackupCodes();
+
+  mfaBackupTempCache.set(device.id, hashed);
+
+
+
+  await repository.withTransaction(async (client) => {
+
+    await repository.verifyMFADevice(device.id, userId, hashed, client);
+
+    if (isPrimary) {
+
+      await repository.updateMFADevicePrimary(userId, device.id, client);
+
+    }
+
+    await repository.updateUserMFAEnabled(userId, true, client);
+
+    await repository.updateBackupCodesGenerated(userId, client);
+
+  });
+
+
+
+  mfaBackupTempCache.delete(device.id);
+
+
+
+  logAudit({
+
+    user_id: userId,
+
+    org_id: null,
+
+    action: 'user.mfa_enabled',
+
+    resource_type: 'mfa_device',
+
+    resource_id: device.id,
+
+    ip_address: ipAddress,
+
+    request_id: requestId,
+
+    metadata: { device_type: 'hardware_key' },
+
+  });
+
+
+
+  return { device_id: device.id, backup_codes: plain };
+
+}
+
+
+
+export async function createWebAuthnAuthenticationOptions(
+
+  userId: string,
+
+): Promise<{ options: Awaited<ReturnType<typeof generateAuthenticationOptions>> }> {
+
+  const devices = await repository.findMFADevicesByUserId(userId);
+
+  const keys = listHardwareKeys(devices);
+
+  if (keys.length === 0) {
+
+    throw new AuthError(
+
+      'No passkeys registered',
+
+      AuthErrorCodes.MFA_NOT_ENABLED,
+
+      400,
+
+    );
+
+  }
+
+
+
+  const options = await generateAuthenticationOptions({
+
+    rpID: webauthnConfig.rpID,
+
+    userVerification: 'preferred',
+
+    allowCredentials: keys.map((d) => ({
+
+      id: d.credential_id!,
+
+    })),
+
+  });
+
+
+
+  webauthnChallengeCache.set(options.challenge, {
+
+    userId,
+
+    type: 'authentication',
+
+  });
+
+
+
+  return { options };
+
+}
+
+
+
+export async function verifyWebAuthnAuthentication(
+
+  userId: string,
+
+  response: AuthenticationResponseJSON,
+
+  challenge: string,
+
+  ipAddress: string,
+
+): Promise<{ verified: true }> {
+
+  const state = webauthnChallengeCache.get(challenge);
+
+  if (!state || state.type !== 'authentication' || state.userId !== userId) {
+
+    throw new AuthError(
+
+      'Authentication challenge expired',
+
+      AuthErrorCodes.WEBAUTHN_CHALLENGE_INVALID,
+
+      400,
+
+    );
+
+  }
+
+  webauthnChallengeCache.delete(challenge);
+
+
+
+  const device = await repository.findWebAuthnDeviceByCredentialId(
+
+    response.id,
+
+  );
+
+  if (!device || device.user_id !== userId) {
+
+    throw new AuthError('Unknown passkey', AuthErrorCodes.MFA_INVALID, 400);
+
+  }
+
+
+
+  const verification = await verifyAuthenticationResponse({
+
+    response,
+
+    expectedChallenge: challenge,
+
+    expectedOrigin: webauthnConfig.origin,
+
+    expectedRPID: webauthnConfig.rpID,
+
+    credential: credentialFromDevice(device),
+
+    requireUserVerification: true,
+
+  });
+
+
+
+  if (!verification.verified) {
+
+    throw new AuthError('Passkey verification failed', AuthErrorCodes.MFA_INVALID, 400);
+
+  }
+
+
+
+  await repository.updateWebAuthnSignCount(
+
+    device.id,
+
+    verification.authenticationInfo.newCounter,
+
+    ipAddress,
+
+  );
+
+
+
+  return { verified: true };
+
+}
+
+
+
+export async function createLoginMfaWebAuthnOptions(
+
+  challengeId: string,
+
+): Promise<{
+
+  options: Awaited<ReturnType<typeof generateAuthenticationOptions>>;
+
+  challenge: string;
+
+}> {
+
+  const loginChallenge = loginMfaChallengeCache.get(challengeId);
+
+  if (!loginChallenge) {
+
+    throw new AuthError(
+
+      'Login challenge expired',
+
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+
+      400,
+
+    );
+
+  }
+
+
+
+  const device = await repository.findMFADeviceById(
+
+    loginChallenge.deviceId,
+
+    loginChallenge.userId,
+
+  );
+
+  if (!device || device.device_type !== 'hardware_key' || !device.credential_id) {
+
+    throw new AuthError(
+
+      'This login challenge requires a different MFA method',
+
+      AuthErrorCodes.MFA_INVALID,
+
+      400,
+
+    );
+
+  }
+
+
+
+  const options = await generateAuthenticationOptions({
+
+    rpID: webauthnConfig.rpID,
+
+    userVerification: 'preferred',
+
+    allowCredentials: [{ id: device.credential_id }],
+
+  });
+
+
+
+  webauthnChallengeCache.set(options.challenge, {
+
+    userId: loginChallenge.userId,
+
+    type: 'login_mfa',
+
+    loginMfaChallengeId: challengeId,
+
+  });
+
+
+
+  return { options, challenge: options.challenge };
+
+}
+
+
+
+export async function verifyLoginMfaWebAuthn(
+
+  input: WebAuthnLoginMfaVerifyInput,
+
+  ipAddress: string,
+
+  userAgent: string,
+
+  clientDeviceType: string,
+
+  requestId: string,
+
+): Promise<{
+
+  access_token: string;
+
+  refresh_token: string;
+
+  expires_at: Date;
+
+  token_type: 'Bearer';
+
+  session_id: string;
+
+  user_id: string;
+
+}> {
+
+  const state = webauthnChallengeCache.get(input.challenge);
+
+  if (!state || state.type !== 'login_mfa' || !state.loginMfaChallengeId) {
+
+    throw new AuthError(
+
+      'WebAuthn challenge expired',
+
+      AuthErrorCodes.WEBAUTHN_CHALLENGE_INVALID,
+
+      400,
+
+    );
+
+  }
+
+  webauthnChallengeCache.delete(input.challenge);
+
+
+
+  const loginChallenge = loginMfaChallengeCache.get(state.loginMfaChallengeId);
+
+  if (!loginChallenge) {
+
+    throw new AuthError(
+
+      'Login challenge expired',
+
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+
+      400,
+
+    );
+
+  }
+
+
+
+  const authResponse = input.response as unknown as AuthenticationResponseJSON;
+
+  const device = await repository.findWebAuthnDeviceByCredentialId(
+
+    authResponse.id,
+
+  );
+
+  if (!device || device.user_id !== loginChallenge.userId) {
+
+    throw new AuthError('Unknown passkey', AuthErrorCodes.MFA_INVALID, 400);
+
+  }
+
+
+
+  const verification = await verifyAuthenticationResponse({
+
+    response: authResponse,
+
+    expectedChallenge: input.challenge,
+
+    expectedOrigin: webauthnConfig.origin,
+
+    expectedRPID: webauthnConfig.rpID,
+
+    credential: credentialFromDevice(device),
+
+    requireUserVerification: true,
+
+  });
+
+
+
+  if (!verification.verified) {
+
+    loginChallenge.attempts += 1;
+
+    loginMfaChallengeCache.set(state.loginMfaChallengeId, loginChallenge);
+
+    throw new AuthError('Passkey verification failed', AuthErrorCodes.MFA_INVALID, 400);
+
+  }
+
+
+
+  loginMfaChallengeCache.delete(state.loginMfaChallengeId);
+
+  await repository.updateWebAuthnSignCount(
+
+    device.id,
+
+    verification.authenticationInfo.newCounter,
+
+    ipAddress,
+
+  );
+
+  await repository.updateMFADeviceLastUsed(device.id, loginChallenge!.userId, ipAddress);
+
+
+
+  const user = await repository.findUserById(loginChallenge.userId);
+
+  if (!user) {
+
+    throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+
+  }
+
+
+
+  await assertLoginAllowedByOrgPolicy(user);
+
+
+
+  const session = await issueSessionForUser({
+
+    user,
+
+    ipAddress,
+
+    userAgent,
+
+    deviceName: loginChallenge.deviceName,
+
+    deviceType: loginChallenge.clientDeviceType || clientDeviceType,
+
+    mfaVerified: true,
+
+    rememberMe: loginChallenge.rememberMe,
+
+  });
+
+  if (loginChallenge.trustDevice) {
+    await trustCurrentDevice(
+      user.id,
+      ipAddress,
+      userAgent,
+      loginChallenge.deviceName,
+      requestId,
+    ).catch((err) => {
+      logger.warn({ err, userId: user.id }, 'Failed to trust device after WebAuthn MFA login');
+    });
+  }
+
+
+
+  await repository.recordLogin(user.id, ipAddress, userAgent);
+
+
+
+  logAudit({
+
+    user_id: user.id,
+
+    org_id: null,
+
+    action: 'user.login',
+
+    resource_type: 'user',
+
+    resource_id: user.id,
+
+    ip_address: ipAddress,
+
+    user_agent: userAgent,
+
+    request_id: requestId,
+
+    metadata: {
+      session_id: session.sessionId,
+      mfa_required: true,
+      webauthn: true,
+      trusted_device_added: loginChallenge.trustDevice,
+    },
+
+  });
+
+
+
+  return {
+
+    access_token: session.accessToken,
+
+    refresh_token: session.refreshToken,
+
+    expires_at: session.expiresAt,
+
+    token_type: 'Bearer',
+
+    session_id: session.sessionId,
+
+    user_id: user.id,
+
+  };
+
+}
+
+export async function createStepUpWebAuthnOptions(
+  challengeId: string,
+  userId: string,
+): Promise<{
+  options: Awaited<ReturnType<typeof generateAuthenticationOptions>>;
+  challenge: string;
+}> {
+  const stepUp = stepUpChallengeCache.get(challengeId);
+  if (!stepUp || stepUp.userId !== userId) {
+    throw new AuthError(
+      'Step-up challenge expired',
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+      400,
+    );
+  }
+
+  const device = await repository.findMFADeviceById(stepUp.deviceId, userId);
+  if (!device || device.device_type !== 'hardware_key' || !device.credential_id) {
+    throw new AuthError(
+      'This step-up challenge requires a different MFA method',
+      AuthErrorCodes.MFA_INVALID,
+      400,
+    );
+  }
+
+  const options = await generateAuthenticationOptions({
+    rpID: webauthnConfig.rpID,
+    userVerification: 'preferred',
+    allowCredentials: [{ id: device.credential_id }],
+  });
+
+  webauthnChallengeCache.set(options.challenge, {
+    userId,
+    type: 'step_up',
+    stepUpChallengeId: challengeId,
+  });
+
+  return { options, challenge: options.challenge };
+}
+
+export async function verifyStepUpWebAuthn(
+  input: WebAuthnStepUpVerifyInput,
+  sessionId: string,
+  userId: string,
+  ipAddress: string,
+): Promise<{ user_id: string; mfa_verified: true }> {
+  const state = webauthnChallengeCache.get(input.challenge);
+  if (
+    !state ||
+    state.type !== 'step_up' ||
+    !state.stepUpChallengeId ||
+    state.userId !== userId
+  ) {
+    throw new AuthError(
+      'WebAuthn challenge expired',
+      AuthErrorCodes.WEBAUTHN_CHALLENGE_INVALID,
+      400,
+    );
+  }
+  webauthnChallengeCache.delete(input.challenge);
+
+  const stepUp = stepUpChallengeCache.get(state.stepUpChallengeId);
+  if (!stepUp || stepUp.userId !== userId) {
+    throw new AuthError(
+      'Step-up challenge expired',
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+      400,
+    );
+  }
+
+  const authResponse = input.response as unknown as AuthenticationResponseJSON;
+  const device = await repository.findWebAuthnDeviceByCredentialId(authResponse.id);
+  if (!device || device.user_id !== userId || device.id !== stepUp.deviceId) {
+    throw new AuthError('Unknown passkey', AuthErrorCodes.MFA_INVALID, 400);
+  }
+
+  const verification = await verifyAuthenticationResponse({
+    response: authResponse,
+    expectedChallenge: input.challenge,
+    expectedOrigin: webauthnConfig.origin,
+    expectedRPID: webauthnConfig.rpID,
+    credential: credentialFromDevice(device),
+    requireUserVerification: true,
+  });
+
+  if (!verification.verified) {
+    stepUp.attempts += 1;
+    stepUpChallengeCache.set(state.stepUpChallengeId, stepUp);
+    throw new AuthError('Passkey verification failed', AuthErrorCodes.MFA_INVALID, 400);
+  }
+
+  stepUpChallengeCache.delete(state.stepUpChallengeId);
+  await repository.updateWebAuthnSignCount(
+    device.id,
+    verification.authenticationInfo.newCounter,
+    ipAddress,
+  );
+  await repository.updateMFADeviceLastUsed(device.id, userId, ipAddress);
+  recordStepUpFreshness(sessionId);
+
+  return { user_id: userId, mfa_verified: true };
+}
+
+

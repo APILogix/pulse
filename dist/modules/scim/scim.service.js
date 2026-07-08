@@ -3,9 +3,9 @@
  */
 import { createHash, randomUUID } from 'crypto';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
-import * as repository from '../auth/repository.js';
-import { AuthError, AuthErrorCodes } from '../auth/types.js';
-import { normalizeEmail } from '../auth/utils.js';
+import * as repository from '../auth/infrastructure/repositories/index.js';
+import { AuthError, AuthErrorCodes } from '../auth/domain/types.js';
+import { normalizeEmail } from '../auth/domain/constants.js';
 const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 const GROUP_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:Group';
 const LIST_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:ListResponse';

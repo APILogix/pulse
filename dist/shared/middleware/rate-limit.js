@@ -1,5 +1,5 @@
 import { redis } from '../../config/redis.js';
-import { AuthErrorCodes } from '../../modules/auth/types.js';
+import { AuthErrorCodes } from '../../modules/auth/domain/types.js';
 export function rateLimit(options) {
     const { max, window, keyGenerator, scope } = options;
     return async function rateLimitHandler(request, reply) {

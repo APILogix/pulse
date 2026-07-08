@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS organization_subscriptions (
   trial_end TIMESTAMPTZ,
   cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
   canceled_at TIMESTAMPTZ,
-  seats INTEGER,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

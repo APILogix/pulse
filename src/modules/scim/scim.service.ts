@@ -5,9 +5,9 @@ import { createHash, randomUUID } from 'crypto';
 import type { FastifyReply } from 'fastify';
 
 import { logAudit } from '../../shared/middleware/audit-logger.js';
-import * as repository from '../auth/repository.js';
-import { AuthError, AuthErrorCodes } from '../auth/types.js';
-import { normalizeEmail } from '../auth/utils.js';
+import * as repository from '../auth/infrastructure/repositories/index.js';
+import { AuthError, AuthErrorCodes } from '../auth/domain/types.js';
+import { normalizeEmail } from '../auth/domain/constants.js';
 
 const USER_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:User';
 const GROUP_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:Group';
@@ -284,7 +284,7 @@ export async function patchUser(
             ? (op.value as { formatted?: string }).formatted
             : undefined;
         if (formatted) {
-          await repository.updateUser(user.id, { full_name: formatted });
+await repository.updateUser(user.id, user.id, { full_name: formatted });
         }
       }
     }
@@ -297,7 +297,7 @@ export async function patchUser(
   if (body.name && typeof body.name === 'object') {
     const formatted = (body.name as { formatted?: string }).formatted;
     if (formatted) {
-      await repository.updateUser(user.id, { full_name: formatted });
+      await repository.updateUser(user.id, user.id, { full_name: formatted });
     }
   }
 

@@ -1,0 +1,248 @@
+[
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\account-administration.routes.ts",
+    "loc": 116,
+    "exports": 1,
+    "imports": 8
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\auth-email.ts",
+    "loc": 7,
+    "exports": 1,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\auth.module.ts",
+    "loc": 37,
+    "exports": 2,
+    "imports": 6
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\auth.schemas.test.ts",
+    "loc": 44,
+    "exports": 0,
+    "imports": 3
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\automation\\cleanup.ts",
+    "loc": 57,
+    "exports": 3,
+    "imports": 2
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\automation\\queue.ts",
+    "loc": 66,
+    "exports": 3,
+    "imports": 3
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\cache.ts",
+    "loc": 272,
+    "exports": 24,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\constants.ts",
+    "loc": 12,
+    "exports": 3,
+    "imports": 0
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\email-outbox.ts",
+    "loc": 165,
+    "exports": 5,
+    "imports": 6
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\identity-link.config.ts",
+    "loc": 28,
+    "exports": 4,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\identity-provider.service.ts",
+    "loc": 412,
+    "exports": 10,
+    "imports": 10
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\identity.routes.ts",
+    "loc": 242,
+    "exports": 1,
+    "imports": 8
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\identity.service.ts",
+    "loc": 552,
+    "exports": 11,
+    "imports": 13
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\lru-rate-limit.ts",
+    "loc": 48,
+    "exports": 3,
+    "imports": 3
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\oauth-callback.config.ts",
+    "loc": 42,
+    "exports": 5,
+    "imports": 2
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\oauth-exchange.ts",
+    "loc": 204,
+    "exports": 5,
+    "imports": 5
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\passport-social.service.ts",
+    "loc": 132,
+    "exports": 3,
+    "imports": 10
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\policy.service.ts",
+    "loc": 221,
+    "exports": 8,
+    "imports": 3
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\provisioning.routes.ts",
+    "loc": 400,
+    "exports": 1,
+    "imports": 14
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\rate-limits.ts",
+    "loc": 141,
+    "exports": 15,
+    "imports": 4
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\repository.ts",
+    "loc": 2769,
+    "exports": 133,
+    "imports": 4
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\route-registration.test.ts",
+    "loc": 77,
+    "exports": 0,
+    "imports": 2
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\routes.ts",
+    "loc": 1194,
+    "exports": 2,
+    "imports": 14
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml-identity.routes.ts",
+    "loc": 81,
+    "exports": 1,
+    "imports": 7
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml-request-cache.ts",
+    "loc": 31,
+    "exports": 1,
+    "imports": 2
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml-slo.service.ts",
+    "loc": 232,
+    "exports": 4,
+    "imports": 8
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml-xml.util.ts",
+    "loc": 50,
+    "exports": 2,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml.config.ts",
+    "loc": 31,
+    "exports": 2,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\saml.service.ts",
+    "loc": 267,
+    "exports": 4,
+    "imports": 12
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\service.ts",
+    "loc": 3502,
+    "exports": 47,
+    "imports": 19
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\social-login.service.ts",
+    "loc": 180,
+    "exports": 2,
+    "imports": 9
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\sso-oidc.routes.ts",
+    "loc": 261,
+    "exports": 1,
+    "imports": 12
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\sso-provision.service.ts",
+    "loc": 127,
+    "exports": 4,
+    "imports": 5
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\sso-session.service.ts",
+    "loc": 89,
+    "exports": 2,
+    "imports": 5
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\sso.service.ts",
+    "loc": 411,
+    "exports": 2,
+    "imports": 13
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\trusted-device.service.ts",
+    "loc": 184,
+    "exports": 4,
+    "imports": 5
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\types.ts",
+    "loc": 671,
+    "exports": 109,
+    "imports": 2
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\utils.test.ts",
+    "loc": 72,
+    "exports": 0,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\utils.ts",
+    "loc": 355,
+    "exports": 37,
+    "imports": 4
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\webauthn.config.ts",
+    "loc": 27,
+    "exports": 1,
+    "imports": 1
+  },
+  {
+    "file": "C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\src\\modules\\auth\\webauthn.service.ts",
+    "loc": 954,
+    "exports": 8,
+    "imports": 14
+  }
+]

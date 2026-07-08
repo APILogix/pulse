@@ -16,8 +16,8 @@
  * Redis lock around runOnce.
  */
 // import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
-import { processDueAccountDeletions } from '../modules/auth/identity.service.js';
-import { cleanupExpiredSessions, deleteExpiredEmailMfaOtps, deleteExpiredEmailTokens, purgeOldRevokedSessions, } from '../modules/auth/repository.js';
+import { processDueAccountDeletions } from '../modules/auth/application/services/identity.service.js';
+import { cleanupExpiredSessions, deleteExpiredEmailMfaOtps, deleteExpiredEmailTokens, purgeOldRevokedSessions, } from '../modules/auth/infrastructure/repositories/index.js';
 import { logger } from '../config/logger.js';
 const log = logger.child({ component: 'auth-cleanup' });
 const INTERVAL_MS = 60 * 60 * 1000; // hourly

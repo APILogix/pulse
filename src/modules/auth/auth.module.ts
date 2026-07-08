@@ -13,10 +13,10 @@
  */
 import type { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
-import authRoutes from './routes.js';
+import authRoutes from './presentation/routes/index.js';
 import { registerScimRoutes } from '../scim/scim.routes.js';
 import { logger } from '../../config/logger.js';
-import { registerPassportSocialAuth } from './passport-social.service.js';
+import { registerPassportSocialAuth } from './application/services/passport-social.service.js';
 
 const authLogger = logger.child({ component: 'auth-module' });
 

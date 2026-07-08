@@ -10,11 +10,17 @@
  */
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ProjectsRepository } from './repository.js';
+import { SettingsRepository } from './settings.repository.js';
+import { ApiKeyRepository } from './api-key.repository.js';
+import { UsageRepository } from './usage.repository.js';
 import { ProjectsService } from './service.js';
 declare module 'fastify' {
     interface FastifyInstance {
         projects: {
             repository: ProjectsRepository;
+            settingsRepository: SettingsRepository;
+            apiKeyRepository: ApiKeyRepository;
+            usageRepository: UsageRepository;
             service: ProjectsService;
             alertRoutesRepository: import('./alert-routes.repository.js').AlertRoutesRepository;
             alertRoutesService: import('./alert-routes.service.js').ProjectAlertRouteService;

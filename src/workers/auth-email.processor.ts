@@ -1,5 +1,5 @@
 import { logger } from '../config/logger.js';
-import { processAuthEmailOutbox } from '../modules/auth/email-outbox.js';
+import { processAuthEmailOutbox } from '../modules/auth/infrastructure/email/email-outbox.js';
 
 const workerLogger = logger.child({ component: 'auth-email-worker' });
 

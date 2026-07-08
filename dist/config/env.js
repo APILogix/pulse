@@ -74,9 +74,13 @@ const envSchema = z.object({
     // refresh JWTs. COOKIE_SECRET signs the @fastify/cookie envelope. These
     // MUST be three distinct values so a leak in one does not compromise the
     // others. ENCRYPTION_KEY encrypts MFA TOTP secrets at rest.
+    // AUTH_TOKEN_SECRET is used for HMAC-SHA256 hashing of sensitive bearer
+    // tokens (email verification, password reset, MFA OTPs) to prevent
+    // timing attacks and rainbow-table brute-force.
     JWT_SECRET: z.string().min(32),
     JWT_REFRESH_SECRET: z.string().min(32),
     COOKIE_SECRET: z.string().min(32),
+    AUTH_TOKEN_SECRET: z.string().min(32),
     ENCRYPTION_KEY: z.string().length(32),
     CORS_ORIGINS: z.string().optional(),
     FRONTEND_URL: z.string().optional(),
@@ -172,10 +176,11 @@ export const env = envSchema.parse(process.env);
         env.JWT_SECRET,
         env.JWT_REFRESH_SECRET,
         env.COOKIE_SECRET,
+        env.AUTH_TOKEN_SECRET,
         env.ENCRYPTION_KEY,
     ]);
-    if (distinct.size < 4) {
-        throw new Error('Auth misconfiguration: JWT_SECRET, JWT_REFRESH_SECRET, COOKIE_SECRET, and ENCRYPTION_KEY must each be unique.');
+    if (distinct.size < 5) {
+        throw new Error('Auth misconfiguration: JWT_SECRET, JWT_REFRESH_SECRET, COOKIE_SECRET, AUTH_TOKEN_SECRET, and ENCRYPTION_KEY must each be unique.');
     }
 })();
 //# sourceMappingURL=env.js.map

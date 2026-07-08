@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS coupons (
   code VARCHAR(30) NOT NULL UNIQUE,
   discount_type billing_coupon_discount_type NOT NULL,
   discount_value INTEGER NOT NULL,
-  applicable_plans UUID[],
   max_redemptions INTEGER,
   redemption_count INTEGER NOT NULL DEFAULT 0,
   valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -15,7 +15,7 @@ import { Pool } from 'pg';
 import { env } from '../config/env.js';
 import { logger } from '../config/logger.js';
 import { registerAlertingWorkers } from '../modules/alerting/queue.js';
-import { registerAuthAutomationWorkers } from '../modules/auth/automation/queue.js';
+import { registerAuthAutomationWorkers } from '../modules/auth/infrastructure/jobs/queue.js';
 import { registerBillingWorkers } from '../modules/billing/queue.js';
 import { startConnectorMonitor } from '../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../modules/event-analytics/queue.js';

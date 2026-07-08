@@ -5,8 +5,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { createHash } from 'crypto';
 
 import { logAudit } from '../../shared/middleware/audit-logger.js';
-import * as authRepository from '../auth/repository.js';
-import { AuthError, AuthErrorCodes } from '../auth/types.js';
+import * as authRepository from '../auth/infrastructure/repositories/index.js';
+import { AuthError, AuthErrorCodes } from '../auth/domain/types.js';
 
 declare module 'fastify' {
   interface FastifyRequest {

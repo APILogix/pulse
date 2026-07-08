@@ -3,8 +3,8 @@ import type { PoolClient } from 'pg';
 
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
-import * as repository from '../auth/repository.js';
-import { withTransaction } from '../auth/repository.js';
+import * as repository from '../auth/infrastructure/repositories/index.js';
+import { withTransaction } from '../auth/infrastructure/repositories/index.js';
 import { logAudit } from '../../shared/middleware/audit-logger.js';
 
 const tokenLogger = logger.child({ component: 'scim-token-service' });

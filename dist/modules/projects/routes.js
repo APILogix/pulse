@@ -1,6 +1,6 @@
 import { authenticate } from "../../shared/middleware/auth.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../organization/sdk-config.types.js";
-import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectActivityQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, } from "./types.js";
+import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectActivityQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "./types.js";
 import { handleProjectError, ProjectError } from "./utils.js";
 function requestMeta(request) {
     const userAgent = request.headers["user-agent"];
@@ -109,6 +109,23 @@ export async function projectsRoutes(fastify) {
             return reply.send({ success: true, data: project });
         }));
     }
+    // ── Project Settings & Overview ─────────────────────────────────────────────
+    fastify.get("/:projectId/settings", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+        const settings = await service.getProjectSettings(orgId, projectId, authenticatedUser(request).id);
+        return reply.send({ success: true, data: settings });
+    }));
+    fastify.patch("/:projectId/settings", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+        const body = UpdateProjectSettingsBodySchema.parse(request.body);
+        const settings = await service.updateProjectSettings(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
+        return reply.send({ success: true, data: settings });
+    }));
+    fastify.get("/:projectId/overview", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+        const overview = await service.getProjectOverview(orgId, projectId, authenticatedUser(request).id);
+        return reply.send({ success: true, data: overview });
+    }));
     // ── Environments ────────────────────────────────────────────────────────────
     fastify.get("/:projectId/sdk-configs", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
