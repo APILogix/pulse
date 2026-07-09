@@ -14,9 +14,9 @@ export declare const ConfigTypeSchema: z.ZodEnum<{
 export type ConfigType = z.infer<typeof ConfigTypeSchema>;
 export declare const DeploymentStatusSchema: z.ZodEnum<{
     pending: "pending";
+    failed: "failed";
     deploying: "deploying";
     deployed: "deployed";
-    failed: "failed";
     rolled_back: "rolled_back";
 }>;
 export type DeploymentStatus = z.infer<typeof DeploymentStatusSchema>;

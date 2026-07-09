@@ -42,7 +42,7 @@ import { createIngestionJobHandler } from '../pipeline/ingestion-job-handler.js'
 import { UsageCounter } from '../usage/usage-counter.js';
 import { LogDatabase } from '../logging/log-database.js';
 import { AdminLogger } from '../logging/admin-logger.js';
-import { TelemetryMaintenanceWorker } from '../../../workers/telemetry-maintenance.processor.js';
+import { TelemetryMaintenanceWorker } from '../../../shared/workers/telemetry-maintenance.processor.js';
 import { BackpressureGauge } from '../../../lib/gauge.js';
 
 export interface WorkerRegistryOptions {

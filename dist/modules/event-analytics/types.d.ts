@@ -189,9 +189,9 @@ export declare const MetricSeriesQuerySchema: z.ZodObject<{
     aggregate: z.ZodDefault<z.ZodEnum<{
         max: "max";
         min: "min";
+        count: "count";
         avg: "avg";
         sum: "sum";
-        count: "count";
     }>>;
 }, z.core.$strip>;
 export type MetricSeriesQuery = z.infer<typeof MetricSeriesQuerySchema>;
@@ -296,14 +296,14 @@ export declare const CreateAnalyticsAlertSchema: z.ZodObject<{
 export type CreateAnalyticsAlertBody = z.infer<typeof CreateAnalyticsAlertSchema>;
 export declare const ExportSchema: z.ZodObject<{
     dataset: z.ZodEnum<{
-        metrics: "metrics";
         requests: "requests";
         errors: "errors";
+        metrics: "metrics";
         logs: "logs";
     }>;
     format: z.ZodDefault<z.ZodEnum<{
-        csv: "csv";
         json: "json";
+        csv: "csv";
     }>>;
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";

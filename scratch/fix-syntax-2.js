@@ -1,0 +1,32 @@
+import fs from 'fs';
+import path from 'path';
+
+function walk(dir) {
+  let results = [];
+  const list = fs.readdirSync(dir);
+  list.forEach(file => {
+    file = path.join(dir, file);
+    const stat = fs.statSync(file);
+    if (stat && stat.isDirectory()) {
+      results = results.concat(walk(file));
+    } else {
+      if (file.endsWith('controller.ts')) {
+        results.push(file);
+      }
+    }
+  });
+  return results;
+}
+
+const controllers = walk('src/modules/billing');
+
+for (const file of controllers) {
+  let content = fs.readFileSync(file, 'utf8');
+  
+  // Revert `type XSchema` back to `XSchema` in code, and in imports
+  // Actually, I can just replace `type ([A-Za-z0-9]+)Schema` with `$1Schema` everywhere.
+  content = content.replace(/type ([A-Za-z0-9]+Schema)/g, '$1');
+  
+  fs.writeFileSync(file, content, 'utf8');
+  console.log(`Updated ${file}`);
+}

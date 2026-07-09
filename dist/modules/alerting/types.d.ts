@@ -50,8 +50,8 @@ export declare const ConditionOperatorSchema: z.ZodEnum<{
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export declare const ActionTypeSchema: z.ZodEnum<{
     group: "group";
-    webhook: "webhook";
     notify: "notify";
+    webhook: "webhook";
     suppress: "suppress";
     escalate: "escalate";
 }>;
@@ -68,8 +68,8 @@ export declare const DeliveryAttemptStatusSchema: z.ZodEnum<{
 export type DeliveryAttemptStatus = z.infer<typeof DeliveryAttemptStatusSchema>;
 export declare const BatchStatusSchema: z.ZodEnum<{
     pending: "pending";
-    failed: "failed";
     processing: "processing";
+    failed: "failed";
     completed: "completed";
     partial: "partial";
 }>;
@@ -152,9 +152,9 @@ export declare const RuleConditionSchema: z.ZodObject<{
     aggregateFunction: z.ZodOptional<z.ZodEnum<{
         max: "max";
         min: "min";
+        count: "count";
         avg: "avg";
         sum: "sum";
-        count: "count";
         p99: "p99";
     }>>;
     isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -164,8 +164,8 @@ export type RuleConditionInput = z.infer<typeof RuleConditionSchema>;
 export declare const RuleActionSchema: z.ZodObject<{
     actionType: z.ZodDefault<z.ZodEnum<{
         group: "group";
-        webhook: "webhook";
         notify: "notify";
+        webhook: "webhook";
         suppress: "suppress";
         escalate: "escalate";
     }>>;
@@ -229,9 +229,9 @@ export declare const CreateRuleSchema: z.ZodObject<{
         aggregateFunction: z.ZodOptional<z.ZodEnum<{
             max: "max";
             min: "min";
+            count: "count";
             avg: "avg";
             sum: "sum";
-            count: "count";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -240,8 +240,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
     actions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            webhook: "webhook";
             notify: "notify";
+            webhook: "webhook";
             suppress: "suppress";
             escalate: "escalate";
         }>>;
@@ -306,9 +306,9 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         aggregateFunction: z.ZodOptional<z.ZodEnum<{
             max: "max";
             min: "min";
+            count: "count";
             avg: "avg";
             sum: "sum";
-            count: "count";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -317,8 +317,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     actions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            webhook: "webhook";
             notify: "notify";
+            webhook: "webhook";
             suppress: "suppress";
             escalate: "escalate";
         }>>;

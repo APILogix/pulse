@@ -1,0 +1,1 @@
+{"version":3,"file":"schemas.d.ts","sourceRoot":"","sources":["../../../../src/modules/billing/payments/schemas.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,CAAC,EAAE,MAAM,KAAK,CAAC;AACxB,OAAO,EAAE,aAAa,EAAoB,MAAM,oBAAoB,CAAC;AAErE,eAAO,MAAM,uBAAuB;;;;iBAEV,CAAC;AAE3B,MAAM,MAAM,iBAAiB,GAAG,CAAC,CAAC,KAAK,CAAC,OAAO,uBAAuB,CAAC,CAAC"}

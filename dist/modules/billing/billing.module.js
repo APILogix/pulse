@@ -1,37 +1,32 @@
 /**
- * Billing module for Fastify.
+ * Billing module for Fastify (Redesigned Vertical Slice Architecture).
  *
  * Flow:
- * 1. Construct repository, service, and quota service once at boot.
- * 2. Decorate Fastify with billing dependencies for routes and other modules.
- * 3. Register billing routes under /billing.
- * 4. Attach shutdown logging for module lifecycle visibility.
+ * 1. Register encapsulated slice routes (Plans, Subscriptions, Entitlements, Usage, etc.)
+ * 2. Prefix them with /billing
  */
 import fp from 'fastify-plugin';
-import { BillingRepository } from './repository.js';
-import { BillingService } from './billing.service.js';
-import { QuotaService } from './quota-service.js';
-import { billingRoutes } from './routes.js';
-import { createBillingLogger } from './utils.js';
+import { plansRoutes } from './plans/routes.js';
+import { subscriptionsRoutes } from './subscriptions/routes.js';
+import { entitlementsRoutes } from './entitlements/routes.js';
+import { usageRoutes } from './usage/routes.js';
+import { aiBillingRoutes } from './ai/routes.js';
+import { invoicesRoutes } from './invoices/routes.js';
+import { paymentsRoutes } from './payments/routes.js';
+import { webhooksRoutes } from './webhooks/routes.js';
+import { couponsRoutes } from './coupons/routes.js';
+import { createBillingLogger } from './shared/utils.js';
 const logger = createBillingLogger('Module');
 async function billingModule(fastify, _options) {
-    // Keep billing dependencies singleton per Fastify app instance so route
-    // handlers share the same repository/service objects.
-    const repository = new BillingRepository();
-    const service = new BillingService(repository);
-    const quotaService = new QuotaService(repository);
-    fastify.decorate('billing', {
-        repository,
-        service,
-        quotaService
-    });
-    // try {
-    //   await repository.seedDefaultPlans();
-    //   logger.info('Billing module initialized and plans seeded');
-    // } catch (error) {
-    //   logger.error('Failed to seed default plans', error);
-    // }
-    await fastify.register(billingRoutes, { prefix: '/billing' });
+    await fastify.register(plansRoutes, { prefix: '/billing/plans' });
+    await fastify.register(subscriptionsRoutes, { prefix: '/billing/subscription' });
+    await fastify.register(entitlementsRoutes, { prefix: '/billing/entitlements' });
+    await fastify.register(usageRoutes, { prefix: '/billing/usage' });
+    await fastify.register(aiBillingRoutes, { prefix: '/billing/ai' });
+    await fastify.register(invoicesRoutes, { prefix: '/billing/invoices' });
+    await fastify.register(paymentsRoutes, { prefix: '/billing/payments' });
+    await fastify.register(webhooksRoutes, { prefix: '/billing/webhooks' });
+    await fastify.register(couponsRoutes, { prefix: '/billing/coupons' });
     fastify.addHook('onClose', async () => {
         logger.info('Billing module shutting down');
     });
