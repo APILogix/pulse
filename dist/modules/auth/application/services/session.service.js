@@ -131,7 +131,7 @@ export async function revokeSession(userId, sessionId, currentSessionId) {
     if (!session) {
         throw new AuthError('Session not found', AuthErrorCodes.SESSION_INVALID, 404);
     }
-    await repository.revokeSession(sessionId, 'User revoked session');
+    await repository.revokeSession(session.id, session.user_id, 'User revoked session');
     blacklistAccessToken(sessionId);
 }
 /**
@@ -186,14 +186,14 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
             // forward.
             const user = await repository.findUserById(session.user_id);
             if (!user || user.deleted_at || user.status !== 'active') {
-                await repository.revokeSession(session.id, 'User inactive');
+                await repository.revokeSession(session.id, session.user_id, 'User inactive');
                 throw new AuthError('User inactive', AuthErrorCodes.USER_SUSPENDED, 401);
             }
             try {
                 await assertRefreshAllowedByOrgPolicy(user, session.last_active_at);
             }
             catch (policyErr) {
-                await repository.revokeSession(session.id, 'Organization policy violation');
+                await repository.revokeSession(session.id, session.user_id, 'Organization policy violation');
                 markAllUserTokensRevoked(user.id);
                 throw policyErr;
             }
@@ -257,11 +257,11 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     }
     const now = new Date();
     if (now > new Date(session.absolute_expires_at)) {
-        await repository.revokeSession(session.id, 'Absolute session expiry reached');
+        await repository.revokeSession(session.id, session.user_id, 'Absolute session expiry reached');
         throw new AuthError('Session expired', AuthErrorCodes.SESSION_EXPIRED, 401);
     }
     if (now > new Date(session.expires_at)) {
-        await repository.revokeSession(session.id, 'Sliding window expired');
+        await repository.revokeSession(session.id, session.user_id, 'Sliding window expired');
         throw new AuthError('Session expired', AuthErrorCodes.SESSION_EXPIRED, 401);
     }
     // BUG-009/010 FIX: Validate IP and device fingerprint on refresh.
@@ -269,20 +269,20 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     // treat it as a potential token theft and revoke the session.
     const currentFingerprint = buildDeviceFingerprint(ipAddress, userAgent);
     if (session.device_fingerprint && session.device_fingerprint !== currentFingerprint) {
-        await repository.revokeSession(session.id, 'Device fingerprint mismatch on refresh');
+        await repository.revokeSession(session.id, session.user_id, 'Device fingerprint mismatch on refresh');
         logger.warn({ userId: session.user_id, sessionId: session.id, ipAddress, userAgent }, 'Refresh token presented from different device; session revoked');
         throw new AuthError('Session invalidated. Please sign in again.', AuthErrorCodes.SESSION_INVALID, 401);
     }
     const user = await repository.findUserById(session.user_id);
     if (!user || user.deleted_at || user.status !== 'active') {
-        await repository.revokeSession(session.id, 'User inactive');
+        await repository.revokeSession(session.id, session.user_id, 'User inactive');
         throw new AuthError('User inactive', AuthErrorCodes.USER_SUSPENDED, 401);
     }
     try {
         await assertRefreshAllowedByOrgPolicy(user, session.last_active_at);
     }
     catch (policyErr) {
-        await repository.revokeSession(session.id, 'Organization policy violation');
+        await repository.revokeSession(session.id, session.user_id, 'Organization policy violation');
         markAllUserTokensRevoked(user.id);
         throw policyErr;
     }
@@ -293,7 +293,7 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     const finalExpiresAt = newExpiresAt > new Date(session.absolute_expires_at)
         ? new Date(session.absolute_expires_at)
         : newExpiresAt;
-    const rotated = await repository.rotateRefreshToken(session.id, presentedHash, newRefreshHash, finalExpiresAt);
+    const rotated = await repository.rotateRefreshToken(session.id, session.user_id, presentedHash, newRefreshHash, finalExpiresAt);
     if (!rotated) {
         // CAS failed: a concurrent refresh already rotated. Outside the grace
         // window we treat this as reuse for safety.
@@ -315,7 +315,12 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
 export async function logout(userId, sessionId, ipAddress, requestId) {
     const session = await repository.findSessionById(sessionId, userId);
     // Always revoke local session immediately; SAML IdP logout is best-effort.
-    await repository.revokeSession(sessionId, 'User logout');
+    if (session) {
+        await repository.revokeSession(session.id, userId, 'User logout');
+    }
+    else {
+        await repository.revokeSession(sessionId, userId, 'User logout');
+    }
     blacklistAccessToken(sessionId);
     if (session?.saml_name_id && session.sso_provider_id) {
         const { completeSamlLogoutForUser } = await import('./saml-slo.service.js');

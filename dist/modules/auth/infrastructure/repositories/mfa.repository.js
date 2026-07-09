@@ -74,7 +74,7 @@ export async function createMFADevice(data, client) {
  * Reset an existing MFA device row for a fresh setup. Called when a user
  * who previously disabled MFA decides to re-enable it.
  */
-export async function resetMFADeviceForReSetup(id, data, client) {
+export async function resetMFADeviceForReSetup(id, userId, data, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_mfa_devices
      SET device_name = $2,
@@ -91,17 +91,18 @@ export async function resetMFADeviceForReSetup(id, data, client) {
          last_used_ip = NULL,
          sign_count = 0,
          updated_at = NOW()
-     WHERE id = $1
+     WHERE id = $1 AND user_id = $6
      RETURNING *`, [
         id,
         data.device_name,
         data.secret_encrypted,
         data.is_primary,
         JSON.stringify(data.device_metadata || {}),
+        userId,
     ]);
     return result.rows[0] || null;
 }
-export async function verifyMFADevice(id, backupCodesHash, client) {
+export async function verifyMFADevice(id, userId, backupCodesHash, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_mfa_devices
      SET verified = TRUE, verified_at = NOW(),
@@ -110,8 +111,8 @@ export async function verifyMFADevice(id, backupCodesHash, client) {
          disabled_at = NULL,
          disabled_reason = NULL,
          updated_at = NOW()
-     WHERE id = $1
-     RETURNING *`, [id, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]']);
+     WHERE id = $1 AND user_id = $3
+     RETURNING *`, [id, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]', userId]);
     return result.rows[0] || null;
 }
 export async function updateMFADevicePrimary(userId, deviceId, client) {
@@ -129,7 +130,7 @@ export async function updateMFADevicePrimary(userId, deviceId, client) {
     }
     await withTransaction(async (tx) => exec(tx));
 }
-export async function disableMFADevice(id, reason, client) {
+export async function disableMFADevice(id, userId, reason, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_mfa_devices
      SET is_active = FALSE,
@@ -137,7 +138,7 @@ export async function disableMFADevice(id, reason, client) {
          disabled_at = NOW(),
          disabled_reason = $2,
          updated_at = NOW()
-     WHERE id = $1`, [id, reason]);
+     WHERE id = $1 AND user_id = $3`, [id, reason, userId]);
     return (result.rowCount ?? 0) > 0;
 }
 export async function disableAllMFADevices(userId, reason, client) {
@@ -165,11 +166,11 @@ export async function updateBackupCodesGenerated(userId, client) {
      SET mfa_backup_codes_generated_at = NOW(), updated_at = NOW()
      WHERE id = $1`, [userId]);
 }
-export async function updateMFADeviceBackupCodes(deviceId, backupCodesHash, client) {
+export async function updateMFADeviceBackupCodes(deviceId, userId, backupCodesHash, client) {
     const db = client || pool;
     await db.query(`UPDATE user_mfa_devices
      SET backup_codes_hash = $2, updated_at = NOW()
-     WHERE id = $1`, [deviceId, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]']);
+     WHERE id = $1 AND user_id = $3`, [deviceId, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]', userId]);
 }
 export async function setBackupCodesForAllUserDevices(userId, backupCodesHash, client) {
     const db = client || pool;
@@ -177,13 +178,13 @@ export async function setBackupCodesForAllUserDevices(userId, backupCodesHash, c
      SET backup_codes_hash = $2::jsonb, updated_at = NOW()
      WHERE user_id = $1 AND verified = TRUE`, [userId, JSON.stringify(backupCodesHash)]);
 }
-export async function updateMFADeviceLastUsed(deviceId, ipAddress, client) {
+export async function updateMFADeviceLastUsed(deviceId, userId, ipAddress, client) {
     const db = client || pool;
     await db.query(`UPDATE user_mfa_devices
      SET last_used_at = NOW(),
          last_used_ip = $2::inet,
          updated_at = NOW()
-     WHERE id = $1`, [deviceId, ipAddress]);
+     WHERE id = $1 AND user_id = $3`, [deviceId, ipAddress, userId]);
 }
 // ============================================================================
 // EMAIL MFA OTP QUERIES (email-based MFA device codes)
@@ -201,7 +202,7 @@ export async function createEmailMfaOtp(userId, deviceId, codeHash, ttlSeconds, 
     await db.query(`UPDATE email_mfa_otps SET used_at = NOW()
      WHERE device_id = $1 AND used_at IS NULL`, [deviceId]);
     await db.query(`INSERT INTO email_mfa_otps (user_id, device_id, code_hash, expires_at)
-     VALUES ($1, $2, $3, NOW() + ($4 || ' seconds')::interval)`, [userId, deviceId, codeHash, ttlSeconds.toString()]);
+     VALUES ($1, $2, $3, NOW() + ($4::interval))`, [userId, deviceId, codeHash, `${ttlSeconds} seconds`]);
 }
 /**
  * Atomically consume an email MFA OTP. Returns true if the code matched a

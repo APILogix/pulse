@@ -94,6 +94,28 @@ export async function requestAccountUnlock(input, ipAddress, requestId) {
             request_id: requestId,
         });
     }
+    else if (user) {
+        logAudit({
+            user_id: user.id,
+            org_id: null,
+            action: 'user.unlock_requested_not_locked',
+            resource_type: 'user',
+            resource_id: user.id,
+            ip_address: ipAddress,
+            request_id: requestId,
+        });
+    }
+    else {
+        logAudit({
+            user_id: null,
+            org_id: null,
+            action: 'user.unlock_requested_unknown_email',
+            resource_type: 'user',
+            resource_id: null,
+            ip_address: ipAddress,
+            request_id: requestId,
+        });
+    }
     return { message: GENERIC_UNLOCK_MESSAGE };
 }
 export async function confirmAccountUnlock(input, ipAddress, requestId) {

@@ -42,7 +42,7 @@ export async function setupMFA(userId, input, ipAddress) {
         const isPrimary = existing?.is_primary === true || !hasOtherPrimary;
         let device;
         if (existing) {
-            const reset = await repository.resetMFADeviceForReSetup(existing.id, {
+            const reset = await repository.resetMFADeviceForReSetup(existing.id, userId, {
                 device_name: input.device_name,
                 secret_encrypted: null, // email MFA has no stored secret
                 is_primary: isPrimary,
@@ -99,7 +99,7 @@ export async function setupMFA(userId, input, ipAddress) {
     const isPrimary = existing?.is_primary === true || !hasOtherPrimaryTotp;
     let device;
     if (existing) {
-        const reset = await repository.resetMFADeviceForReSetup(existing.id, {
+        const reset = await repository.resetMFADeviceForReSetup(existing.id, userId, {
             device_name: input.device_name,
             secret_encrypted: secretEncrypted,
             is_primary: isPrimary,
@@ -165,7 +165,7 @@ export async function verifyMFASetup(userId, input, ipAddress, requestId) {
     }
     const backupCodesHash = mfaBackupTempCache.get(device.id) ?? [];
     await repository.withTransaction(async (client) => {
-        await repository.verifyMFADevice(device.id, backupCodesHash, client);
+        await repository.verifyMFADevice(device.id, userId, backupCodesHash, client);
         if (device.is_primary) {
             await repository.updateMFADevicePrimary(userId, device.id, client);
         }
@@ -255,7 +255,7 @@ export async function verifyMFAChallenge(challengeId, input, sessionId, ipAddres
         throw new AuthError('Invalid code', AuthErrorCodes.MFA_INVALID, 400);
     }
     stepUpChallengeCache.delete(challengeId);
-    await repository.updateMFADeviceLastUsed(device.id, ipAddress);
+    await repository.updateMFADeviceLastUsed(device.id, challenge.userId, ipAddress);
     // Stamp step-up freshness on this session so subsequent sensitive
     // endpoints (`requireStepUp`) accept the call.
     recordStepUpFreshness(sessionId);
@@ -396,7 +396,7 @@ export async function removeMFADevice(userId, deviceId, currentPassword, ipAddre
             throw new AuthError('Device not found', AuthErrorCodes.MFA_DEVICE_NOT_FOUND, 404);
         }
         const freshRemaining = freshDevices.filter((d) => d.verified && d.is_active && d.id !== deviceId);
-        await repository.disableMFADevice(deviceId, 'user_removed', client);
+        await repository.disableMFADevice(deviceId, userId, 'user_removed', client);
         if (freshRemaining.length === 0) {
             await repository.updateUserMFAEnabled(userId, false, client);
         }

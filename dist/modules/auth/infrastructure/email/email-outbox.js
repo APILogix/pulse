@@ -78,12 +78,15 @@ export async function processAuthEmailOutbox(batchSize = 50) {
     const pending = await claimAuthEmailBatch(batchSize);
     const results = await Promise.all(pending.map(async (row) => {
         try {
-            await sendEmail({
-                to: row.to_email,
-                subject: row.subject,
-                html: row.html,
-                text: row.text,
-            });
+            await Promise.race([
+                sendEmail({
+                    to: row.to_email,
+                    subject: row.subject,
+                    html: row.html,
+                    text: row.text,
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Email send timeout')), 15_000)),
+            ]);
             await markAuthEmailSent(row.id);
             return true;
         }
@@ -100,14 +103,14 @@ export async function purgeSentAuthEmailOutbox(olderThanDays, client) {
     const result = await db.query(`DELETE FROM auth_email_outbox
      WHERE status = 'sent'
        AND sent_at IS NOT NULL
-       AND sent_at < NOW() - ($1 || ' days')::interval`, [olderThanDays.toString()]);
+       AND sent_at < NOW() - ($1::interval)`, [`${olderThanDays} days`]);
     return result.rowCount ?? 0;
 }
 export async function purgeFailedAuthEmailOutbox(olderThanDays, client) {
     const db = client || pool;
     const result = await db.query(`DELETE FROM auth_email_outbox
      WHERE status = 'failed'
-       AND created_at < NOW() - ($1 || ' days')::interval`, [olderThanDays.toString()]);
+       AND created_at < NOW() - ($1::interval)`, [`${olderThanDays} days`]);
     return result.rowCount ?? 0;
 }
 //# sourceMappingURL=email-outbox.js.map

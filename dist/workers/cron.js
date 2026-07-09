@@ -20,7 +20,7 @@ import { logger } from '../config/logger.js';
 import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
 import { registerAuthAutomationWorkers } from '../modules/auth/infrastructure/jobs/queue.js';
 import { registerBillingWorkers } from '../modules/billing/queue.js';
-import { registerOrganizationCleanupWorkers } from '../modules/organization/queue.js';
+import { registerOrganizationCleanupWorkers } from '../modules/organization/shared/background/queue.js';
 const cronLogger = logger.child({ component: 'cron' });
 async function bootstrapCron() {
     if (!env.DATABASE_URL) {

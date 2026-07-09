@@ -1,5 +1,5 @@
 import { logger } from '../config/logger.js';
-import { processOrgEmailOutbox } from '../modules/organization/email-outbox.js';
+import { processOrgEmailOutbox } from '../modules/organization/shared/background/email-outbox.js';
 
 const workerLogger = logger.child({ component: 'org-email-worker' });
 

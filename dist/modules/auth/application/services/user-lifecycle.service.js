@@ -135,7 +135,7 @@ export async function updateCurrentUser(userId, input) {
     if (input.preferred_mfa_method !== undefined) {
         updates.preferred_mfa_method = input.preferred_mfa_method;
     }
-    const updated = await repository.updateUser(userId, updates);
+    const updated = await repository.updateUser(userId, userId, updates);
     if (!updated) {
         throw new AuthError('Update failed', AuthErrorCodes.USER_NOT_FOUND, 500);
     }

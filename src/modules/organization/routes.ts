@@ -13,17 +13,13 @@ import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import {
   AcceptInvitationSchema,
-  ApiKeyParamsSchema,
   AuditLogQuerySchema,
-  CreateApiKeySchema,
-  CreateEnvironmentSchema,
   CreateInvitationSchema,
   CreateOrganizationSchema,
   CreateScimTokenSchema,
   CreateQuotaRequestSchema,
   CreateSsoProviderSchema,
   CursorPaginationSchema,
-  EnvironmentParamsSchema,
   IdParamsSchema,
   InvitationListQuerySchema,
   InvitationIdParamsSchema,
@@ -43,14 +39,13 @@ import {
   SuspendMemberSchema,
   SwitchOrganizationSchema,
   TransferOwnershipSchema,
-  UpdateEnvironmentSchema,
   UpdateMemberRoleSchema,
   UpdateOrganizationSchema,
   UpdateSettingsSchema,
   UpdateSsoProviderSchema,
   type RequestMeta,
 } from './types.js';
-import { registerSdkConfigRoutes } from './sdk-config.routes.js';
+import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 
 type AuthenticatedRequest = FastifyRequest & {
   user: { id: string; email: string; isAdmin: boolean; sessionId: string; mfaVerified: boolean };
@@ -314,59 +309,7 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
     return reply.send({ success: true, data: result });
   }));
 
-  // ═══════════════════════════════════════════════
-  // ENVIRONMENTS
-  // ═══════════════════════════════════════════════
 
-  fastify.get('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const result = await svc.listEnvironments(orgId, asAuth(request).user.id);
-    return reply.send({ success: true, data: result });
-  }));
-
-  fastify.post('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const body = CreateEnvironmentSchema.parse(request.body);
-    const result = await svc.createEnvironment(buildMeta(request), orgId, strip(body) as any);
-    return reply.code(201).send({ success: true, data: result });
-  }));
-
-  fastify.patch('/:orgId/environments/:envId', auth, withErrorHandling(async (request, reply) => {
-    const { orgId, envId } = EnvironmentParamsSchema.parse(request.params);
-    const body = UpdateEnvironmentSchema.parse(request.body);
-    const result = await svc.updateEnvironment(buildMeta(request), orgId, envId, body);
-    return reply.send({ success: true, data: result });
-  }));
-
-  // ═══════════════════════════════════════════════
-  // API KEYS
-  // ═══════════════════════════════════════════════
-
-  fastify.get('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const query = CursorPaginationSchema.parse(request.query ?? {});
-    const result = await svc.listApiKeys(orgId, asAuth(request).user.id, query);
-    return reply.send({ success: true, ...result });
-  }));
-
-  fastify.post('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const body = CreateApiKeySchema.parse(request.body);
-    const result = await svc.createApiKey(buildMeta(request), orgId, strip(body) as any);
-    return reply.code(201).send({ success: true, data: result });
-  }));
-
-  fastify.delete('/:orgId/api-keys/:keyId', auth, withErrorHandling(async (request, reply) => {
-    const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
-    await svc.revokeApiKey(buildMeta(request), orgId, keyId);
-    return reply.code(204).send();
-  }));
-
-  fastify.post('/:orgId/api-keys/:keyId/rotate', auth, withErrorHandling(async (request, reply) => {
-    const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
-    const result = await svc.rotateApiKey(buildMeta(request), orgId, keyId);
-    return reply.send({ success: true, data: result });
-  }));
 
   // ═══════════════════════════════════════════════
   // SSO PROVIDERS

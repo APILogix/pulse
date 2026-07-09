@@ -14,11 +14,14 @@ export class ScimTokenService {
             return this.createTokenInTransaction(input, client);
         });
     }
-    async rotateToken(tokenId, rotatedBy) {
+    async rotateToken(tokenId, orgId, rotatedBy) {
         return withTransaction(async (client) => {
             const existing = await repository.findScimTokenById(tokenId, client);
             if (!existing) {
                 throw new Error('Token not found');
+            }
+            if (existing.org_id !== orgId) {
+                throw new Error('Token does not belong to this organization');
             }
             if (existing.revoked_at) {
                 throw new Error('Token already revoked');
@@ -35,7 +38,7 @@ export class ScimTokenService {
             await repository.rotateScimToken(tokenId, created.tokenId, gracePeriodEndsAt, client);
             logAudit({
                 user_id: rotatedBy,
-                org_id: existing.org_id,
+                org_id: orgId,
                 actor_type: 'admin',
                 actor_id: rotatedBy,
                 action: 'scim_token.rotated',
@@ -48,12 +51,18 @@ export class ScimTokenService {
             return { rawToken: created.rawToken, newTokenId: created.tokenId };
         });
     }
-    async revokeToken(tokenId, revokedBy) {
+    async revokeToken(tokenId, orgId, revokedBy) {
         const existing = await repository.findScimTokenById(tokenId);
+        if (!existing) {
+            throw new Error('Token not found');
+        }
+        if (existing.org_id !== orgId) {
+            throw new Error('Token does not belong to this organization');
+        }
         await repository.revokeScimToken(tokenId);
         logAudit({
             user_id: revokedBy,
-            org_id: existing?.org_id ?? null,
+            org_id: orgId,
             actor_type: 'admin',
             actor_id: revokedBy,
             action: 'scim_token.revoked',

@@ -111,7 +111,7 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
     const { plain, hashed } = await generateBackupCodes();
     mfaBackupTempCache.set(device.id, hashed);
     await repository.withTransaction(async (client) => {
-        await repository.verifyMFADevice(device.id, hashed, client);
+        await repository.verifyMFADevice(device.id, userId, hashed, client);
         if (isPrimary) {
             await repository.updateMFADevicePrimary(userId, device.id, client);
         }
@@ -225,7 +225,7 @@ export async function verifyLoginMfaWebAuthn(input, ipAddress, userAgent, client
     }
     loginMfaChallengeCache.delete(state.loginMfaChallengeId);
     await repository.updateWebAuthnSignCount(device.id, verification.authenticationInfo.newCounter, ipAddress);
-    await repository.updateMFADeviceLastUsed(device.id, ipAddress);
+    await repository.updateMFADeviceLastUsed(device.id, loginChallenge.userId, ipAddress);
     const user = await repository.findUserById(loginChallenge.userId);
     if (!user) {
         throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
@@ -325,7 +325,7 @@ export async function verifyStepUpWebAuthn(input, sessionId, userId, ipAddress) 
     }
     stepUpChallengeCache.delete(state.stepUpChallengeId);
     await repository.updateWebAuthnSignCount(device.id, verification.authenticationInfo.newCounter, ipAddress);
-    await repository.updateMFADeviceLastUsed(device.id, ipAddress);
+    await repository.updateMFADeviceLastUsed(device.id, userId, ipAddress);
     recordStepUpFreshness(sessionId);
     return { user_id: userId, mfa_verified: true };
 }

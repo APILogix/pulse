@@ -50,7 +50,7 @@ export declare function listActiveSessionsByUser(userId: string, client?: PoolCl
 export declare function listOtherActiveSessionIds(userId: string, currentSessionId: string, client?: PoolClient): Promise<string[]>;
 export declare function countActiveSessionsByUser(userId: string, client?: PoolClient): Promise<number>;
 export declare function revokeOldestSessions(userId: string, keepCount: number, client?: PoolClient): Promise<number>;
-export declare function revokeSession(id: string, reason: string, terminatedBy?: string, client?: PoolClient): Promise<boolean>;
+export declare function revokeSession(id: string, userId: string, reason: string, terminatedBy?: string, client?: PoolClient): Promise<boolean>;
 /**
  * Revoke every active session of a user. Used by suspend, password reset,
  * MFA disable, and refresh-token reuse responses.
@@ -74,8 +74,8 @@ export declare function revokeAllSessionsForUser(userId: string, reason: string,
  * Returns true on success; false when CAS fails (caller treats that as a
  * concurrent rotation = potential reuse).
  */
-export declare function rotateRefreshToken(sessionId: string, oldHash: string, newHash: string, newExpiresAt: Date, client?: PoolClient): Promise<boolean>;
-export declare function touchSessionActivity(sessionId: string, client?: PoolClient): Promise<void>;
+export declare function rotateRefreshToken(sessionId: string, userId: string, oldHash: string, newHash: string, newExpiresAt: Date, client?: PoolClient): Promise<boolean>;
+export declare function touchSessionActivity(sessionId: string, userId: string, client?: PoolClient): Promise<void>;
 export declare function cleanupExpiredSessions(client?: PoolClient): Promise<number>;
 export declare function purgeOldRevokedSessions(olderThanDays?: number, client?: PoolClient): Promise<number>;
 //# sourceMappingURL=session.repository.d.ts.map

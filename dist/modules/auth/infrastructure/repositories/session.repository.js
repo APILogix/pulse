@@ -119,12 +119,12 @@ export async function revokeOldestSessions(userId, keepCount, client) {
      )`, [userId, keepCount]);
     return result.rowCount ?? 0;
 }
-export async function revokeSession(id, reason, terminatedBy, client) {
+export async function revokeSession(id, userId, reason, terminatedBy, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_sessions
      SET status = 'revoked', terminated_at = NOW(),
          termination_reason = $2, terminated_by = $3
-     WHERE id = $1`, [id, reason, terminatedBy || null]);
+     WHERE id = $1 AND user_id = $4`, [id, reason, terminatedBy || null, userId]);
     return (result.rowCount ?? 0) > 0;
 }
 /**
@@ -170,22 +170,23 @@ export async function revokeAllSessionsForUser(userId, reason, client) {
  * Returns true on success; false when CAS fails (caller treats that as a
  * concurrent rotation = potential reuse).
  */
-export async function rotateRefreshToken(sessionId, oldHash, newHash, newExpiresAt, client) {
+export async function rotateRefreshToken(sessionId, userId, oldHash, newHash, newExpiresAt, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_sessions
-     SET refresh_token_hash = $3,
-         previous_refresh_token_hash = $2,
+     SET refresh_token_hash = $4,
+         previous_refresh_token_hash = $3,
          previous_refresh_rotated_at = NOW(),
-         expires_at = $4,
+         expires_at = $5,
          last_active_at = NOW()
      WHERE id = $1
-       AND refresh_token_hash = $2
-       AND status = 'active'`, [sessionId, oldHash, newHash, newExpiresAt]);
+       AND user_id = $2
+       AND refresh_token_hash = $3
+       AND status = 'active'`, [sessionId, userId, oldHash, newHash, newExpiresAt]);
     return (result.rowCount ?? 0) === 1;
 }
-export async function touchSessionActivity(sessionId, client) {
+export async function touchSessionActivity(sessionId, userId, client) {
     const db = client || pool;
-    await db.query(`UPDATE user_sessions SET last_active_at = NOW() WHERE id = $1`, [sessionId]);
+    await db.query(`UPDATE user_sessions SET last_active_at = NOW() WHERE id = $1 AND user_id = $2`, [sessionId, userId]);
 }
 export async function cleanupExpiredSessions(client) {
     const db = client || pool;
@@ -201,7 +202,7 @@ export async function purgeOldRevokedSessions(olderThanDays = 90, client) {
     const db = client || pool;
     const result = await db.query(`DELETE FROM user_sessions
      WHERE status IN ('revoked', 'expired', 'terminated_by_admin')
-       AND COALESCE(terminated_at, expires_at) < NOW() - ($1 || ' days')::interval`, [olderThanDays.toString()]);
+       AND COALESCE(terminated_at, expires_at) < NOW() - ($1::interval)`, [`${olderThanDays} days`]);
     return result.rowCount ?? 0;
 }
 //# sourceMappingURL=session.repository.js.map

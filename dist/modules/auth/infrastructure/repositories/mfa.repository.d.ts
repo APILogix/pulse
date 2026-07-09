@@ -33,21 +33,21 @@ export declare function createMFADevice(data: {
  * Reset an existing MFA device row for a fresh setup. Called when a user
  * who previously disabled MFA decides to re-enable it.
  */
-export declare function resetMFADeviceForReSetup(id: string, data: {
+export declare function resetMFADeviceForReSetup(id: string, userId: string, data: {
     device_name: string;
     secret_encrypted: string | null;
     is_primary: boolean;
     device_metadata?: Record<string, unknown>;
 }, client?: PoolClient): Promise<MFADevice | null>;
-export declare function verifyMFADevice(id: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<MFADevice | null>;
+export declare function verifyMFADevice(id: string, userId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<MFADevice | null>;
 export declare function updateMFADevicePrimary(userId: string, deviceId: string, client?: PoolClient): Promise<void>;
-export declare function disableMFADevice(id: string, reason: string, client?: PoolClient): Promise<boolean>;
+export declare function disableMFADevice(id: string, userId: string, reason: string, client?: PoolClient): Promise<boolean>;
 export declare function disableAllMFADevices(userId: string, reason: string, client?: PoolClient): Promise<number>;
 export declare function updateUserMFAEnabled(userId: string, enabled: boolean, client?: PoolClient): Promise<void>;
 export declare function updateBackupCodesGenerated(userId: string, client?: PoolClient): Promise<void>;
-export declare function updateMFADeviceBackupCodes(deviceId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<void>;
+export declare function updateMFADeviceBackupCodes(deviceId: string, userId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<void>;
 export declare function setBackupCodesForAllUserDevices(userId: string, backupCodesHash: string[], client?: PoolClient): Promise<void>;
-export declare function updateMFADeviceLastUsed(deviceId: string, ipAddress: string, client?: PoolClient): Promise<void>;
+export declare function updateMFADeviceLastUsed(deviceId: string, userId: string, ipAddress: string, client?: PoolClient): Promise<void>;
 /**
  * Insert a fresh email MFA OTP for a device. Any prior unconsumed OTP for the
  * same device is invalidated first so only the newest code is valid.

@@ -380,7 +380,7 @@ export async function changePassword(userId, currentSessionId, input, mfaVerifie
     await repository.revokeAllOtherSessions(userId, currentSessionId, 'Password changed');
     await blacklistOtherUserSessionTokens(userId, currentSessionId);
     blacklistAccessToken(currentSessionId);
-    await repository.revokeSession(currentSessionId, 'Password changed');
+    await repository.revokeSession(currentSessionId, userId, 'Password changed');
     const session = await issueSessionForUser({
         user: updated,
         ipAddress,

@@ -19,7 +19,7 @@ import { registerAuthAutomationWorkers } from '../modules/auth/infrastructure/jo
 import { registerBillingWorkers } from '../modules/billing/queue.js';
 import { startConnectorMonitor } from '../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../modules/event-analytics/queue.js';
-import { registerOrganizationCleanupWorkers } from '../modules/organization/queue.js';
+import { registerOrganizationCleanupWorkers } from '../modules/organization/shared/background/queue.js';
 import { startPgBoss, stopPgBoss } from '../lib/pgboss.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';

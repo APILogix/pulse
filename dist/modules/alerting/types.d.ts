@@ -262,13 +262,13 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     name: z.ZodOptional<z.ZodString>;
     enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
+    metadata: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     severity: z.ZodOptional<z.ZodDefault<z.ZodEnum<{
         error: "error";
         info: "info";
         warning: "warning";
         critical: "critical";
     }>>>;
-    metadata: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     evaluationIntervalSeconds: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     cooldownSeconds: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     autoResolveAfterMinutes: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;

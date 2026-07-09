@@ -343,7 +343,7 @@ export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clien
         throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
     }
     loginMfaChallengeCache.delete(input.challenge_id);
-    await repository.updateMFADeviceLastUsed(device.id, ipAddress);
+    await repository.updateMFADeviceLastUsed(device.id, challenge.userId, ipAddress);
     await assertLoginAllowedByOrgPolicy(user);
     const session = await issueSessionForUser({
         user,

@@ -40,7 +40,7 @@ export async function startSamlSingleLogout(userId, sessionId, ipAddress, reques
  */
 export async function completeSamlLogoutForUser(userId, sessionId, ipAddress, requestId) {
     const slo = await startSamlSingleLogout(userId, sessionId, ipAddress, requestId);
-    await repository.revokeSession(sessionId, 'User SAML logout');
+    await repository.revokeSession(sessionId, userId, 'User SAML logout');
     blacklistAccessToken(sessionId);
     logAudit({
         user_id: userId,
@@ -120,7 +120,7 @@ async function revokeSessionsBySamlContext(providerId, nameId, sessionIndex, ipA
     const sessionIds = sessions.map((row) => row.session_id);
     await repository.expireSamlSessionsBySessionIds(sessionIds);
     for (const row of sessions) {
-        await repository.revokeSession(row.session_id, 'SAML single logout');
+        await repository.revokeSession(row.session_id, row.user_id, 'SAML single logout');
         blacklistAccessToken(row.session_id);
         logAudit({
             user_id: row.user_id,

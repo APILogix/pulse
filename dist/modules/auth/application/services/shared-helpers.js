@@ -241,7 +241,7 @@ export async function consumeBackupCode(userId, code) {
         const matchIndex = codes.findIndex((hashedCode) => verifyBackupCodeHash(normalized, hashedCode));
         if (matchIndex >= 0) {
             codes.splice(matchIndex, 1);
-            await repository.updateMFADeviceBackupCodes(device.id, codes.length > 0 ? codes : null);
+            await repository.updateMFADeviceBackupCodes(device.id, userId, codes.length > 0 ? codes : null);
             return true;
         }
     }

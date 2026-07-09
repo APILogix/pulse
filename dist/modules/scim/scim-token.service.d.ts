@@ -10,11 +10,11 @@ export declare class ScimTokenService {
         rawToken: string;
         tokenId: string;
     }>;
-    rotateToken(tokenId: string, rotatedBy: string): Promise<{
+    rotateToken(tokenId: string, orgId: string, rotatedBy: string): Promise<{
         rawToken: string;
         newTokenId: string;
     }>;
-    revokeToken(tokenId: string, revokedBy: string): Promise<void>;
+    revokeToken(tokenId: string, orgId: string, revokedBy: string): Promise<void>;
     listTokens(orgId: string): Promise<{
         id: string;
         created_at: Date;

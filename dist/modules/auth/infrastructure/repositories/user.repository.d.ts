@@ -27,7 +27,7 @@ export declare function createUser(data: {
     accepted_privacy_version?: string | null;
     marketing_consent?: boolean;
 }, client?: PoolClient): Promise<User>;
-export declare function updateUser(id: string, data: Partial<Pick<User, 'full_name' | 'avatar_url' | 'timezone' | 'locale' | 'preferred_mfa_method'>>, client?: PoolClient): Promise<User | null>;
+export declare function updateUser(id: string, requestingUserId: string, data: Partial<Pick<User, 'full_name' | 'avatar_url' | 'timezone' | 'locale' | 'preferred_mfa_method'>>, client?: PoolClient): Promise<User | null>;
 export declare function softDeleteUser(id: string, reason: string | null, deletedBy: string | null, client?: PoolClient): Promise<boolean>;
 export declare function restoreUser(id: string, client?: PoolClient): Promise<User | null>;
 /**

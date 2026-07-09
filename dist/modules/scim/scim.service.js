@@ -217,7 +217,7 @@ export async function patchUser(orgId, externalId, body, actor) {
                     ? op.value.formatted
                     : undefined;
                 if (formatted) {
-                    await repository.updateUser(user.id, { full_name: formatted });
+                    await repository.updateUser(user.id, user.id, { full_name: formatted });
                 }
             }
         }
@@ -231,7 +231,7 @@ export async function patchUser(orgId, externalId, body, actor) {
     if (body.name && typeof body.name === 'object') {
         const formatted = body.name.formatted;
         if (formatted) {
-            await repository.updateUser(user.id, { full_name: formatted });
+            await repository.updateUser(user.id, user.id, { full_name: formatted });
         }
     }
     logAudit({

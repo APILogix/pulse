@@ -10,10 +10,10 @@
 import fp from 'fastify-plugin';
 import { OrganizationRepository } from './repository.js';
 import { OrganizationService } from './organizationservice.js';
-import { SdkConfigRepository } from './sdk-config.repository.js';
-import { SdkConfigService } from './sdk-config.service.js';
+import { SdkConfigRepository } from './sdk-config/sdk-config.repository.js';
+import { SdkConfigService } from './sdk-config/sdk-config.service.js';
 import { organizationRoutes } from './routes.js';
-import { createOrganizationLogger } from './utils.js';
+import { createOrganizationLogger } from './shared/utils/index.js';
 import { ScimTokenService } from '../scim/scim-token.service.js';
 const orgLogger = createOrganizationLogger('Module');
 async function organizationModule(fastify, _options) {

@@ -65,7 +65,7 @@ export async function createUser(data, client) {
     ]);
     return result.rows[0];
 }
-export async function updateUser(id, data, client) {
+export async function updateUser(id, requestingUserId, data, client) {
     const db = client || pool;
     const fields = [];
     const values = [];
@@ -75,7 +75,6 @@ export async function updateUser(id, data, client) {
         values.push(data.full_name);
     }
     if (data.avatar_url !== undefined) {
-        // null is a meaningful value — clears the avatar.
         fields.push(`avatar_url = $${idx++}`);
         values.push(data.avatar_url);
     }
@@ -94,8 +93,9 @@ export async function updateUser(id, data, client) {
     if (fields.length === 0)
         return findUserById(id, client);
     values.push(id);
+    values.push(requestingUserId);
     const result = await db.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
-     WHERE id = $${idx} AND deleted_at IS NULL
+     WHERE id = $${idx++} AND deleted_at IS NULL AND id = $${idx}
      RETURNING *`, values);
     return result.rows[0] || null;
 }

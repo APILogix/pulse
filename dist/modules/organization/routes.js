@@ -1,8 +1,8 @@
 import { authenticate } from '../../shared/middleware/auth.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
-import { AcceptInvitationSchema, ApiKeyParamsSchema, AuditLogQuerySchema, CreateApiKeySchema, CreateEnvironmentSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateScimTokenSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, EnvironmentParamsSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateEnvironmentSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
-import { registerSdkConfigRoutes } from './sdk-config.routes.js';
+import { AcceptInvitationSchema, AuditLogQuerySchema, CreateInvitationSchema, CreateOrganizationSchema, CreateScimTokenSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
     console.log('[organization.handleError]', error);
     if (error instanceof OrganizationError) {
@@ -229,51 +229,6 @@ export async function organizationRoutes(fastify, _options) {
     fastify.get('/invitations/validate', withErrorHandling(async (request, reply) => {
         const query = InvitationValidateQuerySchema.parse(request.query ?? {});
         const result = await svc.validateInvitationToken(query.token);
-        return reply.send({ success: true, data: result });
-    }));
-    // ═══════════════════════════════════════════════
-    // ENVIRONMENTS
-    // ═══════════════════════════════════════════════
-    fastify.get('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const result = await svc.listEnvironments(orgId, asAuth(request).user.id);
-        return reply.send({ success: true, data: result });
-    }));
-    fastify.post('/:orgId/environments', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const body = CreateEnvironmentSchema.parse(request.body);
-        const result = await svc.createEnvironment(buildMeta(request), orgId, strip(body));
-        return reply.code(201).send({ success: true, data: result });
-    }));
-    fastify.patch('/:orgId/environments/:envId', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, envId } = EnvironmentParamsSchema.parse(request.params);
-        const body = UpdateEnvironmentSchema.parse(request.body);
-        const result = await svc.updateEnvironment(buildMeta(request), orgId, envId, body);
-        return reply.send({ success: true, data: result });
-    }));
-    // ═══════════════════════════════════════════════
-    // API KEYS
-    // ═══════════════════════════════════════════════
-    fastify.get('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const query = CursorPaginationSchema.parse(request.query ?? {});
-        const result = await svc.listApiKeys(orgId, asAuth(request).user.id, query);
-        return reply.send({ success: true, ...result });
-    }));
-    fastify.post('/:orgId/api-keys', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const body = CreateApiKeySchema.parse(request.body);
-        const result = await svc.createApiKey(buildMeta(request), orgId, strip(body));
-        return reply.code(201).send({ success: true, data: result });
-    }));
-    fastify.delete('/:orgId/api-keys/:keyId', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
-        await svc.revokeApiKey(buildMeta(request), orgId, keyId);
-        return reply.code(204).send();
-    }));
-    fastify.post('/:orgId/api-keys/:keyId/rotate', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, keyId } = ApiKeyParamsSchema.parse(request.params);
-        const result = await svc.rotateApiKey(buildMeta(request), orgId, keyId);
         return reply.send({ success: true, data: result });
     }));
     // ═══════════════════════════════════════════════

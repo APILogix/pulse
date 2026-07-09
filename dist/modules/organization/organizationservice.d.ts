@@ -1,22 +1,24 @@
-import type { OrganizationUsageCounts } from "./repository.js";
-import { type OrgRole, type RequestMeta, type OrganizationDto, type OrgSettingsDto, type MemberDto, type InvitationDto, type EnvironmentDto, type ApiKeyDto, type SsoProviderDto, type ScimTokenDto, type SecurityEventDto, type AuditLogDto, type QuotaRequestDto, type UserOrganizationDto, type OrganizationServiceDependencies, type CursorPaginationQuery } from "./types.js";
+import { QuotasService } from "./quotas/quotas.service.js";
+import { MembersService } from "./members/members.service.js";
+import { InvitationsService } from "./invitations/invitations.service.js";
+import { type OrgRole, type RequestMeta, type MemberDto, type InvitationDto, type ScimTokenDto, type SecurityEventDto, type AuditLogDto, type QuotaRequestDto, type OrganizationServiceDependencies, type CursorPaginationQuery } from "./types.js";
+import { CoreService } from "./core/core.service.js";
 export declare class OrganizationService {
     private repo;
     private log;
-    private emitEvent;
+    private readonly emitEvent;
+    private readonly sso;
+    private readonly auditLogs;
+    readonly core: CoreService;
+    readonly invitations: InvitationsService;
+    readonly quotas: QuotasService;
+    readonly members: MembersService;
     private scimTokenService;
+    private readonly securityEvents;
     constructor(deps: OrganizationServiceDependencies);
     private audit;
-    /** Send the organization-invitation email. Throws on SMTP failure so callers
-     *  can decide whether the failure is fatal (resend) or best-effort (invite). */
-    private sendInvitationEmail;
     private requireMember;
     private requireMutableOrg;
-    private limitFrom;
-    private featureAllowed;
-    private assertWithinLimit;
-    private requireBillingEntitlements;
-    private enforceBillingLimit;
     createOrganization(meta: RequestMeta, data: {
         name: string;
         description?: string;
@@ -25,17 +27,17 @@ export declare class OrganizationService {
         country?: string;
         timezone?: string;
         billingEmail?: string;
-    }): Promise<OrganizationDto>;
-    switchOrganization(meta: RequestMeta, orgId: string): Promise<OrganizationDto>;
-    getOrganization(orgId: string, userId: string): Promise<OrganizationDto>;
-    getOrganizationBySlug(slug: string, userId: string): Promise<OrganizationDto>;
-    updateOrganization(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<OrganizationDto>;
+    }): Promise<import("./types.js").OrganizationDto>;
+    switchOrganization(meta: RequestMeta, orgId: string): Promise<import("./types.js").OrganizationDto>;
+    getOrganization(orgId: string, userId: string): Promise<import("./types.js").OrganizationDto>;
+    getOrganizationBySlug(slug: string, userId: string): Promise<import("./types.js").OrganizationDto>;
+    updateOrganization(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<import("./types.js").OrganizationDto>;
     deleteOrganization(meta: RequestMeta, orgId: string): Promise<void>;
     archiveOrganization(meta: RequestMeta, orgId: string): Promise<void>;
-    restoreOrganization(meta: RequestMeta, orgId: string): Promise<OrganizationDto>;
+    restoreOrganization(meta: RequestMeta, orgId: string): Promise<import("./types.js").OrganizationDto>;
     transferOwnership(meta: RequestMeta, orgId: string, newOwnerUserId: string): Promise<void>;
-    getSettings(orgId: string, userId: string): Promise<OrgSettingsDto>;
-    updateSettings(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<OrgSettingsDto>;
+    getSettings(orgId: string, userId: string): Promise<import("./types.js").OrgSettingsDto>;
+    updateSettings(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<import("./types.js").OrgSettingsDto>;
     listMembers(orgId: string, userId: string, q: CursorPaginationQuery, filters?: {
         status?: string;
         role?: string;
@@ -84,41 +86,8 @@ export declare class OrganizationService {
             limit: number;
         };
     }>;
-    createEnvironment(meta: RequestMeta, orgId: string, data: {
-        name: string;
-        description?: string;
-        isProduction?: boolean;
-    }): Promise<EnvironmentDto>;
-    updateEnvironment(meta: RequestMeta, orgId: string, envId: string, data: Record<string, unknown>): Promise<EnvironmentDto>;
-    listEnvironments(orgId: string, userId: string): Promise<EnvironmentDto[]>;
-    createApiKey(meta: RequestMeta, orgId: string, data: {
-        name: string;
-        role?: OrgRole;
-        environmentId?: string;
-        expiresInDays?: number;
-    }): Promise<{
-        rawKey: string;
-        id: string;
-        name: string;
-        keyPrefix: string;
-        role: OrgRole;
-        environmentId: string | null;
-        lastUsedAt: Date | null;
-        expiresAt: Date | null;
-        revokedAt: Date | null;
-        createdAt: Date;
-    }>;
-    revokeApiKey(meta: RequestMeta, orgId: string, keyId: string): Promise<void>;
-    listApiKeys(orgId: string, userId: string, q: CursorPaginationQuery): Promise<{
-        data: ApiKeyDto[];
-        meta: {
-            hasMore: boolean;
-            nextCursor: string | null;
-            limit: number;
-        };
-    }>;
-    createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
-    updateSsoProvider(meta: RequestMeta, orgId: string, ssoId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
+    createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<import("./sso/sso.service.js").SsoProviderDto>;
+    updateSsoProvider(meta: RequestMeta, orgId: string, ssoId: string, data: Record<string, unknown>): Promise<import("./sso/sso.service.js").SsoProviderDto>;
     deleteSsoProvider(meta: RequestMeta, orgId: string, ssoId: string): Promise<void>;
     createScimToken(meta: RequestMeta, orgId: string, data?: {
         scopes?: string[];
@@ -185,19 +154,27 @@ export declare class OrganizationService {
         };
     }>;
     getBillingSummary(orgId: string, userId: string): Promise<{
-        subscription: {
-            id: string;
-            status: string;
+        orgId: string;
+        subscriptionStatus: string;
+        planTier: string;
+        eventLimitMonthly: number;
+        hardCap: boolean;
+        usage: {
+            activeMembers: {
+                used: number;
+                limit: number;
+            };
+            ssoProviders: {
+                used: number;
+                limit: number;
+                enabled: boolean;
+            };
+            scimTokens: {
+                used: number;
+                limit: number;
+                enabled: boolean;
+            };
         };
-        plan: {
-            id: string;
-            key: string;
-            tier: string;
-            eventLimitMonthly: number;
-            hardCap: boolean;
-            features: Record<string, unknown>;
-        };
-        usage: OrganizationUsageCounts;
     }>;
     getUsageLimits(orgId: string, userId: string): Promise<{
         subscriptionStatus: string;
@@ -206,14 +183,6 @@ export declare class OrganizationService {
             members: {
                 used: number;
                 pending: number;
-                limit: number | null;
-            };
-            environments: {
-                used: number;
-                limit: number | null;
-            };
-            apiKeys: {
-                used: number;
                 limit: number | null;
             };
             ssoProviders: {
@@ -234,7 +203,7 @@ export declare class OrganizationService {
         };
     }>;
     listUserOrganizations(userId: string, q: CursorPaginationQuery): Promise<{
-        data: UserOrganizationDto[];
+        data: import("./types.js").UserOrganizationDto[];
         meta: {
             hasMore: boolean;
             nextCursor: string | null;
@@ -255,18 +224,6 @@ export declare class OrganizationService {
         slug: string;
         available: boolean;
     }>;
-    rotateApiKey(meta: RequestMeta, orgId: string, keyId: string): Promise<{
-        rawKey: string;
-        id: string;
-        name: string;
-        keyPrefix: string;
-        role: OrgRole;
-        environmentId: string | null;
-        lastUsedAt: Date | null;
-        expiresAt: Date | null;
-        revokedAt: Date | null;
-        createdAt: Date;
-    }>;
     exportAuditLogs(orgId: string, userId: string, filters?: {
         action?: string;
         entityType?: string;
@@ -279,7 +236,7 @@ export declare class OrganizationService {
         changedFields: unknown;
     })[]>;
     leaveOrganization(meta: RequestMeta, orgId: string): Promise<void>;
-    listSsoProviders(orgId: string, userId: string): Promise<SsoProviderDto[]>;
+    listSsoProviders(orgId: string, userId: string): Promise<import("./sso/sso.service.js").SsoProviderDto[]>;
     listScimTokens(orgId: string, userId: string): Promise<ScimTokenDto[]>;
     private toScimTokenDto;
 }
