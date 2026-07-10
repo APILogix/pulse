@@ -10,14 +10,14 @@
  * The registry is a process-wide singleton; registration is idempotent.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { BaseConnector } from './connectors/base.connector.js';
-import { SlackConnector } from './connectors/slack.connector.js';
-import { DiscordConnector } from './connectors/discord.connector.js';
-import { TeamsConnector } from './connectors/teams.connector.js';
-import { PagerDutyConnector } from './connectors/pagerduty.connector.js';
-import { WebhookConnector } from './connectors/webhook.connector.js';
-import { EmailConnector } from './connectors/email.connector.js';
-import { SmsConnector } from './connectors/sms.connector.js';
+import { BaseConnector } from './shared/base.connector.js';
+import { SlackConnector } from './providers/slack/slack.connector.js';
+import { DiscordConnector } from './providers/discord/discord.connector.js';
+import { TeamsConnector } from './providers/teams/teams.connector.js';
+import { PagerDutyConnector } from './providers/pagerduty/pagerduty.connector.js';
+import { WebhookConnector } from './providers/webhook/webhook.connector.js';
+import { EmailConnector } from './providers/email/email.connector.js';
+import { SmsConnector } from './providers/sms/sms.connector.js';
 import {
   ConnectorTypeUnsupportedError,
   type ConnectorContext,

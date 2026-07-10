@@ -64,6 +64,12 @@ import {
   slugifyProjectName,
   validateStatusTransition,
 } from "./shared/utils.js";
+import { ProjectService } from "./core/project.service.js";
+import { SettingsService } from "./settings/settings.service.js";
+import { ProjectActivityService } from "./activity/activity.service.js";
+import { EnvironmentService } from "./environments/environment.service.js";
+import { ApiKeyService } from "./api-keys/api-key.service.js";
+import { BaseProjectService } from "./shared/base.service.js";
 
 // Audit/request footprint passed from routes. Mirrors the organization
 // module's RequestMeta so audit rows are uniform across modules.
@@ -104,6 +110,13 @@ export function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMem
 }
 
 export class ProjectsService {
+    public readonly core: ProjectService;
+    public readonly settings: SettingsService;
+    public readonly activity: ProjectActivityService;
+    public readonly environments: EnvironmentService;
+    public readonly apiKeys: ApiKeyService;
+    public readonly base: BaseProjectService;
+
   constructor(
     private readonly repository: ProjectsRepository,
     private readonly logger: FastifyBaseLogger,
@@ -115,7 +128,14 @@ export class ProjectsService {
     private readonly environmentRepository: EnvironmentRepository,
     private readonly activityRepository: ActivityRepository,
     private readonly usageRepository: UsageRepository,
-  ) {}
+  ) {
+
+          this.core = new ProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.settings = new SettingsService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.activity = new ProjectActivityService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.environments = new EnvironmentService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.apiKeys = new ApiKeyService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);}
 
   // ── Projects ────────────────────────────────────────────────────────────────
 
@@ -129,10 +149,7 @@ export class ProjectsService {
     limit: number;
     offset: number;
   }> {
-    await this.requireOrganizationAccess(orgId, userId);
-    const result = await this.repository.listProjects(orgId, query);
-    const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
-    return { ...result, limit: query.limit, offset };
+      return this.core.listProjects(orgId, userId, query) as any;
   }
 
   async createProject(
@@ -141,85 +158,15 @@ export class ProjectsService {
     body: CreateProjectBody,
     meta: RequestMeta,
   ): Promise<Project> {
-    await this.requireOrganizationAccess(orgId, userId, "admin");
-    const entitlements = await this.enforceProjectModuleLimit(orgId, "project");
-    await this.enforceProjectModuleLimit(
-      orgId,
-      "environment",
-      DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT,
-    );
-    const slug = await this.generateUniqueSlug(orgId, body.name);
-    const prefixes = buildApiPrefixes();
-
-    const config: ProjectUpdateInput = {};
-    this.assignProjectConfig(config, body);
-
-    const project = await this.repository.withTransaction(async (client) => {
-      const created = await this.repository.createProject(
-        {
-          orgId,
-          name: body.name,
-          slug,
-          description: body.description ?? null,
-          environment: body.environment,
-          productionApiPrefix: body.productionApiPrefix ?? prefixes.productionApiPrefix,
-          developmentApiPrefix: body.developmentApiPrefix ?? prefixes.developmentApiPrefix,
-          stagingApiPrefix: body.stagingApiPrefix ?? prefixes.stagingApiPrefix,
-          config,
-        },
-        client,
-      );
-      for (const environment of ["development", "staging", "production"] as ProjectEnvironment[]) {
-        await this.environmentRepository.createEnvironment(
-          {
-            projectId: created.id,
-            orgId: created.orgId,
-            environment,
-            createdBy: userId,
-          },
-          client,
-        );
-      }
-      await this.repository.createDefaultSdkConfigs(created, userId, entitlements.plan_key, client);
-
-      // [DISABLED] RemoteSDK configuration is deferred until Phase 2.
-      // The project is created without remote infrastructure provisioning.
-      // To enable: uncomment the block below and ensure RemoteSDK credentials
-      // are available in the environment.
-      /*
-      const remoteSdk = new RemoteSDK({ orgId: created.org_id });
-      await remoteSdk.configureProject({
-        projectId: created.id,
-        slug: created.slug,
-        environment: created.environment,
-      });
-      */
-
-      return created;
-    });
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.created",
-      entityType: "project",
-      entityId: project.id,
-      entityName: project.name,
-      newValues: { name: project.name, slug: project.slug, environment: project.environment },
-    });
-
-    this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
-    return project;
+      return this.core.createProject(orgId, userId, body, meta) as any;
   }
 
   async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {
-    return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+      return this.core.getProject(orgId, projectId, userId) as any;
   }
 
   async getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings> {
-    await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
-    const settings = await this.settingsRepository.findByProjectId(projectId);
-    if (!settings) throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
-    return settings;
+      return this.settings.getProjectSettings(orgId, projectId, userId) as any;
   }
 
   async updateProjectSettings(
@@ -229,48 +176,11 @@ export class ProjectsService {
     updates: Partial<Omit<ProjectSettings, "id" | "projectId" | "organizationId" | "createdAt" | "updatedAt">>,
     meta: RequestMeta
   ): Promise<ProjectSettings> {
-    await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-    const result = await this.settingsRepository.update(projectId, updates);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.settings.updated",
-      entityType: "project_settings",
-      entityId: result.id,
-      newValues: updates as any,
-    });
-
-    return result;
+      return this.settings.updateProjectSettings(orgId, projectId, userId, updates, meta) as any;
   }
 
   async getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
-    const settings = await this.settingsRepository.findByProjectId(projectId);
-    if (!settings) throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
-    
-    const members = (this.repository as any).findProjectMembers ? await (this.repository as any).findProjectMembers(orgId, projectId) : [];
-    const apiKeys = await (this.apiKeyRepository as any).listApiKeys(orgId, projectId);
-
-    const now = new Date();
-    const usage = {
-      totalEventsToday: 0,
-      totalBytesToday: 0,
-      peakHour: 0,
-      currentHourEvents: 0,
-      categoryBreakdown: {},
-      eventTypeBreakdown: {},
-      hourlyBreakdown: [],
-      dailyTrend: [],
-      heatmapData: []
-    };
-
-    return {
-      project,
-      settings,
-      memberCount: members.length,
-      apiKeyCount: apiKeys.length,
-      usage,
-    };
+      return this.core.getProjectOverview(orgId, projectId, userId) as any;
   }
 
   async updateProject(
@@ -280,52 +190,7 @@ export class ProjectsService {
     body: UpdateProjectBody,
     meta: RequestMeta,
   ): Promise<Project> {
-    const current = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-
-    if (body.status && body.status !== current.status &&
-        !validateStatusTransition(current.status, body.status)) {
-      throw new ProjectError(
-        "PROJECT_INVALID_TRANSITION",
-        `Cannot transition project from ${current.status} to ${body.status}`,
-        400,
-      );
-    }
-    if (body.status === "active" && current.status !== "active") {
-      await this.requireMutableBilling(orgId);
-    }
-
-    const updates: ProjectUpdateInput = {};
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.description !== undefined) updates.description = body.description;
-    if (body.status !== undefined) {
-      updates.status = body.status;
-      updates.archivedAt = body.status === "archived" ? new Date() : null;
-    }
-    if (body.environment !== undefined) updates.environment = body.environment;
-    if (body.productionApiPrefix !== undefined) updates.productionApiPrefix = body.productionApiPrefix;
-    if (body.developmentApiPrefix !== undefined) updates.developmentApiPrefix = body.developmentApiPrefix;
-    if (body.stagingApiPrefix !== undefined) updates.stagingApiPrefix = body.stagingApiPrefix;
-    this.assignProjectConfig(updates, body);
-
-    const updated = await this.repository.updateProject(orgId, projectId, updates);
-
-    // If the project is no longer active, evict its cached keys now so ingestion
-    // stops accepting data within this request rather than after the LRU TTL.
-    if (body.status !== undefined && body.status !== "active") {
-      await this.evictProjectApiKeys(projectId);
-    }
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.updated",
-      entityType: "project",
-      entityId: updated.id,
-      entityName: updated.name,
-      changedFields: Object.keys(body),
-      newValues: { status: updated.status },
-    });
-
-    return updated;
+      return this.core.updateProject(orgId, projectId, userId, body, meta) as any;
   }
 
   async deleteProject(
@@ -334,88 +199,31 @@ export class ProjectsService {
     userId: string,
     meta: RequestMeta,
   ): Promise<void> {
-    await this.requireProjectAccess(orgId, projectId, userId, "owner");
-    // Evict cached keys BEFORE soft delete so ingestion stops resolving them
-    // immediately. Revoke all keys so the secrets cannot be reactivated.
-    await this.evictProjectApiKeys(projectId);
-    await this.repository.withTransaction(async (client) => {
-      const keys = await this.apiKeyRepository.listActiveApiKeyRecords(projectId, undefined, client);
-      for (const key of keys) {
-        await this.apiKeyRepository.revokeApiKey(projectId, key.id, userId, "project_deleted", client);
-      }
-      await this.repository.softDeleteProject(orgId, projectId, userId, client);
-    });
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.deleted",
-      entityType: "project",
-      entityId: projectId,
-      isSensitive: true,
-    });
-    this.logger.warn({ orgId, projectId, userId }, "Project soft-deleted");
+      return this.core.deleteProject(orgId, projectId, userId, meta) as any;
   }
 
   async restoreProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
-    await this.requireOrganizationAccess(orgId, userId, "owner");
-    const project = await this.repository.findProjectByIdIncludingDeleted(orgId, projectId);
-    if (!project) throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-    if (!project.deletedAt) return project;
-
-    await this.enforceProjectModuleLimit(orgId, "project");
-    const restored = await this.repository.restoreProject(orgId, projectId);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.restored",
-      entityType: "project",
-      entityId: restored.id,
-      entityName: restored.name,
-      newValues: { status: restored.status },
-    });
-    return restored;
+      return this.core.restoreProject(orgId, projectId, userId, meta) as any;
   }
 
   async archiveProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    if (project.status === "archived") return project;
-    return this.updateProject(orgId, projectId, userId, { status: "archived" }, meta);
+      return this.core.archiveProject(orgId, projectId, userId, meta) as any;
   }
 
   async unarchiveProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    if (project.status !== "archived") {
-      throw new ProjectError("PROJECT_INVALID_TRANSITION", "Only archived projects can be unarchived", 400);
-    }
-    return this.updateProject(orgId, projectId, userId, { status: "active" }, meta);
+      return this.core.unarchiveProject(orgId, projectId, userId, meta) as any;
   }
 
   async pauseProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    if (project.status === "paused") return project;
-    return this.updateProject(orgId, projectId, userId, { status: "paused" }, meta);
+      return this.core.pauseProject(orgId, projectId, userId, meta) as any;
   }
 
   async resumeProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    if (project.status !== "paused") {
-      throw new ProjectError("PROJECT_INVALID_TRANSITION", "Only paused projects can be resumed", 400);
-    }
-    return this.updateProject(orgId, projectId, userId, { status: "active" }, meta);
+      return this.core.resumeProject(orgId, projectId, userId, meta) as any;
   }
 
   async getProjectStats(orgId: string, projectId: string, userId: string): Promise<ProjectWithStats> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "member");
-    const stats = await this.repository.getProjectStats(projectId);
-    return {
-      ...project,
-      stats: {
-        totalRequests: stats.totalRequests,
-        apiKeysCount: stats.apiKeysCount,
-        activeKeysCount: stats.activeKeysCount,
-        environmentCount: stats.environmentCount,
-      },
-    };
+      return this.base.getProjectStats(orgId, projectId, userId) as any;
   }
 
   async getProjectUsage(
@@ -423,8 +231,7 @@ export class ProjectsService {
     projectId: string,
     userId: string,
   ): Promise<ProjectUsageCounter[]> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    return this.repository.getProjectUsageCounters(projectId);
+      return this.base.getProjectUsage(orgId, projectId, userId) as any;
   }
 
   async listProjectActivity(
@@ -433,15 +240,13 @@ export class ProjectsService {
     userId: string,
     query: ListProjectActivityQuery,
   ): Promise<ProjectActivityResult> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    return this.activityRepository.listProjectActivity(orgId, projectId, query);
+      return this.activity.listProjectActivity(orgId, projectId, userId, query) as any;
   }
 
   // ── Environments ─────────────────────────────────────────────────────────
 
   async listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    return this.environmentRepository.listEnvironments(projectId);
+      return this.environments.listEnvironments(orgId, projectId, userId) as any;
   }
 
   async getEnvironment(
@@ -450,10 +255,7 @@ export class ProjectsService {
     environment: ProjectEnvironment,
     userId: string,
   ): Promise<ProjectEnvironmentConfig> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    const env = await this.environmentRepository.findEnvironment(projectId, environment);
-    if (!env) throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
-    return env;
+      return this.environments.getEnvironment(orgId, projectId, environment, userId) as any;
   }
 
   async createEnvironment(
@@ -463,36 +265,7 @@ export class ProjectsService {
     body: CreateEnvironmentBody,
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    await this.enforceProjectModuleLimit(orgId, "environment");
-    const env = await this.environmentRepository.createEnvironment({
-      projectId,
-      orgId,
-      environment: body.environment,
-      createdBy: userId,
-      isActive: body.isActive,
-      rateLimitPerSecond: body.rateLimitPerSecond ?? null,
-      rateLimitPerMinute: body.rateLimitPerMinute ?? null,
-      rateLimitPerHour: body.rateLimitPerHour ?? null,
-      burstLimit: body.burstLimit ?? null,
-      allowedEventTypes: body.allowedEventTypes,
-      maxEventSizeBytes: body.maxEventSizeBytes ?? null,
-      maxBatchSize: body.maxBatchSize ?? null,
-      requireHttps: body.requireHttps,
-      ipAllowlist: body.ipAllowlist ?? null,
-      ipBlocklist: body.ipBlocklist ?? null,
-      alertEmail: body.alertEmail ?? null,
-      alertWebhookUrl: body.alertWebhookUrl ?? null,
-    });
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.environment_created",
-      entityType: "project_environment",
-      entityId: env.id,
-      newValues: { environment: env.environment },
-    });
-    return env;
+      return this.environments.createEnvironment(orgId, projectId, userId, body, meta) as any;
   }
 
   async updateEnvironment(
@@ -503,31 +276,7 @@ export class ProjectsService {
     body: UpdateEnvironmentBody,
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    const updated = await this.environmentRepository.updateEnvironment(projectId, environment, {
-      isActive: body.isActive,
-      rateLimitPerSecond: body.rateLimitPerSecond,
-      rateLimitPerMinute: body.rateLimitPerMinute,
-      rateLimitPerHour: body.rateLimitPerHour,
-      burstLimit: body.burstLimit,
-      allowedEventTypes: body.allowedEventTypes,
-      maxEventSizeBytes: body.maxEventSizeBytes,
-      maxBatchSize: body.maxBatchSize,
-      requireHttps: body.requireHttps,
-      ipAllowlist: body.ipAllowlist,
-      ipBlocklist: body.ipBlocklist,
-      alertEmail: body.alertEmail,
-      alertWebhookUrl: body.alertWebhookUrl,
-    });
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.environment_updated",
-      entityType: "project_environment",
-      entityId: updated.id,
-      changedFields: Object.keys(body),
-    });
-    return updated;
+      return this.environments.updateEnvironment(orgId, projectId, environment, userId, body, meta) as any;
   }
 
   async deleteEnvironment(
@@ -537,15 +286,7 @@ export class ProjectsService {
     userId: string,
     meta: RequestMeta,
   ): Promise<void> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    await this.environmentRepository.deleteEnvironment(projectId, environment);
-    await this.audit(meta, {
-      orgId,
-      action: "project.environment_deleted",
-      entityType: "project_environment",
-      metadata: { projectId, environment },
-      isSensitive: true,
-    });
+      return this.environments.deleteEnvironment(orgId, projectId, environment, userId, meta) as any;
   }
 
   // ── API keys ─────────────────────────────────────────────────────────────
@@ -556,10 +297,7 @@ export class ProjectsService {
     userId: string,
     query: ListApiKeysQuery,
   ): Promise<{ keys: ProjectApiKey[]; total: number; limit: number; offset: number }> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    const result = await this.apiKeyRepository.listApiKeys(projectId, query);
-    const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
-    return { ...result, limit: query.limit, offset };
+      return this.apiKeys.listApiKeys(orgId, projectId, userId, query) as any;
   }
 
   async createApiKey(
@@ -569,63 +307,11 @@ export class ProjectsService {
     body: CreateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    this.assertFutureExpiry(body.expiresAt);
-    await this.enforceProjectModuleLimit(orgId, "apiKey");
-
-    const activeKeys = await this.apiKeyRepository.countActiveApiKeys(projectId, body.environment);
-    if (activeKeys >= MAX_ACTIVE_KEYS_ON_CREATE) {
-      throw new ProjectError(
-        "API_KEY_LIMIT_EXCEEDED",
-        `Maximum ${MAX_ACTIVE_KEYS_ON_CREATE} active API keys are allowed per environment`,
-        400,
-      );
-    }
-
-    const keyMaterial = createApiKey(body.environment);
-    const permissions = body.permissions ?? defaultPermissionsForType(body.keyType);
-
-    const created = await this.apiKeyRepository.createApiKey({
-      projectId,
-      orgId,
-      keyHash: keyMaterial.keyHash,
-      keyPrefix: keyMaterial.keyPrefix,
-      keyType: body.keyType,
-      environment: body.environment,
-      name: body.name ?? null,
-      description: body.description ?? null,
-      createdBy: userId,
-      expiresAt: body.expiresAt ?? null,
-      autoRotateEnabled: body.autoRotateEnabled,
-      autoRotateDays: body.autoRotateDays,
-      permissions,
-      allowedEndpoints: body.allowedEndpoints,
-      blockedEndpoints: body.blockedEndpoints,
-      rateLimitPerSecond: body.rateLimitPerSecond ?? null,
-      rateLimitPerMinute: body.rateLimitPerMinute ?? null,
-      rateLimitPerHour: body.rateLimitPerHour ?? null,
-    });
-
-    this.warmApiKeyCache(keyMaterial.keyHash, created, project);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_created",
-      entityType: "api_key",
-      entityId: created.id,
-      isSensitive: true,
-      newValues: { projectId, environment: created.environment, keyType: created.keyType, keyPrefix: created.keyPrefix },
-    });
-
-    this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
-    return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
+      return this.apiKeys.createApiKey(orgId, projectId, userId, body, meta) as any;
   }
 
   async getApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ProjectApiKey> {
-    await this.requireProjectAccess(orgId, projectId, userId, "member");
-    const apiKey = await this.apiKeyRepository.findApiKeyById(projectId, apiKeyId);
-    if (!apiKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    return apiKey;
+      return this.apiKeys.getApiKey(orgId, projectId, apiKeyId, userId) as any;
   }
 
   async updateApiKey(
@@ -636,37 +322,7 @@ export class ProjectsService {
     body: UpdateApiKeyBody,
     meta: RequestMeta,
   ): Promise<ProjectApiKey> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    this.assertFutureExpiry(body.expiresAt);
-
-    const updates: ApiKeyUpdateInput = {};
-    if (body.name !== undefined) updates.name = body.name;
-    if (body.description !== undefined) updates.description = body.description;
-    if (body.expiresAt !== undefined) updates.expiresAt = body.expiresAt;
-    if (body.autoRotateEnabled !== undefined) updates.autoRotateEnabled = body.autoRotateEnabled;
-    if (body.autoRotateDays !== undefined) updates.autoRotateDays = body.autoRotateDays;
-    if (body.permissions !== undefined) updates.permissions = body.permissions;
-    if (body.allowedEndpoints !== undefined) updates.allowedEndpoints = body.allowedEndpoints;
-    if (body.blockedEndpoints !== undefined) updates.blockedEndpoints = body.blockedEndpoints;
-    if (body.rateLimitPerSecond !== undefined) updates.rateLimitPerSecond = body.rateLimitPerSecond;
-    if (body.rateLimitPerMinute !== undefined) updates.rateLimitPerMinute = body.rateLimitPerMinute;
-    if (body.rateLimitPerHour !== undefined) updates.rateLimitPerHour = body.rateLimitPerHour;
-
-    const updated = await this.apiKeyRepository.updateApiKey(projectId, apiKeyId, updates);
-
-    // Permission/rate-limit changes affect the cached config; evict so the next
-    // ingestion request re-resolves the fresh row.
-    const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-    if (record) this.evictApiKeyConfig(record.keyHash);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_updated",
-      entityType: "api_key",
-      entityId: apiKeyId,
-      changedFields: Object.keys(body),
-    });
-    return updated;
+      return this.apiKeys.updateApiKey(orgId, projectId, apiKeyId, userId, body, meta) as any;
   }
 
   /** Revoke (delete) a key with a reason. Soft state change, not row removal. */
@@ -678,22 +334,7 @@ export class ProjectsService {
     meta: RequestMeta,
     reason?: string | null,
   ): Promise<ProjectApiKey> {
-    await this.requireProjectAccess(orgId, projectId, userId, "owner");
-    const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-    if (!record) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-
-    const revoked = await this.apiKeyRepository.revokeApiKey(projectId, apiKeyId, userId, reason ?? null);
-    this.evictApiKeyConfig(record.keyHash);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_revoked",
-      entityType: "api_key",
-      entityId: apiKeyId,
-      isSensitive: true,
-      newValues: { reason: reason ?? null },
-    });
-    return revoked;
+      return this.apiKeys.deleteApiKey(orgId, projectId, apiKeyId, userId, meta, reason) as any;
   }
 
   async rotateApiKey(
@@ -704,69 +345,7 @@ export class ProjectsService {
     body: RotateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    this.assertFutureExpiry(body.expiresAt);
-
-    const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-    if (!currentKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    if (!currentKey.isActive || currentKey.status !== "active") {
-      throw new ProjectError("API_KEY_REVOKED", "Cannot rotate an inactive API key", 400);
-    }
-
-    const graceHours = body.gracePeriodHours ?? DEFAULT_GRACE_PERIOD_HOURS;
-    const graceEndsAt = graceHours > 0 ? new Date(Date.now() + graceHours * 3_600_000) : null;
-    const keyMaterial = createApiKey(currentKey.environment);
-
-    const rotated = await this.repository.withTransaction(async (client) => {
-      await this.apiKeyRepository.markApiKeyRotated(
-        projectId,
-        apiKeyId,
-        userId,
-        body.rotationReason ?? "manual_rotation",
-        graceEndsAt,
-        client,
-      );
-      return this.apiKeyRepository.createApiKey(
-        {
-          projectId,
-          orgId,
-          keyHash: keyMaterial.keyHash,
-          keyPrefix: keyMaterial.keyPrefix,
-          keyType: currentKey.keyType,
-          environment: currentKey.environment,
-          name: body.name !== undefined ? body.name : currentKey.name,
-          description: currentKey.description,
-          createdBy: userId,
-          expiresAt: body.expiresAt !== undefined ? body.expiresAt : currentKey.expiresAt,
-          autoRotateEnabled: currentKey.autoRotateEnabled,
-          autoRotateDays: currentKey.autoRotateDays,
-          permissions: currentKey.permissions,
-          allowedEndpoints: currentKey.allowedEndpoints,
-          blockedEndpoints: currentKey.blockedEndpoints,
-          rateLimitPerSecond: currentKey.rateLimitPerSecond,
-          rateLimitPerMinute: currentKey.rateLimitPerMinute,
-          rateLimitPerHour: currentKey.rateLimitPerHour,
-          rotatedFromKeyId: apiKeyId,
-        },
-        client,
-      );
-    });
-
-    // If there is no grace window, evict the old key now. With a grace window
-    // the old key stays valid (and cached) until grace ends.
-    if (!graceEndsAt) this.evictApiKeyConfig(currentKey.keyHash);
-    this.warmApiKeyCache(keyMaterial.keyHash, rotated, project);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_rotated",
-      entityType: "api_key",
-      entityId: apiKeyId,
-      isSensitive: true,
-      newValues: { newKeyId: rotated.id, gracePeriodHours: graceHours, reason: body.rotationReason ?? null },
-    });
-
-    return { apiKey: this.publicApiKey(rotated), fullKey: keyMaterial.fullKey };
+      return this.apiKeys.rotateApiKey(orgId, projectId, apiKeyId, userId, body, meta) as any;
   }
 
   /** Emergency regenerate: rotate with no grace window (old key dies instantly). */
@@ -777,14 +356,7 @@ export class ProjectsService {
     userId: string,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
-    return this.rotateApiKey(
-      orgId,
-      projectId,
-      apiKeyId,
-      userId,
-      { gracePeriodHours: 0, rotationReason: "emergency_regenerate" },
-      meta,
-    );
+      return this.apiKeys.regenerateApiKey(orgId, projectId, apiKeyId, userId, meta) as any;
   }
 
   async enableApiKey(
@@ -794,38 +366,7 @@ export class ProjectsService {
     userId: string,
     meta: RequestMeta,
   ): Promise<ProjectApiKey> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-    if (!currentKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    if (currentKey.isActive) return this.publicApiKey(currentKey);
-
-    if (currentKey.status === "revoked") {
-      throw new ProjectError("API_KEY_REVOKED", "Revoked API keys cannot be re-enabled", 400);
-    }
-    if (currentKey.expiresAt && currentKey.expiresAt <= new Date()) {
-      throw new ProjectError("API_KEY_EXPIRED", "Expired API keys cannot be re-enabled", 400);
-    }
-    await this.enforceProjectModuleLimit(orgId, "apiKey");
-
-    const activeKeys = await this.apiKeyRepository.countActiveApiKeys(projectId, currentKey.environment);
-    if (activeKeys >= MAX_ACTIVE_KEYS_ON_ENABLE) {
-      throw new ProjectError(
-        "API_KEY_LIMIT_EXCEEDED",
-        `Maximum ${MAX_ACTIVE_KEYS_ON_ENABLE} active API keys are allowed per environment`,
-        400,
-      );
-    }
-
-    const updated = await this.apiKeyRepository.setApiKeyActiveState(projectId, apiKeyId, true);
-    this.warmApiKeyCache(currentKey.keyHash, { ...currentKey, isActive: true }, project);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_enabled",
-      entityType: "api_key",
-      entityId: apiKeyId,
-    });
-    return updated;
+      return this.apiKeys.enableApiKey(orgId, projectId, apiKeyId, userId, meta) as any;
   }
 
   async disableApiKey(
@@ -835,20 +376,7 @@ export class ProjectsService {
     userId: string,
     meta: RequestMeta,
   ): Promise<ProjectApiKey> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-    if (!record) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-
-    const updated = await this.apiKeyRepository.setApiKeyActiveState(projectId, apiKeyId, false);
-    this.evictApiKeyConfig(record.keyHash);
-
-    await this.audit(meta, {
-      orgId,
-      action: "project.api_key_disabled",
-      entityType: "api_key",
-      entityId: apiKeyId,
-    });
-    return updated;
+      return this.apiKeys.disableApiKey(orgId, projectId, apiKeyId, userId, meta) as any;
   }
 
   async bulkRotateKeys(
@@ -858,27 +386,7 @@ export class ProjectsService {
     body: BulkRotateBody,
     meta: RequestMeta,
   ): Promise<BulkOperationResult> {
-    await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    const keys = await this.apiKeyRepository.listActiveApiKeyRecords(projectId, body.environment);
-    const results: BulkOperationResult["results"] = [];
-
-    for (const key of keys) {
-      try {
-        const rotated = await this.rotateApiKey(
-          orgId,
-          projectId,
-          key.id,
-          userId,
-          { gracePeriodHours: body.gracePeriodHours, rotationReason: body.rotationReason ?? "bulk_rotation" },
-          meta,
-        );
-        results.push({ apiKeyId: key.id, status: "ok", newKeyId: rotated.apiKey.id });
-      } catch (err) {
-        results.push({ apiKeyId: key.id, status: "error", reason: (err as Error).message });
-      }
-    }
-
-    return this.summarizeBulk(results);
+      return this.apiKeys.bulkRotateKeys(orgId, projectId, userId, body, meta) as any;
   }
 
   async bulkRevokeKeys(
@@ -888,22 +396,7 @@ export class ProjectsService {
     body: BulkRevokeBody,
     meta: RequestMeta,
   ): Promise<BulkOperationResult> {
-    await this.requireProjectAccess(orgId, projectId, userId, "owner");
-    const keys = body.apiKeyIds
-      ? body.apiKeyIds.map((id) => ({ id }))
-      : (await this.apiKeyRepository.listActiveApiKeyRecords(projectId, body.environment)).map((k) => ({ id: k.id }));
-
-    const results: BulkOperationResult["results"] = [];
-    for (const key of keys) {
-      try {
-        await this.deleteApiKey(orgId, projectId, key.id, userId, meta, body.revokedReason ?? "bulk_revocation");
-        results.push({ apiKeyId: key.id, status: "ok" });
-      } catch (err) {
-        results.push({ apiKeyId: key.id, status: "error", reason: (err as Error).message });
-      }
-    }
-
-    return this.summarizeBulk(results);
+      return this.apiKeys.bulkRevokeKeys(orgId, projectId, userId, body, meta) as any;
   }
 
   async getApiKeyUsage(
@@ -912,19 +405,7 @@ export class ProjectsService {
     apiKeyId: string,
     userId: string,
   ): Promise<ApiKeyUsage> {
-    const apiKey = await this.getApiKey(orgId, projectId, apiKeyId, userId);
-    const summary = await this.apiKeyRepository.getApiKeyUsageSummary(apiKeyId);
-    return {
-      keyId: apiKey.id,
-      keyPrefix: apiKey.keyPrefix,
-      totalRequests: summary.totalRequests || apiKey.usageCount,
-      totalSuccess: summary.totalSuccess,
-      totalErrors: summary.totalErrors || apiKey.errorCount,
-      bytesIngested: summary.bytesIngested,
-      eventsIngested: summary.eventsIngested,
-      lastUsedAt: apiKey.lastUsedAt,
-      requestsByDay: summary.requestsByDay,
-    };
+      return this.apiKeys.getApiKeyUsage(orgId, projectId, apiKeyId, userId) as any;
   }
 
   // ── Verification (ingestion-facing) ─────────────────────────────────────────
@@ -935,39 +416,7 @@ export class ProjectsService {
    * project status, expiry, and rotation grace. Touches last_used_at async.
    */
   async validateApiKey(rawKey: string): Promise<ValidatedApiKey | null> {
-    const keyPrefix = extractApiKeyPrefix(rawKey);
-    if (!keyPrefix) return null;
-
-    const rawKeyHash = hashApiKey(rawKey);
-    const candidates = await this.apiKeyRepository.findActiveApiKeyCandidatesByPrefix(keyPrefix);
-
-    for (const candidate of candidates) {
-      if (candidate.project.status !== "active") continue;
-      if (candidate.apiKey.expiresAt && candidate.apiKey.expiresAt <= new Date()) continue;
-
-      if (constantTimeEqualHex(candidate.apiKey.keyHash, rawKeyHash)) {
-        // Fire-and-forget usage touch; never block verification on the write.
-        this.apiKeyRepository
-          .touchApiKeyLastUsed(candidate.apiKey.id)
-          .catch((err: any) => this.logger.debug({ err }, "touchApiKeyLastUsed failed"));
-
-        return {
-          id: candidate.apiKey.id,
-          projectId: candidate.apiKey.projectId,
-          orgId: candidate.project.orgId,
-          environment: candidate.apiKey.environment,
-          keyType: candidate.apiKey.keyType,
-          permissions: candidate.apiKey.permissions,
-          allowedEndpoints: candidate.apiKey.allowedEndpoints,
-          blockedEndpoints: candidate.apiKey.blockedEndpoints,
-          rateLimitPerSecond: candidate.apiKey.rateLimitPerSecond,
-          rateLimitPerMinute: candidate.apiKey.rateLimitPerMinute,
-          rateLimitPerHour: candidate.apiKey.rateLimitPerHour,
-        };
-      }
-    }
-
-    return null;
+      return this.apiKeys.validateApiKey(rawKey) as any;
   }
 
   // ── Authorization ───────────────────────────────────────────────────────────
@@ -977,22 +426,7 @@ export class ProjectsService {
     userId: string,
     requiredRole: OrgRole = "viewer",
   ) {
-    const membership = await this.repository.findOrganizationMembership(orgId, userId);
-    if (!membership || !membership.isActive) {
-      throw new ProjectError(
-        "INSUFFICIENT_PERMISSIONS",
-        "You do not have access to this organization",
-        403,
-      );
-    }
-    if (!hasRequiredRole(membership.role, requiredRole)) {
-      throw new ProjectError(
-        "INSUFFICIENT_PERMISSIONS",
-        `Requires ${requiredRole} role or higher`,
-        403,
-      );
-    }
-    return membership;
+      return this.base.requireOrganizationAccess(orgId, userId, requiredRole) as any;
   }
 
   public async requireProjectAccess(
@@ -1001,31 +435,7 @@ export class ProjectsService {
     userId: string,
     requiredRole: OrgRole | ProjectMemberRole,
   ): Promise<Project> {
-    const project = await this.repository.findProjectById(orgId, projectId);
-    if (!project) throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-
-    if (requiredRole === "owner" || requiredRole === "admin" || requiredRole === "member" || requiredRole === "billing") {
-      await this.requireOrganizationAccess(orgId, userId, requiredRole);
-      return project;
-    }
-
-    try {
-      await this.requireOrganizationAccess(orgId, userId);
-    } catch (err) {
-      throw err;
-    }
-
-    if ((this.repository as any).getProjectMemberRole) {
-      const userProjectRole = await (this.repository as any).getProjectMemberRole(orgId, projectId, userId);
-      if (userProjectRole) {
-         if (!hasProjectRole(userProjectRole, requiredRole as ProjectMemberRole)) {
-           throw new ProjectError("FORBIDDEN", "Insufficient project role", 403);
-         }
-         return project;
-      }
-    }
-
-    return project;
+      return this.base.requireProjectAccess(orgId, projectId, userId, requiredRole) as any;
   }
 
   private limitFrom(
@@ -1033,15 +443,7 @@ export class ProjectsService {
     keys: string[],
     fallback = Number.POSITIVE_INFINITY,
   ): number {
-    const config = entitlements.feature_config ?? {};
-    for (const key of keys) {
-      const raw = config[key];
-      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
-      if (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw))) {
-        return Number(raw);
-      }
-    }
-    return fallback;
+      return this.base.limitFrom(entitlements, keys, fallback) as any;
   }
 
   private assertWithinLimit(
@@ -1050,33 +452,11 @@ export class ProjectsService {
     limit: number,
     increment = 1,
   ): void {
-    if (limit >= 0 && Number.isFinite(limit) && used + increment > limit) {
-      throw new ProjectError(
-        "PROJECT_LIMIT_EXCEEDED",
-        `${name} limit exceeded for current billing plan`,
-        403,
-        { used, limit, requested: increment },
-      );
-    }
+      this.base.assertWithinLimit(name, used, limit, increment);
   }
 
   private async requireMutableBilling(orgId: string): Promise<BillingEntitlementsRow> {
-    const entitlements = await this.orgRepo.getBillingEntitlements(orgId);
-    if (!entitlements) {
-      throw new ProjectError(
-        "PROJECT_LIMIT_EXCEEDED",
-        "Organization has no active billing subscription",
-        403,
-      );
-    }
-    if (!BILLING_MUTABLE_STATUSES.has(entitlements.subscription_status)) {
-      throw new ProjectError(
-        "PROJECT_LIMIT_EXCEEDED",
-        `Billing subscription is ${entitlements.subscription_status}. This action is not permitted.`,
-        403,
-      );
-    }
-    return entitlements;
+      return this.base.requireMutableBilling(orgId) as any;
   }
 
   private async enforceProjectModuleLimit(
@@ -1084,35 +464,7 @@ export class ProjectsService {
     capability: "project" | "environment" | "apiKey",
     increment = 1,
   ): Promise<BillingEntitlementsRow> {
-    const entitlements = await this.requireMutableBilling(orgId);
-    const counts: ProjectModuleUsageCounts = await this.repository.getProjectModuleUsageCounts(orgId);
-
-    if (capability === "project") {
-      this.assertWithinLimit(
-        "Project",
-        counts.projects,
-        this.limitFrom(entitlements, ["max_projects", "projects_max"]),
-        increment,
-      );
-    }
-    if (capability === "environment") {
-      this.assertWithinLimit(
-        "Project environment",
-        counts.environments,
-        this.limitFrom(entitlements, ["max_project_environments", "max_environments", "environments_max"]),
-        increment,
-      );
-    }
-    if (capability === "apiKey") {
-      this.assertWithinLimit(
-        "Project API key",
-        counts.apiKeys,
-        this.limitFrom(entitlements, ["max_project_api_keys", "max_api_keys", "api_keys_max"]),
-        increment,
-      );
-    }
-
-    return entitlements;
+      return this.base.enforceProjectModuleLimit(orgId, capability, increment) as any;
   }
 
   // ── Internal helpers ────────────────────────────────────────────────────────
@@ -1121,59 +473,23 @@ export class ProjectsService {
     target: ProjectUpdateInput,
     body: CreateProjectBody | UpdateProjectBody,
   ): void {
-    if (body.rateLimitPerSecond !== undefined) target.rateLimitPerSecond = body.rateLimitPerSecond;
-    if (body.rateLimitPerMinute !== undefined) target.rateLimitPerMinute = body.rateLimitPerMinute;
-    if (body.rateLimitPerHour !== undefined) target.rateLimitPerHour = body.rateLimitPerHour;
-    if (body.burstLimit !== undefined) target.burstLimit = body.burstLimit;
-    if (body.allowedEventTypes !== undefined) target.allowedEventTypes = body.allowedEventTypes;
-    if (body.maxEventSizeBytes !== undefined) target.maxEventSizeBytes = body.maxEventSizeBytes;
-    if (body.maxBatchSize !== undefined) target.maxBatchSize = body.maxBatchSize;
-    if (body.allowedOrigins !== undefined) target.allowedOrigins = body.allowedOrigins;
-    if (body.requireHttps !== undefined) target.requireHttps = body.requireHttps;
-    if (body.ipAllowlist !== undefined) target.ipAllowlist = body.ipAllowlist;
-    if (body.ipBlocklist !== undefined) target.ipBlocklist = body.ipBlocklist;
-    if (body.geoRestrictionEnabled !== undefined) target.geoRestrictionEnabled = body.geoRestrictionEnabled;
-    if (body.allowedCountries !== undefined) target.allowedCountries = body.allowedCountries;
-    if (body.alertEmail !== undefined) target.alertEmail = body.alertEmail;
-    if (body.alertWebhookUrl !== undefined) target.alertWebhookUrl = body.alertWebhookUrl;
-    if (body.alertOnErrorRateThreshold !== undefined) target.alertOnErrorRateThreshold = body.alertOnErrorRateThreshold;
-    if (body.alertOnLatencyThresholdMs !== undefined) target.alertOnLatencyThresholdMs = body.alertOnLatencyThresholdMs;
-    if (body.metadata !== undefined) target.metadata = body.metadata;
-    if (body.settings !== undefined) target.settings = body.settings;
+      this.base.assignProjectConfig(target, body);
   }
 
   private async generateUniqueSlug(orgId: string, name: string): Promise<string> {
-    const baseSlug = slugifyProjectName(name);
-    let candidate = baseSlug;
-    let suffix = 1;
-    while (await this.repository.findProjectBySlug(orgId, candidate)) {
-      candidate = `${baseSlug}-${suffix}`;
-      suffix += 1;
-    }
-    return candidate;
+      return this.base.generateUniqueSlug(orgId, name) as any;
   }
 
   private assertFutureExpiry(expiresAt: Date | null | undefined): void {
-    if (expiresAt && expiresAt <= new Date()) {
-      throw new ProjectError("VALIDATION_ERROR", "expiresAt must be in the future", 422);
-    }
+      this.apiKeys.assertFutureExpiry(expiresAt);
   }
 
   private publicApiKey(apiKey: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey {
-    const { ...rest } = apiKey as ProjectApiKeyRecord;
-    // Strip the hash if present; never expose it.
-    delete (rest as Partial<ProjectApiKeyRecord>).keyHash;
-    return rest as ProjectApiKey;
+      return this.apiKeys.publicApiKey(apiKey) as any;
   }
 
   private summarizeBulk(results: BulkOperationResult["results"]): BulkOperationResult {
-    const succeeded = results.filter((r) => r.status === "ok").length;
-    return {
-      total: results.length,
-      succeeded,
-      failed: results.length - succeeded,
-      results,
-    };
+      return this.apiKeys.summarizeBulk(results) as any;
   }
 
   /**
@@ -1186,42 +502,15 @@ export class ProjectsService {
     key: ProjectApiKeyRecord | ProjectApiKey,
     project: Project,
   ): void {
-    const config: CachedProjectConfig = {
-      id: project.id,
-      orgId: project.orgId,
-      name: key.name ?? project.name,
-      environment: key.environment,
-      rateLimitPerSecond: key.rateLimitPerSecond ?? project.rateLimitPerSecond ?? DEFAULT_API_KEY_RATE_LIMITS.perSecond,
-      rateLimitPerMinute: key.rateLimitPerMinute ?? project.rateLimitPerMinute ?? DEFAULT_API_KEY_RATE_LIMITS.perMinute,
-      allowedEventTypes: project.allowedEventTypes.length ? project.allowedEventTypes : ["*"],
-      permissions: key.permissions,
-      allowedEndpoints: key.allowedEndpoints.length ? key.allowedEndpoints : ["*"],
-      blockedEndpoints: key.blockedEndpoints,
-      isActive: project.status === "active" && key.isActive,
-      apiKeyId: key.id,
-    };
-    try {
-      apiKeyCache.set(keyHash, config);
-    } catch (err) {
-      this.logger.warn({ err }, "Failed to warm API key cache");
-    }
+      this.apiKeys.warmApiKeyCache(keyHash, key, project);
   }
 
   private evictApiKeyConfig(keyHash: string): void {
-    try {
-      apiKeyCache.delete(keyHash);
-    } catch (err) {
-      this.logger.warn({ err }, "Failed to evict API key cache");
-    }
+      this.apiKeys.evictApiKeyConfig(keyHash);
   }
 
   private async evictProjectApiKeys(projectId: string): Promise<void> {
-    try {
-      const hashes = await this.apiKeyRepository.listApiKeyHashesByProject(projectId);
-      for (const hash of hashes) apiKeyCache.delete(hash);
-    } catch (err) {
-      this.logger.warn({ err, projectId }, "Failed to evict project API key cache");
-    }
+      return this.base.evictProjectApiKeys(projectId);
   }
 
   /**
@@ -1243,34 +532,6 @@ export class ProjectsService {
       metadata?: Record<string, unknown>;
     },
   ): Promise<void> {
-    try {
-      const record: Parameters<OrganizationRepository["createAuditLog"]>[0] = {
-        orgId: data.orgId,
-        action: data.action,
-        entityType: data.entityType,
-        actorUserId: meta.actorUserId,
-        actorIp: meta.actorIp,
-        actorUserAgent: meta.actorUserAgent,
-        requestId: meta.requestId,
-        httpMethod: meta.httpMethod,
-        endpoint: meta.endpoint,
-        status: "success",
-      };
-      // Only attach optional fields when present so exactOptionalPropertyTypes
-      // is satisfied (no explicit `undefined` values).
-      if (meta.actorEmail) record.actorEmail = meta.actorEmail;
-      if (meta.actorSessionId) record.actorSessionId = meta.actorSessionId;
-      if (data.entityId !== undefined) record.entityId = data.entityId;
-      if (data.entityName !== undefined) record.entityName = data.entityName;
-      if (data.oldValues !== undefined) record.oldValues = data.oldValues;
-      if (data.newValues !== undefined) record.newValues = data.newValues;
-      if (data.changedFields !== undefined) record.changedFields = data.changedFields;
-      if (data.isSensitive !== undefined) record.isSensitive = data.isSensitive;
-      if (data.metadata !== undefined) record.metadata = data.metadata;
-
-      await this.orgRepo.createAuditLog(record);
-    } catch (err) {
-      this.logger.error({ err, action: data.action }, "Failed to write project audit log");
-    }
+      return this.base.audit(meta, data) as any;
   }
 }

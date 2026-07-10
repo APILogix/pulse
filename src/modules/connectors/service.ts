@@ -11,8 +11,8 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
-import { NotificationDispatcher } from './dispatcher.js';
-import { encryptConfig } from './crypto.js';
+import { NotificationDispatcher } from './delivery/delivery.service.js';
+import { encryptConfig } from './secrets/secret.service.js';
 import {
   createConnector as factoryCreate,
   ephemeralContext,

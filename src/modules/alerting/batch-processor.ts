@@ -18,7 +18,7 @@ import { AlertingRepository, type DeliveryAttemptInsert } from './repository.js'
 import { resolveRouting, type RoutableAlert } from './routing.js';
 import type { AlertEventRow, AlertEventStatus, AlertRoutingRuleRow } from './types.js';
 import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/dispatcher.js';
+import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 import {
   circuitAllows,
   recordCircuitFailure,

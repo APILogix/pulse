@@ -1,0 +1,878 @@
+{
+  "reports": [
+    {
+      "file": "src/modules/alerting/alert-router.service.ts",
+      "loc": 65,
+      "importCount": 6,
+      "exportCount": 2,
+      "functionCount": 1,
+      "classCount": 1,
+      "largestFunctionLOC": 38,
+      "complexityEstimate": 1,
+      "exports": [
+        "AlertPayload",
+        "AlertRouterService"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/alerting.module.ts",
+      "loc": 52,
+      "importCount": 6,
+      "exportCount": 2,
+      "functionCount": 1,
+      "classCount": 0,
+      "largestFunctionLOC": 16,
+      "complexityEstimate": 1,
+      "exports": [
+        "registerAlertingModule",
+        "default"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/batch-processor.ts",
+      "loc": 264,
+      "importCount": 8,
+      "exportCount": 3,
+      "functionCount": 5,
+      "classCount": 1,
+      "largestFunctionLOC": 70,
+      "complexityEstimate": 12,
+      "exports": [
+        "BatchJobData",
+        "BatchProcessSummary",
+        "AlertBatchProcessor"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/delivery.repository.ts",
+      "loc": 130,
+      "importCount": 3,
+      "exportCount": 2,
+      "functionCount": 6,
+      "classCount": 1,
+      "largestFunctionLOC": 22,
+      "complexityEstimate": 4,
+      "exports": [
+        "CreateDeliveryInput",
+        "DeliveryRepository"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/delivery.service.ts",
+      "loc": 56,
+      "importCount": 4,
+      "exportCount": 2,
+      "functionCount": 1,
+      "classCount": 1,
+      "largestFunctionLOC": 32,
+      "complexityEstimate": 1,
+      "exports": [
+        "EnqueueDeliveryPayload",
+        "DeliveryService"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/evaluator.ts",
+      "loc": 129,
+      "importCount": 1,
+      "exportCount": 5,
+      "functionCount": 4,
+      "classCount": 0,
+      "largestFunctionLOC": 34,
+      "complexityEstimate": 14,
+      "exports": [
+        "readPath",
+        "evaluateCondition",
+        "evaluateRule",
+        "EvaluableCondition",
+        "EvaluationResult"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/fingerprint.ts",
+      "loc": 70,
+      "importCount": 1,
+      "exportCount": 4,
+      "functionCount": 3,
+      "classCount": 0,
+      "largestFunctionLOC": 18,
+      "complexityEstimate": 5,
+      "exports": [
+        "normalizePayload",
+        "computeFingerprint",
+        "renderDedupKey",
+        "FingerprintInput"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/notifier.ts",
+      "loc": 8,
+      "importCount": 0,
+      "exportCount": 0,
+      "functionCount": 0,
+      "classCount": 0,
+      "largestFunctionLOC": 0,
+      "complexityEstimate": 1,
+      "exports": []
+    },
+    {
+      "file": "src/modules/alerting/queue.ts",
+      "loc": 188,
+      "importCount": 6,
+      "exportCount": 3,
+      "functionCount": 5,
+      "classCount": 0,
+      "largestFunctionLOC": 76,
+      "complexityEstimate": 8,
+      "exports": [
+        "registerAlertingWorkers",
+        "ALERT_JOBS",
+        "AlertingWorkerConfig"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/repository.ts",
+      "loc": 916,
+      "importCount": 3,
+      "exportCount": 6,
+      "functionCount": 49,
+      "classCount": 1,
+      "largestFunctionLOC": 55,
+      "complexityEstimate": 46,
+      "exports": [
+        "RuleConditionInsert",
+        "RuleActionInsert",
+        "CreateRuleInput",
+        "InsertEventInput",
+        "DeliveryAttemptInsert",
+        "AlertingRepository"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/routes.ts",
+      "loc": 289,
+      "importCount": 5,
+      "exportCount": 1,
+      "functionCount": 4,
+      "classCount": 0,
+      "largestFunctionLOC": 212,
+      "complexityEstimate": 3,
+      "exports": [
+        "alertingRoutes"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/routing.ts",
+      "loc": 75,
+      "importCount": 1,
+      "exportCount": 4,
+      "functionCount": 2,
+      "classCount": 0,
+      "largestFunctionLOC": 28,
+      "complexityEstimate": 7,
+      "exports": [
+        "matchesConditions",
+        "resolveRouting",
+        "RoutableAlert",
+        "RoutingDecision"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/service.ts",
+      "loc": 534,
+      "importCount": 8,
+      "exportCount": 2,
+      "functionCount": 43,
+      "classCount": 1,
+      "largestFunctionLOC": 45,
+      "complexityEstimate": 12,
+      "exports": [
+        "AlertingServiceDeps",
+        "AlertingService"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/template.ts",
+      "loc": 73,
+      "importCount": 1,
+      "exportCount": 4,
+      "functionCount": 3,
+      "classCount": 0,
+      "largestFunctionLOC": 15,
+      "complexityEstimate": 3,
+      "exports": [
+        "sanitizeValue",
+        "renderTemplate",
+        "extractVariables",
+        "RenderResult"
+      ]
+    },
+    {
+      "file": "src/modules/alerting/types.ts",
+      "loc": 574,
+      "importCount": 2,
+      "exportCount": 89,
+      "functionCount": 0,
+      "classCount": 4,
+      "largestFunctionLOC": 0,
+      "complexityEstimate": 1,
+      "exports": [
+        "AlertSeveritySchema",
+        "AlertSeverity",
+        "AlertEventStatusSchema",
+        "AlertEventStatus",
+        "ConditionTypeSchema",
+        "ConditionType",
+        "ConditionOperatorSchema",
+        "ConditionOperator",
+        "ActionTypeSchema",
+        "ActionType",
+        "DeliveryAttemptStatusSchema",
+        "DeliveryAttemptStatus",
+        "BatchStatusSchema",
+        "BatchStatus",
+        "HistoryActionSchema",
+        "HistoryAction",
+        "MetricGranularitySchema",
+        "MetricGranularity",
+        "AGGREGATE_FUNCTIONS",
+        "UuidSchema",
+        "OrgIdParamsSchema",
+        "OrgRuleParamsSchema",
+        "OrgEventParamsSchema",
+        "OrgPolicyParamsSchema",
+        "OrgPolicyStepParamsSchema",
+        "PaginationSchema",
+        "RuleConditionSchema",
+        "RuleConditionInput",
+        "RuleActionSchema",
+        "RuleActionInput",
+        "CreateRuleSchema",
+        "CreateRuleBody",
+        "UpdateRuleSchema",
+        "UpdateRuleBody",
+        "ListRulesQuerySchema",
+        "ListRulesQuery",
+        "TestRuleSchema",
+        "TestRuleBody",
+        "IngestEventSchema",
+        "IngestEventBody",
+        "ListEventsQuerySchema",
+        "ListEventsQuery",
+        "AcknowledgeEventSchema",
+        "AcknowledgeEventBody",
+        "ResolveEventSchema",
+        "ResolveEventBody",
+        "CreateSilenceSchema",
+        "CreateSilenceBody",
+        "SilenceFromEventSchema",
+        "SilenceFromEventBody",
+        "ListSilencesQuerySchema",
+        "ListSilencesQuery",
+        "CreateEscalationPolicySchema",
+        "CreateEscalationPolicyBody",
+        "UpsertEscalationStepSchema",
+        "UpsertEscalationStepBody",
+        "CreateTemplateSchema",
+        "CreateTemplateBody",
+        "UpdateTemplateSchema",
+        "UpdateTemplateBody",
+        "PreviewTemplateSchema",
+        "PreviewTemplateBody",
+        "RoutingConditionsSchema",
+        "RoutingConditions",
+        "CreateRoutingRuleSchema",
+        "CreateRoutingRuleBody",
+        "UpdateRoutingRuleSchema",
+        "UpdateRoutingRuleBody",
+        "TestRoutingSchema",
+        "TestRoutingBody",
+        "MetricsQuerySchema",
+        "MetricsQuery",
+        "AlertRuleRow",
+        "AlertRuleConditionRow",
+        "AlertRuleActionRow",
+        "AlertEventRow",
+        "AlertSilenceRow",
+        "AlertBatchRow",
+        "AlertDeliveryAttemptRow",
+        "AlertTemplateRow",
+        "AlertRoutingRuleRow",
+        "AlertEscalationPolicyRow",
+        "AlertEscalationStepRow",
+        "AlertMetricRow",
+        "RequestMeta",
+        "AlertError",
+        "AlertNotFoundError",
+        "AlertConflictError",
+        "AlertValidationError"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors.module.ts",
+      "loc": 74,
+      "importCount": 9,
+      "exportCount": 2,
+      "functionCount": 1,
+      "classCount": 0,
+      "largestFunctionLOC": 28,
+      "complexityEstimate": 1,
+      "exports": [
+        "registerConnectorsModule",
+        "default"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/crypto.ts",
+      "loc": 57,
+      "importCount": 3,
+      "exportCount": 5,
+      "functionCount": 5,
+      "classCount": 0,
+      "largestFunctionLOC": 4,
+      "complexityEstimate": 1,
+      "exports": [
+        "encryptConfig",
+        "decryptConfig",
+        "encryptSecret",
+        "decryptSecret",
+        "reencryptConfig"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/dispatcher.ts",
+      "loc": 249,
+      "importCount": 8,
+      "exportCount": 2,
+      "functionCount": 8,
+      "classCount": 1,
+      "largestFunctionLOC": 70,
+      "complexityEstimate": 7,
+      "exports": [
+        "DispatchOutcome",
+        "NotificationDispatcher"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/monitor.ts",
+      "loc": 127,
+      "importCount": 5,
+      "exportCount": 2,
+      "functionCount": 4,
+      "classCount": 1,
+      "largestFunctionLOC": 27,
+      "complexityEstimate": 14,
+      "exports": [
+        "MonitorOptions",
+        "ConnectorMonitor"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/registry.ts",
+      "loc": 190,
+      "importCount": 10,
+      "exportCount": 6,
+      "functionCount": 6,
+      "classCount": 0,
+      "largestFunctionLOC": 13,
+      "complexityEstimate": 3,
+      "exports": [
+        "registerConnectorType",
+        "isConnectorTypeRegistered",
+        "createConnector",
+        "listConnectorTypes",
+        "getTypeCapabilities",
+        "ephemeralContext"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/repository.ts",
+      "loc": 456,
+      "importCount": 3,
+      "exportCount": 3,
+      "functionCount": 21,
+      "classCount": 1,
+      "largestFunctionLOC": 48,
+      "complexityEstimate": 18,
+      "exports": [
+        "CreateConnectorInput",
+        "InsertDeliveryInput",
+        "ConnectorRepository"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/routes.ts",
+      "loc": 148,
+      "importCount": 5,
+      "exportCount": 1,
+      "functionCount": 5,
+      "classCount": 0,
+      "largestFunctionLOC": 76,
+      "complexityEstimate": 4,
+      "exports": [
+        "connectorRoutes"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/runtime.ts",
+      "loc": 134,
+      "importCount": 0,
+      "exportCount": 9,
+      "functionCount": 8,
+      "classCount": 0,
+      "largestFunctionLOC": 18,
+      "complexityEstimate": 8,
+      "exports": [
+        "checkRateLimit",
+        "sweepRateLimiter",
+        "circuitAllows",
+        "recordCircuitSuccess",
+        "recordCircuitFailure",
+        "getCircuitState",
+        "computeBackoffMs",
+        "RateCheck",
+        "CircuitBreakerOptions"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/service.ts",
+      "loc": 307,
+      "importCount": 6,
+      "exportCount": 2,
+      "functionCount": 15,
+      "classCount": 1,
+      "largestFunctionLOC": 32,
+      "complexityEstimate": 7,
+      "exports": [
+        "ConnectorServiceDeps",
+        "ConnectorService"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/types.ts",
+      "loc": 519,
+      "importCount": 2,
+      "exportCount": 63,
+      "functionCount": 0,
+      "classCount": 8,
+      "largestFunctionLOC": 0,
+      "complexityEstimate": 1,
+      "exports": [
+        "ConnectorTypeSchema",
+        "ConnectorType",
+        "ConnectorStatusSchema",
+        "ConnectorStatus",
+        "NotificationSeveritySchema",
+        "NotificationSeverity",
+        "DeliveryStatusSchema",
+        "DeliveryStatus",
+        "HealthStateSchema",
+        "HealthState",
+        "FailureCategorySchema",
+        "FailureCategory",
+        "SlackConfigSchema",
+        "SlackConfig",
+        "DiscordConfigSchema",
+        "DiscordConfig",
+        "TeamsConfigSchema",
+        "TeamsConfig",
+        "PagerDutyConfigSchema",
+        "PagerDutyConfig",
+        "WebhookConfigSchema",
+        "WebhookConfig",
+        "EmailConfigSchema",
+        "EmailConfig",
+        "SmsConfigSchema",
+        "SmsConfig",
+        "CONNECTOR_CONFIG_SCHEMAS",
+        "ConnectorConfig",
+        "ValidationResult",
+        "NotificationPayload",
+        "DeliveryResult",
+        "ConnectionTestResult",
+        "HealthStatus",
+        "RateLimitInfo",
+        "INotificationConnector",
+        "ConnectorContext",
+        "UuidSchema",
+        "OrgIdParamsSchema",
+        "ConnectorParamsSchema",
+        "CreateConnectorSchema",
+        "CreateConnectorBody",
+        "UpdateConnectorSchema",
+        "UpdateConnectorBody",
+        "ListConnectorsQuerySchema",
+        "ListConnectorsQuery",
+        "SendTestNotificationSchema",
+        "SendTestNotificationBody",
+        "ConnectorConfigRow",
+        "DeliveryRow",
+        "HealthCheckRow",
+        "ConnectorDto",
+        "ConnectorTypeInfoDto",
+        "DeliveryDto",
+        "DispatchSummary",
+        "RequestMeta",
+        "ConnectorError",
+        "ConnectorNotFoundError",
+        "ConnectorConflictError",
+        "ConnectorConfigError",
+        "ConnectorTypeUnsupportedError",
+        "ConnectorDeliveryError",
+        "CircuitOpenError",
+        "RateLimitedError"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/workers.ts",
+      "loc": 35,
+      "importCount": 6,
+      "exportCount": 1,
+      "functionCount": 1,
+      "classCount": 0,
+      "largestFunctionLOC": 19,
+      "complexityEstimate": 1,
+      "exports": [
+        "startConnectorMonitor"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/base.connector.ts",
+      "loc": 113,
+      "importCount": 3,
+      "exportCount": 1,
+      "functionCount": 10,
+      "classCount": 1,
+      "largestFunctionLOC": 25,
+      "complexityEstimate": 4,
+      "exports": [
+        "BaseConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/discord.connector.ts",
+      "loc": 119,
+      "importCount": 4,
+      "exportCount": 1,
+      "functionCount": 6,
+      "classCount": 1,
+      "largestFunctionLOC": 34,
+      "complexityEstimate": 6,
+      "exports": [
+        "DiscordConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/email.connector.ts",
+      "loc": 160,
+      "importCount": 6,
+      "exportCount": 1,
+      "functionCount": 10,
+      "classCount": 1,
+      "largestFunctionLOC": 27,
+      "complexityEstimate": 6,
+      "exports": [
+        "EmailConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/http.ts",
+      "loc": 100,
+      "importCount": 1,
+      "exportCount": 5,
+      "functionCount": 3,
+      "classCount": 0,
+      "largestFunctionLOC": 37,
+      "complexityEstimate": 9,
+      "exports": [
+        "httpRequest",
+        "classifyHttpStatus",
+        "redactUrl",
+        "HttpRequestOptions",
+        "HttpResponse"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/pagerduty.connector.ts",
+      "loc": 108,
+      "importCount": 4,
+      "exportCount": 1,
+      "functionCount": 5,
+      "classCount": 1,
+      "largestFunctionLOC": 52,
+      "complexityEstimate": 4,
+      "exports": [
+        "PagerDutyConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/slack.connector.ts",
+      "loc": 202,
+      "importCount": 4,
+      "exportCount": 1,
+      "functionCount": 9,
+      "classCount": 1,
+      "largestFunctionLOC": 46,
+      "complexityEstimate": 11,
+      "exports": [
+        "SlackConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/sms.connector.ts",
+      "loc": 120,
+      "importCount": 4,
+      "exportCount": 1,
+      "functionCount": 6,
+      "classCount": 1,
+      "largestFunctionLOC": 53,
+      "complexityEstimate": 4,
+      "exports": [
+        "SmsConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/teams.connector.ts",
+      "loc": 112,
+      "importCount": 4,
+      "exportCount": 1,
+      "functionCount": 6,
+      "classCount": 1,
+      "largestFunctionLOC": 37,
+      "complexityEstimate": 3,
+      "exports": [
+        "TeamsConnector"
+      ]
+    },
+    {
+      "file": "src/modules/connectors/connectors/webhook.connector.ts",
+      "loc": 116,
+      "importCount": 5,
+      "exportCount": 1,
+      "functionCount": 7,
+      "classCount": 1,
+      "largestFunctionLOC": 34,
+      "complexityEstimate": 4,
+      "exports": [
+        "WebhookConnector"
+      ]
+    }
+  ],
+  "dependencies": {
+    "src/modules/alerting/alert-router.service.ts": [
+      "fastify",
+      "pg",
+      "../../config/database.js",
+      "uuid",
+      "../projects/alerts/preferences/alert-preferences.service.js",
+      "./delivery.service.js"
+    ],
+    "src/modules/alerting/alerting.module.ts": [
+      "fastify",
+      "fastify-plugin",
+      "../../config/logger.js",
+      "./repository.js",
+      "./service.js",
+      "./routes.js"
+    ],
+    "src/modules/alerting/batch-processor.ts": [
+      "fastify",
+      "./repository.js",
+      "./routing.js",
+      "./types.js",
+      "../connectors/repository.js",
+      "../connectors/dispatcher.js",
+      "../connectors/runtime.js",
+      "../connectors/types.js"
+    ],
+    "src/modules/alerting/delivery.repository.ts": [
+      "pg",
+      "../../config/database.js",
+      "../connectors/types.js"
+    ],
+    "src/modules/alerting/delivery.service.ts": [
+      "fastify",
+      "pg",
+      "../../config/database.js",
+      "./alert-router.service.js"
+    ],
+    "src/modules/alerting/evaluator.ts": [
+      "./types.js"
+    ],
+    "src/modules/alerting/fingerprint.ts": [
+      "crypto"
+    ],
+    "src/modules/alerting/notifier.ts": [],
+    "src/modules/alerting/queue.ts": [
+      "fastify",
+      "../../lib/pgboss.js",
+      "./repository.js",
+      "./batch-processor.js",
+      "../connectors/repository.js",
+      "../connectors/dispatcher.js"
+    ],
+    "src/modules/alerting/repository.ts": [
+      "pg",
+      "../../config/database.js",
+      "./types.js"
+    ],
+    "src/modules/alerting/routes.ts": [
+      "fastify",
+      "../../shared/middleware/auth.js",
+      "../../shared/middleware/requireorg.js",
+      "../../shared/errors/app-error.js",
+      "./types.js"
+    ],
+    "src/modules/alerting/routing.ts": [
+      "./types.js"
+    ],
+    "src/modules/alerting/service.ts": [
+      "fastify",
+      "../../shared/middleware/audit-logger.js",
+      "./repository.js",
+      "./fingerprint.js",
+      "./evaluator.js",
+      "./template.js",
+      "./routing.js",
+      "./types.js"
+    ],
+    "src/modules/alerting/template.ts": [
+      "./evaluator.js"
+    ],
+    "src/modules/alerting/types.ts": [
+      "zod",
+      "../../shared/errors/app-error.js"
+    ],
+    "src/modules/connectors/connectors.module.ts": [
+      "fastify",
+      "fastify-plugin",
+      "../../config/logger.js",
+      "./repository.js",
+      "./dispatcher.js",
+      "./service.js",
+      "./monitor.js",
+      "./routes.js",
+      "./registry.js"
+    ],
+    "src/modules/connectors/crypto.ts": [
+      "../../shared/utils/encryption.js",
+      "../../config/env.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/dispatcher.ts": [
+      "fastify",
+      "crypto",
+      "./repository.js",
+      "./registry.js",
+      "./crypto.js",
+      "./runtime.js",
+      "./connectors/base.connector.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/monitor.ts": [
+      "fastify",
+      "./repository.js",
+      "./dispatcher.js",
+      "./service.js",
+      "./runtime.js"
+    ],
+    "src/modules/connectors/registry.ts": [
+      "fastify",
+      "./connectors/base.connector.js",
+      "./connectors/slack.connector.js",
+      "./connectors/discord.connector.js",
+      "./connectors/teams.connector.js",
+      "./connectors/pagerduty.connector.js",
+      "./connectors/webhook.connector.js",
+      "./connectors/email.connector.js",
+      "./connectors/sms.connector.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/repository.ts": [
+      "pg",
+      "../../config/database.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/routes.ts": [
+      "fastify",
+      "../../shared/middleware/auth.js",
+      "../../shared/middleware/requireorg.js",
+      "../../shared/errors/app-error.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/runtime.ts": [],
+    "src/modules/connectors/service.ts": [
+      "fastify",
+      "./repository.js",
+      "./dispatcher.js",
+      "./crypto.js",
+      "./registry.js",
+      "./types.js"
+    ],
+    "src/modules/connectors/types.ts": [
+      "zod",
+      "../../shared/errors/app-error.js"
+    ],
+    "src/modules/connectors/workers.ts": [
+      "fastify",
+      "./repository.js",
+      "./dispatcher.js",
+      "./service.js",
+      "./monitor.js",
+      "./registry.js"
+    ],
+    "src/modules/connectors/connectors/base.connector.ts": [
+      "zod",
+      "../types.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/discord.connector.ts": [
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/email.connector.ts": [
+      "nodemailer",
+      "nodemailer",
+      "zod",
+      "./base.connector.js",
+      "../../../config/env.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/http.ts": [
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/pagerduty.connector.ts": [
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/slack.connector.ts": [
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/sms.connector.ts": [
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/teams.connector.ts": [
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ],
+    "src/modules/connectors/connectors/webhook.connector.ts": [
+      "crypto",
+      "zod",
+      "./base.connector.js",
+      "./http.js",
+      "../types.js"
+    ]
+  }
+}
