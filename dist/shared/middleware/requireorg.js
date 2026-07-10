@@ -1,5 +1,5 @@
 import { pool } from "../../config/database.js";
-import { hasRequiredRole, ProjectError } from "../../modules/projects/utils.js";
+import { hasRequiredRole, ProjectError } from "../../modules/projects/shared/utils.js";
 function getRouteIds(request) {
     const params = (request.params ?? {});
     return {

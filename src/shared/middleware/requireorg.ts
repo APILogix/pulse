@@ -1,6 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { pool } from "../../config/database.js";
-import { hasRequiredRole, ProjectError } from "../../modules/projects/utils.js";
+import { hasRequiredRole, ProjectError } from "../../modules/projects/shared/utils.js";
 import type { OrgRole } from "../../modules/projects/types.js";
 
 function getRouteIds(request: FastifyRequest): {

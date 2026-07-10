@@ -1,0 +1,67 @@
+import type { Pool, PoolClient } from "pg";
+import type { ProjectEnvironment, ProjectEnvironmentConfig } from "./environment.types.js";
+export type EnvRow = {
+    id: string;
+    project_id: string;
+    org_id: string;
+    environment: ProjectEnvironment;
+    is_active: boolean;
+    rate_limit_per_second: number | null;
+    rate_limit_per_minute: number | null;
+    rate_limit_per_hour: number | null;
+    burst_limit: number | null;
+    allowed_event_types: string[] | null;
+    max_event_size_bytes: number | null;
+    max_batch_size: number | null;
+    require_https: boolean;
+    ip_allowlist: string[] | null;
+    ip_blocklist: string[] | null;
+    alert_email: string | null;
+    alert_webhook_url: string | null;
+    created_by: string | null;
+    created_at: Date;
+    updated_at: Date;
+};
+export declare class EnvironmentRepository {
+    private readonly db;
+    constructor(db?: Pool);
+    listEnvironments(projectId: string, client?: PoolClient): Promise<ProjectEnvironmentConfig[]>;
+    findEnvironment(projectId: string, environment: ProjectEnvironment, client?: PoolClient): Promise<ProjectEnvironmentConfig | null>;
+    createEnvironment(input: {
+        projectId: string;
+        orgId: string;
+        environment: ProjectEnvironment;
+        createdBy: string;
+        isActive?: boolean | undefined;
+        rateLimitPerSecond?: number | null | undefined;
+        rateLimitPerMinute?: number | null | undefined;
+        rateLimitPerHour?: number | null | undefined;
+        burstLimit?: number | null | undefined;
+        allowedEventTypes?: string[] | undefined;
+        maxEventSizeBytes?: number | null | undefined;
+        maxBatchSize?: number | null | undefined;
+        requireHttps?: boolean | undefined;
+        ipAllowlist?: string[] | null | undefined;
+        ipBlocklist?: string[] | null | undefined;
+        alertEmail?: string | null | undefined;
+        alertWebhookUrl?: string | null | undefined;
+    }, client?: PoolClient): Promise<ProjectEnvironmentConfig>;
+    updateEnvironment(projectId: string, environment: ProjectEnvironment, input: {
+        isActive?: boolean | undefined;
+        rateLimitPerSecond?: number | null | undefined;
+        rateLimitPerMinute?: number | null | undefined;
+        rateLimitPerHour?: number | null | undefined;
+        burstLimit?: number | null | undefined;
+        allowedEventTypes?: string[] | undefined;
+        maxEventSizeBytes?: number | null | undefined;
+        maxBatchSize?: number | null | undefined;
+        requireHttps?: boolean | undefined;
+        ipAllowlist?: string[] | null | undefined;
+        ipBlocklist?: string[] | null | undefined;
+        alertEmail?: string | null | undefined;
+        alertWebhookUrl?: string | null | undefined;
+    }, client?: PoolClient): Promise<ProjectEnvironmentConfig>;
+    deleteEnvironment(projectId: string, environment: ProjectEnvironment, client?: PoolClient): Promise<void>;
+    mapEnv(row: EnvRow): ProjectEnvironmentConfig;
+}
+//# sourceMappingURL=environment.repository.d.ts.map

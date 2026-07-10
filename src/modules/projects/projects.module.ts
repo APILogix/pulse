@@ -11,9 +11,11 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { ProjectsRepository } from './repository.js';
-import { SettingsRepository } from './settings.repository.js';
-import { ApiKeyRepository } from './api-key.repository.js';
-import { UsageRepository } from './usage.repository.js';
+import { SettingsRepository } from './settings/settings.repository.js';
+import { ApiKeyRepository } from './api-keys/api-key.repository.js';
+import { EnvironmentRepository } from './environments/environment.repository.js';
+import { ActivityRepository } from './activity/activity.repository.js';
+import { UsageRepository } from './usage/usage.repository.js';
 import { projectsRoutes } from './routes.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
@@ -26,12 +28,14 @@ declare module 'fastify' {
       repository: ProjectsRepository;
       settingsRepository: SettingsRepository;
       apiKeyRepository: ApiKeyRepository;
+      environmentRepository: EnvironmentRepository;
+      activityRepository: ActivityRepository;
       usageRepository: UsageRepository;
       service: ProjectsService;
-      alertRoutesRepository: import('./alert-routes.repository.js').AlertRoutesRepository;
-      alertRoutesService: import('./alert-routes.service.js').ProjectAlertRouteService;
-      alertPreferencesRepository: import('./alert-preferences.repository.js').AlertPreferencesRepository;
-      alertPreferencesService: import('./alert-preferences.service.js').ProjectMemberAlertPreferenceService;
+      alertRoutesRepository: import('./alerts/routes/alert-routes.repository.js').AlertRoutesRepository;
+      alertRoutesService: import('./alerts/routes/alert-routes.service.js').ProjectAlertRouteService;
+      alertPreferencesRepository: import('./alerts/preferences/alert-preferences.repository.js').AlertPreferencesRepository;
+      alertPreferencesService: import('./alerts/preferences/alert-preferences.service.js').ProjectMemberAlertPreferenceService;
     };
   }
 }
@@ -43,6 +47,8 @@ async function projectsModule(
   const repository = new ProjectsRepository();
   const settingsRepository = new SettingsRepository();
   const apiKeyRepository = new ApiKeyRepository();
+  const environmentRepository = new EnvironmentRepository();
+  const activityRepository = new ActivityRepository();
   const usageRepository = new UsageRepository();
 
   // Caching is in-process LRU only (no Redis dependency). The ingestion module
@@ -59,15 +65,17 @@ async function projectsModule(
     fastify.organization.repository,
     settingsRepository,
     apiKeyRepository,
+    environmentRepository,
+    activityRepository,
     usageRepository
   );
 
-  const { AlertRoutesRepository } = await import('./alert-routes.repository.js');
-  const { ProjectAlertRouteService } = await import('./alert-routes.service.js');
-  const { AlertPreferencesRepository } = await import('./alert-preferences.repository.js');
-  const { ProjectMemberAlertPreferenceService } = await import('./alert-preferences.service.js');
-  const { projectAlertRoutes } = await import('./alert-routes.controller.js');
-  const { projectAlertPreferencesRoutes } = await import('./alert-preferences.controller.js');
+  const { AlertRoutesRepository } = await import('./alerts/routes/alert-routes.repository.js');
+  const { ProjectAlertRouteService } = await import('./alerts/routes/alert-routes.service.js');
+  const { AlertPreferencesRepository } = await import('./alerts/preferences/alert-preferences.repository.js');
+  const { ProjectMemberAlertPreferenceService } = await import('./alerts/preferences/alert-preferences.service.js');
+  const { projectAlertRoutes } = await import('./alerts/routes/alert-routes.controller.js');
+  const { projectAlertPreferencesRoutes } = await import('./alerts/preferences/alert-preferences.controller.js');
 
   const alertRoutesRepository = new AlertRoutesRepository();
   const alertPreferencesRepository = new AlertPreferencesRepository();
@@ -91,6 +99,8 @@ async function projectsModule(
     repository,
     settingsRepository,
     apiKeyRepository,
+    environmentRepository,
+    activityRepository,
     usageRepository,
     service,
     alertRoutesRepository,

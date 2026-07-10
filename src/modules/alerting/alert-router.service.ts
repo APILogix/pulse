@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { PoolClient } from "pg";
 import { pool } from "../../config/database.js";
 import { v4 as generateUUID } from "uuid";
-import type { ProjectMemberAlertPreferenceService } from "../projects/alert-preferences.service.js";
+import type { ProjectMemberAlertPreferenceService } from "../projects/alerts/preferences/alert-preferences.service.js";
 import type { DeliveryService } from "./delivery.service.js"; // We will create this
 
 export interface AlertPayload {

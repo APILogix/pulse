@@ -16,9 +16,11 @@ import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../organization/repository.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "./types.js";
 import { ProjectsRepository } from "./repository.js";
-import { SettingsRepository } from "./settings.repository.js";
-import { ApiKeyRepository } from "./api-key.repository.js";
-import { UsageRepository } from "./usage.repository.js";
+import { SettingsRepository } from "./settings/settings.repository.js";
+import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
+import { EnvironmentRepository } from "./environments/environment.repository.js";
+import { ActivityRepository } from "./activity/activity.repository.js";
+import { UsageRepository } from "./usage/usage.repository.js";
 import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 export interface RequestMeta {
     actorUserId: string;
@@ -37,8 +39,10 @@ export declare class ProjectsService {
     private readonly orgRepo;
     private readonly settingsRepository;
     private readonly apiKeyRepository;
+    private readonly environmentRepository;
+    private readonly activityRepository;
     private readonly usageRepository;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, usageRepository: UsageRepository);
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;

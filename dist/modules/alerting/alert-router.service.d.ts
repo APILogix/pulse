@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { ProjectMemberAlertPreferenceService } from "../projects/alert-preferences.service.js";
+import type { ProjectMemberAlertPreferenceService } from "../projects/alerts/preferences/alert-preferences.service.js";
 import type { DeliveryService } from "./delivery.service.js";
 export interface AlertPayload {
     orgId: string;

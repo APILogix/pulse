@@ -40,7 +40,7 @@ import {
   UpdateProjectBodySchema,
   UpdateProjectSettingsBodySchema,
 } from "./types.js";
-import { handleProjectError, ProjectError } from "./utils.js";
+import { handleProjectError, ProjectError } from "./shared/utils.js";
 
 function requestMeta(request: FastifyRequest): RequestMeta {
   const userAgent = request.headers["user-agent"];

@@ -10,9 +10,11 @@
  */
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ProjectsRepository } from './repository.js';
-import { SettingsRepository } from './settings.repository.js';
-import { ApiKeyRepository } from './api-key.repository.js';
-import { UsageRepository } from './usage.repository.js';
+import { SettingsRepository } from './settings/settings.repository.js';
+import { ApiKeyRepository } from './api-keys/api-key.repository.js';
+import { EnvironmentRepository } from './environments/environment.repository.js';
+import { ActivityRepository } from './activity/activity.repository.js';
+import { UsageRepository } from './usage/usage.repository.js';
 import { ProjectsService } from './service.js';
 declare module 'fastify' {
     interface FastifyInstance {
@@ -20,12 +22,14 @@ declare module 'fastify' {
             repository: ProjectsRepository;
             settingsRepository: SettingsRepository;
             apiKeyRepository: ApiKeyRepository;
+            environmentRepository: EnvironmentRepository;
+            activityRepository: ActivityRepository;
             usageRepository: UsageRepository;
             service: ProjectsService;
-            alertRoutesRepository: import('./alert-routes.repository.js').AlertRoutesRepository;
-            alertRoutesService: import('./alert-routes.service.js').ProjectAlertRouteService;
-            alertPreferencesRepository: import('./alert-preferences.repository.js').AlertPreferencesRepository;
-            alertPreferencesService: import('./alert-preferences.service.js').ProjectMemberAlertPreferenceService;
+            alertRoutesRepository: import('./alerts/routes/alert-routes.repository.js').AlertRoutesRepository;
+            alertRoutesService: import('./alerts/routes/alert-routes.service.js').ProjectAlertRouteService;
+            alertPreferencesRepository: import('./alerts/preferences/alert-preferences.repository.js').AlertPreferencesRepository;
+            alertPreferencesService: import('./alerts/preferences/alert-preferences.service.js').ProjectMemberAlertPreferenceService;
         };
     }
 }
