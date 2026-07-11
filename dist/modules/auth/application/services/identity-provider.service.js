@@ -7,6 +7,8 @@ import { assertLoginAllowedByOrgPolicy } from '../../domain/policies.js';
 import * as repository from '../../infrastructure/repositories/index.js';
 import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
+import { normalizeEmail } from '../../domain/constants.js';
+import { emailToHash } from './shared-helpers.js';
 function readCallbackState(state) {
     const login = socialLoginStateCache.get(state);
     if (login) {
@@ -122,7 +124,64 @@ export function resolveCallbackState(state) {
 export async function completeSocialLogin(profile, flow, ipAddress, userAgent, requestId) {
     const link = await repository.findLinkedIdentityByProviderSubject(profile.provider, profile.subject);
     if (!link) {
-        throw new AuthError('Invalid email or password', AuthErrorCodes.INVALID_CREDENTIALS, 401);
+        if (!profile.email) {
+            throw new AuthError('The provider did not return a verified email address. Cannot create an account.', AuthErrorCodes.SOCIAL_LOGIN_FAILED, 400);
+        }
+        const normalizedEmail = normalizeEmail(profile.email);
+        const existingUser = await repository.findUserByEmailHash(emailToHash(normalizedEmail));
+        if (existingUser) {
+            throw new AuthError('An account already exists with this email. Sign in with your password first, then link this provider from Account Settings.', AuthErrorCodes.IDENTITY_ALREADY_LINKED, 409);
+        }
+        const created = await repository.withTransaction(async (client) => {
+            const user = await repository.createUser({
+                id: randomUUID(),
+                email: normalizedEmail,
+                full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
+                password: null,
+                email_verified: true,
+            }, client);
+            await repository.createLinkedIdentity({
+                user_id: user.id,
+                provider: flow.provider,
+                provider_subject: profile.subject,
+                provider_email: normalizedEmail,
+                profile_metadata: {
+                    display_name: profile.displayName,
+                    ...profile.profileMetadata,
+                },
+            }, client);
+            return user;
+        });
+        const session = await issueSessionForUser({
+            user: created,
+            ipAddress: flow.ipAddress || ipAddress,
+            userAgent: flow.userAgent || userAgent,
+            deviceName: flow.deviceName,
+            deviceType: flow.clientDeviceType || 'web',
+            mfaVerified: true,
+            rememberMe: flow.rememberMe === true,
+            ssoContext: { loginMethod: `social_${flow.provider}` },
+        });
+        await repository.recordLogin(created.id, ipAddress, userAgent);
+        logAudit({
+            user_id: created.id,
+            org_id: null,
+            action: 'user.created',
+            resource_type: 'user',
+            resource_id: created.id,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            request_id: requestId,
+            metadata: { source: 'social_login', provider: flow.provider, email_verified: true },
+        });
+        return {
+            access_token: session.accessToken,
+            refresh_token: session.refreshToken,
+            expires_at: session.expiresAt,
+            token_type: 'Bearer',
+            session_id: session.sessionId,
+            user_id: created.id,
+        };
     }
     const user = await repository.findUserById(link.user_id);
     if (!user || user.deleted_at || user.status !== 'active') {
@@ -169,6 +228,13 @@ export async function completeIdentityLink(profile, flow, ipAddress, requestId) 
     const user = await repository.findUserById(userId);
     if (!user || user.deleted_at || user.status !== 'active') {
         throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
+    }
+    // Linking must bind the provider identity to the account that is already
+    // signed in.  Without this check, a user could link a different provider
+    // email to the current account, which is both surprising and unsafe for
+    // account-recovery expectations.
+    if (!profile.email || normalizeEmail(profile.email) !== normalizeEmail(user.email)) {
+        throw new AuthError('The provider account email must match the email of the signed-in account', AuthErrorCodes.IDENTITY_LINK_FAILED, 409);
     }
     const existingBySubject = await repository.findLinkedIdentityByProviderSubject(profile.provider, profile.subject);
     if (existingBySubject && existingBySubject.user_id !== userId) {

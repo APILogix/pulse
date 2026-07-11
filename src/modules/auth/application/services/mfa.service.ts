@@ -56,6 +56,9 @@ export async function setupMFA(
   // before enrolling. Re-enrolling an existing device of the same type reuses
   // its row, so it does not count against the cap.
   const policyDevices = await repository.findMFADevicesByUserId(userId);
+  const existingBackupCodesHash = policyDevices.find(
+    (d) => d.verified && d.is_active && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0,
+  )?.backup_codes_hash ?? null;
   const existingOfType = policyDevices.find(
     (d) => d.device_type === input.type && d.is_active,
   );
@@ -125,13 +128,13 @@ export async function setupMFA(
     await createEmailMfaOtp(userId, device.id, otpHash);
     await sendEmailMfaOtpEmail(user, otp, input.device_name, 'setup');
 
-    const { plain: backupCodes, hashed } = await generateBackupCodes();
-    mfaBackupTempCache.set(device.id, hashed);
+    const generated = existingBackupCodesHash ? null : await generateBackupCodes();
+    mfaBackupTempCache.set(device.id, existingBackupCodesHash ?? generated!.hashed);
 
     return {
       device_id: device.id,
       device_type: 'email',
-      backupCodes,
+      backupCodes: generated?.plain ?? [],
     };
   }
 
@@ -189,12 +192,12 @@ export async function setupMFA(
     });
   }
 
-  const { plain: backupCodes, hashed } = await generateBackupCodes();
+  const generated = existingBackupCodesHash ? null : await generateBackupCodes();
 
   // Hold backup-code hashes in process until verify-setup commits them. The
   // LRU TTL (24h) is generous enough that "I'll set this up later today" is
   // safe; abandoned setups expire on their own.
-  mfaBackupTempCache.set(device.id, hashed);
+  mfaBackupTempCache.set(device.id, existingBackupCodesHash ?? generated!.hashed);
 
   const qrCodeUrl = await QRCode.toDataURL(totp.toString());
   return {
@@ -202,7 +205,7 @@ export async function setupMFA(
     device_type: 'totp',
     secret: secret.base32,
     qrCodeUrl,
-    backupCodes,
+    backupCodes: generated?.plain ?? [],
   };
 }
 

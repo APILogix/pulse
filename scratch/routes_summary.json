@@ -1,0 +1,675 @@
+[
+  {
+    "file": "account-administration.routes.ts",
+    "method": "POST",
+    "path": "/mfa/step-up/webauthn/options",
+    "middlewares": [
+      "authenticate",
+      "webauthnRateLimit"
+    ]
+  },
+  {
+    "file": "account-administration.routes.ts",
+    "method": "POST",
+    "path": "/mfa/step-up/webauthn/verify",
+    "middlewares": [
+      "authenticate",
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "account-administration.routes.ts",
+    "method": "PATCH",
+    "path": "/mfa/devices/:id",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "account-administration.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/password/reset",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/password/policy",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/users/me/verification",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/policy/effective",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/sso/discovery",
+    "middlewares": [
+      "ssoDiscoveryRateLimit"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "POST",
+    "path": "/account/unlock/request",
+    "middlewares": [
+      "accountUnlockRequestRateLimit"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "POST",
+    "path": "/account/unlock/confirm",
+    "middlewares": [
+      "tokenConfirmRateLimit"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/users/me/export",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "POST",
+    "path": "/users/me/delete/request",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "POST",
+    "path": "/users/me/delete/confirm",
+    "middlewares": [
+      "tokenConfirmRateLimit"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "POST",
+    "path": "/mfa/recovery/request",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "identity.routes.ts",
+    "method": "GET",
+    "path": "/users/:id/audit-events",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "login.routes.ts",
+    "method": "POST",
+    "path": "/login",
+    "middlewares": [
+      "loginRateLimit"
+    ]
+  },
+  {
+    "file": "login.routes.ts",
+    "method": "POST",
+    "path": "/login/mfa",
+    "middlewares": [
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "login.routes.ts",
+    "method": "POST",
+    "path": "/login/mfa/switch",
+    "middlewares": [
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "login.routes.ts",
+    "method": "POST",
+    "path": "/login/backup-code",
+    "middlewares": [
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/setup",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/verify-setup",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/challenge",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/verify",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/email/resend",
+    "middlewares": [
+      "authenticate",
+      "mfaEmailResendRateLimit"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "GET",
+    "path": "/mfa/devices",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "DELETE",
+    "path": "/mfa/devices/:id",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "PATCH",
+    "path": "/mfa/devices/:id/primary",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/backup-codes",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "PATCH",
+    "path": "/mfa/toggle",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/disable",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/disable/request",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "mfa.routes.ts",
+    "method": "POST",
+    "path": "/mfa/disable/confirm",
+    "middlewares": [
+      "tokenConfirmRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/forgot-password",
+    "middlewares": [
+      "forgotPasswordRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/password/forgot",
+    "middlewares": [
+      "forgotPasswordRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/reset-password",
+    "middlewares": [
+      "resetPasswordRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/password/reset",
+    "middlewares": [
+      "resetPasswordRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/resend-verification",
+    "middlewares": [
+      "resendVerificationRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "GET",
+    "path": "/verify-email",
+    "middlewares": [
+      "verifyEmailRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/verify-email/confirm",
+    "middlewares": [
+      "tokenConfirmRateLimit"
+    ]
+  },
+  {
+    "file": "password.routes.ts",
+    "method": "POST",
+    "path": "/password/change",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "POST",
+    "path": "/login/social/:provider",
+    "middlewares": [
+      "loginRateLimit"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "GET",
+    "path": "/login/social/:provider/authorize",
+    "middlewares": [
+      "loginRateLimit"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "GET",
+    "path": "/login/social/callback",
+    "middlewares": [
+      "ssoCallbackRateLimit"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "POST",
+    "path": "/identity-providers/:provider/link",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "GET",
+    "path": "/identity-providers/:provider/authorize",
+    "middlewares": []
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "GET",
+    "path": "/identity-providers",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "DELETE",
+    "path": "/identity-providers/:linkId",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "POST",
+    "path": "/saml/logout",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "provisioning.routes.ts",
+    "method": "POST",
+    "path": "/saml/slo",
+    "middlewares": [
+      "ssoCallbackRateLimit"
+    ]
+  },
+  {
+    "file": "saml-identity.routes.ts",
+    "method": "GET",
+    "path": "/saml/metadata",
+    "middlewares": [
+      "ssoCallbackRateLimit"
+    ]
+  },
+  {
+    "file": "saml-identity.routes.ts",
+    "method": "POST",
+    "path": "/saml/acs",
+    "middlewares": [
+      "ssoCallbackRateLimit"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "GET",
+    "path": "/sessions",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "GET",
+    "path": "/sessions/${UUID_PATH_SEGMENT}",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "DELETE",
+    "path": "/sessions",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "DELETE",
+    "path": "/sessions/others",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "DELETE",
+    "path": "/sessions/${UUID_PATH_SEGMENT}",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "POST",
+    "path": "/sessions/refresh",
+    "middlewares": [
+      "refreshSessionRateLimit"
+    ]
+  },
+  {
+    "file": "session.routes.ts",
+    "method": "POST",
+    "path": "/logout",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/sso/login",
+    "middlewares": [
+      "ssoLoginRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "GET",
+    "path": "/sso/callback",
+    "middlewares": [
+      "ssoCallbackRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/mfa/webauthn/register/options",
+    "middlewares": [
+      "authenticate",
+      "webauthnRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/mfa/webauthn/register/verify",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp",
+      "webauthnRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/login/mfa/webauthn/options",
+    "middlewares": [
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/login/mfa/webauthn/verify",
+    "middlewares": [
+      "loginMfaRateLimit"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "GET",
+    "path": "/trusted-devices",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "POST",
+    "path": "/trusted-devices",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "sso-oidc.routes.ts",
+    "method": "DELETE",
+    "path": "/trusted-devices/:id",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/register",
+    "middlewares": [
+      "registerRateLimit"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users",
+    "middlewares": [
+      "registerRateLimit"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "GET",
+    "path": "/users/me",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "GET",
+    "path": "/users/me/security-summary",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "PATCH",
+    "path": "/users/me",
+    "middlewares": [
+      "authenticate"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "DELETE",
+    "path": "/users/me",
+    "middlewares": [
+      "authenticate",
+      "requireStepUp"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "GET",
+    "path": "/users/:id",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "GET",
+    "path": "/users",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/restore",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/suspend",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/unsuspend",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/lock",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "POST",
+    "path": "/users/:id/unlock",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  },
+  {
+    "file": "user.routes.ts",
+    "method": "DELETE",
+    "path": "/users/:id/sessions",
+    "middlewares": [
+      "authenticate",
+      "requireAdmin"
+    ]
+  }
+]

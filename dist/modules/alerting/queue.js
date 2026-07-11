@@ -2,7 +2,7 @@ import { pgboss } from '../../lib/pgboss.js';
 import { AlertingRepository } from './repository.js';
 import { AlertBatchProcessor } from './batch-processor.js';
 import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/dispatcher.js';
+import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 export const ALERT_JOBS = {
     formBatches: 'alert.form-batches',
     processBatch: 'alert.process-batch',

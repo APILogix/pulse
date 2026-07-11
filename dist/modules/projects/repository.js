@@ -1,5 +1,9 @@
 import { pool } from "../../config/database.js";
 import { ProjectError } from "./shared/utils.js";
+import { ProjectRepository } from "./core/project.repository.js";
+import { MemberRepository } from "./members/member.repository.js";
+import { ProjectUsageRepository } from "./usage/project-usage.repository.js";
+import { ProjectSettingsRepository } from "./settings/project-settings.repository.js";
 // Column list selected for every project read. Centralized so the projection
 // stays consistent across find/list/update.
 const PROJECT_COLUMNS = `
@@ -27,565 +31,68 @@ const ENV_COLUMNS = `
 const DEFAULT_PROJECT_ENVIRONMENTS = ["development", "staging", "production"];
 export class ProjectsRepository {
     db;
+    core;
+    members;
+    usage;
+    settings;
     constructor(db = pool) {
         this.db = db;
+        this.core = new ProjectRepository(db);
+        this.members = new MemberRepository(db);
+        this.usage = new ProjectUsageRepository(db);
+        this.settings = new ProjectSettingsRepository(db);
     }
     async withTransaction(callback) {
-        const client = await this.db.connect();
-        try {
-            await client.query("BEGIN");
-            const result = await callback(client);
-            await client.query("COMMIT");
-            return result;
-        }
-        catch (error) {
-            await client.query("ROLLBACK");
-            throw error;
-        }
-        finally {
-            client.release();
-        }
+        return this.core.withTransaction(arguments[0]);
     }
     // ── Membership ────────────────────────────────────────────────────────────
     async findOrganizationMembership(orgId, userId, client) {
-        const db = client ?? this.db;
-        // organization_members uses a `status` column, not is_active; derive it.
-        const result = await db.query(`SELECT org_id, user_id, role, (status = 'active') AS is_active
-         FROM organization_members
-        WHERE org_id = $1 AND user_id = $2
-        LIMIT 1`, [orgId, userId]);
-        const row = result.rows[0];
-        if (!row)
-            return null;
-        return {
-            orgId: row.org_id,
-            userId: row.user_id,
-            role: row.role,
-            isActive: row.is_active,
-        };
+        return this.members.findOrganizationMembership(orgId, userId, client);
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, query, client) {
-        const db = client ?? this.db;
-        const params = [orgId];
-        const whereClauses = ["p.org_id = $1"];
-        if (!query.includeDeleted) {
-            whereClauses.push("p.deleted_at IS NULL");
-        }
-        if (query.status) {
-            params.push(query.status);
-            whereClauses.push(`p.status = $${params.length}`);
-        }
-        if (query.environment) {
-            params.push(query.environment);
-            whereClauses.push(`p.default_environment = ${params.length}`);
-        }
-        if (query.search) {
-            params.push(`%${query.search}%`);
-            whereClauses.push(`(p.name ILIKE $${params.length} OR p.slug ILIKE $${params.length})`);
-        }
-        const whereClause = `WHERE ${whereClauses.join(" AND ")}`;
-        const countResult = await db.query(`SELECT COUNT(*)::text AS count FROM projects p ${whereClause}`, params);
-        const sortColumnMap = {
-            created_at: "p.created_at",
-            updated_at: "p.updated_at",
-            name: "p.name",
-        };
-        const sortColumn = sortColumnMap[query.sortBy];
-        const sortOrder = query.sortOrder.toUpperCase() === "ASC" ? "ASC" : "DESC";
-        const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
-        params.push(query.limit, offset);
-        const result = await db.query(`SELECT
-         ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")},
-         COUNT(k.id)::int AS api_keys_count,
-         COUNT(k.id) FILTER (WHERE k.is_active = TRUE)::int AS active_api_keys_count
-       FROM projects p
-       LEFT JOIN project_api_keys k ON k.project_id = p.id
-       ${whereClause}
-       GROUP BY p.id
-       ORDER BY ${sortColumn} ${sortOrder}
-       LIMIT $${params.length - 1}
-       OFFSET $${params.length}`, params);
-        return {
-            projects: result.rows.map((row) => this.mapProjectWithCounts(row)),
-            total: Number.parseInt(countResult.rows[0]?.count ?? "0", 10),
-        };
+        return this.core.listProjects(orgId, query, client);
     }
     async createProject(input, client) {
-        const db = client ?? this.db;
-        try {
-            const result = await db.query(`INSERT INTO projects (
-           org_id, name, slug, description, default_environment
-         ) VALUES (
-           $1,$2,$3,$4,$5
-         )
-         RETURNING ${PROJECT_COLUMNS}`, [
-                input.orgId,
-                input.name,
-                input.slug,
-                input.description,
-                input.environment,
-            ]);
-            return this.mapProject(result.rows[0]);
-        }
-        catch (error) {
-            if (error.code === "23505") {
-                throw new ProjectError("PROJECT_SLUG_EXISTS", "A project with the same slug already exists in this organization", 409);
-            }
-            throw error;
-        }
+        return this.core.createProject(input, client);
     }
     async findProjectBySlug(orgId, slug, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
-        WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL
-        LIMIT 1`, [orgId, slug]);
-        return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+        return this.core.findProjectBySlug(orgId, slug, client);
     }
     async findProjectById(orgId, projectId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
-        WHERE org_id = $1 AND id = $2 AND deleted_at IS NULL
-        LIMIT 1`, [orgId, projectId]);
-        return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+        return this.core.findProjectById(orgId, projectId, client);
     }
     async findProjectByIdIncludingDeleted(orgId, projectId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
-        WHERE org_id = $1 AND id = $2
-        LIMIT 1`, [orgId, projectId]);
-        return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+        return this.core.findProjectByIdIncludingDeleted(orgId, projectId, client);
     }
     async updateProject(orgId, projectId, input, client) {
-        const db = client ?? this.db;
-        const { assignments, values } = this.buildProjectAssignments(input);
-        if (assignments.length === 0) {
-            const project = await this.findProjectById(orgId, projectId, client);
-            if (!project) {
-                throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-            }
-            return project;
-        }
-        values.push(orgId, projectId);
-        const result = await db.query(`UPDATE projects
-          SET ${assignments.join(", ")}
-        WHERE org_id = $${values.length - 1}
-          AND id = $${values.length}
-          AND deleted_at IS NULL
-        RETURNING ${PROJECT_COLUMNS}`, values);
-        if (result.rowCount === 0) {
-            throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-        }
-        return this.mapProject(result.rows[0]);
+        return this.core.updateProject(orgId, projectId, input, client);
     }
     /** Soft-delete: stamp deleted_at + deleted_by; row is retained for audit. */
     async softDeleteProject(orgId, projectId, deletedBy, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`UPDATE projects
-          SET deleted_at = NOW(), deleted_by = $3, status = 'archived'
-        WHERE org_id = $1 AND id = $2 AND deleted_at IS NULL`, [orgId, projectId, deletedBy]);
-        if (result.rowCount === 0) {
-            throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-        }
+        return this.core.softDeleteProject(orgId, projectId, deletedBy, client);
     }
     async restoreProject(orgId, projectId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`UPDATE projects
-          SET deleted_at = NULL,
-              deleted_by = NULL,
-              archived_at = NULL,
-              status = 'active'
-        WHERE org_id = $1
-          AND id = $2
-          AND deleted_at IS NOT NULL
-        RETURNING ${PROJECT_COLUMNS}`, [orgId, projectId]);
-        if (result.rowCount === 0) {
-            throw new ProjectError("PROJECT_NOT_FOUND", "Deleted project not found", 404);
-        }
-        return this.mapProject(result.rows[0]);
+        return this.core.restoreProject(orgId, projectId, client);
     }
     async getProjectStats(projectId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT
-         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1)::text AS api_keys_count,
-         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND is_active = TRUE)::text AS active_keys_count,
-         (SELECT COUNT(*) FROM project_environments WHERE project_id = $1)::text AS environment_count,
-         GREATEST(
-           COALESCE((SELECT SUM(request_count) FROM project_api_key_usage WHERE project_id = $1),0),
-           COALESCE((SELECT SUM(usage_count) FROM project_api_keys WHERE project_id = $1),0)
-         )::text AS total_requests`, [projectId]);
-        const row = result.rows[0];
-        return {
-            totalRequests: Number.parseInt(row?.total_requests ?? "0", 10),
-            apiKeysCount: Number.parseInt(row?.api_keys_count ?? "0", 10),
-            activeKeysCount: Number.parseInt(row?.active_keys_count ?? "0", 10),
-            environmentCount: Number.parseInt(row?.environment_count ?? "0", 10),
-        };
+        return this.usage.getProjectStats(projectId, client);
     }
     async getProjectUsageCounters(projectId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT
-         counter_type,
-         COALESCE(SUM(total_value),0)::text AS total_value,
-         MAX(period_start) AS last_period_start,
-         MAX(period_end) AS last_period_end,
-         MAX(last_flushed_at) AS last_flushed_at
-       FROM project_usage_realtime
-       WHERE project_id = $1
-       GROUP BY counter_type
-       ORDER BY counter_type ASC`, [projectId]);
-        return result.rows.map((row) => ({
-            counterType: row.counter_type,
-            totalValue: Number.parseInt(row.total_value ?? "0", 10),
-            lastPeriodStart: row.last_period_start,
-            lastPeriodEnd: row.last_period_end,
-            lastFlushedAt: row.last_flushed_at,
-        }));
+        return this.usage.getProjectUsageCounters(projectId, client);
     }
     async getProjectModuleUsageCounts(orgId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`SELECT
-         (SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL)::text AS projects,
-         (SELECT COUNT(*) FROM project_environments WHERE org_id = $1)::text AS environments,
-         (SELECT COUNT(*) FROM project_api_keys WHERE org_id = $1 AND is_active = TRUE)::text AS api_keys`, [orgId]);
-        const row = result.rows[0];
-        return {
-            projects: Number.parseInt(row?.projects ?? "0", 10),
-            environments: Number.parseInt(row?.environments ?? "0", 10),
-            apiKeys: Number.parseInt(row?.api_keys ?? "0", 10),
-        };
+        return this.usage.getProjectModuleUsageCounts(orgId, client);
     }
     async findSdkConfigPlanKey(orgId, client) {
-        const db = client ?? this.db;
-        try {
-            const result = await db.query(`SELECT p.key AS plan_key
-           FROM organization_subscriptions s
-           INNER JOIN plans p ON p.id = s.plan_id
-          WHERE s.org_id = $1
-            AND s.status IN ('trialing','active','past_due')
-            AND p.is_active = TRUE
-          ORDER BY s.current_period_end DESC, s.created_at DESC
-          LIMIT 1`, [orgId]);
-            return result.rows[0]?.plan_key ?? "free";
-        }
-        catch (error) {
-            if (error.code === "42P01")
-                return "free";
-            throw error;
-        }
+        return this.settings.findSdkConfigPlanKey(orgId, client);
     }
     async createDefaultSdkConfigs(project, createdBy, planKey, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`WITH matching_templates AS (
-         SELECT
-           t.environment,
-           t.config_key,
-           t.config_type,
-           t.config_value,
-           t.schema_version,
-           t.target_sdk_versions,
-           t.target_platforms,
-           t.rollout_percentage
-         FROM sdk_config_templates t
-         WHERE t.plan_key = $4
-           AND t.environment = ANY($5::text[])
-           AND t.is_active = TRUE
-       ),
-       selected_templates AS (
-         SELECT
-           environment,
-           config_key,
-           config_type,
-           config_value,
-           schema_version,
-           target_sdk_versions,
-           target_platforms,
-           rollout_percentage
-         FROM matching_templates
-         UNION ALL
-         SELECT
-           f.environment,
-           f.config_key,
-           f.config_type,
-           f.config_value,
-           f.schema_version,
-           f.target_sdk_versions,
-           f.target_platforms,
-           f.rollout_percentage
-         FROM sdk_config_templates f
-         WHERE f.plan_key = 'free'
-           AND f.environment = ANY($5::text[])
-           AND f.is_active = TRUE
-           AND NOT EXISTS (SELECT 1 FROM matching_templates)
-       ),
-       prepared_configs AS (
-         SELECT
-           $1::uuid AS org_id,
-           $2::uuid AS project_id,
-           s.config_key,
-           s.config_type,
-           jsonb_set(
-             jsonb_set(
-               COALESCE(s.config_value, '{}'::jsonb),
-               '{sdk,projectId}',
-               to_jsonb($2::text),
-               TRUE
-             ),
-             '{sdk,environment}',
-             to_jsonb(s.environment),
-             TRUE
-           ) AS config_value,
-           s.schema_version,
-           s.environment,
-           s.target_sdk_versions,
-           s.target_platforms,
-           s.rollout_percentage
-         FROM selected_templates s
-       ),
-       inserted_configs AS (
-         INSERT INTO sdk_configs (
-           org_id,
-           project_id,
-           config_key,
-           config_type,
-           version,
-           version_hash,
-           is_latest,
-           config_value,
-           schema_version,
-           environment,
-           target_sdk_versions,
-           target_platforms,
-           rollout_percentage,
-           is_active,
-           is_encrypted,
-           created_by,
-           updated_by
-         )
-         SELECT
-           p.org_id,
-           p.project_id,
-           p.config_key,
-           p.config_type,
-           1,
-           encode(digest(p.config_value::text, 'sha256'), 'hex'),
-           TRUE,
-           p.config_value,
-           p.schema_version,
-           p.environment,
-           p.target_sdk_versions,
-           p.target_platforms,
-           p.rollout_percentage,
-           TRUE,
-           FALSE,
-           $3::uuid,
-           $3::uuid
-         FROM prepared_configs p
-         ON CONFLICT (
-           org_id,
-           (COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid)),
-           config_key,
-           environment
-         ) WHERE is_latest = TRUE DO NOTHING
-         RETURNING id, version, version_hash, config_value, rollout_percentage
-       ),
-       inserted_versions AS (
-         INSERT INTO sdk_config_versions (
-           config_id,
-           version,
-           version_hash,
-           config_value,
-           change_type,
-           change_summary,
-           created_by
-         )
-         SELECT
-           id,
-           version,
-           version_hash,
-           config_value,
-           'create',
-           'Initial project SDK config',
-           $3::uuid
-         FROM inserted_configs
-         RETURNING id
-       ),
-       inserted_deployments AS (
-         INSERT INTO sdk_config_deployments (
-           config_id,
-           version,
-           status,
-           rollout_percentage,
-           started_at
-         )
-         SELECT
-           id,
-           version,
-           'deploying',
-           rollout_percentage,
-           NOW()
-         FROM inserted_configs
-         RETURNING id
-       )
-       SELECT COUNT(*)::text AS inserted_count FROM inserted_configs`, [
-            project.orgId,
-            project.id,
-            createdBy,
-            planKey,
-            DEFAULT_PROJECT_ENVIRONMENTS,
-        ]);
-        return Number.parseInt(result.rows[0]?.inserted_count ?? "0", 10);
-    }
-    // ── Mapping helpers ─────────────────────────────────────────────────────────
-    buildProjectAssignments(input) {
-        const assignments = [];
-        const values = [];
-        let i = 1;
-        const set = (col, val) => {
-            assignments.push(`${col} = $${i++}`);
-            values.push(val);
-        };
-        if (input.name !== undefined)
-            set("name", input.name);
-        if (input.description !== undefined)
-            set("description", input.description);
-        if (input.status !== undefined)
-            set("status", input.status);
-        if (input.environment !== undefined)
-            set("default_environment", input.environment);
-        if (input.archivedAt !== undefined)
-            set("archived_at", input.archivedAt);
-        return { assignments, values };
-    }
-    /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
-    prefixedProjectRow(row) {
-        return {
-            id: row.p_id,
-            org_id: row.p_org_id,
-            name: row.p_name,
-            slug: row.p_slug,
-            description: row.p_description,
-            status: row.p_status,
-            environment: row.p_environment,
-            archived_at: row.p_archived_at,
-            deleted_at: row.p_deleted_at,
-            created_at: row.p_created_at,
-            updated_at: row.p_updated_at,
-        };
-    }
-    mapProject(row) {
-        return {
-            id: row.id,
-            orgId: row.org_id,
-            name: row.name,
-            slug: row.slug,
-            description: row.description,
-            status: row.status,
-            environment: row.environment,
-            productionApiPrefix: null,
-            developmentApiPrefix: null,
-            stagingApiPrefix: null,
-            rateLimitPerSecond: 0,
-            rateLimitPerMinute: 0,
-            rateLimitPerHour: 0,
-            burstLimit: 0,
-            allowedEventTypes: [],
-            maxEventSizeBytes: 0,
-            maxBatchSize: 0,
-            allowedOrigins: [],
-            requireHttps: false,
-            ipAllowlist: null,
-            ipBlocklist: null,
-            geoRestrictionEnabled: false,
-            allowedCountries: null,
-            alertEmail: null,
-            alertWebhookUrl: null,
-            alertOnErrorRateThreshold: 0,
-            alertOnLatencyThresholdMs: 0,
-            metadata: {},
-            settings: {},
-            archivedAt: row.archived_at,
-            deletedAt: row.deleted_at,
-            deletedBy: null,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-        };
-    }
-    mapProjectWithCounts(row) {
-        return {
-            ...this.mapProject(row),
-            apiKeysCount: Number(row.api_keys_count ?? 0),
-            activeApiKeysCount: Number(row.active_api_keys_count ?? 0),
-        };
-    }
-    mapEnv(row) {
-        return {
-            id: row.id,
-            projectId: row.project_id,
-            orgId: row.org_id,
-            environment: row.environment,
-            isActive: row.is_active,
-            rateLimitPerSecond: row.rate_limit_per_second,
-            rateLimitPerMinute: row.rate_limit_per_minute,
-            rateLimitPerHour: row.rate_limit_per_hour,
-            burstLimit: row.burst_limit,
-            allowedEventTypes: row.allowed_event_types ?? [],
-            maxEventSizeBytes: row.max_event_size_bytes,
-            maxBatchSize: row.max_batch_size,
-            requireHttps: row.require_https,
-            ipAllowlist: row.ip_allowlist,
-            ipBlocklist: row.ip_blocklist,
-            alertEmail: row.alert_email,
-            alertWebhookUrl: row.alert_webhook_url,
-            createdBy: row.created_by,
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-        };
-    }
-    mapApiKey(row) {
-        return {
-            id: row.id,
-            projectId: row.project_id,
-            orgId: row.org_id,
-            keyPrefix: row.key_prefix,
-            keyType: row.key_type,
-            environment: row.environment,
-            name: row.name,
-            description: row.description,
-            isActive: row.is_active,
-            status: row.status,
-            createdBy: row.created_by,
-            rotatedFromKeyId: row.rotated_from_key_id,
-            rotatedAt: row.rotated_at,
-            rotatedBy: row.rotated_by,
-            rotationReason: row.rotation_reason,
-            gracePeriodEndsAt: row.grace_period_ends_at,
-            revokedAt: row.revoked_at,
-            revokedBy: row.revoked_by,
-            revokedReason: row.revoked_reason,
-            expiresAt: row.expires_at,
-            autoRotateEnabled: row.auto_rotate_enabled,
-            autoRotateDays: Number(row.auto_rotate_days ?? 90),
-            lastUsedAt: row.last_used_at,
-            lastUsedIp: row.last_used_ip,
-            usageCount: Number(row.usage_count ?? 0),
-            errorCount: Number(row.error_count ?? 0),
-            rateLimitPerSecond: row.rate_limit_per_second,
-            rateLimitPerMinute: row.rate_limit_per_minute,
-            rateLimitPerHour: row.rate_limit_per_hour,
-            permissions: row.permissions ?? [],
-            allowedEndpoints: row.allowed_endpoints ?? [],
-            blockedEndpoints: row.blocked_endpoints ?? [],
-            metadata: row.metadata ?? {},
-            createdAt: row.created_at,
-            updatedAt: row.updated_at,
-        };
-    }
-    mapApiKeyRecord(row) {
-        return {
-            ...this.mapApiKey(row),
-            keyHash: row.key_hash,
-        };
+        return this.settings.createDefaultSdkConfigs(project, createdBy, planKey, client);
     }
 }
+export * from "./core/project.repository.js";
+export * from "./members/member.repository.js";
+export * from "./usage/project-usage.repository.js";
+export * from "./settings/project-settings.repository.js";
 //# sourceMappingURL=repository.js.map

@@ -1,12 +1,13 @@
 import { z } from 'zod';
-import { UuidSchema, PaginationSchema, type RequestMeta } from '../types.js';
+import { UuidSchema, PaginationSchema, AlertSeveritySchema } from '../common.js';
+import type { AlertSeverity } from '../common.js';
+import type { RequestMeta } from '../types.js';
 
 
 import { AppError } from '../../../shared/errors/app-error.js';
 
-export const AlertSeveritySchema = z.enum(['info', 'warning', 'error', 'critical']);
-
-export type AlertSeverity = z.infer<typeof AlertSeveritySchema>;
+export { AlertSeveritySchema } from '../common.js';
+export type { AlertSeverity } from '../common.js';
 
 export const ConditionTypeSchema = z.enum(['threshold', 'change', 'anomaly', 'static', 'composite']);
 

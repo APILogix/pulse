@@ -8,9 +8,10 @@ import { UsageRepository } from './usage/usage.repository.js';
 import { projectsRoutes } from './routes.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
+import { pool } from '../../config/database.js';
 const projectsLogger = logger.child({ component: 'projects-module' });
 async function projectsModule(fastify, _options) {
-    const repository = new ProjectsRepository();
+    const repository = new ProjectsRepository(pool);
     const settingsRepository = new SettingsRepository();
     const apiKeyRepository = new ApiKeyRepository();
     const environmentRepository = new EnvironmentRepository();

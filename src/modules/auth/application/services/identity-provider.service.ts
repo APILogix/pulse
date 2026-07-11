@@ -15,7 +15,9 @@ import { assertLoginAllowedByOrgPolicy } from '../../domain/policies.js';
 import * as repository from '../../infrastructure/repositories/index.js';
 import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes, type SocialLoginInput } from '../../domain/types.js';
+import { normalizeEmail } from '../../domain/constants.js';
 import type { PassportSocialProfile } from './passport-social.service.js';
+import { emailToHash } from './shared-helpers.js';
 
 interface CallbackStateResult {
   kind: 'login' | 'link';
@@ -116,10 +118,11 @@ export async function startSocialLogin(
     org_id: null,
     action: 'user.social_login_started',
     resource_type: 'identity_provider',
-    resource_id: provider,
+    resource_id: null,
     ip_address: ipAddress,
     request_id: requestId,
     user_agent: userAgent,
+    metadata: { provider },
   });
 
   return {
@@ -135,6 +138,15 @@ export async function startIdentityLink(
   requestId: string,
 ): Promise<{ authorization_url: string; state: string }> {
   assertProviderReady(provider);
+
+  const user = await repository.findUserById(userId);
+  if (!user || user.deleted_at || user.status !== 'active') {
+    throw new AuthError(
+      'Your account is no longer available. Sign in again to continue.',
+      AuthErrorCodes.USER_NOT_FOUND,
+      404,
+    );
+  }
 
   const existing = await repository.findLinkedIdentityByUserProvider(userId, provider);
   if (existing) {
@@ -153,9 +165,10 @@ export async function startIdentityLink(
     org_id: null,
     action: 'user.identity_link_started',
     resource_type: 'identity_provider',
-    resource_id: provider,
+    resource_id: null,
     ip_address: ipAddress,
     request_id: requestId,
+    metadata: { provider },
   });
 
   return {
@@ -209,11 +222,78 @@ export async function completeSocialLogin(
     profile.subject,
   );
   if (!link) {
-    throw new AuthError(
-      'Invalid email or password',
-      AuthErrorCodes.INVALID_CREDENTIALS,
-      401,
-    );
+    if (!profile.email) {
+      throw new AuthError(
+        'The provider did not return a verified email address. Cannot create an account.',
+        AuthErrorCodes.SOCIAL_LOGIN_FAILED,
+        400,
+      );
+    }
+
+    const normalizedEmail = normalizeEmail(profile.email);
+    const existingUser = await repository.findUserByEmailHash(emailToHash(normalizedEmail));
+    if (existingUser) {
+      throw new AuthError(
+        'An account already exists with this email. Sign in with your password first, then link this provider from Account Settings.',
+        AuthErrorCodes.IDENTITY_ALREADY_LINKED,
+        409,
+      );
+    }
+
+    const created = await repository.withTransaction(async (client) => {
+      const user = await repository.createUser({
+        id: randomUUID(),
+        email: normalizedEmail,
+        full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
+        password: null,
+        email_verified: true,
+        avatar_url: profile.avatarUrl,
+      }, client);
+      await repository.createLinkedIdentity({
+        user_id: user.id,
+        provider: flow.provider,
+        provider_subject: profile.subject,
+        provider_email: normalizedEmail,
+        profile_metadata: {
+          display_name: profile.displayName,
+          ...profile.profileMetadata,
+        },
+      }, client);
+      return user;
+    });
+
+    const session = await issueSessionForUser({
+      user: created,
+      ipAddress: flow.ipAddress || ipAddress,
+      userAgent: flow.userAgent || userAgent,
+      deviceName: flow.deviceName,
+      deviceType: flow.clientDeviceType || 'web',
+      mfaVerified: true,
+      rememberMe: flow.rememberMe === true,
+      ssoContext: { loginMethod: `social_${flow.provider}` },
+    });
+
+    await repository.recordLogin(created.id, ipAddress, userAgent);
+    logAudit({
+      user_id: created.id,
+      org_id: null,
+      action: 'user.created',
+      resource_type: 'user',
+      resource_id: created.id,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      request_id: requestId,
+      metadata: { source: 'social_login', provider: flow.provider, email_verified: true },
+    });
+
+    return {
+      access_token: session.accessToken,
+      refresh_token: session.refreshToken,
+      expires_at: session.expiresAt,
+      token_type: 'Bearer' as const,
+      session_id: session.sessionId,
+      user_id: created.id,
+    };
   }
 
   const user = await repository.findUserById(link.user_id);
@@ -287,6 +367,18 @@ export async function completeIdentityLink(
     );
   }
 
+  // Linking must bind the provider identity to the account that is already
+  // signed in.  Without this check, a user could link a different provider
+  // email to the current account, which is both surprising and unsafe for
+  // account-recovery expectations.
+  if (!profile.email || normalizeEmail(profile.email) !== normalizeEmail(user.email)) {
+    throw new AuthError(
+      'The provider account email must match the email of the signed-in account',
+      AuthErrorCodes.IDENTITY_LINK_FAILED,
+      409,
+    );
+  }
+
   const existingBySubject = await repository.findLinkedIdentityByProviderSubject(
     profile.provider,
     profile.subject,
@@ -319,17 +411,25 @@ export async function completeIdentityLink(
     };
   }
 
-  const created = await repository.createLinkedIdentity({
-    user_id: userId,
-    provider: profile.provider,
-    provider_subject: profile.subject,
-    provider_email: profile.email,
-    profile_metadata: {
-      display_name: profile.displayName,
-      ...profile.profileMetadata,
-    },
+  // Keep the identity row, last-used timestamp, and imported avatar atomic.
+  // If any write fails, none of the provider data is persisted.
+  const created = await repository.withTransaction(async (client) => {
+    const identity = await repository.createLinkedIdentity({
+      user_id: userId,
+      provider: profile.provider,
+      provider_subject: profile.subject,
+      provider_email: profile.email,
+      profile_metadata: {
+        display_name: profile.displayName,
+        ...profile.profileMetadata,
+      },
+    }, client);
+    await repository.updateLinkedIdentityLastUsed(identity.id, client);
+    if (profile.avatarUrl) {
+      await repository.updateUser(userId, userId, { avatar_url: profile.avatarUrl }, client);
+    }
+    return identity;
   });
-  await repository.updateLinkedIdentityLastUsed(created.id);
 
   logAudit({
     user_id: userId,
@@ -389,8 +489,8 @@ export async function unlinkIdentityProvider(
     );
   }
 
-  const revoked = await repository.revokeLinkedIdentity(userId, linkId);
-  if (!revoked) {
+  const deleted = await repository.deleteLinkedIdentity(userId, linkId);
+  if (!deleted) {
     throw new AuthError(
       'Linked identity not found',
       AuthErrorCodes.IDENTITY_LINK_FAILED,

@@ -21,6 +21,10 @@ export interface ProjectModuleUsageCounts {
 }
 export declare class ProjectsRepository {
     private readonly db;
+    private readonly core;
+    private readonly members;
+    private readonly usage;
+    private readonly settings;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     findOrganizationMembership(orgId: string, userId: string, client?: PoolClient): Promise<OrganizationMembership | null>;
@@ -56,13 +60,9 @@ export declare class ProjectsRepository {
     getProjectModuleUsageCounts(orgId: string, client?: PoolClient): Promise<ProjectModuleUsageCounts>;
     findSdkConfigPlanKey(orgId: string, client?: PoolClient): Promise<string>;
     createDefaultSdkConfigs(project: Project, createdBy: string, planKey: string, client?: PoolClient): Promise<number>;
-    private buildProjectAssignments;
-    /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
-    private prefixedProjectRow;
-    private mapProject;
-    private mapProjectWithCounts;
-    private mapEnv;
-    private mapApiKey;
-    private mapApiKeyRecord;
 }
+export * from "./core/project.repository.js";
+export * from "./members/member.repository.js";
+export * from "./usage/project-usage.repository.js";
+export * from "./settings/project-settings.repository.js";
 //# sourceMappingURL=repository.d.ts.map

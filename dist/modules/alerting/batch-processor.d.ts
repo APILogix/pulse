@@ -16,7 +16,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from './repository.js';
 import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/dispatcher.js';
+import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 export interface BatchJobData {
     batchId: string;
     organizationId: string;

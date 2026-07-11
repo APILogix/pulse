@@ -22,7 +22,7 @@ function frontendAuthCallbackUrl() {
 }
 function frontendIdentityProvidersUrl() {
     const base = (env.FRONTEND_URL || env.APP_URL).replace(/\/+$/, '');
-    return `${base}/settings/security`;
+    return `${base}/settings/linked-accounts`;
 }
 function buildFrontendErrorRedirect(path, code, message) {
     const url = new URL(path);
@@ -121,7 +121,9 @@ export default async function provisioningRoutes(fastify) {
                     return callbackReply.redirect(frontendAuthCallbackUrl());
                 }
                 await identityProviders.completeIdentityLink(profile, flow, ci.ip, request.id);
-                return callbackReply.redirect(frontendIdentityProvidersUrl());
+                const target = new URL(frontendIdentityProvidersUrl());
+                target.searchParams.set('linked', flow.provider);
+                return callbackReply.redirect(target.toString());
             });
             return reply;
         }

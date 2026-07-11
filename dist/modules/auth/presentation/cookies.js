@@ -4,7 +4,11 @@ const SECURE_REFRESH_COOKIE_NAME = '__Host-refresh_token';
 const DEV_REFRESH_COOKIE_NAME = 'refresh_token';
 const LEGACY_REFRESH_COOKIE_NAMES = [SECURE_REFRESH_COOKIE_NAME, DEV_REFRESH_COOKIE_NAME, '_HOST_refresh_token'];
 function useSecureRefreshCookiePrefix() {
-    return env.NODE_ENV !== 'development';
+    // Local deployments are sometimes run with NODE_ENV=production.  A Secure
+    // cookie is ignored by browsers over http://localhost, which makes the
+    // OAuth callback look like an expired session.  Tie the transport setting
+    // to the public URL as well as the environment.
+    return env.NODE_ENV !== 'development' && /^https:\/\//i.test(env.API_PUBLIC_URL || env.APP_URL);
 }
 export const REFRESH_COOKIE_NAME = useSecureRefreshCookiePrefix() ? SECURE_REFRESH_COOKIE_NAME : DEV_REFRESH_COOKIE_NAME;
 export function getRefreshCookieNames() {

@@ -336,11 +336,13 @@ export async function sessionRoutes(fastify: FastifyInstance) {
         0,
         Math.ceil((result.expiresAt.getTime() - Date.now()) / 1000),
       );
-      reply.setCookie(
-        REFRESH_COOKIE_NAME,
-        result.refreshToken,
-        getRefreshCookieOptions(refreshMaxAgeSeconds),
-      );
+      if (result.refreshTokenRotated) {
+        reply.setCookie(
+          REFRESH_COOKIE_NAME,
+          result.refreshToken,
+          getRefreshCookieOptions(refreshMaxAgeSeconds),
+        );
+      }
       return reply.send({
         data: {
           access_token: result.accessToken,
@@ -385,4 +387,4 @@ export async function sessionRoutes(fastify: FastifyInstance) {
     },
   );
 }
-
+

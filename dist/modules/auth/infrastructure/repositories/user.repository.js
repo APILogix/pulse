@@ -47,10 +47,10 @@ export async function createUser(data, client) {
        data_processing_consent
      ) VALUES (
        $1, $2, $3, $4, $5,
-       'active', FALSE,
-       NOW(), $6,
+       'active', $6,
        NOW(), $7,
-       $8, NOW(),
+       NOW(), $8,
+       $9, NOW(),
        TRUE
      )
      RETURNING *`, [
@@ -59,6 +59,7 @@ export async function createUser(data, client) {
         data.full_name,
         data.avatar_url ?? null,
         data.password ?? null,
+        data.email_verified ?? false,
         data.accepted_terms_version ?? null,
         data.accepted_privacy_version ?? null,
         data.marketing_consent ?? false,

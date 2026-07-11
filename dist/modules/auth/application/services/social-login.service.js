@@ -10,6 +10,9 @@ import { assertLoginAllowedByOrgPolicy } from '../../domain/policies.js';
 import * as repository from '../../infrastructure/repositories/index.js';
 import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
+import { normalizeEmail } from '../../domain/constants.js';
+import { emailToHash } from './shared-helpers.js';
+import { randomUUID } from 'node:crypto';
 function getSocialLoginCallbackUrl() {
     return getApiSocialLoginCallbackUrl();
 }
@@ -66,7 +69,64 @@ export async function completeSocialLogin(callbackUrl, ipAddress, userAgent, req
     const profile = await exchangeOAuthCallback(flow.provider, callbackUrl, flow.codeVerifier ?? '', flow.redirectUri ?? getSocialLoginCallbackUrl(), flow.nonce);
     const link = await repository.findLinkedIdentityByProviderSubject(flow.provider, profile.subject);
     if (!link) {
-        throw new AuthError('Invalid email or password', AuthErrorCodes.INVALID_CREDENTIALS, 401);
+        if (!profile.email) {
+            throw new AuthError('The provider did not return a verified email address. Cannot create an account.', AuthErrorCodes.SOCIAL_LOGIN_FAILED, 400);
+        }
+        const normalizedEmail = normalizeEmail(profile.email);
+        const emailHash = emailToHash(normalizedEmail);
+        const existingUser = await repository.findUserByEmailHash(emailHash);
+        if (existingUser) {
+            throw new AuthError('An account already exists with this email. Sign in with your password first, then link this provider from Account Settings.', AuthErrorCodes.IDENTITY_ALREADY_LINKED, 409);
+        }
+        const created = await repository.withTransaction(async (client) => {
+            const user = await repository.createUser({
+                id: randomUUID(),
+                email: normalizedEmail,
+                full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
+                password: null,
+                email_verified: true,
+            }, client);
+            await repository.createLinkedIdentity({
+                user_id: user.id,
+                provider: flow.provider,
+                provider_subject: profile.subject,
+                provider_email: normalizedEmail,
+                profile_metadata: {
+                    display_name: profile.displayName,
+                },
+            }, client);
+            return user;
+        });
+        await repository.recordLogin(created.id, ipAddress, userAgent);
+        logAudit({
+            user_id: created.id,
+            org_id: null,
+            action: 'user.created',
+            resource_type: 'user',
+            resource_id: created.id,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            request_id: requestId,
+            metadata: { source: 'social_login', provider: flow.provider, email_verified: true },
+        });
+        const session = await issueSessionForUser({
+            user: created,
+            ipAddress: flow.ipAddress || ipAddress,
+            userAgent: flow.userAgent || userAgent,
+            deviceName: flow.deviceName,
+            deviceType: flow.clientDeviceType || 'web',
+            mfaVerified: true,
+            rememberMe: flow.rememberMe,
+            ssoContext: { loginMethod: `social_${flow.provider}` },
+        });
+        return {
+            access_token: session.accessToken,
+            refresh_token: session.refreshToken,
+            expires_at: session.expiresAt,
+            token_type: 'Bearer',
+            session_id: session.sessionId,
+            user_id: created.id,
+        };
     }
     const user = await repository.findUserById(link.user_id);
     if (!user || user.deleted_at || user.status !== 'active') {

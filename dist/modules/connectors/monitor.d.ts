@@ -12,7 +12,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
-import { NotificationDispatcher } from './dispatcher.js';
+import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
 export interface MonitorOptions {
     retryIntervalMs?: number;

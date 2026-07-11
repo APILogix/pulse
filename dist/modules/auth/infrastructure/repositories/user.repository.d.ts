@@ -23,6 +23,7 @@ export declare function createUser(data: {
     full_name: string;
     avatar_url?: string | null;
     password?: string | null;
+    email_verified?: boolean;
     accepted_terms_version?: string | null;
     accepted_privacy_version?: string | null;
     marketing_consent?: boolean;

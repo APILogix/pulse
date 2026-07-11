@@ -10,7 +10,7 @@
  * The registry is a process-wide singleton; registration is idempotent.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { BaseConnector } from './connectors/base.connector.js';
+import { BaseConnector } from './shared/base.connector.js';
 import { type ConnectorContext, type ConnectorType, type ConnectorTypeInfoDto } from './types.js';
 type ConnectorConstructor = new (ctx: ConnectorContext) => BaseConnector;
 interface RegistryEntry {

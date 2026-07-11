@@ -1355,15 +1355,16 @@ export async function removeScimGroupMember(
   );
 }
 
-export async function revokeLinkedIdentity(
+/** Permanently remove a social identity link from the account. */
+export async function deleteLinkedIdentity(
   userId: string,
   linkId: string,
   client?: PoolClient,
 ): Promise<boolean> {
   const db = client || pool;
   const result = await db.query(
-    `UPDATE user_linked_identities SET revoked_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+    `DELETE FROM user_linked_identities
+     WHERE id = $1 AND user_id = $2`,
     [linkId, userId],
   );
   return (result.rowCount ?? 0) > 0;
@@ -1450,4 +1451,4 @@ export async function listAuditLogsForUser(
     total: parseInt(countRes.rows[0]?.count ?? '0', 10),
   };
 }
-
+

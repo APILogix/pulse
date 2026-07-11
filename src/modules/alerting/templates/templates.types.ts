@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { UuidSchema, PaginationSchema, AlertSeveritySchema, type RequestMeta, type AlertSeverity } from '../types.js';
+import { UuidSchema, PaginationSchema, AlertSeveritySchema, type AlertSeverity } from '../common.js';
+import type { RequestMeta } from '../types.js';
 
 
 import { AppError } from '../../../shared/errors/app-error.js';

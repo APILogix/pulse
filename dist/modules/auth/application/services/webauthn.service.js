@@ -100,6 +100,7 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
     const allDevices = await repository.findMFADevicesByUserId(userId);
     const hasOtherPrimary = allDevices.some((d) => d.is_primary && d.is_active);
     const isPrimary = !hasOtherPrimary;
+    const existingBackupCodesHash = allDevices.find((d) => d.verified && d.is_active && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0)?.backup_codes_hash ?? null;
     const device = await repository.createWebAuthnDevice({
         user_id: userId,
         device_name: input.device_name,
@@ -108,15 +109,17 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
         sign_count: credential.counter,
         is_primary: isPrimary,
     });
-    const { plain, hashed } = await generateBackupCodes();
-    mfaBackupTempCache.set(device.id, hashed);
+    const generated = existingBackupCodesHash ? null : await generateBackupCodes();
+    mfaBackupTempCache.set(device.id, existingBackupCodesHash ?? generated.hashed);
     await repository.withTransaction(async (client) => {
-        await repository.verifyMFADevice(device.id, userId, hashed, client);
+        await repository.verifyMFADevice(device.id, userId, existingBackupCodesHash ?? generated.hashed, client);
         if (isPrimary) {
             await repository.updateMFADevicePrimary(userId, device.id, client);
         }
         await repository.updateUserMFAEnabled(userId, true, client);
-        await repository.updateBackupCodesGenerated(userId, client);
+        if (generated) {
+            await repository.updateBackupCodesGenerated(userId, client);
+        }
     });
     mfaBackupTempCache.delete(device.id);
     logAudit({
@@ -129,7 +132,7 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
         request_id: requestId,
         metadata: { device_type: 'hardware_key' },
     });
-    return { device_id: device.id, backup_codes: plain };
+    return { device_id: device.id, backup_codes: generated?.plain ?? [] };
 }
 export async function createWebAuthnAuthenticationOptions(userId) {
     const devices = await repository.findMFADevicesByUserId(userId);

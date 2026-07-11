@@ -1,7 +1,7 @@
 import { AlertingRepository } from './repository.js';
 import { resolveRouting } from './routing.js';
 import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/dispatcher.js';
+import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 import { circuitAllows, recordCircuitFailure, recordCircuitSuccess, } from '../connectors/runtime.js';
 export class AlertBatchProcessor {
     alertRepo;

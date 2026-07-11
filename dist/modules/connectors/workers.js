@@ -1,5 +1,5 @@
 import { ConnectorRepository } from './repository.js';
-import { NotificationDispatcher } from './dispatcher.js';
+import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
 import { ConnectorMonitor } from './monitor.js';
 import './registry.js'; // ensure built-in connector types register

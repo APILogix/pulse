@@ -319,6 +319,8 @@ export async function refreshAccessToken(
 ): Promise<{
   accessToken: string;
   refreshToken: string;
+  /** True only when this request produced a replacement refresh token. */
+  refreshTokenRotated: boolean;
   expiresAt: Date;
   sessionId: string;
   currentOrgId: string | null;
@@ -401,6 +403,10 @@ export async function refreshAccessToken(
       return {
         accessToken,
         refreshToken,
+        // Never re-send the previously presented token as a Set-Cookie. A
+        // concurrent refresh may already have rotated it; overwriting that
+        // newer cookie would turn the next refresh into a replay.
+        refreshTokenRotated: false,
         expiresAt: new Date(session.expires_at),
         sessionId: session.id,
         currentOrgId: user.current_org_id ?? null,
@@ -543,6 +549,7 @@ export async function refreshAccessToken(
   return {
     accessToken,
     refreshToken: newRefreshToken,
+    refreshTokenRotated: true,
     expiresAt: finalExpiresAt,
     sessionId: session.id,
     currentOrgId: user.current_org_id ?? null,

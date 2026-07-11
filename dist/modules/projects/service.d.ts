@@ -22,6 +22,12 @@ import { EnvironmentRepository } from "./environments/environment.repository.js"
 import { ActivityRepository } from "./activity/activity.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
 import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+import { ProjectService } from "./core/project.service.js";
+import { SettingsService } from "./settings/settings.service.js";
+import { ProjectActivityService } from "./activity/activity.service.js";
+import { EnvironmentService } from "./environments/environment.service.js";
+import { ApiKeyService } from "./api-keys/api-key.service.js";
+import { BaseProjectService } from "./shared/base.service.js";
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -42,6 +48,12 @@ export declare class ProjectsService {
     private readonly environmentRepository;
     private readonly activityRepository;
     private readonly usageRepository;
+    readonly core: ProjectService;
+    readonly settings: SettingsService;
+    readonly activity: ProjectActivityService;
+    readonly environments: EnvironmentService;
+    readonly apiKeys: ApiKeyService;
+    readonly base: BaseProjectService;
     constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];

@@ -314,6 +314,10 @@ export async function verifyWebAuthnRegistration(
 
   const isPrimary = !hasOtherPrimary;
 
+  const existingBackupCodesHash = allDevices.find(
+    (d) => d.verified && d.is_active && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0,
+  )?.backup_codes_hash ?? null;
+
 
 
   const device = await repository.createWebAuthnDevice({
@@ -334,15 +338,15 @@ export async function verifyWebAuthnRegistration(
 
 
 
-  const { plain, hashed } = await generateBackupCodes();
+  const generated = existingBackupCodesHash ? null : await generateBackupCodes();
 
-  mfaBackupTempCache.set(device.id, hashed);
+  mfaBackupTempCache.set(device.id, existingBackupCodesHash ?? generated!.hashed);
 
 
 
   await repository.withTransaction(async (client) => {
 
-    await repository.verifyMFADevice(device.id, userId, hashed, client);
+    await repository.verifyMFADevice(device.id, userId, existingBackupCodesHash ?? generated!.hashed, client);
 
     if (isPrimary) {
 
@@ -352,7 +356,9 @@ export async function verifyWebAuthnRegistration(
 
     await repository.updateUserMFAEnabled(userId, true, client);
 
-    await repository.updateBackupCodesGenerated(userId, client);
+    if (generated) {
+      await repository.updateBackupCodesGenerated(userId, client);
+    }
 
   });
 
@@ -384,7 +390,7 @@ export async function verifyWebAuthnRegistration(
 
 
 
-  return { device_id: device.id, backup_codes: plain };
+  return { device_id: device.id, backup_codes: generated?.plain ?? [] };
 
 }
 

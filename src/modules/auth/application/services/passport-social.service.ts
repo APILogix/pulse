@@ -23,6 +23,7 @@ export interface PassportSocialProfile {
   email: string | null;
   displayName: string | null;
   profileMetadata: Record<string, unknown>;
+  avatarUrl: string | null;
 }
 
 export const socialPassport = new Authenticator();
@@ -30,7 +31,7 @@ export const socialPassport = new Authenticator();
 type PassportDone = (error: Error | null, user?: PassportSocialProfile | false) => void;
 
 function secureCookieEnabled(): boolean {
-  return env.NODE_ENV !== 'development';
+  return env.NODE_ENV !== 'development' && /^https:\/\//i.test(env.API_PUBLIC_URL || env.APP_URL);
 }
 
 function sessionKey(): Buffer {
@@ -39,10 +40,12 @@ function sessionKey(): Buffer {
 
 function toGoogleProfile(profile: GoogleProfile): PassportSocialProfile {
   const email = profile.emails?.find((entry) => Boolean(entry.value))?.value ?? null;
+  const avatarUrl = profile.photos?.find((entry) => Boolean(entry.value))?.value ?? null;
   return {
     provider: 'google',
     subject: profile.id,
     email: email ? normalizeEmail(email) : null,
+    avatarUrl,
     displayName: profile.displayName || null,
     profileMetadata: {
       provider: profile.provider,
@@ -55,10 +58,12 @@ function toGoogleProfile(profile: GoogleProfile): PassportSocialProfile {
 
 function toGitHubProfile(profile: GitHubProfile): PassportSocialProfile {
   const email = profile.emails?.find((entry) => Boolean(entry.value))?.value ?? null;
+  const avatarUrl = profile.photos?.find((entry) => Boolean(entry.value))?.value ?? null;
   return {
     provider: 'github',
     subject: profile.id,
     email: email ? normalizeEmail(email) : null,
+    avatarUrl,
     displayName: profile.displayName || profile.username || null,
     profileMetadata: {
       provider: profile.provider,

@@ -11,7 +11,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
-import { NotificationDispatcher } from './dispatcher.js';
+import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { type ConnectionTestResult, type ConnectorConfigRow, type ConnectorDto, type ConnectorTypeInfoDto, type CreateConnectorBody, type DeliveryDto, type DispatchSummary, type HealthStatus, type ListConnectorsQuery, type RequestMeta, type SendTestNotificationBody, type UpdateConnectorBody } from './types.js';
 export interface ConnectorServiceDeps {
     repository: ConnectorRepository;
