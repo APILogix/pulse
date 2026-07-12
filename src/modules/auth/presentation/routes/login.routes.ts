@@ -165,6 +165,9 @@ async function sendAuthSession(
     const user = await authRepo.findUserById(payload.user_id);
     const orgRepo = new OrganizationRepository();
     const orgContext = await orgRepo.getUserContextForLogin(payload.user_id);
+    const defaultOrgId = orgContext.organizations.find(
+      (org) => org.slug === orgContext.default_org_slug,
+    )?.id ?? null;
 
     return reply.send({
       data: {
@@ -172,12 +175,14 @@ async function sendAuthSession(
         expires_at: payload.expires_at,
         token_type: payload.token_type,
         session_id: payload.session_id,
+        current_org_id: user?.current_org_id ?? defaultOrgId,
         user: user ? {
           id: user.id,
           email: user.email,
           name: user.full_name,
         } : undefined,
         default_org_slug: orgContext.default_org_slug,
+        default_org_id: defaultOrgId,
         organizations: orgContext.organizations,
       },
     });
@@ -292,4 +297,4 @@ export async function credentialRoutes(fastify: FastifyInstance) {
   },
   );
 }
-
+

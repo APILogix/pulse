@@ -154,6 +154,7 @@ export async function completeSocialLogin(
         full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
         password: null,
         email_verified: true,
+        avatar_url: profile.avatarUrl,
       }, client);
       await repository.createLinkedIdentity({
         user_id: user.id,

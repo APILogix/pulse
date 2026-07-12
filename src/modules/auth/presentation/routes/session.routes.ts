@@ -303,6 +303,14 @@ export async function sessionRoutes(fastify: FastifyInstance) {
   // POST /auth/sessions/refresh — rotate refresh token.
   fastify.post('/sessions/refresh', { preHandler: [refreshSessionRateLimit] }, async (request, reply) => {
     try {
+      // The refresh credential is cookie-backed. Require a non-simple header
+      // so another site cannot silently rotate a user's session with a form
+      // submission; CORS enforces that only trusted SPAs can send it.
+      if (request.headers['x-csrf-request'] !== '1') {
+        return reply.status(403).send({
+          error: { code: 'CSRF_VALIDATION_FAILED', message: 'Invalid refresh request' },
+        });
+      }
       const ci = getClientInfo(request);
 
       const raw = getRefreshCookieValue(request.cookies);
@@ -343,13 +351,21 @@ export async function sessionRoutes(fastify: FastifyInstance) {
           getRefreshCookieOptions(refreshMaxAgeSeconds),
         );
       }
+      const orgRepo = new OrganizationRepository();
+      const orgContext = await orgRepo.getUserContextForLogin(result.userId);
+      const defaultOrgId = orgContext.organizations.find(
+        (org) => org.slug === orgContext.default_org_slug,
+      )?.id ?? null;
       return reply.send({
         data: {
           access_token: result.accessToken,
           expires_at: result.expiresAt,
           session_id: result.sessionId,
           token_type: 'Bearer',
-          current_org_id: result.currentOrgId,
+          current_org_id: result.currentOrgId ?? defaultOrgId,
+          default_org_id: defaultOrgId,
+          default_org_slug: orgContext.default_org_slug,
+          organizations: orgContext.organizations,
         },
       });
     } catch (error: any) {

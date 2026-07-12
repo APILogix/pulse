@@ -323,6 +323,7 @@ export async function refreshAccessToken(
   refreshTokenRotated: boolean;
   expiresAt: Date;
   sessionId: string;
+  userId: string;
   currentOrgId: string | null;
 }> {
   let decoded;
@@ -409,6 +410,7 @@ export async function refreshAccessToken(
         refreshTokenRotated: false,
         expiresAt: new Date(session.expires_at),
         sessionId: session.id,
+        userId: session.user_id,
         currentOrgId: user.current_org_id ?? null,
       };
     }
@@ -552,6 +554,7 @@ export async function refreshAccessToken(
     refreshTokenRotated: true,
     expiresAt: finalExpiresAt,
     sessionId: session.id,
+    userId: session.user_id,
     currentOrgId: user.current_org_id ?? null,
   };
 }

@@ -107,11 +107,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, {
-    // origin: buildCorsOrigin(),
-    origin:true,
+    origin: buildCorsOrigin(),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request'],
     exposedHeaders: ['X-Request-ID'],
   });
 

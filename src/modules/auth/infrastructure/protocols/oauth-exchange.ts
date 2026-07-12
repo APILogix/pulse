@@ -23,6 +23,7 @@ export interface OAuthProfile {
   subject: string;
   email: string | null;
   displayName: string | null;
+  avatarUrl: string | null;
 }
 
 export async function buildOidcClient(provider: 'google') {
@@ -109,6 +110,7 @@ async function exchangeGithubCode(
     email?: string | null;
     name?: string | null;
     login?: string;
+    avatar_url?: string | null;
   };
   if (!userJson.id) {
     throw new AuthError('GitHub profile missing', AuthErrorCodes.IDENTITY_LINK_FAILED, 400);
@@ -138,6 +140,7 @@ async function exchangeGithubCode(
     subject: String(userJson.id),
     email,
     displayName: userJson.name ?? userJson.login ?? null,
+    avatarUrl: userJson.avatar_url ?? null,
   };
 }
 
@@ -186,8 +189,9 @@ export async function exchangeOAuthCallback(
       : typeof claims?.given_name === 'string'
         ? claims.given_name
         : null;
+  const avatarUrl = typeof claims?.picture === 'string' ? claims.picture : null;
 
-  return { provider, subject, email, displayName };
+  return { provider, subject, email, displayName, avatarUrl };
 }
 
 export function createPkcePair(): {
