@@ -79,7 +79,21 @@ export class OrganizationRepository extends BaseRepository {
     }
     // ── Backward Compatibility for other modules ──
     async getBillingEntitlements(orgId) {
-        const r = await this.db.query(`SELECT s.id AS subscription_id, s.status AS subscription_status, p.id AS plan_id, p.key AS plan_key, p.tier AS plan_tier, p.feature_config, p.event_limit_monthly, p.hard_cap FROM organization_subscriptions s JOIN plans p ON p.id = s.plan_id WHERE s.org_id = $1 AND s.status IN ('trialing','active','past_due') AND p.is_active = TRUE ORDER BY s.created_at DESC LIMIT 1`, [orgId]);
+        const r = await this.db.query(`SELECT
+         s.id AS subscription_id, s.status AS subscription_status,
+         p.id AS plan_id, p.key AS plan_key, p.tier AS plan_tier,
+         COALESCE(jsonb_object_agg(e.feature_key, COALESCE(to_jsonb(e.boolean_value), to_jsonb(e.integer_value), to_jsonb(e.decimal_value), to_jsonb(e.string_value))) FILTER (WHERE e.feature_key IS NOT NULL), '{}'::jsonb) AS feature_config,
+         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key = 'monthly_events'), 0) AS event_limit_monthly,
+         FALSE AS hard_cap
+       FROM organization_subscriptions s
+       JOIN plans p ON p.id = s.plan_id
+       LEFT JOIN v_effective_entitlements e ON e.organization_id = s.organization_id
+       WHERE s.organization_id = $1
+         AND s.status IN ('trialing','active','past_due')
+         AND s.deleted_at IS NULL AND p.is_active = TRUE AND p.deleted_at IS NULL
+       GROUP BY s.id, s.status, p.id, p.key, p.tier
+       ORDER BY MAX(s.created_at) DESC
+       LIMIT 1`, [orgId]);
         return r.rows[0] ?? null;
     }
     async getOrganizationUsageCounts(orgId) {
@@ -113,7 +127,7 @@ export class OrganizationRepository extends BaseRepository {
     async purgeTerminalInvitations(days) {
         const r = await this.db.query(`DELETE FROM organization_invitations
        WHERE status IN ('expired','revoked','declined')
-         AND created_at < NOW() - ($1 || ' days')::interval`, [String(days)]);
+         AND COALESCE(revoked_at, declined_at, accepted_at, expires_at, created_at) < NOW() - make_interval(days => $1)`, [days]);
         return r.rowCount ?? 0;
     }
 }

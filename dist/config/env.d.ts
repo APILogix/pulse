@@ -59,6 +59,13 @@ declare const envSchema: z.ZodObject<{
     SAML_SP_SLO_URL: z.ZodOptional<z.ZodString>;
     SAML_SP_PRIVATE_KEY: z.ZodOptional<z.ZodString>;
     SAML_SP_CERTIFICATE: z.ZodOptional<z.ZodString>;
+    SAML_ENFORCE_HTTPS: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    SAML_REQUIRE_SIGNED_ASSERTIONS: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    SAML_REQUIRE_SIGNED_RESPONSES: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    SAML_ACCEPTED_CLOCK_SKEW_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    SAML_MAX_ASSERTION_AGE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    SAML_REQUEST_ID_TTL_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    SAML_ASSERTION_REPLAY_TTL_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     SCIM_TOKEN_GRACE_PERIOD_MINUTES: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     SCIM_DEFAULT_TOKEN_EXPIRY_DAYS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     SAML_SESSION_TTL_HOURS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -147,6 +154,13 @@ export declare const env: {
     SMTP_SECURE: boolean;
     SMTP_FROM_EMAIL: string;
     SMTP_FROM_NAME: string;
+    SAML_ENFORCE_HTTPS: boolean;
+    SAML_REQUIRE_SIGNED_ASSERTIONS: boolean;
+    SAML_REQUIRE_SIGNED_RESPONSES: boolean;
+    SAML_ACCEPTED_CLOCK_SKEW_MS: number;
+    SAML_MAX_ASSERTION_AGE_MS: number;
+    SAML_REQUEST_ID_TTL_MS: number;
+    SAML_ASSERTION_REPLAY_TTL_MS: number;
     SCIM_TOKEN_GRACE_PERIOD_MINUTES: number;
     SCIM_DEFAULT_TOKEN_EXPIRY_DAYS: number;
     SAML_SESSION_TTL_HOURS: number;

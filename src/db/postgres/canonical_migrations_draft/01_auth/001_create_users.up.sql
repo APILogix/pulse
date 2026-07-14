@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
   marketing_consent_updated_at TIMESTAMPTZ,
   data_processing_consent BOOLEAN NOT NULL DEFAULT FALSE,
   suspended_at TIMESTAMPTZ,
+  current_org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
   suspended_by UUID,
   deletion_scheduled_at TIMESTAMPTZ,
   deleted_at TIMESTAMPTZ,
@@ -57,7 +58,9 @@ CREATE TABLE IF NOT EXISTS users (
   created_by UUID,
   version INTEGER NOT NULL DEFAULT 1
 );
-
+CREATE INDEX IF NOT EXISTS idx_users_current_org
+ON users(current_org_id)
+WHERE current_org_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_hash
   ON users(email_hash) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_status

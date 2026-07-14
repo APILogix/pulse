@@ -123,7 +123,7 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
     // silently re-issue a verification email and respond with the same
     // INVALID_CREDENTIALS code as a wrong password. The frontend can guide
     // the user via /auth/resend-verification (which is also enumeration-safe).
-    if (!user.email_verified) {
+    if (!user.email_is_verified) {
         const verificationToken = generateEmailFlowToken();
         await repository.createEmailVerification({
             user_id: user.id,
@@ -194,7 +194,7 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
     // MFA branch: issue a challenge but do NOT issue tokens.
     if (user.mfa_enabled) {
         const devices = await repository.findMFADevicesByUserId(user.id);
-        const verifiedDevices = devices.filter((d) => d.verified && d.is_active);
+        const verifiedDevices = devices.filter((d) => d.is_verified && (!d.deleted_at));
         if (verifiedDevices.length === 0) {
             // mfa_enabled but no usable devices -> data inconsistency. Fail closed.
             logger.error({ userId: user.id }, 'mfa_enabled=true but no verified active devices');
@@ -218,8 +218,8 @@ export async function loginWithEmailPassword(input, ipAddress, userAgent, client
             is_primary: d.is_primary,
             last_used_at: d.last_used_at,
         }));
-        const hasBackupCodes = user.mfa_backup_codes_generated_at != null ||
-            verifiedDevices.some((d) => Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0);
+        const unusedBackupCodesCount = await repository.countUnusedBackupCodes(user.id);
+        const hasBackupCodes = unusedBackupCodesCount > 0;
         if (hasBackupCodes) {
             availableMethods.push({
                 id: 'backup_codes',
@@ -287,7 +287,7 @@ export async function switchLoginMfaMethod(challengeId, deviceId) {
         throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
     }
     const device = await repository.findMFADeviceById(deviceId);
-    if (!device || device.user_id !== challenge.userId || !device.verified || !device.is_active) {
+    if (!device || device.user_id !== challenge.userId || !device.is_verified || !device.is_active) {
         throw new AuthError('Invalid or unverified MFA device', AuthErrorCodes.MFA_INVALID, 400);
     }
     challenge.deviceId = device.id;
@@ -319,7 +319,7 @@ export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clien
         throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
     }
     const device = await repository.findMFADeviceById(challenge.deviceId, user.id);
-    if (!device || !device.verified || !device.is_active) {
+    if (!device || !device.is_verified || !device.is_active) {
         loginMfaChallengeCache.delete(input.challenge_id);
         throw new AuthError('MFA device invalid', AuthErrorCodes.MFA_INVALID, 400);
     }
@@ -398,7 +398,7 @@ export async function verifyLoginBackupCode(input, ipAddress, userAgent, clientD
         loginMfaChallengeCache.delete(input.challenge_id);
         throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
     }
-    const ok = await consumeBackupCode(user.id, input.code);
+    const ok = await consumeBackupCode(user.id, input.code, ipAddress);
     if (!ok) {
         challenge.attempts += 1;
         loginMfaChallengeCache.set(input.challenge_id, challenge);

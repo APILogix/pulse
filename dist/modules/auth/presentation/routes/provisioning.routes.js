@@ -116,11 +116,33 @@ export default async function provisioningRoutes(fastify) {
                     return callbackReply.redirect(buildFrontendErrorRedirect(target, 'SOCIAL_LOGIN_FAILED', 'Unable to verify identity provider response'));
                 }
                 if (flow.kind === 'login') {
-                    const tokens = await identityProviders.completeSocialLogin(profile, flow, ci.ip, ci.userAgent, request.id);
+                    let tokens;
+                    try {
+                        tokens = await identityProviders.completeSocialLogin(profile, flow, ci.ip, ci.userAgent, request.id);
+                    }
+                    catch (loginError) {
+                        request.log.warn({ err: loginError, provider: flow.provider }, 'Social sign-in failed');
+                        const message = loginError instanceof AuthError
+                            ? loginError.message
+                            : 'Unable to complete social sign-in. No account changes were saved.';
+                        return callbackReply.redirect(buildFrontendErrorRedirect(frontendAuthCallbackUrl(), loginError instanceof AuthError ? loginError.code : 'SOCIAL_LOGIN_FAILED', message));
+                    }
                     setRefreshCookie(callbackReply, tokens.refresh_token, tokens.expires_at);
                     return callbackReply.redirect(frontendAuthCallbackUrl());
                 }
-                await identityProviders.completeIdentityLink(profile, flow, ci.ip, request.id);
+                try {
+                    await identityProviders.completeIdentityLink(profile, flow, ci.ip, request.id);
+                }
+                catch (linkError) {
+                    request.log.warn({ err: linkError, provider: flow.provider }, 'Social account linking failed');
+                    const message = linkError instanceof AuthError
+                        ? linkError.message
+                        : 'Unable to link this provider account. No changes were saved.';
+                    const target = new URL(frontendIdentityProvidersUrl());
+                    target.searchParams.set('error', linkError instanceof AuthError ? linkError.code : 'IDENTITY_LINK_FAILED');
+                    target.searchParams.set('message', message);
+                    return callbackReply.redirect(target.toString());
+                }
                 const target = new URL(frontendIdentityProvidersUrl());
                 target.searchParams.set('linked', flow.provider);
                 return callbackReply.redirect(target.toString());

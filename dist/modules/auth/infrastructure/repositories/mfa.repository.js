@@ -2,6 +2,49 @@ import { withTransaction } from './transaction.js';
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 const repositoryLogger = logger.child({ component: 'auth-repository' });
+const MFA_DEVICE_SELECT = `
+  id,
+  user_id,
+  CASE
+    WHEN type::text = 'webauthn' THEN 'hardware_key'
+    WHEN type::text = 'backup_code' THEN 'backup_codes'
+    ELSE type::text
+  END AS device_type,
+  type::text AS type,
+  device_type AS mfa_device_type,
+  device_name,
+  secret_encrypted,
+  phone_e164,
+  email,
+  credential_id,
+  public_key,
+  sign_count,
+  is_verified,
+  verified_at,
+  last_used_at,
+  last_used_ip,
+  is_primary,
+  is_active,
+  disabled_at,
+  disabled_reason,
+  device_metadata,
+  created_at,
+  updated_at,
+  CASE WHEN is_active THEN NULL ELSE COALESCE(disabled_at, updated_at) END AS deleted_at,
+  NULL::text AS display_hint,
+  NULL::text AS phone_number_encrypted,
+  NULL::jsonb AS backup_codes_hash,
+  0::integer AS failed_attempts,
+  NULL::timestamptz AS last_failed_at,
+  0::integer AS use_count
+`;
+function toDbMfaType(deviceType) {
+    if (deviceType === 'hardware_key')
+        return 'webauthn';
+    if (deviceType === 'backup_codes')
+        return 'backup_code';
+    return deviceType;
+}
 function shouldDestroyTransactionClient(error) {
     const pgCode = typeof error === 'object' && error !== null && 'code' in error
         ? String(error.code)
@@ -21,7 +64,7 @@ function shouldDestroyTransactionClient(error) {
 // ============================================================================
 export async function findMFADevicesByUserId(userId, activeOnly = true, client) {
     const db = client || pool;
-    let query = `SELECT * FROM user_mfa_devices WHERE user_id = $1`;
+    let query = `SELECT ${MFA_DEVICE_SELECT} FROM user_mfa_devices WHERE user_id = $1`;
     if (activeOnly)
         query += ` AND is_active = TRUE`;
     query += ` ORDER BY is_primary DESC, created_at DESC`;
@@ -30,7 +73,7 @@ export async function findMFADevicesByUserId(userId, activeOnly = true, client) 
 }
 export async function findMFADeviceById(id, userId, client) {
     const db = client || pool;
-    let query = `SELECT * FROM user_mfa_devices WHERE id = $1`;
+    let query = `SELECT ${MFA_DEVICE_SELECT} FROM user_mfa_devices WHERE id = $1`;
     const params = [id];
     if (userId) {
         query += ` AND user_id = $2`;
@@ -46,27 +89,26 @@ export async function findMFADeviceById(id, userId, client) {
  */
 export async function findAnyMFADeviceByType(userId, deviceType, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM user_mfa_devices
-     WHERE user_id = $1 AND device_type = $2
+    const result = await db.query(`SELECT ${MFA_DEVICE_SELECT} FROM user_mfa_devices
+     WHERE user_id = $1 AND type = $2::mfa_type
      ORDER BY is_primary DESC, created_at DESC
-     LIMIT 1`, [userId, deviceType]);
+     LIMIT 1`, [userId, toDbMfaType(deviceType)]);
     return result.rows[0] || null;
 }
 export async function createMFADevice(data, client) {
     const db = client || pool;
     const result = await db.query(`INSERT INTO user_mfa_devices (
-       user_id, device_type, device_name, secret_encrypted, is_primary,
-       device_metadata, display_hint, phone_number_encrypted, is_active, verified
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, FALSE)
-     RETURNING *`, [
+       user_id, type, device_type, device_name, secret_encrypted, is_primary,
+       device_metadata, is_active, is_verified
+     ) VALUES ($1, $2::mfa_type, $3, $4, $5, $6, $7, TRUE, FALSE)
+     RETURNING ${MFA_DEVICE_SELECT}`, [
         data.user_id,
-        data.device_type,
+        toDbMfaType(data.device_type),
+        data.device_type === 'hardware_key' ? 'hardware_key' : data.device_type,
         data.device_name,
         data.secret_encrypted,
         data.is_primary,
         JSON.stringify(data.device_metadata || {}),
-        data.display_hint ?? null,
-        data.phone_number_encrypted ?? null,
     ]);
     return result.rows[0];
 }
@@ -81,18 +123,17 @@ export async function resetMFADeviceForReSetup(id, userId, data, client) {
          secret_encrypted = $3,
          is_primary = $4,
          is_active = TRUE,
-         verified = FALSE,
+         is_verified = FALSE,
          verified_at = NULL,
          disabled_at = NULL,
          disabled_reason = NULL,
-         backup_codes_hash = '[]'::jsonb,
          device_metadata = $5,
          last_used_at = NULL,
          last_used_ip = NULL,
          sign_count = 0,
          updated_at = NOW()
      WHERE id = $1 AND user_id = $6
-     RETURNING *`, [
+     RETURNING ${MFA_DEVICE_SELECT}`, [
         id,
         data.device_name,
         data.secret_encrypted,
@@ -102,17 +143,16 @@ export async function resetMFADeviceForReSetup(id, userId, data, client) {
     ]);
     return result.rows[0] || null;
 }
-export async function verifyMFADevice(id, userId, backupCodesHash, client) {
+export async function verifyMFADevice(id, userId, client) {
     const db = client || pool;
     const result = await db.query(`UPDATE user_mfa_devices
-     SET verified = TRUE, verified_at = NOW(),
-         backup_codes_hash = $2,
+     SET is_verified = TRUE, verified_at = NOW(),
          is_active = TRUE,
          disabled_at = NULL,
          disabled_reason = NULL,
          updated_at = NOW()
-     WHERE id = $1 AND user_id = $3
-     RETURNING *`, [id, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]', userId]);
+     WHERE id = $1 AND user_id = $2
+     RETURNING ${MFA_DEVICE_SELECT}`, [id, userId]);
     return result.rows[0] || null;
 }
 export async function updateMFADevicePrimary(userId, deviceId, client) {
@@ -168,15 +208,11 @@ export async function updateBackupCodesGenerated(userId, client) {
 }
 export async function updateMFADeviceBackupCodes(deviceId, userId, backupCodesHash, client) {
     const db = client || pool;
-    await db.query(`UPDATE user_mfa_devices
-     SET backup_codes_hash = $2, updated_at = NOW()
-     WHERE id = $1 AND user_id = $3`, [deviceId, backupCodesHash ? JSON.stringify(backupCodesHash) : '[]', userId]);
+    repositoryLogger.debug({ deviceId, userId, count: backupCodesHash?.length ?? 0 }, 'backup codes are stored in user_backup_codes');
 }
 export async function setBackupCodesForAllUserDevices(userId, backupCodesHash, client) {
     const db = client || pool;
-    await db.query(`UPDATE user_mfa_devices
-     SET backup_codes_hash = $2::jsonb, updated_at = NOW()
-     WHERE user_id = $1 AND verified = TRUE`, [userId, JSON.stringify(backupCodesHash)]);
+    repositoryLogger.debug({ userId, count: backupCodesHash.length }, 'backup codes are stored in user_backup_codes');
 }
 export async function updateMFADeviceLastUsed(deviceId, userId, ipAddress, client) {
     const db = client || pool;
@@ -230,5 +266,31 @@ export async function deleteExpiredEmailMfaOtps(client) {
     const result = await db.query(`DELETE FROM email_mfa_otps
      WHERE expires_at < NOW() - INTERVAL '1 day'`);
     return result.rowCount ?? 0;
+}
+export async function countUnusedBackupCodes(userId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT COUNT(*) as count FROM user_backup_codes WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+    return parseInt(result.rows[0].count, 10);
+}
+export async function generateBackupCodesForUser(userId, count = 10, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT code_plaintext, code_hash FROM generate_backup_codes_for_user($1, $2)`, [userId, count]);
+    return {
+        plain: result.rows.map(r => r.code_plaintext),
+        hashed: result.rows.map(r => r.code_hash)
+    };
+}
+export async function deleteAllUnusedBackupCodes(userId, client) {
+    const db = client || pool;
+    await db.query(`DELETE FROM user_backup_codes WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+}
+export async function getUnusedBackupCodes(userId, client) {
+    const db = client || pool;
+    const result = await db.query(`SELECT id, code_hash FROM user_backup_codes WHERE user_id = $1 AND used_at IS NULL`, [userId]);
+    return result.rows;
+}
+export async function markBackupCodeUsed(codeId, userId, ipAddress, client) {
+    const db = client || pool;
+    await db.query(`UPDATE user_backup_codes SET used_at = NOW(), used_from_ip = $3 WHERE id = $1 AND user_id = $2`, [codeId, userId, ipAddress]);
 }
 //# sourceMappingURL=mfa.repository.js.map

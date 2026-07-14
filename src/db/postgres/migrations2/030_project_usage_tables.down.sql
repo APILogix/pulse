@@ -1,4 +1,0 @@
-BEGIN;
-DROP TABLE IF EXISTS project_usage_hourly CASCADE;
-DROP TABLE IF EXISTS project_usage_daily CASCADE;
-COMMIT;

@@ -117,6 +117,4 @@ export interface UserOrganizationDto {
 
 export interface OrganizationProvisioningResult {
   organization: OrganizationRow;
-  subscriptionId: string;
-  planId: string;
 }

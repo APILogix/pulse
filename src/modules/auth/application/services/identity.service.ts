@@ -45,7 +45,7 @@ function profileFromUser(user: User): UserProfile {
   return {
     id: user.id,
     email: user.email,
-    email_verified: user.email_verified,
+    email_is_verified: user.email_is_verified,
     full_name: user.full_name,
     avatar_url: user.avatar_url,
     status: user.status,
@@ -353,7 +353,7 @@ export async function exportUserData(userId: string): Promise<UserDataExport> {
       id: d.id,
       type: d.device_type,
       name: d.device_name,
-      verified: d.verified,
+      is_verified: d.is_verified,
       is_primary: d.is_primary,
       last_used_at: d.last_used_at,
     })),
@@ -421,7 +421,7 @@ export async function getEmailVerificationStatus(userId: string): Promise<{
     throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
   }
   return {
-    email_verified: user.email_verified,
+    email_verified: user.email_is_verified,
     email_verified_at: user.email_verified_at,
   };
 }

@@ -4,7 +4,7 @@ export declare function getRefreshCookieValue(cookies: Record<string, string | u
 export declare function getRefreshCookieOptions(maxAgeSeconds?: number): {
     httpOnly: boolean;
     secure: boolean;
-    sameSite: "strict";
+    sameSite: "none" | "lax";
     maxAge: number;
     path: string;
     signed: boolean;

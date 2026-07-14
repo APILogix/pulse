@@ -71,6 +71,5 @@ export interface OrgInvitationRow {
     resent_count: number;
     last_resent_at: Date | null;
     created_at: Date;
-    updated_at: Date;
 }
 //# sourceMappingURL=invitations.schema.d.ts.map

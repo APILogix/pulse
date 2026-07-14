@@ -48,9 +48,10 @@ export async function startSocialLogin(provider, input, ipAddress, userAgent, re
         org_id: null,
         action: 'user.social_login_started',
         resource_type: 'identity_provider',
-        resource_id: provider,
+        resource_id: null,
         ip_address: ipAddress,
         request_id: requestId,
+        metadata: { provider },
         user_agent: userAgent,
     });
     return { authorization_url: authorizationUrl, state };
@@ -85,6 +86,7 @@ export async function completeSocialLogin(callbackUrl, ipAddress, userAgent, req
                 full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
                 password: null,
                 email_verified: true,
+                avatar_url: profile.avatarUrl,
             }, client);
             await repository.createLinkedIdentity({
                 user_id: user.id,

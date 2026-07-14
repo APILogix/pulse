@@ -57,20 +57,20 @@ export async function setupMFA(
   // its row, so it does not count against the cap.
   const policyDevices = await repository.findMFADevicesByUserId(userId);
   const existingBackupCodesHash = policyDevices.find(
-    (d) => d.verified && d.is_active && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0,
+    (d) => d.is_verified && (!d.deleted_at) && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0,
   )?.backup_codes_hash ?? null;
   const existingOfType = policyDevices.find(
-    (d) => d.device_type === input.type && d.is_active,
+    (d) => d.device_type === input.type && (!d.deleted_at),
   );
   const activeCountForCap = policyDevices.filter(
-    (d) => d.is_active && d.id !== existingOfType?.id,
+    (d) => (!d.deleted_at) && d.id !== existingOfType?.id,
   ).length;
   await assertMfaEnrollmentAllowed(userId, input.type, activeCountForCap);
 
   // ΓöÇΓöÇ Email MFA setup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (input.type === 'email') {
     const existing = await repository.findAnyMFADeviceByType(userId, 'email');
-    if (existing && existing.is_active && existing.verified) {
+    if (existing && existing.is_active && existing.is_verified) {
       throw new AuthError(
         'Email MFA is already configured. Disable it first if you want to re-enroll.',
         AuthErrorCodes.MFA_ALREADY_ENABLED,
@@ -85,7 +85,7 @@ export async function setupMFA(
     // itself the primary keeps it primary.
     const allDevices = await repository.findMFADevicesByUserId(userId);
     const hasOtherPrimary = allDevices.some(
-      (d) => d.is_primary && d.is_active && d.id !== existing?.id,
+      (d) => d.is_primary && (!d.deleted_at) && d.id !== existing?.id,
     );
     const isPrimary = existing?.is_primary === true || !hasOtherPrimary;
 
@@ -134,14 +134,14 @@ export async function setupMFA(
     return {
       device_id: device.id,
       device_type: 'email',
-      backupCodes: generated?.plain ?? [],
+      
     };
   }
 
   // ΓöÇΓöÇ TOTP setup ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // Look at any existing TOTP device so we can reactivate it.
   const existing = await repository.findAnyMFADeviceByType(userId, 'totp');
-  if (existing && existing.is_active && existing.verified) {
+  if (existing && existing.is_active && existing.is_verified) {
     throw new AuthError(
       'TOTP MFA is already configured. Disable it first if you want to re-enroll.',
       AuthErrorCodes.MFA_ALREADY_ENABLED,
@@ -157,7 +157,7 @@ export async function setupMFA(
   // primary. Adding TOTP alongside an existing primary must not demote it.
   const allTotpDevices = await repository.findMFADevicesByUserId(userId);
   const hasOtherPrimaryTotp = allTotpDevices.some(
-    (d) => d.is_primary && d.is_active && d.id !== existing?.id,
+    (d) => d.is_primary && (!d.deleted_at) && d.id !== existing?.id,
   );
   const isPrimary = existing?.is_primary === true || !hasOtherPrimaryTotp;
 
@@ -205,7 +205,7 @@ export async function setupMFA(
     device_type: 'totp',
     secret: secret.base32,
     qrCodeUrl,
-    backupCodes: generated?.plain ?? [],
+    
   };
 }
 
@@ -214,7 +214,7 @@ export async function verifyMFASetup(
   input: MFAVerifySetupInput,
   ipAddress: string,
   requestId: string,
-): Promise<void> {
+): Promise<{ backup_codes: string[] }> {
   const device = await repository.findMFADeviceById(input.device_id, userId);
   if (!device) {
     throw new AuthError(
@@ -223,7 +223,7 @@ export async function verifyMFASetup(
       404,
     );
   }
-  if (device.verified && device.is_active) {
+  if (device.is_verified && device.is_active) {
     throw new AuthError(
       'Device already verified',
       AuthErrorCodes.MFA_ALREADY_ENABLED,
@@ -260,15 +260,15 @@ export async function verifyMFASetup(
     }
   }
 
-  const backupCodesHash = mfaBackupTempCache.get(device.id) ?? [];
-
-  await repository.withTransaction(async (client) => {
-    await repository.verifyMFADevice(device.id, userId, backupCodesHash, client);
+  const generated = await repository.withTransaction(async (client) => {
+    await repository.verifyMFADevice(device.id, userId, client);
+    const codes = await repository.generateBackupCodesForUser(userId, 10, client);
     if (device.is_primary) {
       await repository.updateMFADevicePrimary(userId, device.id, client);
     }
     await repository.updateUserMFAEnabled(userId, true, client);
     await repository.updateBackupCodesGenerated(userId, client);
+    return codes;
   });
 
   mfaBackupTempCache.delete(device.id);
@@ -277,6 +277,7 @@ export async function verifyMFASetup(
   if (user) await sendMFAStatusEmail(user, true);
 
   logAudit({
+
     user_id: userId,
     org_id: null,
     action: 'user.mfa_enabled',
@@ -286,11 +287,12 @@ export async function verifyMFASetup(
     request_id: requestId,
     metadata: { device_id: device.id, device_type: device.device_type },
   });
+  return { backup_codes: generated.plain };
 }
 
 export async function createMFAChallenge(userId: string): Promise<MFAChallenge> {
   const devices = await repository.findMFADevicesByUserId(userId);
-  const verified = devices.filter((d) => d.verified && d.is_active);
+  const verified = devices.filter((d) => d.is_verified && (!d.deleted_at));
   if (verified.length === 0) {
     throw new AuthError(
       'No verified MFA devices',
@@ -359,7 +361,7 @@ export async function verifyMFAChallenge(
     challenge.deviceId,
     challenge.userId,
   );
-  if (!device || !device.verified || !device.is_active) {
+  if (!device || !device.is_verified || !device.is_active) {
     stepUpChallengeCache.delete(challengeId);
     throw new AuthError('MFA device invalid', AuthErrorCodes.MFA_INVALID, 400);
   }
@@ -483,6 +485,7 @@ export async function adminForcePasswordReset(
   await sendPasswordResetEmail(user, resetToken);
 
   logAudit({
+
     user_id: adminId,
     org_id: null,
     action: 'user.admin_password_reset',
@@ -532,7 +535,7 @@ export async function resendEmailMfaOtp(
   const otp = await generateEmailMfaOtp();
   const otpHash = hashEmailMfaOtp(otp);
   await createEmailMfaOtp(userId, device.id, otpHash);
-  const purpose = device.verified ? 'challenge' : 'setup';
+  const purpose = device.is_verified ? 'challenge' : 'setup';
   await sendEmailMfaOtpEmail(user, otp, device.device_name, purpose);
 }
 
@@ -541,7 +544,7 @@ export async function setPrimaryMFADevice(
   deviceId: string,
 ): Promise<void> {
   const device = await repository.findMFADeviceById(deviceId, userId);
-  if (!device || !device.verified || !device.is_active) {
+  if (!device || !device.is_verified || !device.is_active) {
     throw new AuthError(
       'Invalid device',
       AuthErrorCodes.MFA_DEVICE_NOT_FOUND,
@@ -586,7 +589,7 @@ export async function removeMFADevice(
   }
 
   const remainingActive = devices.filter(
-    (d) => d.verified && d.is_active && d.id !== deviceId,
+    (d) => d.is_verified && (!d.deleted_at) && d.id !== deviceId,
   );
 
   if (remainingActive.length === 0) {
@@ -626,7 +629,7 @@ export async function removeMFADevice(
       );
     }
     const freshRemaining = freshDevices.filter(
-      (d) => d.verified && d.is_active && d.id !== deviceId,
+      (d) => d.is_verified && (!d.deleted_at) && d.id !== deviceId,
     );
 
     await repository.disableMFADevice(deviceId, userId, 'user_removed', client);
@@ -643,6 +646,7 @@ export async function removeMFADevice(
   }
 
   logAudit({
+
     user_id: userId,
     org_id: null,
     action:
@@ -662,7 +666,7 @@ export async function generateNewBackupCodes(
   input: RegenerateBackupCodesInput,
 ): Promise<string[]> {
   const devices = await repository.findMFADevicesByUserId(userId);
-  const primary = devices.find((d) => d.is_primary && d.verified && d.is_active);
+  const primary = devices.find((d) => d.is_primary && d.is_verified && (!d.deleted_at));
   if (!primary) {
     throw new AuthError(
       'No primary MFA device',
@@ -682,11 +686,11 @@ export async function generateNewBackupCodes(
     throw new AuthError('Invalid MFA code', AuthErrorCodes.MFA_INVALID, 400);
   }
 
-  const { plain, hashed } = await generateBackupCodes();
-
-  await repository.withTransaction(async (client) => {
-    await repository.setBackupCodesForAllUserDevices(userId, hashed, client);
+  const plain = await repository.withTransaction(async (client) => {
+    await repository.deleteAllUnusedBackupCodes(userId, client);
+    const generated = await repository.generateBackupCodesForUser(userId, 10, client);
     await repository.updateBackupCodesGenerated(userId, client);
+    return generated.plain;
   });
 
   return plain;
@@ -714,8 +718,8 @@ export async function toggleMFA(
   // Enabling: require a currently-verified device.
   const devices = await repository.findMFADevicesByUserId(userId);
   const primary =
-    devices.find((d) => d.is_primary && d.verified && d.is_active) ||
-    devices.find((d) => d.verified && d.is_active);
+    devices.find((d) => d.is_primary && d.is_verified && (!d.deleted_at)) ||
+    devices.find((d) => d.is_verified && (!d.deleted_at));
   if (!primary) {
     throw new AuthError(
       'Verified MFA device required before enabling MFA',
@@ -739,6 +743,7 @@ export async function toggleMFA(
   await sendMFAStatusEmail(user, true);
 
   logAudit({
+
     user_id: userId,
     org_id: null,
     action: 'user.mfa_enabled',
@@ -774,7 +779,7 @@ export async function requestMfaDisable(
   }
 
   const devices = await repository.findMFADevicesByUserId(userId);
-  const primary = devices.find((d) => d.is_primary && d.verified && d.is_active);
+  const primary = devices.find((d) => d.is_primary && d.is_verified && (!d.deleted_at));
   if (!primary) {
     throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
@@ -817,6 +822,7 @@ export async function requestMfaDisable(
     });
 
   logAudit({
+
     user_id: userId,
     org_id: null,
     action: 'user.mfa_disable_requested',
@@ -883,7 +889,6 @@ export async function confirmMfaDisable(
       return;
     }
 
-    await repository.disableAllMFADevices(user.id, 'User disabled MFA', client);
     await repository.revokeAllTrustedDevices(user.id, 'MFA disabled', client);
     await repository.updateUserMFAEnabled(user.id, false, client);
     userId = user.id;
@@ -894,6 +899,7 @@ export async function confirmMfaDisable(
     if (user) await sendMFAStatusEmail(user, false);
 
     logAudit({
+
       user_id: userId,
       org_id: null,
       action: 'user.mfa_disabled',
@@ -927,13 +933,12 @@ export async function disableMFA(
   }
 
   const devices = await repository.findMFADevicesByUserId(userId);
-  const verifiedActive = devices.filter((d) => d.verified && d.is_active);
+  const verifiedActive = devices.filter((d) => d.is_verified && (!d.deleted_at));
   if (verifiedActive.length === 0) {
     throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
   await repository.withTransaction(async (client) => {
-    await repository.disableAllMFADevices(user.id, 'User disabled MFA', client);
     await repository.revokeAllTrustedDevices(user.id, 'MFA disabled', client);
     await repository.updateUserMFAEnabled(user.id, false, client);
   });
@@ -953,6 +958,7 @@ export async function disableMFA(
     });
 
   logAudit({
+
     user_id: userId,
     org_id: null,
     action: 'user.mfa_disabled',

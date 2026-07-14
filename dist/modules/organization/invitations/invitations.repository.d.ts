@@ -11,7 +11,7 @@ export declare class InvitationsRepository extends BaseRepository {
     acceptInvitation(tokenHash: string, userId: string): Promise<void>;
     acceptInvitationAndAddMember(tokenHash: string, userId: string, maxActiveMembers: number | null): Promise<void>;
     declineInvitation(id: string, _userId: string): Promise<void>;
-    revokeInvitation(id: string, by: string): Promise<void>;
+    revokeInvitation(id: string, _by: string): Promise<void>;
     incrementResentCount(id: string): Promise<void>;
     rotateInvitationToken(id: string, tokenHash: string): Promise<void>;
     expireStalePendingInvitations(): Promise<number>;

@@ -126,6 +126,7 @@ export class InvitationsService {
         const inv = await this.deps.repository.findInvitationByTokenHash(tokenHash);
         if (!inv)
             throw new NotFoundError("Invitation");
+        await this.deps.requireMutableOrg(inv.org_id);
         const invitedEmail = inv.email.trim().toLowerCase();
         const actorEmail = (meta.actorEmail ?? "").trim().toLowerCase();
         if (!actorEmail || actorEmail !== invitedEmail) {

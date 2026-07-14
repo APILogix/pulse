@@ -8,8 +8,8 @@
  * be scaled and tuned independently.
  *
  * Run with:
- *   npm run start:ingestion           (node dist/workers/ingestion-worker-main.js)
- *   npm run dev:ingestion             (tsx watch src/workers/ingestion-worker-main.ts)
+ *   npm run start:ingestion           (node dist/shared/workers/ingestion-worker-main.js)
+ *   npm run dev:ingestion             (tsx watch src/shared/workers/ingestion-worker-main.ts)
  *
  * Horizontal scaling: run multiple copies. FOR UPDATE SKIP LOCKED guarantees a
  * job is processed by exactly one worker across all processes/nodes.

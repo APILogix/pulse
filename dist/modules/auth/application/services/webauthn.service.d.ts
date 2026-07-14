@@ -6,7 +6,7 @@
 
  * Challenges live in-process LRU (`webauthnChallengeCache`). Credentials in
 
- * `user_mfa_devices` with `device_type = hardware_key`.
+ * `user_mfa_devices` with `type = webauthn`.
 
  */
 import { generateAuthenticationOptions, generateRegistrationOptions } from '@simplewebauthn/server';

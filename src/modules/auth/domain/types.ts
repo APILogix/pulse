@@ -32,7 +32,7 @@ export interface User {
   id: string;
   email: string;
   email_hash: string;
-  email_verified: boolean;
+  email_is_verified: boolean;
   email_verified_at: Date | null;
   full_name: string;
   avatar_url: string | null;
@@ -45,8 +45,7 @@ export interface User {
   current_org_id: string | null;
   mfa_enabled: boolean;
   mfa_enforced_at: Date | null;
-  mfa_backup_codes_generated_at: Date | null;
-  login_attempts: number;
+    login_attempts: number;
   locked_until: Date | null;
   last_login_at: Date | null;
   last_login_ip: string | null;
@@ -79,7 +78,7 @@ export interface User {
 export interface UserProfile {
   id: string;
   email: string;
-  email_verified: boolean;
+  email_is_verified: boolean;
   full_name: string;
   avatar_url: string | null;
   status: UserStatus;
@@ -101,7 +100,7 @@ export interface MFADevice {
   device_type: MFAType;
   device_name: string;
   secret_encrypted: string | null;
-  verified: boolean;
+  is_verified: boolean;
   verified_at: Date | null;
   credential_id: string | null;
   public_key: string | null;
@@ -111,9 +110,12 @@ export interface MFADevice {
   last_used_at: Date | null;
   last_used_ip: string | null;
   is_primary: boolean;
-  is_active: boolean;
   disabled_at: Date | null;
   disabled_reason: string | null;
+  /** Legacy active flag retained by the core auth schema. */
+  is_active: boolean;
+  /** Soft-deletion marker introduced by migration 032. */
+  deleted_at: Date | null;
   // Added in migration 005 (Google-style MFA / "try another way").
   display_hint: string | null;
   phone_number_encrypted: string | null;
@@ -144,11 +146,11 @@ export interface MfaPolicy {
 export interface TOTPSetup {
   secret: string;
   qrCodeUrl: string;
-  backupCodes: string[];
+  backupCodes?: string[];
 }
 
 export interface EmailMFASetup {
-  backupCodes: string[];
+  backupCodes?: string[];
 }
 
 export interface MFAChallenge {
@@ -408,7 +410,7 @@ export type AdminLockUserInput = z.infer<typeof AdminLockUserSchema>;
 
 /** Public security posture for the authenticated user (settings UI). */
 export interface UserSecuritySummary {
-  email_verified: boolean;
+  email_is_verified: boolean;
   mfa_enabled: boolean;
   active_session_count: number;
   verified_mfa_device_count: number;
@@ -663,7 +665,7 @@ export interface UserDataExport {
     id: string;
     type: string;
     name: string;
-    verified: boolean;
+    is_verified: boolean;
     is_primary: boolean;
     last_used_at: Date | null;
   }>;

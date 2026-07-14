@@ -28,7 +28,12 @@ export function getRefreshCookieOptions(maxAgeSeconds) {
     const maxAge = (maxAgeSeconds ?? REFRESH_TOKEN_TTL_SECONDS) * 1000;
     const secure = useSecureRefreshCookiePrefix();
     return {
-        httpOnly: true, secure, sameSite: 'strict',
+        httpOnly: true,
+        secure,
+        // The SPA and API are commonly different origins, and OAuth returns from
+        // an external provider before the SPA calls the API. Strict would prevent
+        // the refresh cookie from being sent in that cross-origin deployment.
+        sameSite: secure ? 'none' : 'lax',
         maxAge, path: '/', signed: true,
     };
 }

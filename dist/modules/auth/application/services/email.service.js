@@ -198,7 +198,7 @@ export async function resendVerification(input, ipAddress, requestId) {
     if (user &&
         !user.deleted_at &&
         user.status === 'active' &&
-        !user.email_verified) {
+        !user.email_is_verified) {
         const verificationToken = generateEmailFlowToken();
         await repository.createEmailVerification({
             user_id: user.id,
@@ -237,7 +237,7 @@ export async function verifyEmail(input, ipAddress, requestId) {
             const existing = await repository.findEmailVerificationByTokenHash(tokenHash, 'email_verification', client);
             if (existing?.verified_at) {
                 const user = await repository.findUserById(existing.user_id, client);
-                if (user?.email_verified) {
+                if (user?.email_is_verified) {
                     verifiedUserId = user.id;
                     alreadyVerified = true;
                     return;
@@ -251,7 +251,7 @@ export async function verifyEmail(input, ipAddress, requestId) {
             normalizeEmail(user.email) !== normalizeEmail(consumed.email)) {
             throw new AuthError('Invalid or expired verification token', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
         }
-        if (!user.email_verified) {
+        if (!user.email_is_verified) {
             await repository.markEmailAsVerified(user.id, client);
         }
         verifiedUserId = user.id;

@@ -200,7 +200,7 @@ export function toUserProfile(user: User): UserProfile {
   return {
     id: user.id,
     email: user.email,
-    email_verified: user.email_verified,
+    email_is_verified: user.email_is_verified,
     full_name: user.full_name,
     avatar_url: user.avatar_url,
     status: user.status,
@@ -370,31 +370,18 @@ export function verifyTotpDeviceCode(device: MFADevice, code: string): boolean {
 export async function consumeBackupCode(
   userId: string,
   code: string,
+  ipAddress = '0.0.0.0',
 ): Promise<boolean> {
   const normalized = code.toLowerCase();
-  const devices = await repository.findMFADevicesByUserId(userId, false);
+  const codes = await repository.getUnusedBackupCodes(userId);
 
-  for (const device of devices) {
-    const codes = Array.isArray(device.backup_codes_hash)
-      ? device.backup_codes_hash.filter(
-          (entry): entry is string => typeof entry === 'string',
-        )
-      : [];
-
-    const matchIndex = codes.findIndex((hashedCode) =>
-      verifyBackupCodeHash(normalized, hashedCode),
-    );
-
-    if (matchIndex >= 0) {
-      codes.splice(matchIndex, 1);
-      await repository.updateMFADeviceBackupCodes(
-        device.id,
-        userId,
-        codes.length > 0 ? codes : null,
-      );
+  for (const backupCode of codes) {
+    const hashedCode = typeof backupCode.code_hash === 'string' ? backupCode.code_hash : '';
+    if (verifyBackupCodeHash(normalized, hashedCode)) {
+      await repository.markBackupCodeUsed(backupCode.id, userId, ipAddress);
       return true;
     }
   }
   return false;
 }
-
+

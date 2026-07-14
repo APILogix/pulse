@@ -5,83 +5,27 @@ function generateSlug(name) {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 export class CoreRepository extends BaseRepository {
-    async createOrg(name, ownerUserId, data) {
-        return this.withTransaction(async (client) => {
-            const dup = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE owner_user_id=$1 AND deleted_at IS NULL) AS x`, [ownerUserId]);
-            if (dup.rows[0]?.x)
-                throw new ConflictError("User already owns an organization");
-            let slug = generateSlug(name);
-            let i = 1;
-            while (true) {
-                const c = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=$1 AND deleted_at IS NULL) AS x`, [slug]);
-                if (!c.rows[0]?.x)
-                    break;
-                slug = `${generateSlug(name)}-${i++}`;
-            }
-            const r = await client.query(`INSERT INTO organizations (name,slug,description,industry,company_size,country,timezone,billing_email,owner_user_id,created_by,status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,'active')
-         RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, [name, slug, data.description ?? null, data.industry ?? null, data.companySize ?? null, data.country ?? null, data.timezone ?? 'UTC', data.billingEmail ?? null, ownerUserId]);
-            const org = r.rows[0];
-            await client.query(`INSERT INTO organization_settings (org_id) VALUES ($1)`, [org.id]);
-            await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,joined_at,joined_method,last_active_at)
+    async createOrg(client, name, ownerUserId, data, status = 'active') {
+        const dup = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE owner_user_id=$1 AND deleted_at IS NULL) AS x`, [ownerUserId]);
+        if (dup.rows[0]?.x)
+            throw new ConflictError("User already owns an organization");
+        let slug = generateSlug(name);
+        let i = 1;
+        while (true) {
+            const c = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=$1 AND deleted_at IS NULL) AS x`, [slug]);
+            if (!c.rows[0]?.x)
+                break;
+            slug = `${generateSlug(name)}-${i++}`;
+        }
+        const r = await client.query(`INSERT INTO organizations (name,slug,description,industry,company_size,country,timezone,billing_email,owner_user_id,created_by,status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
+         RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, [name, slug, data.description ?? null, data.industry ?? null, data.companySize ?? null, data.country ?? null, data.timezone ?? 'UTC', data.billingEmail ?? null, ownerUserId, status]);
+        const org = r.rows[0];
+        await client.query(`INSERT INTO organization_settings (org_id) VALUES ($1)`, [org.id]);
+        await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,joined_at,joined_method,last_active_at)
          VALUES ($1,$2,'owner','active',NOW(),'admin_add',NOW())`, [org.id, ownerUserId]);
-            await client.query(`UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`, [org.id, ownerUserId]);
-            const plan = await client.query(`SELECT id
-         FROM plans
-         WHERE tier = 'enterprise' AND is_active = TRUE
-         ORDER BY version DESC, sort_order ASC
-         LIMIT 1
-         FOR SHARE`);
-            const freePlanId = plan.rows[0]?.id;
-            if (!freePlanId)
-                throw new NotFoundError("Free billing plan");
-            const periodStart = new Date();
-            const periodEnd = new Date(periodStart);
-            periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
-            const subscription = await client.query(`INSERT INTO organization_subscriptions (
-           org_id,
-           plan_id,
-           status,
-           billing_provider,
-           billing_interval,
-           current_period_start,
-           current_period_end,
-           cancel_at_period_end,
-           seats
-         )
-         VALUES ($1,$2,'active','system','monthly',$3,$4,FALSE,1)
-         RETURNING id`, [org.id, freePlanId, periodStart, periodEnd]);
-            const subscriptionId = subscription.rows[0].id;
-            await client.query(`INSERT INTO subscription_events (
-           org_id,
-           subscription_id,
-           event_type,
-           new_plan_id,
-           actor,
-           metadata
-         )
-         VALUES ($1,$2,'created',$3,'system',$4)`, [
-                org.id,
-                subscriptionId,
-                freePlanId,
-                JSON.stringify({ reason: "organization_created", provisionedBy: "organization.create" }),
-            ]);
-            await client.query(`INSERT INTO usage_daily_counters (
-           org_id,
-           project_id,
-           date,
-           events_count,
-           ai_analyses_count
-         )
-         VALUES ($1,NULL,CURRENT_DATE,0,0)
-         ON CONFLICT (
-           org_id,
-           (COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid)),
-           date
-         )
-         DO NOTHING`, [org.id]);
-            return { organization: org, subscriptionId, planId: freePlanId };
-        });
+        await client.query(`UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2`, [org.id, ownerUserId]);
+        return { organization: org };
     }
     async setUserCurrentOrg(userId, orgId) {
         await this.db.query(`UPDATE users SET current_org_id=$1, updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL`, [orgId, userId]);

@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = process.env.NODE_ENV;
+const ORIGINAL_API_PUBLIC_URL = process.env.API_PUBLIC_URL;
 afterEach(() => {
     process.env.NODE_ENV = ORIGINAL_ENV;
+    if (ORIGINAL_API_PUBLIC_URL === undefined)
+        delete process.env.API_PUBLIC_URL;
+    else
+        process.env.API_PUBLIC_URL = ORIGINAL_API_PUBLIC_URL;
     vi.resetModules();
 });
 describe('refresh cookie utils', () => {
@@ -19,6 +24,7 @@ describe('refresh cookie utils', () => {
     });
     it('uses the __Host- cookie name when secure transport is enabled', async () => {
         process.env.NODE_ENV = 'production';
+        process.env.API_PUBLIC_URL = 'https://api.example.test';
         const { REFRESH_COOKIE_NAME, getRefreshCookieOptions } = await import('./cookies.js');
         expect(REFRESH_COOKIE_NAME).toBe('__Host-refresh_token');
         expect(getRefreshCookieOptions()).toMatchObject({

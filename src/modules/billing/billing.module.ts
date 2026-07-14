@@ -17,7 +17,6 @@ import { aiBillingRoutes } from './ai/routes.js';
 import { invoicesRoutes } from './invoices/routes.js';
 import { paymentsRoutes } from './payments/routes.js';
 import { webhooksRoutes } from './webhooks/routes.js';
-import { couponsRoutes } from './coupons/routes.js';
 
 import { createBillingLogger } from './shared/utils.js';
 
@@ -35,7 +34,6 @@ async function billingModule(
   await fastify.register(invoicesRoutes, { prefix: '/billing/invoices' });
   await fastify.register(paymentsRoutes, { prefix: '/billing/payments' });
   await fastify.register(webhooksRoutes, { prefix: '/billing/webhooks' });
-  await fastify.register(couponsRoutes, { prefix: '/billing/coupons' });
 
   fastify.addHook('onClose', async () => {
     logger.info('Billing module shutting down');

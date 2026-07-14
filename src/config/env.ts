@@ -90,7 +90,7 @@ const envSchema = z.object({
   AUTH_TOKEN_SECRET: z.string().min(32),
   ENCRYPTION_KEY: z.string().length(32),
   CORS_ORIGINS: z.string().optional(),
-  FRONTEND_URL: z.string().optional(),
+  FRONTEND_URL: z.string().url().optional(),
   ALLOWED_ORIGINS: z.string().default(''),
 
   // Email / SMTP
@@ -113,6 +113,22 @@ const envSchema = z.object({
   SAML_SP_SLO_URL: z.string().url().optional(),
   SAML_SP_PRIVATE_KEY: z.string().optional(),
   SAML_SP_CERTIFICATE: z.string().optional(),
+  SAML_ENFORCE_HTTPS: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  SAML_REQUIRE_SIGNED_ASSERTIONS: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  SAML_REQUIRE_SIGNED_RESPONSES: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  SAML_ACCEPTED_CLOCK_SKEW_MS: z.coerce.number().int().min(0).default(180_000),
+  SAML_MAX_ASSERTION_AGE_MS: z.coerce.number().int().min(1_000).default(300_000),
+  SAML_REQUEST_ID_TTL_MS: z.coerce.number().int().min(1_000).default(600_000),
+  SAML_ASSERTION_REPLAY_TTL_MS: z.coerce.number().int().min(1_000).default(600_000),
   SCIM_TOKEN_GRACE_PERIOD_MINUTES: z.coerce.number().int().min(1).default(5),
   SCIM_DEFAULT_TOKEN_EXPIRY_DAYS: z.coerce.number().int().min(1).default(365),
   SAML_SESSION_TTL_HOURS: z.coerce.number().int().min(1).default(24),

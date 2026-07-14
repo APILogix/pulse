@@ -4,6 +4,7 @@ export interface OAuthProfile {
     subject: string;
     email: string | null;
     displayName: string | null;
+    avatarUrl: string | null;
 }
 export declare function buildOidcClient(provider: 'google'): Promise<import("openid-client").Configuration>;
 export declare function buildOAuthAuthorizationUrl(options: {

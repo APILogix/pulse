@@ -8,17 +8,19 @@ import { normalizeEmail } from '../../domain/constants.js';
 import { getApiSocialLoginCallbackUrl } from '../../infrastructure/config/oauth-callback.config.js';
 export const socialPassport = new Authenticator();
 function secureCookieEnabled() {
-    return env.NODE_ENV !== 'development';
+    return env.NODE_ENV !== 'development' && /^https:\/\//i.test(env.API_PUBLIC_URL || env.APP_URL);
 }
 function sessionKey() {
     return createHash('sha256').update(env.COOKIE_SECRET).digest();
 }
 function toGoogleProfile(profile) {
     const email = profile.emails?.find((entry) => Boolean(entry.value))?.value ?? null;
+    const avatarUrl = profile.photos?.find((entry) => Boolean(entry.value))?.value ?? null;
     return {
         provider: 'google',
         subject: profile.id,
         email: email ? normalizeEmail(email) : null,
+        avatarUrl,
         displayName: profile.displayName || null,
         profileMetadata: {
             provider: profile.provider,
@@ -30,10 +32,12 @@ function toGoogleProfile(profile) {
 }
 function toGitHubProfile(profile) {
     const email = profile.emails?.find((entry) => Boolean(entry.value))?.value ?? null;
+    const avatarUrl = profile.photos?.find((entry) => Boolean(entry.value))?.value ?? null;
     return {
         provider: 'github',
         subject: profile.id,
         email: email ? normalizeEmail(email) : null,
+        avatarUrl,
         displayName: profile.displayName || profile.username || null,
         profileMetadata: {
             provider: profile.provider,

@@ -7,7 +7,7 @@
  * a cooldown window (used by latency alerts).
  *
  * Enqueue from request handlers / evaluators; the org-email worker
- * (src/workers/org-email.processor.ts) drains the table with FOR UPDATE SKIP
+ * (src/shared/workers/org-email.processor.ts) drains the table with FOR UPDATE SKIP
  * LOCKED, so it is safe to run many worker processes concurrently.
  */
 import { randomUUID } from 'crypto';

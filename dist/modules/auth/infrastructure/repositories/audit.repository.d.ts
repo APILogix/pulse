@@ -259,7 +259,8 @@ export declare function listScimGroupMembers(groupId: string, client?: PoolClien
 export declare function replaceScimGroupMembers(orgId: string, groupId: string, userIds: string[], client?: PoolClient): Promise<void>;
 export declare function addScimGroupMember(orgId: string, groupId: string, userId: string, client?: PoolClient): Promise<void>;
 export declare function removeScimGroupMember(groupId: string, userId: string, client?: PoolClient): Promise<void>;
-export declare function revokeLinkedIdentity(userId: string, linkId: string, client?: PoolClient): Promise<boolean>;
+/** Permanently remove a social identity link from the account. */
+export declare function deleteLinkedIdentity(userId: string, linkId: string, client?: PoolClient): Promise<boolean>;
 export declare function revokeTrustedDevice(userId: string, deviceId: string, client?: PoolClient): Promise<boolean>;
 export declare function revokeAllTrustedDevices(userId: string, _reason: string, client?: PoolClient): Promise<number>;
 export declare function listAuditLogsForUser(userId: string, options: {

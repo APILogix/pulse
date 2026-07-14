@@ -1,6 +1,42 @@
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 const repositoryLogger = logger.child({ component: 'auth-repository' });
+const MFA_DEVICE_SELECT = `
+  id,
+  user_id,
+  CASE
+    WHEN type::text = 'webauthn' THEN 'hardware_key'
+    WHEN type::text = 'backup_code' THEN 'backup_codes'
+    ELSE type::text
+  END AS device_type,
+  type::text AS type,
+  device_type AS mfa_device_type,
+  device_name,
+  secret_encrypted,
+  phone_e164,
+  email,
+  credential_id,
+  public_key,
+  sign_count,
+  is_verified,
+  verified_at,
+  last_used_at,
+  last_used_ip,
+  is_primary,
+  is_active,
+  disabled_at,
+  disabled_reason,
+  device_metadata,
+  created_at,
+  updated_at,
+  CASE WHEN is_active THEN NULL ELSE COALESCE(disabled_at, updated_at) END AS deleted_at,
+  NULL::text AS display_hint,
+  NULL::text AS phone_number_encrypted,
+  NULL::jsonb AS backup_codes_hash,
+  0::integer AS failed_attempts,
+  NULL::timestamptz AS last_failed_at,
+  0::integer AS use_count
+`;
 function shouldDestroyTransactionClient(error) {
     const pgCode = typeof error === 'object' && error !== null && 'code' in error
         ? String(error.code)
@@ -191,18 +227,18 @@ export async function updateMFADeviceName(deviceId, userId, deviceName, client) 
 }
 export async function findWebAuthnDeviceByCredentialId(credentialId, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM user_mfa_devices
-     WHERE credential_id = $1 AND device_type = 'hardware_key'
-       AND verified = TRUE AND is_active = TRUE`, [credentialId]);
+    const result = await db.query(`SELECT ${MFA_DEVICE_SELECT} FROM user_mfa_devices
+     WHERE credential_id = $1 AND type = 'webauthn'::mfa_type
+       AND is_verified = TRUE AND is_active = TRUE`, [credentialId]);
     return result.rows[0] || null;
 }
 export async function createWebAuthnDevice(data, client) {
     const db = client || pool;
     const result = await db.query(`INSERT INTO user_mfa_devices (
-       user_id, device_type, device_name, credential_id, public_key,
-       sign_count, verified, verified_at, is_primary, is_active
-     ) VALUES ($1, 'hardware_key', $2, $3, $4, $5, TRUE, NOW(), $6, TRUE)
-     RETURNING *`, [
+       user_id, type, device_type, device_name, credential_id, public_key,
+       sign_count, is_verified, verified_at, is_primary, is_active
+     ) VALUES ($1, 'webauthn'::mfa_type, 'hardware_key', $2, $3, $4, $5, TRUE, NOW(), $6, TRUE)
+     RETURNING ${MFA_DEVICE_SELECT}`, [
         data.user_id,
         data.device_name,
         data.credential_id,
@@ -648,10 +684,11 @@ export async function removeScimGroupMember(groupId, userId, client) {
     await db.query(`DELETE FROM scim_group_memberships
      WHERE group_id = $1 AND user_id = $2`, [groupId, userId]);
 }
-export async function revokeLinkedIdentity(userId, linkId, client) {
+/** Permanently remove a social identity link from the account. */
+export async function deleteLinkedIdentity(userId, linkId, client) {
     const db = client || pool;
-    const result = await db.query(`UPDATE user_linked_identities SET revoked_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL`, [linkId, userId]);
+    const result = await db.query(`DELETE FROM user_linked_identities
+     WHERE id = $1 AND user_id = $2`, [linkId, userId]);
     return (result.rowCount ?? 0) > 0;
 }
 export async function revokeTrustedDevice(userId, deviceId, client) {

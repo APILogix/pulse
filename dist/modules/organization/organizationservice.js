@@ -22,6 +22,9 @@ import { enqueueOrgEmail } from "./shared/background/email-outbox.js";
 import { hasMinRole, canManageRole, isMutableOrg, OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError, } from "./types.js";
 import { CoreService } from "./core/core.service.js";
 import { CoreRepository } from "./core/core.repository.js";
+import { BillingProvisioningService } from "../billing/provisioning/service.js";
+import { DomainsRepository } from './domains/domains.repository.js';
+import { DomainsService } from './domains/domains.service.js';
 function toMemberDto(r) {
     return { id: r.id, userId: r.user_id, email: r.email, fullName: r.full_name, role: r.role, status: r.status, joinedAt: r.joined_at, lastActiveAt: r.last_active_at, createdAt: r.created_at };
 }
@@ -68,6 +71,7 @@ export class OrganizationService {
     members;
     scimTokenService;
     securityEvents;
+    domains;
     constructor(deps) {
         this.repo = deps.repository;
         this.log = deps.logger.child({ component: "OrganizationService" });
@@ -82,6 +86,7 @@ export class OrganizationService {
             log: this.log,
             requireMember: this.requireMember.bind(this),
             audit: this.audit.bind(this),
+            billingProvisioning: new BillingProvisioningService(),
             deleteApiKeyCache: (hash) => { try {
                 apiKeyCache.delete(hash);
             }
@@ -119,6 +124,7 @@ export class OrganizationService {
             audit: this.audit.bind(this),
             enforceBillingLimit: this.quotas.enforceBillingLimit.bind(this.quotas),
         });
+        this.domains = new DomainsService(new DomainsRepository(), this.requireMember.bind(this), this.audit.bind(this), this.log);
     }
     // ── Helpers ───────────────────────────────────
     async audit(meta, data) {

@@ -39,7 +39,7 @@ export declare function resetMFADeviceForReSetup(id: string, userId: string, dat
     is_primary: boolean;
     device_metadata?: Record<string, unknown>;
 }, client?: PoolClient): Promise<MFADevice | null>;
-export declare function verifyMFADevice(id: string, userId: string, backupCodesHash: string[] | null, client?: PoolClient): Promise<MFADevice | null>;
+export declare function verifyMFADevice(id: string, userId: string, client?: PoolClient): Promise<MFADevice | null>;
 export declare function updateMFADevicePrimary(userId: string, deviceId: string, client?: PoolClient): Promise<void>;
 export declare function disableMFADevice(id: string, userId: string, reason: string, client?: PoolClient): Promise<boolean>;
 export declare function disableAllMFADevices(userId: string, reason: string, client?: PoolClient): Promise<number>;
@@ -63,4 +63,12 @@ export declare function createEmailMfaOtp(userId: string, deviceId: string, code
  */
 export declare function consumeEmailMfaOtp(deviceId: string, codeHash: string, client?: PoolClient): Promise<boolean>;
 export declare function deleteExpiredEmailMfaOtps(client?: PoolClient): Promise<number>;
+export declare function countUnusedBackupCodes(userId: string, client?: PoolClient): Promise<number>;
+export declare function generateBackupCodesForUser(userId: string, count?: number, client?: PoolClient): Promise<{
+    plain: string[];
+    hashed: string[];
+}>;
+export declare function deleteAllUnusedBackupCodes(userId: string, client?: PoolClient): Promise<void>;
+export declare function getUnusedBackupCodes(userId: string, client?: PoolClient): Promise<any[]>;
+export declare function markBackupCodeUsed(codeId: string, userId: string, ipAddress: string, client?: PoolClient): Promise<void>;
 //# sourceMappingURL=mfa.repository.d.ts.map

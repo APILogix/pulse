@@ -64,8 +64,11 @@ export declare function revokeAllOtherSessions(userId: string, currentSessionId:
 export declare function refreshAccessToken(refreshToken: string, ipAddress: string, userAgent: string, requestId: string): Promise<{
     accessToken: string;
     refreshToken: string;
+    /** True only when this request produced a replacement refresh token. */
+    refreshTokenRotated: boolean;
     expiresAt: Date;
     sessionId: string;
+    userId: string;
     currentOrgId: string | null;
 }>;
 export declare function logout(userId: string, sessionId: string, ipAddress: string, requestId: string): Promise<{

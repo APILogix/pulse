@@ -103,7 +103,6 @@ export async function mfaRoutes(fastify) {
                     data: {
                         device_id: setup.device_id,
                         device_type: 'email',
-                        backup_codes: setup.backupCodes,
                         warning: 'Save these backup codes - they will only be shown once!',
                     },
                 });
@@ -115,7 +114,6 @@ export async function mfaRoutes(fastify) {
                     device_type: 'totp',
                     secret: setup.secret,
                     qr_code_url: setup.qrCodeUrl,
-                    backup_codes: setup.backupCodes,
                     warning: 'Save these backup codes - they will only be shown once!',
                 },
             });
@@ -194,7 +192,7 @@ export async function mfaRoutes(fastify) {
                     type: d.device_type,
                     name: d.device_name,
                     display_hint: d.display_hint,
-                    verified: d.verified,
+                    verified: d.is_verified,
                     is_primary: d.is_primary,
                     last_used_at: d.last_used_at,
                     created_at: d.created_at,

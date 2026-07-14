@@ -62,5 +62,5 @@ export declare function buildMfaDisplayHint(deviceType: MFAType, deviceName: str
 }): string;
 export declare function buildTotp(secretBase32: string, label?: string): OTPAuth.TOTP;
 export declare function verifyTotpDeviceCode(device: MFADevice, code: string): boolean;
-export declare function consumeBackupCode(userId: string, code: string): Promise<boolean>;
+export declare function consumeBackupCode(userId: string, code: string, ipAddress?: string): Promise<boolean>;
 //# sourceMappingURL=shared-helpers.d.ts.map

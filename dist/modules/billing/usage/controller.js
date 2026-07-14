@@ -9,7 +9,7 @@ export class UsageController {
     getCurrentUsage = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = req.user?.currentOrgId || req.user?.orgId;
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const result = await this.service.getCurrentUsage(orgId);
@@ -22,7 +22,7 @@ export class UsageController {
     getDailyUsage = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = req.user?.currentOrgId || req.user?.orgId;
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const query = GetUsageRecordsSchema.parse(req.query);
@@ -38,7 +38,7 @@ export class UsageController {
     incrementEventUsage = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = req.user?.currentOrgId || req.user?.orgId;
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const body = IncrementUsageSchema.parse(req.body);

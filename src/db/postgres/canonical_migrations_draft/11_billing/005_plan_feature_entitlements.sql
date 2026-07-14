@@ -67,72 +67,333 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================================
--- Seed entitlements for FREE plan
--- Assumes plan.key='free' exists from seed migration or earlier insert.
+-- FREE
 -- ============================================================================
 
-WITH free_plan AS (
-    SELECT id FROM plans WHERE key='free' AND is_active = TRUE LIMIT 1
+WITH plan AS (
+    SELECT id
+    FROM plans
+    WHERE key = 'free'
+      AND is_active = TRUE
+      AND deleted_at IS NULL
+    LIMIT 1
 ),
-vals(feature_key, bool_val, int_val) AS (
+vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
 VALUES
-('monthly_events',NULL,5000),
-('projects',NULL,1),
-('organization_members',NULL,3),
-('api_keys',NULL,1),
-('connectors',NULL,0),
-('alert_rules',NULL,0),
-('dashboards',NULL,0),
-('retention_days',NULL,7),
-('ai_credits',NULL,50),
-
-('request_capture',TRUE,NULL),
-('error_tracking',TRUE,NULL),
-('distributed_tracing',FALSE,NULL),
-('performance_monitoring',FALSE,NULL),
-('metrics',FALSE,NULL),
-('logs',FALSE,NULL),
-('session_replay',FALSE,NULL),
-('cpu_profiling',FALSE,NULL),
-('cron_monitoring',FALSE,NULL),
-
-('in_app_alerts',TRUE,NULL),
-('email_alerts',FALSE,NULL),
-('slack_connector',FALSE,NULL),
-('discord_connector',FALSE,NULL),
-('teams_connector',FALSE,NULL),
-('webhook_connector',FALSE,NULL),
-
-('ai_chat',FALSE,NULL),
-('ai_error_explanation',FALSE,NULL),
-('ai_root_cause',FALSE,NULL),
-('ai_trace_analysis',FALSE,NULL),
-('ai_log_summary',FALSE,NULL),
-
-('custom_dashboards',FALSE,NULL),
-('saved_views',FALSE,NULL),
-
-('sso',FALSE,NULL),
-('scim',FALSE,NULL),
-('audit_logs',FALSE,NULL),
-('ip_allowlist',FALSE,NULL)
+    ('monthly_events', NULL::boolean, 5000::bigint, NULL::numeric, NULL::text),
+    ('projects', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
+    ('organization_members', NULL::boolean, 3::bigint, NULL::numeric, NULL::text),
+    ('api_keys', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
+    ('connectors', NULL::boolean, 0::bigint, NULL::numeric, NULL::text),
+    ('alert_rules', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
+    ('dashboards', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
+    ('retention_days', NULL::boolean, 7::bigint, NULL::numeric, NULL::text),
+    ('ai_credits', NULL::boolean, 0::bigint, NULL::numeric, NULL::text),
+    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('distributed_tracing', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('performance_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('metrics', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('session_replay', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cpu_profiling', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cron_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('email_alerts', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('slack_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('discord_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('teams_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('webhook_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_chat', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_error_explanation', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_root_cause', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_trace_analysis', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_log_summary', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('custom_dashboards', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('saved_views', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('audit_logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
 )
 INSERT INTO plan_feature_entitlements
-(
- plan_id,
- feature_id,
- boolean_value,
- integer_value
-)
+    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
 SELECT
- fp.id,
- bf.id,
- vals.bool_val,
- vals.int_val
-FROM vals
-JOIN billing_features bf
-  ON bf.feature_key = vals.feature_key
-CROSS JOIN free_plan fp
+    plan.id,
+    billing_features.id,
+    vals.boolean_value,
+    vals.integer_value,
+    vals.decimal_value,
+    vals.string_value
+FROM plan
+JOIN vals ON TRUE
+JOIN billing_features
+  ON billing_features.feature_key = vals.feature_key
+ AND billing_features.deleted_at IS NULL
+ON CONFLICT (plan_id, feature_id) DO NOTHING;
+
+-- ============================================================================
+-- STARTER
+-- ============================================================================
+
+WITH plan AS (
+    SELECT id
+    FROM plans
+    WHERE key = 'starter'
+      AND is_active = TRUE
+      AND deleted_at IS NULL
+    LIMIT 1
+),
+vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
+VALUES
+    ('monthly_events', NULL::boolean, 100000::bigint, NULL::numeric, NULL::text),
+    ('projects', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
+    ('organization_members', NULL::boolean, 10::bigint, NULL::numeric, NULL::text),
+    ('api_keys', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
+    ('connectors', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
+    ('alert_rules', NULL::boolean, 10::bigint, NULL::numeric, NULL::text),
+    ('dashboards', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
+    ('retention_days', NULL::boolean, 30::bigint, NULL::numeric, NULL::text),
+    ('ai_credits', NULL::boolean, 1000::bigint, NULL::numeric, NULL::text),
+    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('session_replay', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cpu_profiling', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cron_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('teams_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_root_cause', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_trace_analysis', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_log_summary', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('audit_logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
+)
+INSERT INTO plan_feature_entitlements
+    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
+SELECT
+    plan.id,
+    billing_features.id,
+    vals.boolean_value,
+    vals.integer_value,
+    vals.decimal_value,
+    vals.string_value
+FROM plan
+JOIN vals ON TRUE
+JOIN billing_features
+  ON billing_features.feature_key = vals.feature_key
+ AND billing_features.deleted_at IS NULL
+ON CONFLICT (plan_id, feature_id) DO NOTHING;
+
+-- ============================================================================
+-- GROWTH
+-- ============================================================================
+
+WITH plan AS (
+    SELECT id
+    FROM plans
+    WHERE key = 'growth'
+      AND is_active = TRUE
+      AND deleted_at IS NULL
+    LIMIT 1
+),
+vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
+VALUES
+    ('monthly_events', NULL::boolean, 1000000::bigint, NULL::numeric, NULL::text),
+    ('projects', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
+    ('organization_members', NULL::boolean, 50::bigint, NULL::numeric, NULL::text),
+    ('api_keys', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
+    ('connectors', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
+    ('alert_rules', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
+    ('dashboards', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
+    ('retention_days', NULL::boolean, 90::bigint, NULL::numeric, NULL::text),
+    ('ai_credits', NULL::boolean, 10000::bigint, NULL::numeric, NULL::text),
+    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
+)
+INSERT INTO plan_feature_entitlements
+    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
+SELECT
+    plan.id,
+    billing_features.id,
+    vals.boolean_value,
+    vals.integer_value,
+    vals.decimal_value,
+    vals.string_value
+FROM plan
+JOIN vals ON TRUE
+JOIN billing_features
+  ON billing_features.feature_key = vals.feature_key
+ AND billing_features.deleted_at IS NULL
+ON CONFLICT (plan_id, feature_id) DO NOTHING;
+
+-- ============================================================================
+-- BUSINESS
+-- ============================================================================
+
+WITH plan AS (
+    SELECT id
+    FROM plans
+    WHERE key = 'business'
+      AND is_active = TRUE
+      AND deleted_at IS NULL
+    LIMIT 1
+),
+vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
+VALUES
+    ('monthly_events', NULL::boolean, 5000000::bigint, NULL::numeric, NULL::text),
+    ('projects', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
+    ('organization_members', NULL::boolean, 250::bigint, NULL::numeric, NULL::text),
+    ('api_keys', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
+    ('connectors', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
+    ('alert_rules', NULL::boolean, 500::bigint, NULL::numeric, NULL::text),
+    ('dashboards', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
+    ('retention_days', NULL::boolean, 180::bigint, NULL::numeric, NULL::text),
+    ('ai_credits', NULL::boolean, 50000::bigint, NULL::numeric, NULL::text),
+    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('sso', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ip_allowlist', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text)
+)
+INSERT INTO plan_feature_entitlements
+    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
+SELECT
+    plan.id,
+    billing_features.id,
+    vals.boolean_value,
+    vals.integer_value,
+    vals.decimal_value,
+    vals.string_value
+FROM plan
+JOIN vals ON TRUE
+JOIN billing_features
+  ON billing_features.feature_key = vals.feature_key
+ AND billing_features.deleted_at IS NULL
+ON CONFLICT (plan_id, feature_id) DO NOTHING;
+
+-- ============================================================================
+-- ENTERPRISE
+-- ============================================================================
+
+WITH plan AS (
+    SELECT id
+    FROM plans
+    WHERE key = 'enterprise'
+      AND is_active = TRUE
+      AND deleted_at IS NULL
+    LIMIT 1
+),
+vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
+VALUES
+    ('monthly_events', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('projects', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('organization_members', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('api_keys', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('connectors', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('alert_rules', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('dashboards', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('retention_days', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('ai_credits', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
+    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('sso', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('scim', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
+    ('ip_allowlist', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text)
+)
+INSERT INTO plan_feature_entitlements
+    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
+SELECT
+    plan.id,
+    billing_features.id,
+    vals.boolean_value,
+    vals.integer_value,
+    vals.decimal_value,
+    vals.string_value
+FROM plan
+JOIN vals ON TRUE
+JOIN billing_features
+  ON billing_features.feature_key = vals.feature_key
+ AND billing_features.deleted_at IS NULL
 ON CONFLICT (plan_id, feature_id) DO NOTHING;
 
 COMMIT;

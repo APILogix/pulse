@@ -35,6 +35,9 @@ import {
 } from "./types.js";
 import { CoreService } from "./core/core.service.js";
 import { CoreRepository } from "./core/core.repository.js";
+import { BillingProvisioningService } from "../billing/provisioning/service.js";
+import { DomainsRepository } from './domains/domains.repository.js';
+import { DomainsService } from './domains/domains.service.js';
 
 
 function toMemberDto(r: OrgMemberRow): MemberDto {
@@ -88,6 +91,7 @@ export class OrganizationService {
   public readonly members: MembersService;
   private scimTokenService: ScimTokenService;
   private readonly securityEvents: SecurityEventsService;
+  public readonly domains: DomainsService;
 
   constructor(deps: OrganizationServiceDependencies) {
     this.repo = deps.repository;
@@ -105,6 +109,7 @@ export class OrganizationService {
       log: this.log,
       requireMember: this.requireMember.bind(this),
       audit: this.audit.bind(this),
+      billingProvisioning: new BillingProvisioningService(),
       deleteApiKeyCache: (hash: string) => { try { apiKeyCache.delete(hash); } catch {} }
     });
 
@@ -148,6 +153,7 @@ export class OrganizationService {
       audit: this.audit.bind(this),
       enforceBillingLimit: this.quotas.enforceBillingLimit.bind(this.quotas),
     });
+    this.domains = new DomainsService(new DomainsRepository(), this.requireMember.bind(this), this.audit.bind(this), this.log);
   }
 
   // ── Helpers ───────────────────────────────────
@@ -329,7 +335,6 @@ export class OrganizationService {
   async listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: { action?: string; entityType?: string; actorUserId?: string }) {
     return this.auditLogs.listAuditLogs(orgId, userId, q, filters);
   }
-
   async createQuotaRequest(meta: RequestMeta, orgId: string, data: { quotaType: string; currentLimit: number; requestedLimit: number; reason: string }) {
     return this.quotas.createQuotaRequest(meta, orgId, data);
   }
@@ -345,7 +350,6 @@ export class OrganizationService {
   async listQuotaRequests(orgId: string, userId: string, q: CursorPaginationQuery) {
     return this.quotas.listQuotaRequests(orgId, userId, q);
   }
-
   async getBillingSummary(orgId: string, userId: string) {
     const { entitlements, counts } = await this.quotas.requireBillingEntitlements(orgId);
     const normalizeLimit = (l: number) => (l >= 1e9 ? -1 : l);

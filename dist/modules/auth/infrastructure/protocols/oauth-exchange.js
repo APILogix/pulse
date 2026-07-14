@@ -81,6 +81,7 @@ async function exchangeGithubCode(code, codeVerifier, redirectUri) {
         subject: String(userJson.id),
         email,
         displayName: userJson.name ?? userJson.login ?? null,
+        avatarUrl: userJson.avatar_url ?? null,
     };
 }
 export async function exchangeOAuthCallback(provider, callbackUrl, codeVerifier, redirectUri, nonce) {
@@ -110,7 +111,8 @@ export async function exchangeOAuthCallback(provider, callbackUrl, codeVerifier,
         : typeof claims?.given_name === 'string'
             ? claims.given_name
             : null;
-    return { provider, subject, email, displayName };
+    const avatarUrl = typeof claims?.picture === 'string' ? claims.picture : null;
+    return { provider, subject, email, displayName, avatarUrl };
 }
 export function createPkcePair() {
     return {

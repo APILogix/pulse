@@ -208,8 +208,13 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
             return {
                 accessToken,
                 refreshToken,
+                // Never re-send the previously presented token as a Set-Cookie. A
+                // concurrent refresh may already have rotated it; overwriting that
+                // newer cookie would turn the next refresh into a replay.
+                refreshTokenRotated: false,
                 expiresAt: new Date(session.expires_at),
                 sessionId: session.id,
+                userId: session.user_id,
                 currentOrgId: user.current_org_id ?? null,
             };
         }
@@ -307,8 +312,10 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     return {
         accessToken,
         refreshToken: newRefreshToken,
+        refreshTokenRotated: true,
         expiresAt: finalExpiresAt,
         sessionId: session.id,
+        userId: session.user_id,
         currentOrgId: user.current_org_id ?? null,
     };
 }

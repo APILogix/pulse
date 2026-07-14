@@ -17,7 +17,6 @@ import {
   CreateInvitationSchema,
   CreateOrganizationSchema,
   CreateScimTokenSchema,
-  CreateQuotaRequestSchema,
   CreateSsoProviderSchema,
   CursorPaginationSchema,
   IdParamsSchema,
@@ -29,9 +28,7 @@ import {
   MembersListQuerySchema,
   OrgIdParamsSchema,
   OrganizationError,
-  QuotaRequestParamsSchema,
   RemoveMemberSchema,
-  ReviewQuotaRequestSchema,
   ScimTokenParamsSchema,
   SecurityEventsQuerySchema,
   SlugParamsSchema,
@@ -45,6 +42,7 @@ import {
   UpdateSsoProviderSchema,
   type RequestMeta,
 } from './types.js';
+import { registerDomainRoutes } from './domains/domains.routes.js';
 import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 
 type AuthenticatedRequest = FastifyRequest & {
@@ -97,6 +95,7 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
 
   // SDK Remote Config routes (/:orgId/sdk-configs ...).
   registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
+  await registerDomainRoutes(fastify, svc.domains);
 
   // ═══════════════════════════════════════════════
   // ORGANIZATION CRUD
@@ -405,34 +404,6 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   // ═══════════════════════════════════════════════
   // QUOTAS
   // ═══════════════════════════════════════════════
-
-  fastify.get('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const query = CursorPaginationSchema.parse(request.query ?? {});
-    const result = await svc.listQuotaRequests(orgId, asAuth(request).user.id, query);
-    return reply.send({ success: true, ...result });
-  }));
-
-  fastify.post('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
-    const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const body = CreateQuotaRequestSchema.parse(request.body);
-    const result = await svc.createQuotaRequest(buildMeta(request), orgId, body);
-    return reply.code(201).send({ success: true, data: result });
-  }));
-
-  fastify.post('/:orgId/quota-requests/:requestId/approve', auth, withErrorHandling(async (request, reply) => {
-    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
-    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
-    const result = await svc.approveQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
-    return reply.send({ success: true, data: result });
-  }));
-
-  fastify.post('/:orgId/quota-requests/:requestId/reject', auth, withErrorHandling(async (request, reply) => {
-    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
-    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
-    const result = await svc.rejectQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
-    return reply.send({ success: true, data: result });
-  }));
 
   // ═══════════════════════════════════════════════
   // UTILITY

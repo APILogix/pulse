@@ -7,6 +7,7 @@ export interface PassportSocialProfile {
     email: string | null;
     displayName: string | null;
     profileMetadata: Record<string, unknown>;
+    avatarUrl: string | null;
 }
 export declare const socialPassport: Authenticator;
 export declare function registerPassportSocialAuth(fastify: FastifyInstance): Promise<void>;

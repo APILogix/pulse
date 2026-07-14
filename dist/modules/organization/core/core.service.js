@@ -1,4 +1,5 @@
 import { NotFoundError, OrgStatusError } from "../shared/errors.js";
+import { BillingProvisioningService } from "../../billing/provisioning/service.js";
 // Helper function to map to DTO
 export function toOrgDto(row) {
     return {
@@ -48,26 +49,36 @@ export class CoreService {
         return org;
     }
     async createOrganization(meta, data) {
-        const provisioned = await this.deps.repository.createOrg(data.name, meta.actorUserId, data);
-        const org = provisioned.organization;
-        await this.deps.audit(meta, {
-            orgId: org.id,
-            action: "org.created",
-            entityType: "organization",
-            entityId: org.id,
-            entityName: org.name,
-            newValues: {
-                name: org.name,
-                slug: org.slug,
-                billing: {
-                    planId: provisioned.planId,
-                    subscriptionId: provisioned.subscriptionId,
-                    provider: "system",
-                    status: "active"
-                }
+        const provisioned = await this.deps.repository.withTransaction(async (client) => {
+            // 1. Create organization (defaults to 'trialing' per canonical schema)
+            const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');
+            // 2. Billing provisioning: creates subscription, subscription_events, and usage_current_period
+            const billing = await this.deps.billingProvisioning.provisionFreeSubscription(client, created.organization.id);
+            // 3. Sync org status with the billing subscription status
+            //    (e.g. 'active' if free plan has trial_days=0, 'trialing' if trial_days>0)
+            if (billing.status !== 'trialing') {
+                await client.query(`UPDATE organizations SET status=$1, updated_at=NOW() WHERE id=$2`, [billing.status, created.organization.id]);
+                created.organization.status = billing.status;
             }
+            // 4. Audit log
+            await client.query(`INSERT INTO organization_audit_logs (
+           org_id, actor_user_id, actor_email, actor_ip, actor_user_agent, actor_session_id,
+           action, entity_type, entity_id, entity_name, request_id, http_method, endpoint,
+           new_values, status, metadata
+         ) VALUES (
+           $1, $2, $3, $4::inet, $5, $6::uuid,
+           'organization.created', 'organization', $1, $7, $8::uuid, $9, $10,
+           $11::jsonb, 'success', $12::jsonb
+         )`, [
+                created.organization.id, meta.actorUserId, meta.actorEmail, meta.actorIp || null,
+                meta.actorUserAgent, meta.actorSessionId || null, created.organization.name,
+                meta.requestId || null, meta.httpMethod || null, meta.endpoint || null,
+                JSON.stringify({ name: created.organization.name, slug: created.organization.slug, billing }),
+                JSON.stringify({ source: 'organization.create' }),
+            ]);
+            return created.organization;
         });
-        return toOrgDto(org);
+        return toOrgDto(provisioned);
     }
     async switchOrganization(meta, orgId) {
         await this.deps.requireMember(orgId, meta.actorUserId);

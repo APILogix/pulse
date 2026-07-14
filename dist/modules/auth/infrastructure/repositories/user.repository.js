@@ -40,14 +40,14 @@ export async function createUser(data, client) {
     const db = client || pool;
     const result = await db.query(`INSERT INTO users (
        id, email, full_name, avatar_url, password_hash,
-       status, email_verified,
+       status, email_verified, email_verified_at,
        accepted_terms_at, accepted_terms_version,
        accepted_privacy_at, accepted_privacy_version,
        marketing_consent, marketing_consent_updated_at,
        data_processing_consent
      ) VALUES (
        $1, $2, $3, $4, $5,
-       'active', $6,
+       'active', $6, CASE WHEN $6 THEN NOW() ELSE NULL END,
        NOW(), $7,
        NOW(), $8,
        $9, NOW(),

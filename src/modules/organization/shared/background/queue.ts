@@ -9,8 +9,8 @@
  *   - Mirrors how the alerting and event-analytics modules schedule their
  *     maintenance jobs (see modules/alerting/queue.ts).
  *
- * Registration runs in the WORKER process (src/workers/main.ts) by default, and
- * can alternatively run in a dedicated cron process (src/workers/cron.ts). Both
+ * Registration runs in the WORKER process (src/shared/workers/main.ts) by default, and
+ * can alternatively run in a dedicated cron process (src/shared/workers/cron.ts). Both
  * are safe to run simultaneously — pg-boss upserts the schedule by name and only
  * one consumer gets each fired job.
  *

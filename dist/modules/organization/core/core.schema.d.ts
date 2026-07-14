@@ -113,7 +113,5 @@ export interface UserOrganizationDto {
 }
 export interface OrganizationProvisioningResult {
     organization: OrganizationRow;
-    subscriptionId: string;
-    planId: string;
 }
 //# sourceMappingURL=core.schema.d.ts.map

@@ -2,7 +2,7 @@
  * Dedicated cron process (PostgreSQL-backed scheduling via pg-boss - no Redis).
  *
  * This is the optional standalone scheduler. By default the organization
- * cleanup cron runs inside the main worker process (src/workers/main.ts). For
+ * cleanup cron runs inside the main worker process (src/shared/workers/main.ts). For
  * deployments that prefer to isolate scheduled maintenance in its own
  * container/pod, run this process instead and start the worker with
  * ORG_CRON_ENABLED=false so the schedule is owned in exactly one place.

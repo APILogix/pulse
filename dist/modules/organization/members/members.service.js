@@ -1,13 +1,13 @@
 import { ForbiddenError, ValidationError, NotFoundError } from "../shared/errors.js";
 import { invalidateMembershipCache } from "../../../shared/middleware/tenant.js";
-const ROLE_HIERARCHY = { owner: 6, admin: 5, billing: 4, security: 3, developer: 2, member: 1, viewer: 0 };
+import { hasMinRole } from "../shared/types.js";
 export class MembersService {
     deps;
     constructor(deps) {
         this.deps = deps;
     }
-    hasSufficientRole(member, required) {
-        return ROLE_HIERARCHY[member.role] >= ROLE_HIERARCHY[required];
+    hasMinRole(member, required) {
+        return hasMinRole(member.role, required);
     }
     async requireMember(orgId, userId, minRole) {
         const member = await this.deps.repository.findMember(orgId, userId);
@@ -15,7 +15,7 @@ export class MembersService {
             throw new ForbiddenError("Not a member of this organization");
         if (member.status === "suspended")
             throw new ForbiddenError("Your access to this organization has been suspended");
-        if (minRole && !this.hasSufficientRole(member, minRole)) {
+        if (minRole && !this.hasMinRole(member, minRole)) {
             throw new ForbiddenError(`Requires ${minRole} role or higher`);
         }
         return member;

@@ -3,7 +3,9 @@ export declare function setupMFA(userId: string, input: MFASetupInput, ipAddress
     device_id: string;
     device_type: string;
 }>;
-export declare function verifyMFASetup(userId: string, input: MFAVerifySetupInput, ipAddress: string, requestId: string): Promise<void>;
+export declare function verifyMFASetup(userId: string, input: MFAVerifySetupInput, ipAddress: string, requestId: string): Promise<{
+    backup_codes: string[];
+}>;
 export declare function createMFAChallenge(userId: string): Promise<MFAChallenge>;
 /**
  * Verify a step-up MFA challenge. On success, stamp step-up freshness on the

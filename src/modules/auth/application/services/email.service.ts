@@ -316,7 +316,7 @@ export async function resendVerification(
     user &&
     !user.deleted_at &&
     user.status === 'active' &&
-    !user.email_verified
+    !user.email_is_verified
   ) {
     const verificationToken = generateEmailFlowToken();
     await repository.createEmailVerification({
@@ -372,7 +372,7 @@ export async function verifyEmail(
       );
       if (existing?.verified_at) {
         const user = await repository.findUserById(existing.user_id, client);
-        if (user?.email_verified) {
+        if (user?.email_is_verified) {
           verifiedUserId = user.id;
           alreadyVerified = true;
           return;
@@ -397,7 +397,7 @@ export async function verifyEmail(
         400,
       );
     }
-    if (!user.email_verified) {
+    if (!user.email_is_verified) {
       await repository.markEmailAsVerified(user.id, client);
     }
     verifiedUserId = user.id;
@@ -665,4 +665,4 @@ export async function changePassword(
     session_id: session.sessionId,
   };
 }
-
+

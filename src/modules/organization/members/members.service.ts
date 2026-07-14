@@ -4,8 +4,7 @@ import type { MembersRepository } from "./members.repository.js";
 import type { RequestMeta, OrgRole, CursorPaginationQuery, OrganizationRow } from "../types.js";
 import type { OrgMemberRow } from "./members.schema.js";
 import type { CreateAuditLogRecord } from "../audit-logs/audit-logs.schema.js";
-
-const ROLE_HIERARCHY: Record<OrgRole, number> = { owner: 6, admin: 5, billing: 4, security: 3, developer: 2, member: 1, viewer: 0 };
+import { hasMinRole } from "../shared/types.js";
 
 export interface MemberDto {
   id: string;
@@ -29,15 +28,15 @@ export interface MembersServiceDependencies {
 export class MembersService {
   constructor(private readonly deps: MembersServiceDependencies) {}
 
-  hasSufficientRole(member: OrgMemberRow, required: OrgRole): boolean {
-    return ROLE_HIERARCHY[member.role] >= ROLE_HIERARCHY[required];
+  hasMinRole(member: OrgMemberRow, required: OrgRole): boolean {
+    return hasMinRole(member.role, required);
   }
 
   async requireMember(orgId: string, userId: string, minRole?: OrgRole): Promise<OrgMemberRow> {
     const member = await this.deps.repository.findMember(orgId, userId);
     if (!member || member.status === "removed") throw new ForbiddenError("Not a member of this organization");
     if (member.status === "suspended") throw new ForbiddenError("Your access to this organization has been suspended");
-    if (minRole && !this.hasSufficientRole(member, minRole)) {
+    if (minRole && !this.hasMinRole(member, minRole)) {
       throw new ForbiddenError(`Requires ${minRole} role or higher`);
     }
     return member;

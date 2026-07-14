@@ -1,7 +1,8 @@
 import { authenticate } from '../../shared/middleware/auth.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
-import { AcceptInvitationSchema, AuditLogQuerySchema, CreateInvitationSchema, CreateOrganizationSchema, CreateScimTokenSchema, CreateQuotaRequestSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { AcceptInvitationSchema, AuditLogQuerySchema, CreateInvitationSchema, CreateOrganizationSchema, CreateScimTokenSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, RemoveMemberSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { registerDomainRoutes } from './domains/domains.routes.js';
 import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
     console.log('[organization.handleError]', error);
@@ -51,6 +52,7 @@ export async function organizationRoutes(fastify, _options) {
     const auth = { preHandler: [authenticate] };
     // SDK Remote Config routes (/:orgId/sdk-configs ...).
     registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
+    await registerDomainRoutes(fastify, svc.domains);
     // ═══════════════════════════════════════════════
     // ORGANIZATION CRUD
     // ═══════════════════════════════════════════════
@@ -311,30 +313,6 @@ export async function organizationRoutes(fastify, _options) {
     // ═══════════════════════════════════════════════
     // QUOTAS
     // ═══════════════════════════════════════════════
-    fastify.get('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const query = CursorPaginationSchema.parse(request.query ?? {});
-        const result = await svc.listQuotaRequests(orgId, asAuth(request).user.id, query);
-        return reply.send({ success: true, ...result });
-    }));
-    fastify.post('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
-        const { orgId } = OrgIdParamsSchema.parse(request.params);
-        const body = CreateQuotaRequestSchema.parse(request.body);
-        const result = await svc.createQuotaRequest(buildMeta(request), orgId, body);
-        return reply.code(201).send({ success: true, data: result });
-    }));
-    fastify.post('/:orgId/quota-requests/:requestId/approve', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
-        const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
-        const result = await svc.approveQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
-        return reply.send({ success: true, data: result });
-    }));
-    fastify.post('/:orgId/quota-requests/:requestId/reject', auth, withErrorHandling(async (request, reply) => {
-        const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
-        const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
-        const result = await svc.rejectQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
-        return reply.send({ success: true, data: result });
-    }));
     // ═══════════════════════════════════════════════
     // UTILITY
     // ═══════════════════════════════════════════════

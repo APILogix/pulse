@@ -361,10 +361,10 @@ export async function getUserSecuritySummary(userId) {
         repository.listActiveSessionsByUser(userId),
         repository.findMFADevicesByUserId(userId, true),
     ]);
-    const verifiedDevices = devices.filter((d) => d.verified && d.is_active);
+    const verifiedDevices = devices.filter((d) => d.is_verified && (!d.deleted_at));
     const locked = Boolean(user.locked_until) && user.locked_until > new Date();
     return {
-        email_verified: user.email_verified,
+        email_is_verified: user.email_is_verified,
         mfa_enabled: user.mfa_enabled,
         active_session_count: sessions.length,
         verified_mfa_device_count: verifiedDevices.length,

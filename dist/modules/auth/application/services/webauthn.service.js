@@ -6,7 +6,7 @@
 
  * Challenges live in-process LRU (`webauthnChallengeCache`). Credentials in
 
- * `user_mfa_devices` with `device_type = hardware_key`.
+ * `user_mfa_devices` with `type = webauthn`.
 
  */
 import { createHash, randomBytes } from 'crypto';
@@ -45,8 +45,8 @@ function credentialFromDevice(device) {
 }
 function listHardwareKeys(devices) {
     return devices.filter((d) => d.device_type === 'hardware_key' &&
-        d.verified &&
-        d.is_active &&
+        d.is_verified &&
+        (!d.deleted_at) &&
         d.credential_id);
 }
 export async function createWebAuthnRegistrationOptions(userId, deviceName) {
@@ -58,7 +58,7 @@ export async function createWebAuthnRegistrationOptions(userId, deviceName) {
     const existing = listHardwareKeys(devices);
     // Enforce org MFA policy: hardware_key (WebAuthn/passkey) must be permitted
     // and the user must be under the per-user device cap.
-    await assertMfaEnrollmentAllowed(userId, 'hardware_key', devices.filter((d) => d.is_active).length);
+    await assertMfaEnrollmentAllowed(userId, 'hardware_key', devices.filter((d) => (!d.deleted_at)).length);
     const options = await generateRegistrationOptions({
         rpName: webauthnConfig.rpName,
         rpID: webauthnConfig.rpID,
@@ -98,9 +98,8 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
     }
     const { credential } = verification.registrationInfo;
     const allDevices = await repository.findMFADevicesByUserId(userId);
-    const hasOtherPrimary = allDevices.some((d) => d.is_primary && d.is_active);
+    const hasOtherPrimary = allDevices.some((d) => d.is_primary && (!d.deleted_at));
     const isPrimary = !hasOtherPrimary;
-    const existingBackupCodesHash = allDevices.find((d) => d.verified && d.is_active && Array.isArray(d.backup_codes_hash) && d.backup_codes_hash.length > 0)?.backup_codes_hash ?? null;
     const device = await repository.createWebAuthnDevice({
         user_id: userId,
         device_name: input.device_name,
@@ -109,15 +108,16 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
         sign_count: credential.counter,
         is_primary: isPrimary,
     });
-    const generated = existingBackupCodesHash ? null : await generateBackupCodes();
-    mfaBackupTempCache.set(device.id, existingBackupCodesHash ?? generated.hashed);
+    let backupCodes = [];
     await repository.withTransaction(async (client) => {
-        await repository.verifyMFADevice(device.id, userId, existingBackupCodesHash ?? generated.hashed, client);
+        await repository.verifyMFADevice(device.id, userId, client);
         if (isPrimary) {
             await repository.updateMFADevicePrimary(userId, device.id, client);
         }
         await repository.updateUserMFAEnabled(userId, true, client);
-        if (generated) {
+        if (await repository.countUnusedBackupCodes(userId, client) === 0) {
+            const generated = await repository.generateBackupCodesForUser(userId, 10, client);
+            backupCodes = generated.plain;
             await repository.updateBackupCodesGenerated(userId, client);
         }
     });
@@ -132,7 +132,7 @@ export async function verifyWebAuthnRegistration(userId, input, ipAddress, reque
         request_id: requestId,
         metadata: { device_type: 'hardware_key' },
     });
-    return { device_id: device.id, backup_codes: generated?.plain ?? [] };
+    return { device_id: device.id, backup_codes: backupCodes };
 }
 export async function createWebAuthnAuthenticationOptions(userId) {
     const devices = await repository.findMFADevicesByUserId(userId);

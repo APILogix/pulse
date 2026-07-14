@@ -114,6 +114,7 @@ export interface AuthenticatedRequest extends FastifyRequest {
         mfaVerified: boolean;
         stepUpFresh: boolean;
         orgId?: string;
+        currentOrgId?: string;
     };
 }
 export type RequestWithUser = AuthenticatedRequest;

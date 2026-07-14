@@ -73,10 +73,11 @@ export async function startSocialLogin(provider, input, ipAddress, userAgent, re
         org_id: null,
         action: 'user.social_login_started',
         resource_type: 'identity_provider',
-        resource_id: provider,
+        resource_id: null,
         ip_address: ipAddress,
         request_id: requestId,
         user_agent: userAgent,
+        metadata: { provider },
     });
     return {
         authorization_url: buildAuthorizeUrl(provider, 'login', state),
@@ -85,6 +86,10 @@ export async function startSocialLogin(provider, input, ipAddress, userAgent, re
 }
 export async function startIdentityLink(userId, provider, ipAddress, requestId) {
     assertProviderReady(provider);
+    const user = await repository.findUserById(userId);
+    if (!user || user.deleted_at || user.status !== 'active') {
+        throw new AuthError('Your account is no longer available. Sign in again to continue.', AuthErrorCodes.USER_NOT_FOUND, 404);
+    }
     const existing = await repository.findLinkedIdentityByUserProvider(userId, provider);
     if (existing) {
         throw new AuthError('Provider already linked to this account', AuthErrorCodes.IDENTITY_ALREADY_LINKED, 409);
@@ -96,9 +101,10 @@ export async function startIdentityLink(userId, provider, ipAddress, requestId) 
         org_id: null,
         action: 'user.identity_link_started',
         resource_type: 'identity_provider',
-        resource_id: provider,
+        resource_id: null,
         ip_address: ipAddress,
         request_id: requestId,
+        metadata: { provider },
     });
     return {
         authorization_url: buildAuthorizeUrl(provider, 'link', state),
@@ -139,6 +145,7 @@ export async function completeSocialLogin(profile, flow, ipAddress, userAgent, r
                 full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
                 password: null,
                 email_verified: true,
+                avatar_url: profile.avatarUrl,
             }, client);
             await repository.createLinkedIdentity({
                 user_id: user.id,
@@ -252,17 +259,25 @@ export async function completeIdentityLink(profile, flow, ipAddress, requestId) 
             linked_at: existingByProvider.linked_at,
         };
     }
-    const created = await repository.createLinkedIdentity({
-        user_id: userId,
-        provider: profile.provider,
-        provider_subject: profile.subject,
-        provider_email: profile.email,
-        profile_metadata: {
-            display_name: profile.displayName,
-            ...profile.profileMetadata,
-        },
+    // Keep the identity row, last-used timestamp, and imported avatar atomic.
+    // If any write fails, none of the provider data is persisted.
+    const created = await repository.withTransaction(async (client) => {
+        const identity = await repository.createLinkedIdentity({
+            user_id: userId,
+            provider: profile.provider,
+            provider_subject: profile.subject,
+            provider_email: profile.email,
+            profile_metadata: {
+                display_name: profile.displayName,
+                ...profile.profileMetadata,
+            },
+        }, client);
+        await repository.updateLinkedIdentityLastUsed(identity.id, client);
+        if (profile.avatarUrl) {
+            await repository.updateUser(userId, userId, { avatar_url: profile.avatarUrl }, client);
+        }
+        return identity;
     });
-    await repository.updateLinkedIdentityLastUsed(created.id);
     logAudit({
         user_id: userId,
         org_id: null,
@@ -302,8 +317,8 @@ export async function unlinkIdentityProvider(userId, linkId, ipAddress, requestI
     if (!user.password_hash && links.length <= 1) {
         throw new AuthError('Cannot remove the last login method from a passwordless account', AuthErrorCodes.INVALID_OPERATION, 400);
     }
-    const revoked = await repository.revokeLinkedIdentity(userId, linkId);
-    if (!revoked) {
+    const deleted = await repository.deleteLinkedIdentity(userId, linkId);
+    if (!deleted) {
         throw new AuthError('Linked identity not found', AuthErrorCodes.IDENTITY_LINK_FAILED, 404);
     }
     logAudit({

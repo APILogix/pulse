@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { RequestMeta, CursorPaginationQuery, OrgRole } from "../shared/types.js";
 import type { CoreRepository } from "./core.repository.js";
+import { BillingProvisioningService } from "../../billing/provisioning/service.js";
 import type { OrganizationRow, OrgSettingsRow, OrganizationDto, OrgSettingsDto, UserOrganizationDto } from "./core.schema.js";
 export declare function toOrgDto(row: OrganizationRow): OrganizationDto;
 export declare function toSettingsDto(row: OrgSettingsRow): OrgSettingsDto;
@@ -12,6 +13,7 @@ export interface CoreServiceDeps {
     audit: (meta: RequestMeta, data: any) => Promise<void>;
     listOrgApiKeyHashes?: (orgId: string) => Promise<string[]>;
     deleteApiKeyCache?: (hash: string) => void;
+    billingProvisioning: BillingProvisioningService;
 }
 export declare class CoreService {
     private deps;

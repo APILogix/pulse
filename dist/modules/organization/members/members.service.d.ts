@@ -26,7 +26,7 @@ export interface MembersServiceDependencies {
 export declare class MembersService {
     private readonly deps;
     constructor(deps: MembersServiceDependencies);
-    hasSufficientRole(member: OrgMemberRow, required: OrgRole): boolean;
+    hasMinRole(member: OrgMemberRow, required: OrgRole): boolean;
     requireMember(orgId: string, userId: string, minRole?: OrgRole): Promise<OrgMemberRow>;
     addMember(meta: RequestMeta, orgId: string, userId: string, role: OrgRole, method?: string): Promise<OrgMemberRow>;
     removeMember(meta: RequestMeta, orgId: string, targetUserId: string, reason?: string): Promise<void>;

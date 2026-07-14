@@ -3,6 +3,7 @@ import { MembersService } from "./members/members.service.js";
 import { InvitationsService } from "./invitations/invitations.service.js";
 import { type OrgRole, type RequestMeta, type MemberDto, type InvitationDto, type ScimTokenDto, type SecurityEventDto, type AuditLogDto, type QuotaRequestDto, type OrganizationServiceDependencies, type CursorPaginationQuery } from "./types.js";
 import { CoreService } from "./core/core.service.js";
+import { DomainsService } from './domains/domains.service.js';
 export declare class OrganizationService {
     private repo;
     private log;
@@ -15,6 +16,7 @@ export declare class OrganizationService {
     readonly members: MembersService;
     private scimTokenService;
     private readonly securityEvents;
+    readonly domains: DomainsService;
     constructor(deps: OrganizationServiceDependencies);
     private audit;
     private requireMember;
