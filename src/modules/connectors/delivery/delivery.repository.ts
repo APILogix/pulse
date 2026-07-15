@@ -87,7 +87,7 @@ export class DeliveryRepository {
       const updated = await client.query<DeliveryRow>(
         `UPDATE connector_deliveries
          SET status='sent', attempts=attempts+1, sent_at=NOW(), updated_at=NOW(),
-             external_message_id=$2, response_status_code=$3, response_body=$4,
+             external_message_id=$2, response_status_code=$3, response_body=$4::text,
              provider_response=$4::jsonb, http_status=$3, duration_ms=$5, delivery_latency_ms=$5
          WHERE id=$1
          RETURNING *`,
@@ -300,10 +300,9 @@ export class DeliveryRepository {
       `INSERT INTO connector_delivery_attempts
          (delivery_id, delivery_created_at, attempt_number, status, http_status,
           error_code, error_message, response, duration_ms)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       VALUES ($1, (SELECT created_at FROM connector_deliveries WHERE id = $1), $2, $3, $4, $5, $6, $7, $8)`,
       [
         delivery.id,
-        delivery.created_at,
         delivery.attempts,
         input.status,
         input.httpStatus ?? null,
