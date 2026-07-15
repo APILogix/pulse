@@ -5,7 +5,7 @@
  * connector while enforcing the reliability envelope:
  *   - per-connector rate limiting
  *   - circuit breaker around the external API
- *   - delivery record bookkeeping (notification_deliveries)
+ *   - delivery record bookkeeping (connector_deliveries)
  *   - retry scheduling with exponential backoff + jitter
  *   - dead-letter on exhausted/non-retryable failures
  *

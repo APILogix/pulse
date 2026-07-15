@@ -43,6 +43,15 @@ export declare class DeliveryRepository {
         data: DeliveryRow[];
         total: number;
     }>;
+    getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
+    listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import('../types.js').DeliveryAttemptRow[];
+        total: number;
+    }>;
+    retryDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
     insertDeadLetter(input: {
         originalDeliveryId: string;
         organizationId: string;
@@ -53,5 +62,6 @@ export declare class DeliveryRepository {
         originalPayload: Record<string, unknown>;
         retryAttempts: number;
     }): Promise<void>;
+    private insertAttempt;
 }
 //# sourceMappingURL=delivery.repository.d.ts.map

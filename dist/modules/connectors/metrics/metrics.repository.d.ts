@@ -8,5 +8,26 @@ export declare class ConnectorMetricsRepository {
         tripped: boolean;
     }>;
     insertHealthCheck(connectorId: string, state: HealthState, responseTimeMs: number | null, errorMessage: string | null, details: Record<string, unknown>): Promise<HealthCheckRow>;
+    listHealthChecks(organizationId: string, connectorId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: HealthCheckRow[];
+        total: number;
+    }>;
+    insertTestRun(input: {
+        connectorId: string;
+        triggeredBy: string | null;
+        status: string;
+        response: Record<string, unknown> | null;
+        durationMs: number | null;
+    }): Promise<void>;
+    listTestRuns(organizationId: string, connectorId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import('../types.js').ConnectorTestRunRow[];
+        total: number;
+    }>;
 }
 //# sourceMappingURL=metrics.repository.d.ts.map

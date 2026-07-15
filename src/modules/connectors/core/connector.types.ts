@@ -26,10 +26,15 @@ export const ConnectorTypeSchema = z.enum([
 export type ConnectorType = z.infer<typeof ConnectorTypeSchema>;
 
 export const ConnectorStatusSchema = z.enum([
+  'pending_setup',
   'active',
   'inactive',
+  'disabled',
+  'expired',
+  'revoked',
+  'degraded',
   'error',
-  'pending_setup',
+  'rate_limited',
 ]);
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
 
@@ -40,6 +45,8 @@ export const NotificationSeveritySchema = z.enum([
   'critical',
 ]);
 export type NotificationSeverity = z.infer<typeof NotificationSeveritySchema>;
+export const ConnectorRouteEnvironmentSchema = z.enum(['development', 'staging', 'production']);
+export type ConnectorRouteEnvironment = z.infer<typeof ConnectorRouteEnvironmentSchema>;
 export const HealthStateSchema = z.enum(['healthy', 'degraded', 'unhealthy']);
 export type HealthState = z.infer<typeof HealthStateSchema>;
 // ════════════════════════════════════════════════════════════════════════
@@ -50,35 +57,35 @@ export const SlackConfigSchema = z.object({
   webhookUrl: z.string().url().startsWith('https://hooks.slack.com/').optional(),
   botToken: z.string().min(1).optional(),
   defaultChannel: z.string().min(1).optional(),
-}).refine((c) => Boolean(c.webhookUrl || c.botToken), {
-  message: 'Slack connector requires either webhookUrl or botToken',
+}).strict().refine((c) => true, {
+  message: 'Slack connector requires either webhookUrl or botToken when active',
 });
 export type SlackConfig = z.infer<typeof SlackConfigSchema>;
 
 export const DiscordConfigSchema = z.object({
-  webhookUrl: z.string().url().includes('discord').describe('Discord webhook URL'),
+  webhookUrl: z.string().url().startsWith('https://').includes('discord').describe('Discord webhook URL'),
   username: z.string().max(80).optional(),
   avatarUrl: z.string().url().optional(),
-});
+}).strict();
 export type DiscordConfig = z.infer<typeof DiscordConfigSchema>;
 
 export const TeamsConfigSchema = z.object({
-  webhookUrl: z.string().url(),
-});
+  webhookUrl: z.string().url().startsWith('https://'),
+}).strict();
 export type TeamsConfig = z.infer<typeof TeamsConfigSchema>;
 
 export const PagerDutyConfigSchema = z.object({
   routingKey: z.string().min(1).describe('Events API v2 integration/routing key'),
   defaultSeverityMap: z.record(z.string(), z.string()).optional(),
-});
+}).strict();
 export type PagerDutyConfig = z.infer<typeof PagerDutyConfigSchema>;
 
 export const WebhookConfigSchema = z.object({
-  url: z.string().url(),
+  url: z.string().url().startsWith('https://'),
   method: z.enum(['POST', 'PUT', 'PATCH']).default('POST'),
   headers: z.record(z.string(), z.string()).optional(),
   signingSecret: z.string().min(8).optional(),
-});
+}).strict();
 export type WebhookConfig = z.infer<typeof WebhookConfigSchema>;
 
 export const EmailConfigSchema = z.object({
@@ -92,8 +99,8 @@ export const EmailConfigSchema = z.object({
     secure: z.boolean().default(false),
     user: z.string().optional(),
     pass: z.string().optional(),
-  }).optional(),
-});
+  }).strict().optional(),
+}).strict();
 export type EmailConfig = z.infer<typeof EmailConfigSchema>;
 
 export const SmsConfigSchema = z.object({
@@ -102,7 +109,7 @@ export const SmsConfigSchema = z.object({
   authToken: z.string().min(1),
   fromNumber: z.string().min(1),
   toNumbers: z.array(z.string().min(1)).min(1),
-});
+}).strict();
 export type SmsConfig = z.infer<typeof SmsConfigSchema>;
 
 /** Discriminated map from connector type to its config schema. */
@@ -181,9 +188,15 @@ export interface INotificationConnector {
   readonly type: ConnectorType;
 
   validateConfig(config: ConnectorConfig): ValidationResult;
+  validateConfiguration(config: ConnectorConfig): ValidationResult;
   send(notification: NotificationPayload): Promise<DeliveryResult>;
   testConnection(): Promise<ConnectionTestResult>;
   getHealthStatus(): Promise<HealthStatus>;
+  healthCheck(): Promise<HealthStatus>;
+  rotateSecret(config: ConnectorConfig): Promise<ValidationResult>;
+  refreshCredentials(credentials?: ConnectorConfig): Promise<ValidationResult>;
+  serialize(): ConnectorConfig;
+  deserialize(config: ConnectorConfig): ValidationResult;
 
   supportsRichFormatting(): boolean;
   supportsThreading(): boolean;
@@ -207,8 +220,11 @@ export interface ConnectorContext {
 // ════════════════════════════════════════════════════════════════════════
 
 export const UuidSchema = z.string().uuid();
-export const OrgIdParamsSchema = z.object({ orgId: UuidSchema });
-export const ConnectorParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema });
+export const OrgIdParamsSchema = z.object({ orgId: UuidSchema }).strict();
+export const ConnectorParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema }).strict();
+export const DeliveryParamsSchema = z.object({ orgId: UuidSchema, deliveryId: UuidSchema }).strict();
+export const ConnectorDeliveryParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema, deliveryId: UuidSchema }).strict();
+export const ConnectorRouteParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema, routeId: UuidSchema }).strict();
 
 export const CreateConnectorSchema = z.object({
   name: z.string().min(1).max(255).trim(),
@@ -222,7 +238,7 @@ export const CreateConnectorSchema = z.object({
   maxRetries: z.number().int().min(0).max(10).optional(),
   failureThreshold: z.number().int().min(1).max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
-});
+}).strict();
 export type CreateConnectorBody = z.infer<typeof CreateConnectorSchema>;
 
 export const UpdateConnectorSchema = z.object({
@@ -236,7 +252,7 @@ export const UpdateConnectorSchema = z.object({
   maxRetries: z.number().int().min(0).max(10).optional(),
   failureThreshold: z.number().int().min(1).max(100).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
-});
+}).strict();
 export type UpdateConnectorBody = z.infer<typeof UpdateConnectorSchema>;
 
 export const ListConnectorsQuerySchema = z.object({
@@ -245,7 +261,7 @@ export const ListConnectorsQuerySchema = z.object({
   search: z.string().max(255).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   offset: z.coerce.number().int().min(0).default(0),
-});
+}).strict();
 export type ListConnectorsQuery = z.infer<typeof ListConnectorsQuerySchema>;
 
 export const SendTestNotificationSchema = z.object({
@@ -258,9 +274,66 @@ export const SendTestNotificationSchema = z.object({
     label: z.string().max(255),
     value: z.string().max(2000),
     short: z.boolean().optional(),
-  })).max(20).optional(),
-});
+  }).strict()).max(20).optional(),
+}).strict();
 export type SendTestNotificationBody = z.infer<typeof SendTestNotificationSchema>;
+
+export const RotateSecretSchema = z.object({
+  config: z.record(z.string(), z.unknown()),
+}).strict();
+export type RotateSecretBody = z.infer<typeof RotateSecretSchema>;
+
+export const ValidateConfigurationSchema = z.object({
+  type: ConnectorTypeSchema,
+  config: z.record(z.string(), z.unknown()),
+}).strict();
+export type ValidateConfigurationBody = z.infer<typeof ValidateConfigurationSchema>;
+
+export const PreviewNotificationSchema = SendTestNotificationSchema.extend({
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+export type PreviewNotificationBody = z.infer<typeof PreviewNotificationSchema>;
+
+export const CreateConnectorRouteSchema = z.object({
+  projectId: UuidSchema.optional().nullable(),
+  environment: ConnectorRouteEnvironmentSchema.optional().nullable(),
+  eventType: z.string().min(1).max(100),
+  severity: NotificationSeveritySchema.optional().nullable(),
+  enabled: z.boolean().default(true),
+}).strict();
+export type CreateConnectorRouteBody = z.infer<typeof CreateConnectorRouteSchema>;
+
+export const UpdateConnectorRouteSchema = z.object({
+  projectId: UuidSchema.optional().nullable(),
+  environment: ConnectorRouteEnvironmentSchema.optional().nullable(),
+  eventType: z.string().min(1).max(100).optional(),
+  severity: NotificationSeveritySchema.optional().nullable(),
+  enabled: z.boolean().optional(),
+}).strict();
+export type UpdateConnectorRouteBody = z.infer<typeof UpdateConnectorRouteSchema>;
+
+export const OAuthCallbackSchema = z.object({
+  state: z.string().min(16).max(255),
+  code: z.string().min(1).max(4096).optional(),
+  error: z.string().max(512).optional(),
+  accessToken: z.string().min(1).max(8192).optional(),
+  refreshToken: z.string().min(1).max(8192).optional(),
+  tokenType: z.string().min(1).max(100).default('Bearer').optional(),
+  scope: z.string().max(2000).optional(),
+  expiresIn: z.number().int().positive().max(31_536_000).optional(),
+  expiresAt: z.coerce.date().optional(),
+}).strict().refine((body) => Boolean(body.code || body.error), {
+  message: 'OAuth callback requires either code or error',
+}).refine((body) => !(body.accessToken || body.refreshToken) || Boolean(body.code), {
+  message: 'OAuth token material requires a successful authorization code callback',
+});
+export type OAuthCallbackBody = z.infer<typeof OAuthCallbackSchema>;
+
+export const PaginationQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  offset: z.coerce.number().int().min(0).default(0),
+}).strict();
+export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
 
 // ════════════════════════════════════════════════════════════════════════
 // DB ROW TYPES — snake_case
@@ -269,6 +342,7 @@ export type SendTestNotificationBody = z.infer<typeof SendTestNotificationSchema
 export interface ConnectorConfigRow {
   id: string;
   organization_id: string;
+  project_id: string | null;
   name: string;
   type: ConnectorType;
   status: ConnectorStatus;
@@ -290,6 +364,7 @@ export interface ConnectorConfigRow {
   failure_threshold: number;
   metadata: Record<string, unknown>;
   created_by: string | null;
+  updated_by: string | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
@@ -303,6 +378,54 @@ export interface HealthCheckRow {
   error_message: string | null;
   details: Record<string, unknown>;
   checked_at: Date;
+}
+
+export type ConnectorProvider = INotificationConnector;
+
+export interface ConnectorRouteRow {
+  id: string;
+  connector_id: string;
+  project_id: string | null;
+  environment: ConnectorRouteEnvironment | null;
+  event_type: string;
+  severity: NotificationSeverity | null;
+  enabled: boolean;
+  created_at: Date;
+}
+
+export interface ConnectorAuditLogRow {
+  id: string;
+  organization_id: string;
+  connector_id: string | null;
+  action: string;
+  actor_id: string | null;
+  actor_type: string | null;
+  previous_state: Record<string, unknown> | null;
+  new_state: Record<string, unknown> | null;
+  changes_summary: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  request_id: string | null;
+  created_at: Date;
+}
+
+export interface ConnectorTestRunRow {
+  id: string;
+  connector_id: string;
+  triggered_by: string | null;
+  status: string;
+  response: Record<string, unknown> | null;
+  duration_ms: number | null;
+  created_at: Date;
+}
+
+export interface ConnectorOAuthStateRow {
+  id: string;
+  connector_id: string | null;
+  state: string;
+  code_verifier: string | null;
+  expires_at: Date;
+  created_at: Date;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -354,12 +477,49 @@ export interface ConnectorTypeInfoDto {
   }>;
 }
 
+export interface ConnectorRouteDto {
+  id: string;
+  connectorId: string;
+  projectId: string | null;
+  environment: ConnectorRouteEnvironment | null;
+  eventType: string;
+  severity: NotificationSeverity | null;
+  enabled: boolean;
+  createdAt: Date;
+}
+
+export interface ConnectorAuditLogDto {
+  id: string;
+  connectorId: string | null;
+  action: string;
+  actorId: string | null;
+  actorType: string | null;
+  changesSummary: Record<string, unknown> | null;
+  createdAt: Date;
+}
+
+export interface ConnectorTestRunDto {
+  id: string;
+  connectorId: string;
+  status: string;
+  response: Record<string, unknown> | null;
+  durationMs: number | null;
+  createdAt: Date;
+}
+
+export interface ConnectorOAuthStartDto {
+  state: string;
+  codeChallenge: string;
+  codeChallengeMethod: 'S256';
+  expiresAt: Date;
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // REQUEST METADATA (for audit)
 // ════════════════════════════════════════════════════════════════════════
 
 export interface RequestMeta {
-  actorUserId: string;
+  actorUserId: string | null;
   actorIp: string;
   actorUserAgent: string | null;
   requestId: string;

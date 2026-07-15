@@ -16,11 +16,13 @@
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 import { logger } from '../../config/logger.js';
+import { pgboss } from '../../lib/pgboss.js';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
 import { ConnectorMonitor } from './monitor.js';
 import { connectorRoutes } from './routes.js';
+import { slackConnectorRoutes } from './providers/slack/slack.routes.js';
 import './registry.js'; // ensure built-in connector types register at boot
 
 const moduleLogger = logger.child({ component: 'connectors-module' });
@@ -49,12 +51,20 @@ async function connectorsModule(
     emitEvent: async (event, payload) => {
       fastify.log.info({ event, payload }, 'Connector event emitted');
     },
+    enqueueConnectorJob: async (queue, data, options) => {
+      const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
+      if (typeof boss.createQueue === 'function') {
+        await boss.createQueue(queue).catch(() => undefined);
+      }
+      return pgboss.send(queue, data, options as never);
+    },
   });
   const monitor = new ConnectorMonitor(repository, dispatcher, service, fastify.log);
 
   fastify.decorate('connectors', { repository, dispatcher, service, monitor });
 
   await fastify.register(connectorRoutes, { prefix: '/organizations/:orgId/connectors' });
+  await fastify.register(slackConnectorRoutes);
 
   // NOTE: monitor.start() is intentionally NOT called here. Background sweeps
   // run only in the worker process (workers/main.ts → startConnectorMonitor).

@@ -18,6 +18,9 @@ export class BaseConnector {
             errors: parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
         };
     }
+    validateConfiguration(config) {
+        return this.validateConfig(config);
+    }
     async send(notification) {
         const start = Date.now();
         try {
@@ -54,6 +57,21 @@ export class BaseConnector {
             checkedAt: new Date().toISOString(),
             ...(test.details ? { details: test.details } : {}),
         };
+    }
+    async healthCheck() {
+        return this.getHealthStatus();
+    }
+    async rotateSecret(config) {
+        return this.validateConfiguration(config);
+    }
+    async refreshCredentials(credentials) {
+        return { valid: true, errors: [], normalized: credentials ?? this.serialize() };
+    }
+    serialize() {
+        return { ...this.ctx.config };
+    }
+    deserialize(config) {
+        return this.validateConfiguration(config);
     }
     getRateLimitInfo() {
         return this.ctx.rateLimit;

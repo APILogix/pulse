@@ -80,7 +80,7 @@ async function bootstrapWorkers(): Promise<void> {
 
   authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
   billingJobWorkers = await registerBillingJobWorkers(workerLogger);
-  connectorMonitor = startConnectorMonitor(workerLogger);
+  connectorMonitor = await startConnectorMonitor(workerLogger);
   alertingWorkers = await registerAlertingWorkers(workerLogger);
   analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
 
@@ -93,7 +93,7 @@ async function bootstrapWorkers(): Promise<void> {
   startAuthCleanupWorker();
 
   workerLogger.info('Worker process started');
-  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors-monitor, alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
+  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
 }
 
 bootstrapWorkers().catch((error) => {

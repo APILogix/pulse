@@ -27,6 +27,27 @@ export interface CreateConnectorInput {
     metadata: Record<string, unknown>;
     createdBy: string | null;
 }
+export interface UpsertConnectorCredentialInput {
+    organizationId: string;
+    connectorId: string;
+    credentialType: string;
+    keyName: string;
+    encryptedValue: Buffer;
+    expiresAt: Date | null;
+    actorUserId: string | null;
+}
+export interface ConnectorCredentialRow {
+    id: string;
+    connector_id: string;
+    credential_type: string;
+    key_name: string;
+    encrypted_value: Buffer;
+    algorithm: string;
+    version: number;
+    expires_at: Date | null;
+    created_at: Date;
+    updated_at: Date;
+}
 export declare class ConnectorRepository {
     private readonly db;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
@@ -48,6 +69,8 @@ export declare class ConnectorRepository {
     /** All non-deleted connectors in an active/error state (for health sweeps). */
     listMonitorable(): Promise<ConnectorConfigRow[]>;
     update(organizationId: string, id: string, fields: Record<string, unknown>): Promise<ConnectorConfigRow>;
+    upsertCredential(input: UpsertConnectorCredentialInput): Promise<void>;
+    getCredential(organizationId: string, connectorId: string, keyName: string): Promise<ConnectorCredentialRow | null>;
     softDelete(organizationId: string, id: string): Promise<void>;
     setStatus(organizationId: string, id: string, status: ConnectorStatus): Promise<void>;
 }

@@ -2,7 +2,6 @@ import { pgboss } from '../../lib/pgboss.js';
 import { AlertingRepository } from './repository.js';
 import { AlertBatchProcessor } from './batch-processor.js';
 import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 export const ALERT_JOBS = {
     formBatches: 'alert.form-batches',
     processBatch: 'alert.process-batch',
@@ -36,8 +35,7 @@ export async function registerAlertingWorkers(logger, config = {}) {
     const log = logger.child({ component: 'alerting-workers' });
     const alertRepo = new AlertingRepository();
     const connectorRepo = new ConnectorRepository();
-    const dispatcher = new NotificationDispatcher(connectorRepo, logger);
-    const processor = new AlertBatchProcessor(alertRepo, connectorRepo, dispatcher, logger);
+    const processor = new AlertBatchProcessor(alertRepo, connectorRepo, async (queue, data, options) => pgboss.send(queue, data, options), logger);
     // Ensure queues exist (pg-boss v10+ requires explicit creation in some setups).
     await safeCreateQueue(ALERT_JOBS.formBatches);
     await safeCreateQueue(ALERT_JOBS.processBatch);

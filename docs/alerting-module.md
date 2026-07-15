@@ -1,13 +1,14 @@
 ﻿# Alerting Module
 
 Enterprise alerting: rule CRUD, event ingestion with deduplication, dynamic
-routing to org-configured connectors, and high-throughput background delivery
+routing to org-configured connectors, and high-throughput background fan-out
 via pg-boss batches of 100 processed with `Promise.allSettled` (no sequential
-async loops, no N+1 writes).
+async loops, no N+1 writes). Alerting resolves recipients and enqueues
+`connector-send`; provider delivery is performed by the connectors workers.
 
 Built on top of migration `migrations2/003_alerting_create_core_schema` and reuses the
-**connectors** module for delivery (`NotificationDispatcher`, `ConnectorRepository`,
-and the shared circuit-breaker / rate-limiter in `connectors/runtime.ts`).
+**connectors** module for delivery (`connector-send`, `ConnectorRepository`,
+and the connector worker retry/circuit-breaker/rate-limiter path).
 
 ## File layout (`src/modules/alerting/`)
 
@@ -38,9 +39,13 @@ and the shared circuit-breaker / rate-limiter in `connectors/runtime.ts`).
   query (`= ANY($1::uuid[])`).
 - **Bulk writes.** Status updates use `UPDATE â€¦ FROM UNNEST(...)`; delivery logs
   use `INSERT â€¦ SELECT FROM UNNEST(...)`. No per-row writes in the worker.
-- **Bulkhead + circuit breaker.** Each connector has its own circuit breaker
-  (shared with the connectors feature), so one failing/slow connector only
-  affects its own deliveries, not the batch.
+- **Queued connector delivery.** The batch worker records alert delivery
+  attempts as `queued` after durable `connector-send` enqueue. Connector
+  workers own provider I/O, circuit breakers, retries, and delivery history.
+- **Connector route targets.** Alert routing rules can target connector routes
+  through `target_route_ids`. The batch worker resolves enabled
+  `connector_routes` by organization ownership and matches project,
+  environment, event type, and severity before enqueueing `connector-send`.
 
 ## pg-boss jobs
 
@@ -69,9 +74,10 @@ teamSize/teamConcurrency â€” 5 independent workers), `retryLimit: 3`,
    `duplicate_count`) â†’ silence check (suppress at ingest if a matcher hits) â†’
    persist as `pending` (or `silenced`) + write history.
 2. **Form batch** (worker): claim pending â†’ `alert_event_batches`.
-3. **Process batch** (worker): resolve routing per event â†’ deliver to connectors
-   concurrently â†’ bulk-update event statuses â†’ bulk-insert
-   `alert_delivery_attempts` â†’ complete the batch (`completed`/`partial`/`failed`).
+3. **Process batch** (worker): resolve routing per event â†’ enqueue
+   `connector-send` jobs concurrently â†’ bulk-update event statuses â†’
+   bulk-insert queued `alert_delivery_attempts` â†’ complete the batch
+   (`completed`/`partial`/`failed`).
 4. **Acknowledge / Resolve / Silence**: user actions write to the event and an
    `alert_event_history` audit row.
 5. **Auto-resolve** (worker): events past `auto_resolve_at` are resolved.
@@ -110,9 +116,11 @@ teamSize/teamConcurrency â€” 5 independent workers), `retryLimit: 3`,
 
 `test/unit/modules/alerting.test.ts` covers the pure logic â€” fingerprint/dedup,
 the evaluation engine (operators + AND/OR grouping), template rendering +
-sanitization, and routing resolution incl. fallback:
+sanitization, and routing resolution incl. fallback.
+`test/unit/modules/alerting-batch-processor.test.ts` covers connector job
+enqueueing from the batch worker:
 
 ```bash
-npx vitest run test/unit/modules/alerting.test.ts
+npx vitest run test/unit/modules/alerting.test.ts test/unit/modules/alerting-batch-processor.test.ts
 ```
 

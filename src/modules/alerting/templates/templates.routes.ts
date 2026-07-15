@@ -52,7 +52,6 @@ function buildMeta(request: FastifyRequest): RequestMeta {
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
-  console.log('[alerting.handleError]', error);
   if (error instanceof AppError) {
     return reply.code(error.statusCode).send({
       success: false,

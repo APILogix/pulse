@@ -6,11 +6,13 @@ export * from './core/connector.repository.js';
 export * from './delivery/delivery.repository.js';
 export * from './metrics/metrics.repository.js';
 export * from './audit/audit.repository.js';
+export * from './routing/routes.repository.js';
 export declare class ConnectorRepository {
     private readonly core;
     private readonly delivery;
     private readonly metrics;
     private readonly audit;
+    private readonly routes;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     create(input: CreateConnectorInput): Promise<ConnectorConfigRow>;
     findById(organizationId: string, id: string): Promise<ConnectorConfigRow | null>;
@@ -22,6 +24,8 @@ export declare class ConnectorRepository {
     }>;
     listMonitorable(): Promise<ConnectorConfigRow[]>;
     update(organizationId: string, id: string, fields: Record<string, unknown>): Promise<ConnectorConfigRow>;
+    upsertCredential(input: import('./core/connector.repository.js').UpsertConnectorCredentialInput): Promise<void>;
+    getCredential(organizationId: string, connectorId: string, keyName: string): Promise<import("./core/connector.repository.js").ConnectorCredentialRow | null>;
     softDelete(organizationId: string, id: string): Promise<void>;
     setStatus(organizationId: string, id: string, status: ConnectorStatus): Promise<void>;
     insertDelivery(input: InsertDeliveryInput): Promise<DeliveryRow>;
@@ -43,6 +47,15 @@ export declare class ConnectorRepository {
         data: DeliveryRow[];
         total: number;
     }>;
+    getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
+    listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import("./types.js").DeliveryAttemptRow[];
+        total: number;
+    }>;
+    retryDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
     insertDeadLetter(input: {
         originalDeliveryId: string;
         organizationId: string;
@@ -59,6 +72,27 @@ export declare class ConnectorRepository {
         tripped: boolean;
     }>;
     insertHealthCheck(connectorId: string, state: HealthState, responseTimeMs: number | null, errorMessage: string | null, details: Record<string, unknown>): Promise<HealthCheckRow>;
+    listHealthChecks(organizationId: string, connectorId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: HealthCheckRow[];
+        total: number;
+    }>;
+    insertTestRun(input: {
+        connectorId: string;
+        triggeredBy: string | null;
+        status: string;
+        response: Record<string, unknown> | null;
+        durationMs: number | null;
+    }): Promise<void>;
+    listTestRuns(organizationId: string, connectorId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import("./types.js").ConnectorTestRunRow[];
+        total: number;
+    }>;
     insertAuditLog(input: {
         organizationId: string;
         connectorId: string | null;
@@ -72,5 +106,31 @@ export declare class ConnectorRepository {
         userAgent?: string | null;
         requestId?: string | null;
     }): Promise<void>;
+    listAuditLogs(organizationId: string, connectorId: string | null, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import("./types.js").ConnectorAuditLogRow[];
+        total: number;
+    }>;
+    createRoute(organizationId: string, connectorId: string, input: import('./types.js').CreateConnectorRouteBody): Promise<import("./types.js").ConnectorRouteRow>;
+    updateRoute(organizationId: string, connectorId: string, routeId: string, input: import('./types.js').UpdateConnectorRouteBody): Promise<import("./types.js").ConnectorRouteRow | null>;
+    deleteRoute(organizationId: string, connectorId: string, routeId: string): Promise<boolean>;
+    listRoutes(organizationId: string, connectorId: string, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import("./types.js").ConnectorRouteRow[];
+        total: number;
+    }>;
+    listRoutesByIds(organizationId: string, routeIds: string[]): Promise<import("./types.js").ConnectorRouteRow[]>;
+    createOAuthState(input: {
+        connectorId: string;
+        state: string;
+        codeVerifier: string;
+        expiresAt: Date;
+    }): Promise<import("./types.js").ConnectorOAuthStateRow>;
+    consumeOAuthState(organizationId: string, connectorId: string, state: string): Promise<import("./types.js").ConnectorOAuthStateRow | null>;
+    cleanupExpiredOAuthStates(): Promise<number>;
 }
 //# sourceMappingURL=repository.d.ts.map

@@ -12,7 +12,6 @@ function buildMeta(request) {
     };
 }
 function handleError(error, reply) {
-    console.log('[alerting.handleError]', error);
     if (error instanceof AppError) {
         return reply.code(error.statusCode).send({
             success: false,

@@ -1,6 +1,6 @@
 {
   "name": "pulsiv",
-  "version": "2.6.9",
+  "version": "3.0.0",
   "description": "See [docs/enterprise-auth-implementation-plan.md](docs/enterprise-auth-implementation-plan.md) for the enterprise-grade backend remediation plan.",
   "main": "index.js",
   "directories": {

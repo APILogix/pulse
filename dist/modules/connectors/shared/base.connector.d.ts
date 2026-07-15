@@ -2,7 +2,7 @@
  * Abstract base connector (Strategy pattern).
  *
  * Concrete connectors extend this and implement:
- *   - `configSchema` (Zod) for `validateConfig`
+ *   - `configSchema` (Zod) for `validateConfig` / `validateConfiguration`
  *   - `deliver()` for the actual provider call
  *   - capability flags + rate-limit info
  *
@@ -29,8 +29,14 @@ export declare abstract class BaseConnector implements INotificationConnector {
     abstract supportsThreading(): boolean;
     abstract supportsAttachments(): boolean;
     validateConfig(config: ConnectorConfig): ValidationResult;
+    validateConfiguration(config: ConnectorConfig): ValidationResult;
     send(notification: NotificationPayload): Promise<DeliveryResult>;
     getHealthStatus(): Promise<HealthStatus>;
+    healthCheck(): Promise<HealthStatus>;
+    rotateSecret(config: ConnectorConfig): Promise<ValidationResult>;
+    refreshCredentials(credentials?: ConnectorConfig): Promise<ValidationResult>;
+    serialize(): ConnectorConfig;
+    deserialize(config: ConnectorConfig): ValidationResult;
     getRateLimitInfo(): RateLimitInfo;
     /** Typed view of the injected config, validated lazily by callers. */
     protected config<T>(): T;

@@ -8,23 +8,23 @@
  *   - Event status updates and delivery-attempt logs are written with ONE
  *     bulk statement each (UNNEST), not per row.
  *
- * Delivery reuses the connector module: the same NotificationDispatcher used
- * by the connectors feature instantiates a live connector and the per-connector
- * circuit breaker / rate limiter from connectors/runtime guard the external API
- * (Bulkhead: a slow connector only blocks its own events, never the batch).
+ * Delivery reuses the connector module by enqueuing connector-send jobs. This
+ * batch processor resolves routes and records queued attempts; connector
+ * pg-boss workers perform provider I/O and connector delivery bookkeeping.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { AlertingRepository, type DeliveryAttemptInsert } from './repository.js';
+import type { AlertingRepository, DeliveryAttemptInsert } from './repository.js';
 import { resolveRouting, type RoutableAlert } from './routing.js';
 import type { AlertEventRow, AlertEventStatus, AlertRoutingRuleRow } from './types.js';
-import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
-import {
-  circuitAllows,
-  recordCircuitFailure,
-  recordCircuitSuccess,
-} from '../connectors/runtime.js';
-import type { ConnectorConfigRow, NotificationPayload, NotificationSeverity } from '../connectors/types.js';
+import type { ConnectorRepository } from '../connectors/repository.js';
+import type {
+  ConnectorConfigRow,
+  ConnectorRouteEnvironment,
+  ConnectorRouteRow,
+  NotificationPayload,
+  NotificationSeverity,
+} from '../connectors/types.js';
+import { CONNECTOR_JOBS, type ConnectorJobName } from '../connectors/job.constants.js';
 
 export interface BatchJobData {
   batchId: string;
@@ -50,11 +50,29 @@ interface EventOutcome {
   skipped: boolean;
 }
 
+interface DeliveryTarget {
+  connectorId: string;
+  routeId: string | null;
+}
+
+interface RouteMatchContext {
+  projectId: string | null;
+  environment: ConnectorRouteEnvironment | null;
+  eventType: string;
+  severity: NotificationSeverity;
+}
+
+type EnqueueConnectorJob = (
+  queue: ConnectorJobName,
+  data: Record<string, unknown>,
+  options?: Record<string, unknown>,
+) => Promise<unknown>;
+
 export class AlertBatchProcessor {
   constructor(
     private readonly alertRepo: AlertingRepository,
     private readonly connectorRepo: ConnectorRepository,
-    private readonly dispatcher: NotificationDispatcher,
+    private readonly enqueueConnectorJob: EnqueueConnectorJob,
     private readonly logger: FastifyBaseLogger,
   ) {}
 
@@ -72,14 +90,18 @@ export class AlertBatchProcessor {
 
     // 2. Load routing rules + every referenced connector in single queries.
     const routingRules = await this.alertRepo.listRoutingRules(data.organizationId);
-    const connectorIds = this.uniqueConnectorIds(events, routingRules);
+    const connectorRoutes = await this.connectorRepo.listRoutesByIds(
+      data.organizationId,
+      this.uniqueRouteIds(routingRules),
+    );
+    const connectorIds = this.uniqueConnectorIds(events, routingRules, connectorRoutes);
     const connectors = await this.connectorRepo.getByIds(connectorIds);
     const connectorMap = new Map<string, ConnectorConfigRow>(connectors.map((c) => [c.id, c]));
 
     // 3. Process ALL events concurrently. Promise.allSettled guarantees one
     //    failing event never aborts the batch.
     const settled = await Promise.allSettled(
-      events.map((event) => this.processSingleEvent(event, routingRules, connectorMap, data.batchId)),
+      events.map((event) => this.processSingleEvent(event, routingRules, connectorRoutes, connectorMap, data.batchId)),
     );
 
     // 4. Fold results into bulk-update + bulk-insert payloads.
@@ -124,13 +146,15 @@ export class AlertBatchProcessor {
   private async processSingleEvent(
     event: AlertEventRow,
     routingRules: AlertRoutingRuleRow[],
+    connectorRoutes: ConnectorRouteRow[],
     connectorMap: Map<string, ConnectorConfigRow>,
     batchId: string,
   ): Promise<EventOutcome> {
     const routable: RoutableAlert = { severity: event.severity, source: event.source, labels: event.labels };
     const decision = resolveRouting(routable, routingRules);
+    const targets = this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes);
 
-    if (decision.connectorIds.length === 0) {
+    if (targets.length === 0) {
       // No route matched — nothing to deliver. Event still transitions to firing.
       return { eventId: event.id, newStatus: 'firing', deliveries: [], delivered: false, skipped: true };
     }
@@ -139,7 +163,7 @@ export class AlertBatchProcessor {
 
     // Fan out to every target connector concurrently (Bulkhead per connector).
     const perConnector = await Promise.allSettled(
-      decision.connectorIds.map((cid) => this.deliverToConnector(event, cid, connectorMap, decision.matchedRuleId, batchId, payload)),
+      targets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)),
     );
 
     const deliveries: DeliveryAttemptInsert[] = [];
@@ -162,12 +186,12 @@ export class AlertBatchProcessor {
 
   private async deliverToConnector(
     event: AlertEventRow,
-    connectorId: string,
+    target: DeliveryTarget,
     connectorMap: Map<string, ConnectorConfigRow>,
-    routeId: string | null,
     batchId: string,
     payload: NotificationPayload,
   ): Promise<{ log: DeliveryAttemptInsert; delivered: boolean }> {
+    const { connectorId, routeId } = target;
     const base: DeliveryAttemptInsert = {
       organizationId: event.organization_id,
       eventId: event.id,
@@ -187,46 +211,33 @@ export class AlertBatchProcessor {
       return { log: { ...base, status: 'failed', errorMessage: 'Connector not found or deleted', errorCategory: 'config' }, delivered: false };
     }
 
-    // Circuit breaker (shared with the connectors feature).
-    const cbKey = `connector:${connectorId}`;
-    if (!circuitAllows(cbKey, { failureThreshold: connector.failure_threshold })) {
-      return { log: { ...base, status: 'failed', errorMessage: 'Circuit breaker open', errorCategory: 'circuit_open' }, delivered: false };
-    }
-
     try {
-      const instance = this.dispatcher.instantiate(connector);
-      const result = await instance.send(payload);
-      if (result.success) {
-        recordCircuitSuccess(cbKey);
-        await this.connectorRepo.recordSuccess(connectorId);
-        return {
-          log: {
-            ...base,
-            status: 'sent',
-            responseStatusCode: result.statusCode ?? null,
-            latencyMs: result.latencyMs,
-            externalMessageId: result.externalMessageId ?? null,
-          },
-          delivered: true,
-        };
-      }
-      recordCircuitFailure(cbKey, { failureThreshold: connector.failure_threshold });
-      await this.connectorRepo.recordFailure(connectorId);
+      const jobId = await this.enqueueConnectorJob(
+        CONNECTOR_JOBS.send,
+        {
+          organizationId: event.organization_id,
+          connectorId,
+          payload,
+          routeId,
+        },
+        { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 },
+      );
+      return {
+        log: {
+          ...base,
+          status: 'queued',
+          externalMessageId: typeof jobId === 'string' ? jobId : null,
+        },
+        delivered: true,
+      };
+    } catch (err) {
       return {
         log: {
           ...base,
           status: 'failed',
-          responseStatusCode: result.statusCode ?? null,
-          errorMessage: (result.errorMessage ?? 'Delivery failed').slice(0, 2000),
-          errorCategory: result.failureCategory ?? 'unknown',
-          latencyMs: result.latencyMs,
+          errorMessage: (err instanceof Error ? err.message : 'Connector enqueue failed').slice(0, 2000),
+          errorCategory: 'queue',
         },
-        delivered: false,
-      };
-    } catch (err) {
-      recordCircuitFailure(cbKey, { failureThreshold: connector.failure_threshold });
-      return {
-        log: { ...base, status: 'failed', errorMessage: (err instanceof Error ? err.message : 'Unknown error').slice(0, 2000), errorCategory: 'unknown' },
         delivered: false,
       };
     }
@@ -249,15 +260,97 @@ export class AlertBatchProcessor {
     };
   }
 
-  private uniqueConnectorIds(events: AlertEventRow[], routingRules: AlertRoutingRuleRow[]): string[] {
+  private uniqueConnectorIds(
+    events: AlertEventRow[],
+    routingRules: AlertRoutingRuleRow[],
+    connectorRoutes: ConnectorRouteRow[],
+  ): string[] {
     const ids = new Set<string>();
     for (const event of events) {
       const decision = resolveRouting(
         { severity: event.severity, source: event.source, labels: event.labels },
         routingRules,
       );
-      decision.connectorIds.forEach((id) => ids.add(id));
+      this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes)
+        .forEach((target) => ids.add(target.connectorId));
     }
     return [...ids];
+  }
+
+  private uniqueRouteIds(routingRules: AlertRoutingRuleRow[]): string[] {
+    const ids = new Set<string>();
+    for (const rule of routingRules) {
+      for (const routeId of rule.target_route_ids ?? []) ids.add(routeId);
+    }
+    return [...ids];
+  }
+
+  private resolveDeliveryTargets(
+    event: AlertEventRow,
+    connectorIds: string[],
+    routeIds: string[],
+    connectorRoutes: ConnectorRouteRow[],
+  ): DeliveryTarget[] {
+    const targets = new Map<string, DeliveryTarget>();
+    for (const connectorId of connectorIds) {
+      targets.set(`${connectorId}:direct`, { connectorId, routeId: null });
+    }
+
+    if (routeIds.length === 0) return [...targets.values()];
+
+    const routeIdSet = new Set(routeIds);
+    const context = this.routeMatchContext(event);
+    for (const route of connectorRoutes) {
+      if (!routeIdSet.has(route.id)) continue;
+      if (!this.routeMatches(route, context)) continue;
+      targets.set(`${route.connector_id}:${route.id}`, {
+        connectorId: route.connector_id,
+        routeId: route.id,
+      });
+    }
+    return [...targets.values()];
+  }
+
+  private routeMatches(route: ConnectorRouteRow, context: RouteMatchContext): boolean {
+    if (route.project_id !== null && route.project_id !== context.projectId) return false;
+    if (route.environment !== null && route.environment !== context.environment) return false;
+    if (route.severity !== null && route.severity !== context.severity) return false;
+    return route.event_type === context.eventType;
+  }
+
+  private routeMatchContext(event: AlertEventRow): RouteMatchContext {
+    const payload = event.payload as Record<string, unknown>;
+    const projectId = this.firstString(payload.projectId, payload.project_id, event.labels.projectId, event.labels.project_id);
+    const environment = this.toRouteEnvironment(this.firstString(
+      payload.environment,
+      payload.env,
+      event.labels.environment,
+      event.labels.env,
+    ));
+    const eventType = this.firstString(
+      payload.eventType,
+      payload.event_type,
+      payload.notificationType,
+      payload.type,
+      event.source,
+    ) ?? event.source;
+
+    return {
+      projectId,
+      environment,
+      eventType,
+      severity: event.severity as NotificationSeverity,
+    };
+  }
+
+  private firstString(...values: unknown[]): string | null {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+    }
+    return null;
+  }
+
+  private toRouteEnvironment(value: string | null): ConnectorRouteEnvironment | null {
+    return value === 'development' || value === 'staging' || value === 'production' ? value : null;
   }
 }

@@ -1,10 +1,7 @@
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
-import { sweepRateLimiter } from './runtime.js';
 const DEFAULTS = {
-    retryIntervalMs: 15_000,
-    healthIntervalMs: 5 * 60_000,
     retryBatchSize: 25,
     enableHealthChecks: true,
 };
@@ -13,9 +10,6 @@ export class ConnectorMonitor {
     dispatcher;
     service;
     logger;
-    retryTimer = null;
-    healthTimer = null;
-    sweepTimer = null;
     retrying = false;
     healthChecking = false;
     opts;
@@ -26,25 +20,9 @@ export class ConnectorMonitor {
         this.logger = logger;
         this.opts = { ...DEFAULTS, ...options };
     }
-    start() {
-        this.retryTimer = setInterval(() => void this.processRetries(), this.opts.retryIntervalMs);
-        this.retryTimer.unref();
-        if (this.opts.enableHealthChecks) {
-            this.healthTimer = setInterval(() => void this.runHealthChecks(), this.opts.healthIntervalMs);
-            this.healthTimer.unref();
-        }
-        this.sweepTimer = setInterval(() => sweepRateLimiter(), 60_000);
-        this.sweepTimer.unref();
-        this.logger.info({ ...this.opts }, 'Connector monitor started');
-    }
     stop() {
-        if (this.retryTimer)
-            clearInterval(this.retryTimer);
-        if (this.healthTimer)
-            clearInterval(this.healthTimer);
-        if (this.sweepTimer)
-            clearInterval(this.sweepTimer);
-        this.retryTimer = this.healthTimer = this.sweepTimer = null;
+        this.retrying = false;
+        this.healthChecking = false;
     }
     /** Claim and process due retries. Returns the number processed. */
     async processRetries() {

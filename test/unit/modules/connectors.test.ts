@@ -14,13 +14,17 @@ import {
   getCircuitState,
   computeBackoffMs,
 } from '../../../src/modules/connectors/runtime.js';
-import { WebhookConnector } from '../../../src/modules/connectors/connectors/webhook.connector.js';
+import { WebhookConnector } from '../../../src/modules/connectors/providers/webhook/webhook.connector.js';
 import {
   SlackConfigSchema,
   DiscordConfigSchema,
   PagerDutyConfigSchema,
+  TeamsConfigSchema,
   WebhookConfigSchema,
   SmsConfigSchema,
+  CreateConnectorSchema,
+  CreateConnectorRouteSchema,
+  SendTestNotificationSchema,
 } from '../../../src/modules/connectors/types.js';
 
 describe('runtime: sliding-window rate limiter', () => {
@@ -132,6 +136,12 @@ describe('connector config validation', () => {
   it('requires a discord-looking webhook url', () => {
     expect(DiscordConfigSchema.safeParse({ webhookUrl: 'https://discord.com/api/webhooks/1/abc' }).success).toBe(true);
     expect(DiscordConfigSchema.safeParse({ webhookUrl: 'https://example.com/hook' }).success).toBe(false);
+    expect(DiscordConfigSchema.safeParse({ webhookUrl: 'http://discord.com/api/webhooks/1/abc' }).success).toBe(false);
+  });
+
+  it('requires Teams webhook urls to use HTTPS', () => {
+    expect(TeamsConfigSchema.safeParse({ webhookUrl: 'https://example.webhook.office.com/hook' }).success).toBe(true);
+    expect(TeamsConfigSchema.safeParse({ webhookUrl: 'http://example.webhook.office.com/hook' }).success).toBe(false);
   });
 
   it('requires a PagerDuty routing key', () => {
@@ -144,6 +154,7 @@ describe('connector config validation', () => {
     expect(r.success).toBe(true);
     if (r.success) expect(r.data.method).toBe('POST');
     expect(WebhookConfigSchema.safeParse({ url: 'not-a-url' }).success).toBe(false);
+    expect(WebhookConfigSchema.safeParse({ url: 'http://example.com/hook' }).success).toBe(false);
   });
 
   it('requires twilio credentials and at least one recipient', () => {
@@ -152,6 +163,42 @@ describe('connector config validation', () => {
     }).success).toBe(true);
     expect(SmsConfigSchema.safeParse({
       accountSid: 'AC123', authToken: 'tok', fromNumber: '+1', toNumbers: [],
+    }).success).toBe(false);
+  });
+
+  it('validates optional connector route environment filters', () => {
+    expect(CreateConnectorRouteSchema.safeParse({
+      eventType: 'incident.created',
+      environment: 'staging',
+    }).success).toBe(true);
+    expect(CreateConnectorRouteSchema.safeParse({
+      eventType: 'incident.created',
+      environment: 'qa',
+    }).success).toBe(false);
+  });
+
+  it('rejects unknown provider config keys instead of stripping them', () => {
+    expect(SlackConfigSchema.safeParse({
+      webhookUrl: 'https://hooks.slack.com/services/T/B/X',
+      unexpected: 'silently-dropped',
+    }).success).toBe(false);
+    expect(WebhookConfigSchema.safeParse({
+      url: 'https://example.com/hook',
+      unsupportedOption: true,
+    }).success).toBe(false);
+  });
+
+  it('rejects unknown connector request fields', () => {
+    expect(CreateConnectorSchema.safeParse({
+      name: 'alerts',
+      type: 'webhook',
+      config: { url: 'https://example.com/hook' },
+      extraTopLevel: true,
+    }).success).toBe(false);
+    expect(SendTestNotificationSchema.safeParse({
+      title: 'Test',
+      body: 'Body',
+      fields: [{ label: 'Region', value: 'us', unknown: 'x' }],
     }).success).toBe(false);
   });
 });

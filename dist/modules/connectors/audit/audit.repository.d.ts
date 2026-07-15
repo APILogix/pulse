@@ -13,5 +13,12 @@ export declare class ConnectorAuditRepository {
         userAgent?: string | null;
         requestId?: string | null;
     }): Promise<void>;
+    listAuditLogs(organizationId: string, connectorId: string | null, filters: {
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: import('../types.js').ConnectorAuditLogRow[];
+        total: number;
+    }>;
 }
 //# sourceMappingURL=audit.repository.d.ts.map

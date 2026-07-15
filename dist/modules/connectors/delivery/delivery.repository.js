@@ -23,7 +23,7 @@ export class DeliveryRepository {
     // ── Deliveries ─────────────────────────────────────────────────────────
     async insertDelivery(input) {
         const payloadJson = JSON.stringify(input.payload);
-        const r = await this.db.query(`INSERT INTO notification_deliveries
+        const r = await this.db.query(`INSERT INTO connector_deliveries
          (organization_id, connector_id, route_id, notification_type, severity,
           payload, payload_size_bytes, status, max_attempts, correlation_id, parent_delivery_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -35,27 +35,72 @@ export class DeliveryRepository {
         return r.rows[0];
     }
     async markDeliverySent(id, update) {
-        await this.db.query(`UPDATE notification_deliveries
-       SET status='sent', attempts=attempts+1, sent_at=NOW(),
-           external_message_id=$2, response_status_code=$3, response_body=$4, delivery_latency_ms=$5
-       WHERE id=$1`, [id, update.externalMessageId, update.responseStatusCode, update.responseBody, update.latencyMs]);
+        await this.withTransaction(async (client) => {
+            const updated = await client.query(`UPDATE connector_deliveries
+         SET status='sent', attempts=attempts+1, sent_at=NOW(), updated_at=NOW(),
+             external_message_id=$2, response_status_code=$3, response_body=$4,
+             provider_response=$4::jsonb, http_status=$3, duration_ms=$5, delivery_latency_ms=$5
+         WHERE id=$1
+         RETURNING *`, [
+                id,
+                update.externalMessageId,
+                update.responseStatusCode,
+                update.responseBody ? JSON.stringify({ body: update.responseBody }) : null,
+                update.latencyMs,
+            ]);
+            const row = updated.rows[0];
+            if (row) {
+                await this.insertAttempt(client, row, {
+                    status: 'sent',
+                    httpStatus: update.responseStatusCode,
+                    response: update.responseBody ? { body: update.responseBody } : null,
+                    durationMs: update.latencyMs,
+                });
+            }
+        });
     }
     async markDeliveryRetrying(id, nextRetryAt, errorMessage) {
-        await this.db.query(`UPDATE notification_deliveries
-       SET status='retrying', attempts=attempts+1, retry_count=retry_count+1,
-           next_retry_at=$2, error_message=$3
-       WHERE id=$1`, [id, nextRetryAt, errorMessage.slice(0, 2000)]);
+        await this.withTransaction(async (client) => {
+            const updated = await client.query(`UPDATE connector_deliveries
+         SET status='retrying', attempts=attempts+1, retry_count=retry_count+1,
+             next_retry_at=$2, error_message=$3, updated_at=NOW()
+         WHERE id=$1
+         RETURNING *`, [id, nextRetryAt, errorMessage.slice(0, 2000)]);
+            const row = updated.rows[0];
+            if (row) {
+                await this.insertAttempt(client, row, {
+                    status: 'retrying',
+                    errorCode: 'retry_scheduled',
+                    errorMessage,
+                    response: null,
+                    durationMs: null,
+                });
+            }
+        });
     }
     async markDeliveryFailed(id, errorMessage, errorDetails) {
-        await this.db.query(`UPDATE notification_deliveries
-       SET status='failed', attempts=attempts+1, failed_at=NOW(),
-           error_message=$2, error_details=$3
-       WHERE id=$1`, [id, errorMessage.slice(0, 2000), errorDetails ? JSON.stringify(errorDetails) : null]);
+        await this.withTransaction(async (client) => {
+            const updated = await client.query(`UPDATE connector_deliveries
+         SET status='failed', attempts=attempts+1, failed_at=NOW(), updated_at=NOW(),
+             error_message=$2, error_details=$3
+         WHERE id=$1
+         RETURNING *`, [id, errorMessage.slice(0, 2000), errorDetails ? JSON.stringify(errorDetails) : null]);
+            const row = updated.rows[0];
+            if (row) {
+                await this.insertAttempt(client, row, {
+                    status: 'failed',
+                    errorCode: typeof errorDetails?.category === 'string' ? errorDetails.category : null,
+                    errorMessage,
+                    response: errorDetails,
+                    durationMs: null,
+                });
+            }
+        });
     }
     /** Claim due retry rows for processing (SKIP LOCKED for safe concurrency). */
     async claimRetryableDeliveries(limit) {
         return this.withTransaction(async (client) => {
-            const r = await client.query(`SELECT * FROM notification_deliveries
+            const r = await client.query(`SELECT * FROM connector_deliveries
          WHERE status='retrying' AND next_retry_at <= NOW()
          ORDER BY next_retry_at ASC
          LIMIT $1
@@ -75,21 +120,78 @@ export class DeliveryRepository {
             conditions.push(`status=$${params.length}`);
         }
         const where = conditions.join(' AND ');
-        const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM notification_deliveries WHERE ${where}`, params);
+        const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM connector_deliveries WHERE ${where}`, params);
         params.push(filters.limit, filters.offset);
-        const r = await this.db.query(`SELECT * FROM notification_deliveries WHERE ${where}
+        const r = await this.db.query(`SELECT * FROM connector_deliveries WHERE ${where}
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
+    async getDelivery(organizationId, id) {
+        const r = await this.db.query(`SELECT * FROM connector_deliveries
+       WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
+        return r.rows[0] ?? null;
+    }
+    async listAttempts(organizationId, connectorId, deliveryId, filters) {
+        const count = await this.db.query(`SELECT COUNT(*)::text AS count
+       FROM connector_delivery_attempts a
+       JOIN connector_deliveries d ON d.id=a.delivery_id AND d.created_at=a.delivery_created_at
+       WHERE a.delivery_id=$1 AND d.organization_id=$2 AND d.connector_id=$3`, [deliveryId, organizationId, connectorId]);
+        const rows = await this.db.query(`SELECT a.id, a.delivery_id, a.delivery_created_at, a.attempt_number, a.status,
+              a.http_status, a.error_code, a.error_message, a.response, a.duration_ms, a.attempted_at
+       FROM connector_delivery_attempts a
+       JOIN connector_deliveries d ON d.id=a.delivery_id AND d.created_at=a.delivery_created_at
+       WHERE a.delivery_id=$1 AND d.organization_id=$2 AND d.connector_id=$3
+       ORDER BY a.attempted_at DESC
+       LIMIT $4 OFFSET $5`, [deliveryId, organizationId, connectorId, filters.limit, filters.offset]);
+        return { data: rows.rows, total: Number(count.rows[0]?.count ?? 0) };
+    }
+    async retryDelivery(organizationId, id) {
+        const r = await this.db.query(`UPDATE connector_deliveries
+       SET status='retrying',
+           attempts=0,
+           retry_count=0,
+           next_retry_at=NOW(),
+           failed_at=NULL,
+           error_message=NULL,
+           error_details=NULL,
+           updated_at=NOW()
+       WHERE id=$1 AND organization_id=$2 AND status IN ('failed','retrying')
+       RETURNING *`, [id, organizationId]);
+        return r.rows[0] ?? null;
+    }
     // ── Dead letter ────────────────────────────────────────────────────────
     async insertDeadLetter(input) {
-        await this.db.query(`INSERT INTO notification_dead_letter
-         (original_delivery_id, organization_id, connector_id, failure_reason,
-          failure_category, error_stack, original_payload, retry_attempts, last_retry_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())`, [
-            input.originalDeliveryId, input.organizationId, input.connectorId,
-            input.failureReason.slice(0, 4000), input.failureCategory, input.errorStack,
-            JSON.stringify(input.originalPayload), input.retryAttempts,
+        await this.db.query(`INSERT INTO connector_audit_logs
+         (organization_id, connector_id, action, actor_type, changes_summary, new_state)
+       VALUES ($1,$2,'delivery.dead_lettered','system',$3,$4)`, [
+            input.organizationId,
+            input.connectorId,
+            JSON.stringify({
+                originalDeliveryId: input.originalDeliveryId,
+                failureReason: input.failureReason.slice(0, 4000),
+                failureCategory: input.failureCategory,
+                retryAttempts: input.retryAttempts,
+            }),
+            JSON.stringify({
+                errorStack: input.errorStack,
+                originalPayload: input.originalPayload,
+            }),
+        ]);
+    }
+    async insertAttempt(client, delivery, input) {
+        await client.query(`INSERT INTO connector_delivery_attempts
+         (delivery_id, delivery_created_at, attempt_number, status, http_status,
+          error_code, error_message, response, duration_ms)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [
+            delivery.id,
+            delivery.created_at,
+            delivery.attempts,
+            input.status,
+            input.httpStatus ?? null,
+            input.errorCode ?? null,
+            input.errorMessage ? input.errorMessage.slice(0, 2000) : null,
+            input.response ? JSON.stringify(input.response) : null,
+            input.durationMs ?? null,
         ]);
     }
 }

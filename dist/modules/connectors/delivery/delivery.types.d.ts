@@ -61,6 +61,19 @@ export interface DeliveryRow {
     created_at: Date;
     updated_at: Date;
 }
+export interface DeliveryAttemptRow {
+    id: string;
+    delivery_id: string;
+    delivery_created_at: Date;
+    attempt_number: number;
+    status: DeliveryStatus;
+    http_status: number | null;
+    error_code: string | null;
+    error_message: string | null;
+    response: Record<string, unknown> | null;
+    duration_ms: number | null;
+    attempted_at: Date;
+}
 export interface DeliveryDto {
     id: string;
     connectorId: string;
@@ -68,6 +81,9 @@ export interface DeliveryDto {
     severity: NotificationSeverity;
     status: DeliveryStatus;
     attempts: number;
+    maxAttempts: number;
+    retryCount: number;
+    nextRetryAt: Date | null;
     externalMessageId: string | null;
     responseStatusCode: number | null;
     errorMessage: string | null;

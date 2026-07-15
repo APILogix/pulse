@@ -1,5 +1,6 @@
 import fp from 'fastify-plugin';
 import { logger } from '../../config/logger.js';
+import { pgboss } from '../../lib/pgboss.js';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
@@ -17,6 +18,7 @@ async function connectorsModule(fastify, _options) {
         emitEvent: async (event, payload) => {
             fastify.log.info({ event, payload }, 'Connector event emitted');
         },
+        enqueueConnectorJob: async (queue, data, options) => pgboss.send(queue, data, options),
     });
     const monitor = new ConnectorMonitor(repository, dispatcher, service, fastify.log);
     fastify.decorate('connectors', { repository, dispatcher, service, monitor });

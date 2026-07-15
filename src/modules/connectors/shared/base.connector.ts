@@ -2,7 +2,7 @@
  * Abstract base connector (Strategy pattern).
  *
  * Concrete connectors extend this and implement:
- *   - `configSchema` (Zod) for `validateConfig`
+ *   - `configSchema` (Zod) for `validateConfig` / `validateConfiguration`
  *   - `deliver()` for the actual provider call
  *   - capability flags + rate-limit info
  *
@@ -63,6 +63,10 @@ export abstract class BaseConnector implements INotificationConnector {
     };
   }
 
+  validateConfiguration(config: ConnectorConfig): ValidationResult {
+    return this.validateConfig(config);
+  }
+
   async send(notification: NotificationPayload): Promise<DeliveryResult> {
     const start = Date.now();
     try {
@@ -99,6 +103,26 @@ export abstract class BaseConnector implements INotificationConnector {
       checkedAt: new Date().toISOString(),
       ...(test.details ? { details: test.details } : {}),
     };
+  }
+
+  async healthCheck(): Promise<HealthStatus> {
+    return this.getHealthStatus();
+  }
+
+  async rotateSecret(config: ConnectorConfig): Promise<ValidationResult> {
+    return this.validateConfiguration(config);
+  }
+
+  async refreshCredentials(credentials?: ConnectorConfig): Promise<ValidationResult> {
+    return { valid: true, errors: [], normalized: credentials ?? this.serialize() };
+  }
+
+  serialize(): ConnectorConfig {
+    return { ...this.ctx.config };
+  }
+
+  deserialize(config: ConnectorConfig): ValidationResult {
+    return this.validateConfiguration(config);
   }
 
   getRateLimitInfo(): RateLimitInfo {

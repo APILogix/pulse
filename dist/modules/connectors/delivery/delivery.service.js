@@ -84,6 +84,18 @@ export class NotificationDispatcher {
                 latencyMs: result.latencyMs,
             });
             await this.repository.recordSuccess(row.id);
+            await this.repository.insertAuditLog({
+                organizationId: row.organization_id,
+                connectorId: row.id,
+                action: 'delivery.sent',
+                actorId: null,
+                changesSummary: {
+                    deliveryId: delivery.id,
+                    statusCode: result.statusCode ?? null,
+                    latencyMs: result.latencyMs,
+                    externalMessageId: result.externalMessageId ?? null,
+                },
+            });
             recordCircuitSuccess(`connector:${row.id}`);
             log.info({ latencyMs: result.latencyMs }, 'Notification delivered');
             return { deliveryId: delivery.id, status: 'sent', result };
@@ -101,6 +113,18 @@ export class NotificationDispatcher {
             const delayMs = explicitDelayMs ?? computeBackoffMs(attemptsSoFar, row.retry_backoff_base_ms, Number(row.retry_backoff_multiplier));
             const nextRetryAt = new Date(Date.now() + delayMs);
             await this.repository.markDeliveryRetrying(delivery.id, nextRetryAt, message);
+            await this.repository.insertAuditLog({
+                organizationId: row.organization_id,
+                connectorId: row.id,
+                action: 'delivery.retry_scheduled',
+                actorId: null,
+                changesSummary: {
+                    deliveryId: delivery.id,
+                    category,
+                    attemptsSoFar,
+                    nextRetryAt: nextRetryAt.toISOString(),
+                },
+            });
             log.warn({ category, attemptsSoFar, delayMs, nextRetryAt }, 'Delivery failed — scheduled for retry');
             return {
                 deliveryId: delivery.id,
@@ -110,6 +134,18 @@ export class NotificationDispatcher {
         }
         // Terminal failure → mark failed + dead-letter
         await this.repository.markDeliveryFailed(delivery.id, message, { category });
+        await this.repository.insertAuditLog({
+            organizationId: row.organization_id,
+            connectorId: row.id,
+            action: 'delivery.failed',
+            actorId: null,
+            changesSummary: {
+                deliveryId: delivery.id,
+                category,
+                attemptsSoFar,
+                retryable,
+            },
+        });
         await this.repository.insertDeadLetter({
             originalDeliveryId: delivery.id,
             organizationId: row.organization_id,

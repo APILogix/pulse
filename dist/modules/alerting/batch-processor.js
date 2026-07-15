@@ -1,17 +1,14 @@
-import { AlertingRepository } from './repository.js';
 import { resolveRouting } from './routing.js';
-import { ConnectorRepository } from '../connectors/repository.js';
-import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
-import { circuitAllows, recordCircuitFailure, recordCircuitSuccess, } from '../connectors/runtime.js';
+import { CONNECTOR_JOBS } from '../connectors/job.constants.js';
 export class AlertBatchProcessor {
     alertRepo;
     connectorRepo;
-    dispatcher;
+    enqueueConnectorJob;
     logger;
-    constructor(alertRepo, connectorRepo, dispatcher, logger) {
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger) {
         this.alertRepo = alertRepo;
         this.connectorRepo = connectorRepo;
-        this.dispatcher = dispatcher;
+        this.enqueueConnectorJob = enqueueConnectorJob;
         this.logger = logger;
     }
     async processBatch(data) {
@@ -26,12 +23,13 @@ export class AlertBatchProcessor {
         const { events } = loaded;
         // 2. Load routing rules + every referenced connector in single queries.
         const routingRules = await this.alertRepo.listRoutingRules(data.organizationId);
-        const connectorIds = this.uniqueConnectorIds(events, routingRules);
+        const connectorRoutes = await this.connectorRepo.listRoutesByIds(data.organizationId, this.uniqueRouteIds(routingRules));
+        const connectorIds = this.uniqueConnectorIds(events, routingRules, connectorRoutes);
         const connectors = await this.connectorRepo.getByIds(connectorIds);
         const connectorMap = new Map(connectors.map((c) => [c.id, c]));
         // 3. Process ALL events concurrently. Promise.allSettled guarantees one
         //    failing event never aborts the batch.
-        const settled = await Promise.allSettled(events.map((event) => this.processSingleEvent(event, routingRules, connectorMap, data.batchId)));
+        const settled = await Promise.allSettled(events.map((event) => this.processSingleEvent(event, routingRules, connectorRoutes, connectorMap, data.batchId)));
         // 4. Fold results into bulk-update + bulk-insert payloads.
         const statusUpdates = [];
         const deliveryLogs = [];
@@ -67,16 +65,17 @@ export class AlertBatchProcessor {
         return { batchId: data.batchId, total: events.length, success, failure, skipped, durationMs, status };
     }
     /** Deliver a single event to all routed connectors concurrently. */
-    async processSingleEvent(event, routingRules, connectorMap, batchId) {
+    async processSingleEvent(event, routingRules, connectorRoutes, connectorMap, batchId) {
         const routable = { severity: event.severity, source: event.source, labels: event.labels };
         const decision = resolveRouting(routable, routingRules);
-        if (decision.connectorIds.length === 0) {
+        const targets = this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes);
+        if (targets.length === 0) {
             // No route matched — nothing to deliver. Event still transitions to firing.
             return { eventId: event.id, newStatus: 'firing', deliveries: [], delivered: false, skipped: true };
         }
         const payload = this.toPayload(event);
         // Fan out to every target connector concurrently (Bulkhead per connector).
-        const perConnector = await Promise.allSettled(decision.connectorIds.map((cid) => this.deliverToConnector(event, cid, connectorMap, decision.matchedRuleId, batchId, payload)));
+        const perConnector = await Promise.allSettled(targets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)));
         const deliveries = [];
         let anyDelivered = false;
         perConnector.forEach((res) => {
@@ -94,7 +93,8 @@ export class AlertBatchProcessor {
             skipped: false,
         };
     }
-    async deliverToConnector(event, connectorId, connectorMap, routeId, batchId, payload) {
+    async deliverToConnector(event, target, connectorMap, batchId, payload) {
+        const { connectorId, routeId } = target;
         const base = {
             organizationId: event.organization_id,
             eventId: event.id,
@@ -112,46 +112,30 @@ export class AlertBatchProcessor {
         if (!connector) {
             return { log: { ...base, status: 'failed', errorMessage: 'Connector not found or deleted', errorCategory: 'config' }, delivered: false };
         }
-        // Circuit breaker (shared with the connectors feature).
-        const cbKey = `connector:${connectorId}`;
-        if (!circuitAllows(cbKey, { failureThreshold: connector.failure_threshold })) {
-            return { log: { ...base, status: 'failed', errorMessage: 'Circuit breaker open', errorCategory: 'circuit_open' }, delivered: false };
-        }
         try {
-            const instance = this.dispatcher.instantiate(connector);
-            const result = await instance.send(payload);
-            if (result.success) {
-                recordCircuitSuccess(cbKey);
-                await this.connectorRepo.recordSuccess(connectorId);
-                return {
-                    log: {
-                        ...base,
-                        status: 'sent',
-                        responseStatusCode: result.statusCode ?? null,
-                        latencyMs: result.latencyMs,
-                        externalMessageId: result.externalMessageId ?? null,
-                    },
-                    delivered: true,
-                };
-            }
-            recordCircuitFailure(cbKey, { failureThreshold: connector.failure_threshold });
-            await this.connectorRepo.recordFailure(connectorId);
+            const jobId = await this.enqueueConnectorJob(CONNECTOR_JOBS.send, {
+                organizationId: event.organization_id,
+                connectorId,
+                payload,
+                routeId,
+            }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 });
+            return {
+                log: {
+                    ...base,
+                    status: 'queued',
+                    externalMessageId: typeof jobId === 'string' ? jobId : null,
+                },
+                delivered: true,
+            };
+        }
+        catch (err) {
             return {
                 log: {
                     ...base,
                     status: 'failed',
-                    responseStatusCode: result.statusCode ?? null,
-                    errorMessage: (result.errorMessage ?? 'Delivery failed').slice(0, 2000),
-                    errorCategory: result.failureCategory ?? 'unknown',
-                    latencyMs: result.latencyMs,
+                    errorMessage: (err instanceof Error ? err.message : 'Connector enqueue failed').slice(0, 2000),
+                    errorCategory: 'queue',
                 },
-                delivered: false,
-            };
-        }
-        catch (err) {
-            recordCircuitFailure(cbKey, { failureThreshold: connector.failure_threshold });
-            return {
-                log: { ...base, status: 'failed', errorMessage: (err instanceof Error ? err.message : 'Unknown error').slice(0, 2000), errorCategory: 'unknown' },
                 delivered: false,
             };
         }
@@ -172,13 +156,74 @@ export class AlertBatchProcessor {
             metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels },
         };
     }
-    uniqueConnectorIds(events, routingRules) {
+    uniqueConnectorIds(events, routingRules, connectorRoutes) {
         const ids = new Set();
         for (const event of events) {
             const decision = resolveRouting({ severity: event.severity, source: event.source, labels: event.labels }, routingRules);
-            decision.connectorIds.forEach((id) => ids.add(id));
+            this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes)
+                .forEach((target) => ids.add(target.connectorId));
         }
         return [...ids];
+    }
+    uniqueRouteIds(routingRules) {
+        const ids = new Set();
+        for (const rule of routingRules) {
+            for (const routeId of rule.target_route_ids ?? [])
+                ids.add(routeId);
+        }
+        return [...ids];
+    }
+    resolveDeliveryTargets(event, connectorIds, routeIds, connectorRoutes) {
+        const targets = new Map();
+        for (const connectorId of connectorIds) {
+            targets.set(`${connectorId}:direct`, { connectorId, routeId: null });
+        }
+        if (routeIds.length === 0)
+            return [...targets.values()];
+        const routeIdSet = new Set(routeIds);
+        const context = this.routeMatchContext(event);
+        for (const route of connectorRoutes) {
+            if (!routeIdSet.has(route.id))
+                continue;
+            if (!this.routeMatches(route, context))
+                continue;
+            targets.set(`${route.connector_id}:${route.id}`, {
+                connectorId: route.connector_id,
+                routeId: route.id,
+            });
+        }
+        return [...targets.values()];
+    }
+    routeMatches(route, context) {
+        if (route.project_id !== null && route.project_id !== context.projectId)
+            return false;
+        if (route.environment !== null && route.environment !== context.environment)
+            return false;
+        if (route.severity !== null && route.severity !== context.severity)
+            return false;
+        return route.event_type === context.eventType;
+    }
+    routeMatchContext(event) {
+        const payload = event.payload;
+        const projectId = this.firstString(payload.projectId, payload.project_id, event.labels.projectId, event.labels.project_id);
+        const environment = this.toRouteEnvironment(this.firstString(payload.environment, payload.env, event.labels.environment, event.labels.env));
+        const eventType = this.firstString(payload.eventType, payload.event_type, payload.notificationType, payload.type, event.source) ?? event.source;
+        return {
+            projectId,
+            environment,
+            eventType,
+            severity: event.severity,
+        };
+    }
+    firstString(...values) {
+        for (const value of values) {
+            if (typeof value === 'string' && value.trim().length > 0)
+                return value.trim();
+        }
+        return null;
+    }
+    toRouteEnvironment(value) {
+        return value === 'development' || value === 'staging' || value === 'production' ? value : null;
     }
 }
 //# sourceMappingURL=batch-processor.js.map

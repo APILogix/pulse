@@ -9,5 +9,17 @@
  * `withErrorHandling` to map AppError subclasses to HTTP responses.
  */
 import type { FastifyInstance } from 'fastify';
+export interface ConnectorRouteErrorResponse {
+    statusCode: number;
+    payload: {
+        success: false;
+        error: {
+            code: string;
+            message: string;
+            details?: unknown;
+        };
+    };
+}
+export declare function connectorRouteErrorResponse(error: unknown): ConnectorRouteErrorResponse;
 export declare function connectorRoutes(fastify: FastifyInstance): Promise<void>;
 //# sourceMappingURL=routes.d.ts.map
