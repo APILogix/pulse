@@ -163,7 +163,7 @@ const envSchema = z.object({
   INGESTION_ENDPOINT: z.string().url().optional(),
 
   // ── Connector Pipeline Tunables ────────────────────────────────────────
-  CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(10),
+  CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(3),
   CONNECTOR_SEND_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
   CONNECTOR_SEND_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(45),
   CONNECTOR_RETRY_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
@@ -186,7 +186,7 @@ const envSchema = z.object({
   INGESTION_SPECIALIZED_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(600_000), // 10m
   INGESTION_POLL_MS: z.coerce.number().int().min(1).max(10_000).default(25),
   INGESTION_IDLE_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
-  INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(20),
+  INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(8),
   INGESTION_DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
   INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(5_000),
   MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),

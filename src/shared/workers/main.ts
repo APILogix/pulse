@@ -32,7 +32,7 @@ const workerLogger = logger.child({ component: 'workers' });
 async function bootstrapWorkers(): Promise<void> {
   const pgPool = new Pool({
     connectionString: env.DATABASE_URL,
-    max: 20,
+    max: 10,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 30000,
     application_name: 'ingestion_workers',

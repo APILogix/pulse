@@ -40,6 +40,9 @@ export function initializeWorkers(deps: WorkerDependencies): RunningWorkers {
   const handler = createIngestionJobHandler(writer);
 
   const concurrency = deps.concurrency ?? 4;
+  const poolMax = 10; // pgPool max from main.ts
+  const perWorkerHandlers = Math.max(2, Math.floor((poolMax - 4) / concurrency));
+
   const workers: PgQueueWorker[] = [];
   for (let i = 0; i < concurrency; i++) {
     const w = new PgQueueWorker(queue, handler, workerLogger, {
@@ -47,6 +50,7 @@ export function initializeWorkers(deps: WorkerDependencies): RunningWorkers {
       batchSize: 50,
       busyPollMs: 25,
       idlePollMs: 500,
+      handlerConcurrency: perWorkerHandlers,
     });
     w.start();
     workers.push(w);
@@ -59,7 +63,10 @@ export function initializeWorkers(deps: WorkerDependencies): RunningWorkers {
     if (deps.shutdown) await deps.shutdown();
   };
 
+  let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     workerLogger.info({ signal }, 'Shutdown signal received — draining workers');
     await stop();
     process.exit(0);

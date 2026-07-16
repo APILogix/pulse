@@ -53,6 +53,6 @@ export async function startPgBoss(): Promise<void> {
  */
 export async function stopPgBoss(): Promise<void> {
   bossLogger.info('Stopping PgBoss...');
-  await pgboss.stop({ graceful: true, timeout: 10000 });
+  await pgboss.stop({ graceful: true, timeout: 30000 });
   bossLogger.info('PgBoss stopped');
 }

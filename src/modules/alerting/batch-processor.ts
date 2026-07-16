@@ -70,12 +70,29 @@ type EnqueueConnectorJob = (
 ) => Promise<unknown>;
 
 export class AlertBatchProcessor {
+  private static readonly EVENT_CONCURRENCY = 10;
+
   constructor(
     private readonly alertRepo: AlertingRepository,
     private readonly connectorRepo: ConnectorRepository,
     private readonly enqueueConnectorJob: EnqueueConnectorJob,
     private readonly logger: FastifyBaseLogger,
   ) {}
+
+  private async mapBounded<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+    const results: PromiseSettledResult<R>[] = new Array(items.length);
+    let cursor = 0;
+    const lane = async (): Promise<void> => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        const item = items[i]!;
+        try { results[i] = { status: 'fulfilled', value: await fn(item) }; }
+        catch (reason) { results[i] = { status: 'rejected', reason }; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+    return results;
+  }
 
   async processBatch(data: BatchJobData): Promise<BatchProcessSummary> {
     const start = Date.now();
@@ -99,10 +116,12 @@ export class AlertBatchProcessor {
     const connectors = await this.connectorRepo.getByIds(connectorIds);
     const connectorMap = new Map<string, ConnectorConfigRow>(connectors.map((c) => [c.id, c]));
 
-    // 3. Process ALL events concurrently. Promise.allSettled guarantees one
+    // 3. Process ALL events concurrently but bounded. Promise.allSettled guarantees one
     //    failing event never aborts the batch.
-    const settled = await Promise.allSettled(
-      events.map((event) => this.processSingleEvent(event, routingRules, connectorRoutes, connectorMap, data.batchId)),
+    const settled = await this.mapBounded(
+      events,
+      AlertBatchProcessor.EVENT_CONCURRENCY,
+      (event) => this.processSingleEvent(event, routingRules, connectorRoutes, connectorMap, data.batchId),
     );
 
     // 4. Fold results into bulk-update + bulk-insert payloads.

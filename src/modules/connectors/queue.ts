@@ -123,7 +123,7 @@ export async function registerConnectorWorkers(
         const rows = await repository.getByIds(connectorIds);
         const rowMap = new Map(rows.map(r => [r.id, r]));
 
-        await Promise.all(jobs.map(async (job) => {
+        await Promise.allSettled(jobs.map(async (job) => {
           workerMetrics.recordJobStarted();
           try {
             const row = rowMap.get(job.data.connectorId);
@@ -140,7 +140,8 @@ export async function registerConnectorWorkers(
             }
           } catch (err) {
             workerMetrics.recordJobFailed(false);
-            throw err;
+            log.error({ err, jobId: job.id }, 'Connector send job errored unexpectedly');
+            // no rethrow — the delivery row + DLQ is the source of truth
           }
         }));
       }) as never,
@@ -310,9 +311,9 @@ export async function registerConnectorWorkers(
     }) as never,
   );
 
-  await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, {} as never);
-  await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, {} as never);
-  await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, {} as never);
+  await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, { singletonKey: 'connector-delivery-retry' } as never);
+  await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' } as never);
+  await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' } as never);
 
   log.info({ queues: CONNECTOR_JOBS }, 'Connector pg-boss workers registered');
 
