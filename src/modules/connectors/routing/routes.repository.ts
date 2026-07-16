@@ -180,6 +180,22 @@ export class ConnectorRoutesRepository {
     return result.rowCount ?? 0;
   }
 
+  async findOAuthStateWithConnector(client: import('pg').PoolClient, state: string) {
+    const res = await client.query(
+      `SELECT s.id, s.connector_id, c.organization_id
+       FROM connector_oauth_states s
+       JOIN connector_configs c ON c.id = s.connector_id
+       WHERE s.state = $1 AND s.expires_at > NOW()
+       FOR UPDATE`,
+      [state]
+    );
+    return res.rows[0];
+  }
+
+  async deleteOAuthState(client: import('pg').PoolClient, id: string) {
+    await client.query(`DELETE FROM connector_oauth_states WHERE id = $1`, [id]);
+  }
+
   private async requireOwnedConnector(organizationId: string, connectorId: string): Promise<void> {
     const r = await this.db.query<{ exists: boolean }>(
       `SELECT EXISTS(

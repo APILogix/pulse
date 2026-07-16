@@ -84,6 +84,7 @@ const payload: NotificationPayload = {
 function makeRepository() {
   return {
     insertDelivery: vi.fn().mockResolvedValue(deliveryRow),
+    insertDeliveryIdempotent: vi.fn().mockResolvedValue({ row: deliveryRow, existed: false }),
     markDeliverySent: vi.fn().mockResolvedValue(undefined),
     markDeliveryRetrying: vi.fn().mockResolvedValue(undefined),
     markDeliveryFailed: vi.fn().mockResolvedValue(undefined),

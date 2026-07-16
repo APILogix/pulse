@@ -237,7 +237,7 @@ export async function registerConnectorWorkers(
           return;
         }
 
-        const connector = dispatcher.instantiate(row);
+        const connector = await dispatcher.instantiate(row);
         const currentCredential = decryptConfig(credential.encrypted_value);
         const refreshed = await connector.refreshCredentials(currentCredential);
         if (!refreshed.valid) {

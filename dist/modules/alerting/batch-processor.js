@@ -1,5 +1,6 @@
 import { resolveRouting } from './routing.js';
-import { CONNECTOR_JOBS } from '../connectors/job.constants.js';
+import { CONNECTOR_JOBS, CONNECTOR_PRIORITY } from '../connectors/job.constants.js';
+import { env } from '../../config/env.js';
 export class AlertBatchProcessor {
     alertRepo;
     connectorRepo;
@@ -113,12 +114,20 @@ export class AlertBatchProcessor {
             return { log: { ...base, status: 'failed', errorMessage: 'Connector not found or deleted', errorCategory: 'config' }, delivered: false };
         }
         try {
-            const jobId = await this.enqueueConnectorJob(CONNECTOR_JOBS.send, {
+            const queueName = `${CONNECTOR_JOBS.send}-${connector.type}`;
+            const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+            const jobId = await this.enqueueConnectorJob(queueName, {
                 organizationId: event.organization_id,
                 connectorId,
                 payload,
                 routeId,
-            }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 });
+            }, {
+                priority,
+                retryLimit: 0,
+                retryDelay: 60,
+                retryBackoff: true,
+                expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS
+            });
             return {
                 log: {
                     ...base,
@@ -152,7 +161,7 @@ export class AlertBatchProcessor {
             title,
             body,
             correlationId: event.id,
-            dedupKey: event.fingerprint,
+            dedupKey: event.id,
             metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels },
         };
     }

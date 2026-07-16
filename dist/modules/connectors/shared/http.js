@@ -21,6 +21,7 @@ export async function httpRequest(url, options = {}) {
         const init = {
             method: options.method ?? 'POST',
             signal: controller.signal,
+            redirect: 'manual', // never follow; 3xx becomes a non-retryable failure via classifyHttpStatus
         };
         if (options.headers)
             init.headers = options.headers;

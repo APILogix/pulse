@@ -131,6 +131,9 @@ const envSchema = z.object({
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     GITHUB_CLIENT_ID: z.string().optional(),
     GITHUB_CLIENT_SECRET: z.string().optional(),
+    SLACK_CLIENT_ID: z.string().optional(),
+    SLACK_CLIENT_SECRET: z.string().optional(),
+    SLACK_REDIRECT_URI: z.string().url().optional(),
     // AI
     OPENAI_API_KEY: z.string().optional(),
     // ── Ingestion pipeline tunables ────────────────────────────────────────
@@ -146,6 +149,15 @@ const envSchema = z.object({
     INGESTION_RATE_BUCKET_TTL_MS: z.coerce.number().int().min(60_000).default(300_000), // 5m
     INGESTION_RATE_BUCKET_SWEEP_MS: z.coerce.number().int().min(5_000).default(60_000), // 1m
     INGESTION_ENDPOINT: z.string().url().optional(),
+    // ── Connector Pipeline Tunables ────────────────────────────────────────
+    CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(10),
+    CONNECTOR_SEND_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+    CONNECTOR_SEND_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(45),
+    CONNECTOR_RETRY_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
+    CONNECTOR_HEALTH_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(180),
+    CONNECTOR_CLEANUP_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(600),
+    CONNECTOR_SECRET_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(900),
+    CONNECTOR_HTTP_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10000),
     // ── Ingestion worker tier (v2) ─────────────────────────────────────────
     // General workers drain fast signals (error/message/request/span/metric/log/
     // cron_checkin); specialized workers isolate heavy signals (profile/replay/

@@ -1,5 +1,6 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { OrgIdParamsSchema, ConnectorParamsSchema } from '../../core/connector.types.js';
 import { authenticate } from '../../../../shared/middleware/auth.js';
 import { requireOrgAccess } from '../../../../shared/middleware/requireorg.js';
 import { CONNECTOR_PERMISSIONS, requireConnectorPermission } from '../../middleware/permissions.js';
@@ -22,8 +23,8 @@ export async function slackConnectorRoutes(fastify: FastifyInstance): Promise<vo
 
   // POST /organizations/:orgId/connectors/slack/oauth/start
   fastify.post('/organizations/:orgId/connectors/slack/oauth/start', updateGuard, async (request, reply) => {
-    const { orgId } = z.object({ orgId: z.string() }).parse(request.params);
-    const actorUserId = (request as any).user.id;
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const actorUserId = (request as FastifyRequest & { user: { id: string } }).user.id;
     const actorIp = request.ip ?? '0.0.0.0';
     const actorUserAgent = request.headers['user-agent'] ?? '';
     const result = await svc.startOAuth(orgId, actorUserId, actorIp, actorUserAgent);
@@ -61,7 +62,7 @@ export async function slackConnectorRoutes(fastify: FastifyInstance): Promise<vo
 
   // GET /organizations/:orgId/connectors/:id/slack/channels
   fastify.get('/organizations/:orgId/connectors/:id/slack/channels', updateGuard, async (request, reply) => {
-    const { orgId, id } = z.object({ orgId: z.string(), id: z.string() }).parse(request.params);
+    const { orgId, id } = ConnectorParamsSchema.parse(request.params);
     const result = await svc.listChannels(orgId, id);
     return reply.send({ success: true, data: result });
   });

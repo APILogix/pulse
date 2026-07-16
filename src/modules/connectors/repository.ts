@@ -44,8 +44,11 @@ export class ConnectorRepository {
   async claimRetryableDeliveries(limit: number) { return this.delivery.claimRetryableDeliveries(limit); }
   async listDeliveries(organizationId: string, filters: { connectorId?: string; status?: DeliveryStatus; limit: number; offset: number }) { return this.delivery.listDeliveries(organizationId, filters); }
   async getDelivery(organizationId: string, id: string) { return this.delivery.getDelivery(organizationId, id); }
+  async insertDeliveryIdempotent(input: import('./delivery/delivery.repository.js').InsertDeliveryInput) { return this.delivery.insertDeliveryIdempotent(input); }
+  async findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number) { return this.delivery.findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes); }
   async listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: { limit: number; offset: number }) { return this.delivery.listAttempts(organizationId, connectorId, deliveryId, filters); }
   async retryDelivery(organizationId: string, id: string) { return this.delivery.retryDelivery(organizationId, id); }
+  async getDlqGrowth(windowMinutes: number) { return this.delivery.getDlqGrowth(windowMinutes); }
   async insertDeadLetter(input: { originalDeliveryId: string; organizationId: string; connectorId: string; failureReason: string; failureCategory: FailureCategory; errorStack: string | null; originalPayload: Record<string, unknown>; retryAttempts: number; }) { return this.delivery.insertDeadLetter(input); }
 
   // Metrics
@@ -69,4 +72,6 @@ export class ConnectorRepository {
   async createOAuthState(input: { connectorId: string; state: string; codeVerifier: string; expiresAt: Date }) { return this.routes.createOAuthState(input); }
   async consumeOAuthState(organizationId: string, connectorId: string, state: string) { return this.routes.consumeOAuthState(organizationId, connectorId, state); }
   async cleanupExpiredOAuthStates() { return this.routes.cleanupExpiredOAuthStates(); }
+  async findOAuthStateWithConnector(client: PoolClient, state: string) { return this.routes.findOAuthStateWithConnector(client, state); }
+  async deleteOAuthState(client: PoolClient, id: string) { return this.routes.deleteOAuthState(client, id); }
 }

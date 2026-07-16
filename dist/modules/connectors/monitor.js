@@ -47,8 +47,10 @@ export class ConnectorMonitor {
                     this.logger.error({ err, deliveryId: delivery.id }, 'Retry processing threw');
                 }
             }
-            if (processed > 0)
-                this.logger.debug({ processed }, 'Processed connector retries');
+            const dlqGrowth = await this.repository.getDlqGrowth(60);
+            if (processed > 0 || dlqGrowth > 0) {
+                this.logger.debug({ processed, dlqGrowth }, 'Processed connector retries');
+            }
         }
         catch (err) {
             this.logger.error({ err }, 'Retry sweep failed');

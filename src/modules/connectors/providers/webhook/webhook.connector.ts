@@ -79,7 +79,7 @@ export class WebhookConnector extends BaseConnector {
     const latencyMs = Date.now() - start;
 
     if (res.ok) {
-      return { success: true, statusCode: res.status, responseBody: res.body.slice(0, 2000), latencyMs };
+      return { success: true, statusCode: res.status, latencyMs };
     }
     const { retryable, category } = classifyHttpStatus(res.status);
     throw new ConnectorDeliveryError(

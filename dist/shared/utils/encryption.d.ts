@@ -13,6 +13,7 @@ export declare function encrypt(plaintext: string, secret: string): string;
  * with the older code keep working until they are rotated.
  */
 export declare function decrypt(payload: string, secret: string): string;
+export declare function decryptAsync(payload: string, secret: string): Promise<string>;
 /**
  * Hash a user password using bcrypt with the production cost factor.
  */

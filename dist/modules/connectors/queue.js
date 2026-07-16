@@ -6,6 +6,9 @@ import { ConnectorMonitor } from './monitor.js';
 import { sweepRateLimiter } from './runtime.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
 import { CONNECTOR_JOBS } from './job.constants.js';
+import { env } from '../../config/env.js';
+import { listConnectorTypes } from './registry.js';
+import { workerMetrics } from './metrics/worker-metrics.js';
 function allJobs(arg) {
     if (Array.isArray(arg))
         return arg;
@@ -48,17 +51,44 @@ export async function registerConnectorWorkers(logger) {
     });
     const monitor = new ConnectorMonitor(repository, dispatcher, service, logger);
     await Promise.all(Object.values(CONNECTOR_JOBS).map((queue) => safeCreateQueue(queue)));
-    await pgboss.work(CONNECTOR_JOBS.send, { localConcurrency: 5, batchSize: 5 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-            if (!row) {
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector send skipped: connector not found');
+    const connectorTypes = listConnectorTypes();
+    const providerQueues = connectorTypes.map((t) => `${CONNECTOR_JOBS.send}-${t.type}`);
+    await Promise.all(providerQueues.map((queue) => safeCreateQueue(queue)));
+    for (const queue of providerQueues) {
+        await pgboss.work(queue, {
+            localConcurrency: env.CONNECTOR_SEND_CONCURRENCY,
+            batchSize: env.CONNECTOR_SEND_BATCH_SIZE
+        }, (async (arg) => {
+            const jobs = allJobs(arg);
+            if (jobs.length === 0)
                 return;
-            }
-            await dispatcher.dispatch(row, job.data.payload, { routeId: job.data.routeId ?? null });
+            const connectorIds = Array.from(new Set(jobs.map(j => j.data.connectorId)));
+            const rows = await repository.getByIds(connectorIds);
+            const rowMap = new Map(rows.map(r => [r.id, r]));
+            await Promise.all(jobs.map(async (job) => {
+                workerMetrics.recordJobStarted();
+                try {
+                    const row = rowMap.get(job.data.connectorId);
+                    if (!row) {
+                        log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector send skipped: connector not found');
+                        workerMetrics.recordJobFailed(false);
+                        return;
+                    }
+                    const outcome = await dispatcher.dispatch(row, job.data.payload, { routeId: job.data.routeId ?? null });
+                    if (outcome.status === 'sent') {
+                        workerMetrics.recordJobCompleted();
+                    }
+                    else {
+                        workerMetrics.recordJobFailed(outcome.result.retryable ?? false);
+                    }
+                }
+                catch (err) {
+                    workerMetrics.recordJobFailed(false);
+                    throw err;
+                }
+            }));
         }));
-    }));
+    }
     await pgboss.work(CONNECTOR_JOBS.deliveryRetry, {}, (async () => {
         await monitor.processRetries();
         sweepRateLimiter();
@@ -120,7 +150,7 @@ export async function registerConnectorWorkers(logger) {
                 });
                 return;
             }
-            const connector = dispatcher.instantiate(row);
+            const connector = await dispatcher.instantiate(row);
             const currentCredential = decryptConfig(credential.encrypted_value);
             const refreshed = await connector.refreshCredentials(currentCredential);
             if (!refreshed.valid) {
@@ -174,7 +204,7 @@ export async function registerConnectorWorkers(logger) {
                 actorId: job.data.actorUserId ?? null,
                 changesSummary: { deliveryId: delivery.id },
             });
-            await pgboss.send(CONNECTOR_JOBS.deliveryRetry, { organizationId: job.data.organizationId, deliveryId: delivery.id }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 3600 });
+            await pgboss.send(CONNECTOR_JOBS.deliveryRetry, { organizationId: job.data.organizationId, deliveryId: delivery.id }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: env.CONNECTOR_RETRY_EXPIRE_SECONDS });
         }));
     }));
     await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, {});

@@ -22,6 +22,7 @@ import {
   isConnectorTypeRegistered,
   listConnectorTypes,
 } from './registry.js';
+import { assertPubliclyResolvable } from './shared/url-safety.js';
 import {
   ConnectorConfigError,
   ConnectorError,
@@ -92,6 +93,7 @@ export class ConnectorService {
       throw new ConnectorTypeUnsupportedError(body.type);
     }
     const normalized = this.validateConfigOrThrow(body.type, body.config);
+    await this.assertSafeUrls(body.type, normalized);
     const capabilities = getTypeCapabilities(body.type);
 
     const row = await this.repository.create({
@@ -152,6 +154,7 @@ export class ConnectorService {
     if (body.config) {
       const mergedInput = { ...decryptConfig(existing.encrypted_config), ...body.config };
       const merged = this.validateConfigOrThrow(existing.type, mergedInput);
+      await this.assertSafeUrls(existing.type, merged);
       fields.encryptedConfig = encryptConfig(merged);
       // Re-derive capabilities (type can't change, but keeps them authoritative).
       const caps = getTypeCapabilities(existing.type);
@@ -237,7 +240,7 @@ export class ConnectorService {
     const startedAt = Date.now();
     let result: ConnectionTestResult;
     try {
-      const connector = this.dispatcher.instantiate(row);
+      const connector = await this.dispatcher.instantiate(row);
       result = await connector.testConnection();
     } catch (err) {
       result = {
@@ -510,7 +513,7 @@ export class ConnectorService {
 
   /** Run a health check for a connector row (used by the background monitor). */
   async runHealthCheck(row: ConnectorConfigRow): Promise<HealthStatus> {
-    const connector = this.dispatcher.instantiate(row);
+    const connector = await this.dispatcher.instantiate(row);
     const health = await connector.getHealthStatus();
     await this.repository.insertHealthCheck(
       row.id,
@@ -536,6 +539,18 @@ export class ConnectorService {
       throw new ConnectorConfigError('Connector configuration is invalid', { errors: result.errors });
     }
     return result.normalized ?? config;
+  }
+
+  private async assertSafeUrls(type: ConnectorType, config: Record<string, unknown>): Promise<void> {
+    try {
+      if (type === 'webhook' && typeof config.url === 'string') {
+        await assertPubliclyResolvable(new URL(config.url));
+      } else if ((type === 'teams' || type === 'discord') && typeof config.webhookUrl === 'string') {
+        await assertPubliclyResolvable(new URL(config.webhookUrl));
+      }
+    } catch (e) {
+      throw new ConnectorConfigError(e instanceof Error ? e.message : 'Invalid URL');
+    }
   }
 
   private async audit(

@@ -9,6 +9,7 @@ export const DeliveryStatusSchema = z.enum([
   'failed',
   'retrying',
   'cancelled',
+  'suppressed',
 ]);
 
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;

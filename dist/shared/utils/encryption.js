@@ -14,7 +14,7 @@
  *     latency is dominated by network round-trips, not bcrypt; the same
  *     change makes offline cracking 16x faster after a DB compromise.
  */
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync, } from 'crypto';
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync, scrypt, } from 'crypto';
 import bcrypt from 'bcrypt';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM standard; 96-bit IV
@@ -26,6 +26,16 @@ function deriveKey(secret, salt) {
     // scrypt parameters: N=2^14 keeps key derivation under ~50ms per call which
     // is acceptable for MFA secret encryption that runs once per device write.
     return scryptSync(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 });
+}
+async function deriveKeyAsync(secret, salt) {
+    return new Promise((resolve, reject) => {
+        scrypt(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
+            if (err)
+                reject(err);
+            else
+                resolve(derivedKey);
+        });
+    });
 }
 /**
  * Encrypt a UTF-8 string using AES-256-GCM with a per-record random scrypt
@@ -81,6 +91,47 @@ export function decrypt(payload, secret) {
         const authTag = Buffer.from(authTagHex, 'hex');
         const ciphertext = Buffer.from(ciphertextHex, 'hex');
         const legacyKey = scryptSync(secret, 'salt', KEY_LENGTH);
+        const decipher = createDecipheriv(ALGORITHM, legacyKey, iv);
+        decipher.setAuthTag(authTag);
+        const plaintext = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+        ]);
+        return plaintext.toString('utf8');
+    }
+    throw new Error('Invalid encrypted payload format');
+}
+export async function decryptAsync(payload, secret) {
+    const parts = payload.split(':');
+    if (parts.length === 4) {
+        const [saltHex, ivHex, authTagHex, ciphertextHex] = parts;
+        const salt = Buffer.from(saltHex, 'hex');
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        const ciphertext = Buffer.from(ciphertextHex, 'hex');
+        const key = await deriveKeyAsync(secret, salt);
+        const decipher = createDecipheriv(ALGORITHM, key, iv);
+        decipher.setAuthTag(authTag);
+        const plaintext = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+        ]);
+        return plaintext.toString('utf8');
+    }
+    if (parts.length === 3) {
+        // Legacy format with hardcoded scrypt salt 'salt' and 16-byte IV.
+        const [ivHex, authTagHex, ciphertextHex] = parts;
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(authTagHex, 'hex');
+        const ciphertext = Buffer.from(ciphertextHex, 'hex');
+        const legacyKey = await new Promise((resolve, reject) => {
+            scrypt(secret, 'salt', KEY_LENGTH, (err, derivedKey) => {
+                if (err)
+                    reject(err);
+                else
+                    resolve(derivedKey);
+            });
+        });
         const decipher = createDecipheriv(ALGORITHM, legacyKey, iv);
         decipher.setAuthTag(authTag);
         const plaintext = Buffer.concat([

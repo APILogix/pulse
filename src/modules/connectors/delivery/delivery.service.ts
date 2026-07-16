@@ -16,10 +16,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import { randomUUID } from 'crypto';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
-import { decryptConfig } from '../secrets/secret.service.js';
+import { decryptConfigAsync } from '../secrets/secret.service.js';
 import {
   checkRateLimit,
-  circuitAllows,
   recordCircuitFailure,
   recordCircuitSuccess,
   computeBackoffMs,
@@ -44,11 +43,12 @@ export class NotificationDispatcher {
   constructor(
     private readonly repository: ConnectorRepository,
     private readonly logger: FastifyBaseLogger,
+    private readonly emitEvent: (event: string, payload: any) => void = () => {},
   ) {}
 
   /** Build a live connector instance from a stored config row. */
-  instantiate(row: ConnectorConfigRow): BaseConnector {
-    const config = decryptConfig(row.encrypted_config);
+  async instantiate(row: ConnectorConfigRow): Promise<BaseConnector> {
+    const config = await decryptConfigAsync(row.encrypted_config);
     const ctx: ConnectorContext = {
       id: row.id,
       name: row.name,
@@ -70,7 +70,33 @@ export class NotificationDispatcher {
     payload: NotificationPayload,
     opts: { routeId?: string | null } = {},
   ): Promise<DispatchOutcome> {
-    const delivery = await this.repository.insertDelivery({
+    // BUG-09: Deduplication / suppression window
+    if (payload.dedupKey) {
+      const recent = await this.repository.findDeliveryByDedupKey(row.id, payload.dedupKey, 5);
+      if (recent) {
+        this.logger.info({ dedupKey: payload.dedupKey }, 'Delivery suppressed due to recent identical payload');
+        const suppressed = await this.repository.insertDelivery({
+          organizationId: row.organization_id,
+          connectorId: row.id,
+          routeId: opts.routeId ?? null,
+          notificationType: payload.notificationType,
+          severity: payload.severity,
+          payload: this.payloadForStorage(payload),
+          maxAttempts: 1,
+          correlationId: payload.correlationId,
+          parentDeliveryId: null,
+          status: 'suppressed' as any,
+        });
+        return {
+          deliveryId: suppressed.id,
+          status: 'suppressed' as any,
+          result: { success: true, latencyMs: 0 },
+        };
+      }
+    }
+
+    // BUG-03: Idempotent dispatch
+    const { row: delivery, existed } = await this.repository.insertDeliveryIdempotent({
       organizationId: row.organization_id,
       connectorId: row.id,
       routeId: opts.routeId ?? null,
@@ -83,13 +109,23 @@ export class NotificationDispatcher {
       status: 'pending',
     });
 
-    return this.attemptDelivery(row, delivery, payload, 0);
+    if (existed && delivery.status === 'sent') {
+      return { deliveryId: delivery.id, status: 'sent', result: { success: true, latencyMs: 0 } };
+    }
+
+    return this.attemptDelivery(row, delivery, payload, existed ? delivery.attempts : 0);
   }
 
   /** Process a single retry (invoked by the background worker). */
   async processRetry(row: ConnectorConfigRow, delivery: DeliveryRow): Promise<DispatchOutcome> {
     const payload = this.payloadFromStorage(delivery);
     return this.attemptDelivery(row, delivery, payload, delivery.attempts);
+  }
+
+  private circuitOpen(row: ConnectorConfigRow): boolean {
+    if (row.consecutive_failures < row.failure_threshold) return false;
+    const CIRCUIT_RESET_MS = 30_000;
+    return Date.now() - new Date(row.updated_at).getTime() < CIRCUIT_RESET_MS;
   }
 
   private async attemptDelivery(
@@ -114,7 +150,7 @@ export class NotificationDispatcher {
     }
 
     // 2. Circuit breaker
-    if (!circuitAllows(`connector:${row.id}`, { failureThreshold: row.failure_threshold })) {
+    if (this.circuitOpen(row)) {
       log.warn('Circuit open — short-circuiting delivery');
       return this.scheduleRetryOrFail(
         row, delivery, payload, priorAttempts,
@@ -125,7 +161,7 @@ export class NotificationDispatcher {
     // 3. Deliver
     let result: DeliveryResult;
     try {
-      const connector = this.instantiate(row);
+      const connector = await this.instantiate(row);
       result = await connector.send(payload);
     } catch (err) {
       result = {
@@ -242,6 +278,12 @@ export class NotificationDispatcher {
       errorStack: null,
       originalPayload: this.payloadForStorage(payload),
       retryAttempts: attemptsSoFar,
+    });
+    this.emitEvent('connector.dead_letter', {
+      orgId: row.organization_id,
+      connectorId: row.id,
+      deliveryId: delivery.id,
+      category,
     });
     log.error({ category, attemptsSoFar }, 'Delivery permanently failed — moved to dead-letter');
     return {

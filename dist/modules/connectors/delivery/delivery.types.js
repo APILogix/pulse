@@ -8,6 +8,7 @@ export const DeliveryStatusSchema = z.enum([
     'failed',
     'retrying',
     'cancelled',
+    'suppressed',
 ]);
 export const FailureCategorySchema = z.enum([
     'timeout',

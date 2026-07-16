@@ -4,6 +4,7 @@ export declare const DeliveryStatusSchema: z.ZodEnum<{
     pending: "pending";
     cancelled: "cancelled";
     failed: "failed";
+    suppressed: "suppressed";
     sent: "sent";
     delivered: "delivered";
     retrying: "retrying";

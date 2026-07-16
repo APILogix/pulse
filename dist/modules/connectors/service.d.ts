@@ -103,6 +103,7 @@ export declare class ConnectorService {
     runHealthCheck(row: ConnectorConfigRow): Promise<HealthStatus>;
     private requireConnector;
     private validateConfigOrThrow;
+    private assertSafeUrls;
     private audit;
     private toDto;
     private deliveryToDto;

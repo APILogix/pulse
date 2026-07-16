@@ -54,6 +54,7 @@ export declare const SlackConfigSchema: z.ZodObject<{
     webhookUrl: z.ZodOptional<z.ZodString>;
     botToken: z.ZodOptional<z.ZodString>;
     defaultChannel: z.ZodOptional<z.ZodString>;
+    pendingOAuth: z.ZodOptional<z.ZodLiteral<true>>;
 }, z.core.$strict>;
 export type SlackConfig = z.infer<typeof SlackConfigSchema>;
 export declare const DiscordConfigSchema: z.ZodObject<{
@@ -109,6 +110,7 @@ export declare const CONNECTOR_CONFIG_SCHEMAS: {
         webhookUrl: z.ZodOptional<z.ZodString>;
         botToken: z.ZodOptional<z.ZodString>;
         defaultChannel: z.ZodOptional<z.ZodString>;
+        pendingOAuth: z.ZodOptional<z.ZodLiteral<true>>;
     }, z.core.$strict>;
     readonly discord: z.ZodObject<{
         webhookUrl: z.ZodString;

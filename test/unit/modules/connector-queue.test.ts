@@ -120,7 +120,7 @@ describe('connector queue workers', () => {
     expect(send).toHaveBeenCalledWith(
       CONNECTOR_JOBS.deliveryRetry,
       { organizationId: 'org-1', deliveryId: 'delivery-1' },
-      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 3600 },
+      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 120 },
     );
   });
 });

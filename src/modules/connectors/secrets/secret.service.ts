@@ -16,7 +16,7 @@
  *     fresh per-record salt + IV. Because each ciphertext is independent,
  *     rotating a secret value is a localized operation.
  */
-import { encrypt, decrypt } from '../../../shared/utils/encryption.js';
+import { encrypt, decrypt, decryptAsync } from '../../../shared/utils/encryption.js';
 import { env } from '../../../config/env.js';
 import type { ConnectorConfig } from '../types.js';
 
@@ -33,6 +33,13 @@ export function encryptConfig(config: ConnectorConfig): Buffer {
 export function decryptConfig(blob: Buffer): ConnectorConfig {
   const ciphertext = blob.toString('utf8');
   const json = decrypt(ciphertext, SECRET);
+  return JSON.parse(json) as ConnectorConfig;
+}
+
+/** Decrypt a `bytea` config blob back into the original object asynchronously. */
+export async function decryptConfigAsync(blob: Buffer): Promise<ConnectorConfig> {
+  const ciphertext = blob.toString('utf8');
+  const json = await decryptAsync(ciphertext, SECRET);
   return JSON.parse(json) as ConnectorConfig;
 }
 

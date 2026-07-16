@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { AppError } from '../../../shared/errors/app-error.js';
+import { assertSafeHttpsUrl } from '../shared/url-safety.js';
 // ════════════════════════════════════════════════════════════════════════
 // ENUMS — must match the connector migration enum types exactly
 // ════════════════════════════════════════════════════════════════════════
@@ -46,23 +47,51 @@ export const SlackConfigSchema = z.object({
     webhookUrl: z.string().url().startsWith('https://hooks.slack.com/').optional(),
     botToken: z.string().min(1).optional(),
     defaultChannel: z.string().min(1).optional(),
-}).strict().refine((c) => Boolean(c.webhookUrl || c.botToken), {
-    message: 'Slack connector requires either webhookUrl or botToken',
+    /** Explicit marker used by the OAuth bootstrap flow before tokens exist. */
+    pendingOAuth: z.literal(true).optional(),
+}).strict().refine((c) => Boolean(c.webhookUrl || c.botToken || c.pendingOAuth), {
+    message: 'Slack connector requires webhookUrl or botToken',
 });
 export const DiscordConfigSchema = z.object({
-    webhookUrl: z.string().url().startsWith('https://').includes('discord').describe('Discord webhook URL'),
+    webhookUrl: z.string().url().refine((u) => {
+        try {
+            const h = new URL(u).hostname.toLowerCase();
+            return h === 'discord.com' || h.endsWith('.discord.com') ||
+                h === 'discordapp.com' || h.endsWith('.discordapp.com');
+        }
+        catch {
+            return false;
+        }
+    }, 'Must be a Discord webhook URL').describe('Discord webhook URL'),
     username: z.string().max(80).optional(),
     avatarUrl: z.string().url().optional(),
 }).strict();
 export const TeamsConfigSchema = z.object({
-    webhookUrl: z.string().url().startsWith('https://'),
+    webhookUrl: z.string().url().refine((u) => {
+        try {
+            const h = new URL(u).hostname.toLowerCase();
+            return h === 'office.com' || h.endsWith('.office.com') ||
+                h === 'webhook.office.com' || h.endsWith('.webhook.office.com');
+        }
+        catch {
+            return false;
+        }
+    }, 'Must be a Microsoft Teams webhook URL'),
 }).strict();
 export const PagerDutyConfigSchema = z.object({
     routingKey: z.string().min(1).describe('Events API v2 integration/routing key'),
     defaultSeverityMap: z.record(z.string(), z.string()).optional(),
 }).strict();
 export const WebhookConfigSchema = z.object({
-    url: z.string().url().startsWith('https://'),
+    url: z.string().url().refine((u) => {
+        try {
+            assertSafeHttpsUrl(u);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }, 'URL must be public HTTPS'),
     method: z.enum(['POST', 'PUT', 'PATCH']).default('POST'),
     headers: z.record(z.string(), z.string()).optional(),
     signingSecret: z.string().min(8).optional(),

@@ -24,6 +24,10 @@ export declare class DeliveryRepository {
     private readonly db;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     insertDelivery(input: InsertDeliveryInput): Promise<DeliveryRow>;
+    insertDeliveryIdempotent(input: InsertDeliveryInput): Promise<{
+        row: DeliveryRow;
+        existed: boolean;
+    }>;
     markDeliverySent(id: string, update: {
         externalMessageId: string | null;
         responseStatusCode: number | null;
@@ -44,6 +48,7 @@ export declare class DeliveryRepository {
         total: number;
     }>;
     getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
+    findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number): Promise<DeliveryRow | null>;
     listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
         limit: number;
         offset: number;
@@ -62,6 +67,7 @@ export declare class DeliveryRepository {
         originalPayload: Record<string, unknown>;
         retryAttempts: number;
     }): Promise<void>;
+    getDlqGrowth(windowMinutes: number): Promise<number>;
     private insertAttempt;
 }
 //# sourceMappingURL=delivery.repository.d.ts.map

@@ -4,6 +4,7 @@ import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 import { connectLogDB, logDB } from './config/log-database.js';
 import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
+import { startPgBoss, stopPgBoss } from './lib/pgboss.js';
 const bootLogger = logger.child({ component: 'bootstrap' });
 // ── Memory Leak Prevention ─────────────────────────────────────────────
 process.setMaxListeners(20);
@@ -41,6 +42,7 @@ async function bootstrap() {
         await connectDB();
         await connectLogDB();
         await connectRedis();
+        await startPgBoss();
         const isRedisHealthy = await checkRedis();
         if (!isRedisHealthy) {
             bootLogger.fatal('Redis health check failed — aborting startup');
@@ -64,6 +66,7 @@ async function bootstrap() {
             await closeRedis();
             await logDB.close();
             await closeDatabase();
+            await stopPgBoss();
             clearTimeout(forceExitTimer);
             bootLogger.info('Shutdown complete');
             process.exit(0);

@@ -4,6 +4,7 @@ import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
 import { CONNECTOR_JOBS } from './job.constants.js';
 import { createConnector as factoryCreate, ephemeralContext, getTypeCapabilities, isConnectorTypeRegistered, listConnectorTypes, } from './registry.js';
+import { assertPubliclyResolvable } from './shared/url-safety.js';
 import { ConnectorConfigError, ConnectorError, ConnectorNotFoundError, ConnectorTypeUnsupportedError, } from './types.js';
 export class ConnectorService {
     repository;
@@ -28,6 +29,7 @@ export class ConnectorService {
             throw new ConnectorTypeUnsupportedError(body.type);
         }
         const normalized = this.validateConfigOrThrow(body.type, body.config);
+        await this.assertSafeUrls(body.type, normalized);
         const capabilities = getTypeCapabilities(body.type);
         const row = await this.repository.create({
             organizationId: orgId,
@@ -81,6 +83,7 @@ export class ConnectorService {
         if (body.config) {
             const mergedInput = { ...decryptConfig(existing.encrypted_config), ...body.config };
             const merged = this.validateConfigOrThrow(existing.type, mergedInput);
+            await this.assertSafeUrls(existing.type, merged);
             fields.encryptedConfig = encryptConfig(merged);
             // Re-derive capabilities (type can't change, but keeps them authoritative).
             const caps = getTypeCapabilities(existing.type);
@@ -159,7 +162,7 @@ export class ConnectorService {
         const startedAt = Date.now();
         let result;
         try {
-            const connector = this.dispatcher.instantiate(row);
+            const connector = await this.dispatcher.instantiate(row);
             result = await connector.testConnection();
         }
         catch (err) {
@@ -390,7 +393,7 @@ export class ConnectorService {
     }
     /** Run a health check for a connector row (used by the background monitor). */
     async runHealthCheck(row) {
-        const connector = this.dispatcher.instantiate(row);
+        const connector = await this.dispatcher.instantiate(row);
         const health = await connector.getHealthStatus();
         await this.repository.insertHealthCheck(row.id, health.state, health.responseTimeMs ?? null, health.state === 'healthy' ? null : (health.message ?? null), health.details ?? {});
         return health;
@@ -409,6 +412,19 @@ export class ConnectorService {
             throw new ConnectorConfigError('Connector configuration is invalid', { errors: result.errors });
         }
         return result.normalized ?? config;
+    }
+    async assertSafeUrls(type, config) {
+        try {
+            if (type === 'webhook' && typeof config.url === 'string') {
+                await assertPubliclyResolvable(new URL(config.url));
+            }
+            else if ((type === 'teams' || type === 'discord') && typeof config.webhookUrl === 'string') {
+                await assertPubliclyResolvable(new URL(config.webhookUrl));
+            }
+        }
+        catch (e) {
+            throw new ConnectorConfigError(e instanceof Error ? e.message : 'Invalid URL');
+        }
     }
     async audit(orgId, connectorId, action, meta, changesSummary) {
         try {

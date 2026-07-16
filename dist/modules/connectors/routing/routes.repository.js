@@ -116,6 +116,17 @@ export class ConnectorRoutesRepository {
         const result = await this.db.query(`DELETE FROM connector_oauth_states WHERE expires_at <= NOW()`);
         return result.rowCount ?? 0;
     }
+    async findOAuthStateWithConnector(client, state) {
+        const res = await client.query(`SELECT s.id, s.connector_id, c.organization_id
+       FROM connector_oauth_states s
+       JOIN connector_configs c ON c.id = s.connector_id
+       WHERE s.state = $1 AND s.expires_at > NOW()
+       FOR UPDATE`, [state]);
+        return res.rows[0];
+    }
+    async deleteOAuthState(client, id) {
+        await client.query(`DELETE FROM connector_oauth_states WHERE id = $1`, [id]);
+    }
     async requireOwnedConnector(organizationId, connectorId) {
         const r = await this.db.query(`SELECT EXISTS(
          SELECT 1 FROM connector_configs

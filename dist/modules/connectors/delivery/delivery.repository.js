@@ -34,11 +34,34 @@ export class DeliveryRepository {
         ]);
         return r.rows[0];
     }
+    async insertDeliveryIdempotent(input) {
+        return this.withTransaction(async (client) => {
+            await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, [input.connectorId, input.correlationId]);
+            const existing = await client.query(`SELECT * FROM connector_deliveries
+         WHERE connector_id = $1 AND correlation_id = $2
+           AND created_at > now() - interval '24 hours'
+         LIMIT 1`, [input.connectorId, input.correlationId]);
+            if (existing.rows.length > 0) {
+                return { row: existing.rows[0], existed: true };
+            }
+            const payloadJson = JSON.stringify(input.payload);
+            const r = await client.query(`INSERT INTO connector_deliveries
+           (organization_id, connector_id, route_id, notification_type, severity,
+            payload, payload_size_bytes, status, max_attempts, correlation_id, parent_delivery_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING *`, [
+                input.organizationId, input.connectorId, input.routeId, input.notificationType,
+                input.severity, payloadJson, Buffer.byteLength(payloadJson, 'utf8'),
+                input.status, input.maxAttempts, input.correlationId, input.parentDeliveryId,
+            ]);
+            return { row: r.rows[0], existed: false };
+        });
+    }
     async markDeliverySent(id, update) {
         await this.withTransaction(async (client) => {
             const updated = await client.query(`UPDATE connector_deliveries
          SET status='sent', attempts=attempts+1, sent_at=NOW(), updated_at=NOW(),
-             external_message_id=$2, response_status_code=$3, response_body=$4,
+             external_message_id=$2, response_status_code=$3, response_body=$4::text,
              provider_response=$4::jsonb, http_status=$3, duration_ms=$5, delivery_latency_ms=$5
          WHERE id=$1
          RETURNING *`, [
@@ -100,6 +123,18 @@ export class DeliveryRepository {
     /** Claim due retry rows for processing (SKIP LOCKED for safe concurrency). */
     async claimRetryableDeliveries(limit) {
         return this.withTransaction(async (client) => {
+            await client.query(`UPDATE connector_deliveries
+         SET status = 'retrying',
+             next_retry_at = now(),
+             error_message = coalesce(error_message, 'Recovered from stale pending'),
+             updated_at = now()
+         WHERE (id, created_at) IN (
+           SELECT id, created_at FROM connector_deliveries
+           WHERE status = 'pending' AND created_at < now() - interval '5 minutes'
+           ORDER BY created_at ASC
+           LIMIT 50
+           FOR UPDATE SKIP LOCKED
+         )`);
             const r = await client.query(`SELECT * FROM connector_deliveries
          WHERE status='retrying' AND next_retry_at <= NOW()
          ORDER BY next_retry_at ASC
@@ -129,6 +164,15 @@ export class DeliveryRepository {
     async getDelivery(organizationId, id) {
         const r = await this.db.query(`SELECT * FROM connector_deliveries
        WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
+        return r.rows[0] ?? null;
+    }
+    async findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes) {
+        const r = await this.db.query(`SELECT * FROM connector_deliveries
+       WHERE connector_id = $1
+         AND payload->>'dedupKey' = $2
+         AND status = 'sent'
+         AND created_at > now() - ($3 || ' minutes')::interval
+       LIMIT 1`, [connectorId, dedupKey, windowMinutes]);
         return r.rows[0] ?? null;
     }
     async listAttempts(organizationId, connectorId, deliveryId, filters) {
@@ -178,13 +222,19 @@ export class DeliveryRepository {
             }),
         ]);
     }
+    async getDlqGrowth(windowMinutes) {
+        const r = await this.db.query(`SELECT COUNT(*)::text AS count
+       FROM connector_audit_logs
+       WHERE action = 'delivery.dead_lettered'
+         AND created_at > NOW() - ($1 || ' minutes')::interval`, [windowMinutes]);
+        return Number(r.rows[0]?.count ?? 0);
+    }
     async insertAttempt(client, delivery, input) {
         await client.query(`INSERT INTO connector_delivery_attempts
          (delivery_id, delivery_created_at, attempt_number, status, http_status,
           error_code, error_message, response, duration_ms)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [
+       VALUES ($1, (SELECT created_at FROM connector_deliveries WHERE id = $1), $2, $3, $4, $5, $6, $7, $8)`, [
             delivery.id,
-            delivery.created_at,
             delivery.attempts,
             input.status,
             input.httpStatus ?? null,

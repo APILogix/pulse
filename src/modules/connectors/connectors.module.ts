@@ -44,15 +44,21 @@ async function connectorsModule(
   fastify: FastifyInstance,
   _options: FastifyPluginOptions,
 ): Promise<void> {
+  const emitEvent = async (event: string, payload: any) => {
+    if (event === 'connector.dead_letter') {
+      fastify.log.error({ event, payload }, 'Connector delivery dead-lettered');
+    } else {
+      fastify.log.info({ event, payload }, 'Connector event emitted');
+    }
+  };
+
   const repository = new ConnectorRepository();
-  const dispatcher = new NotificationDispatcher(repository, fastify.log);
+  const dispatcher = new NotificationDispatcher(repository, fastify.log, emitEvent);
   const service = new ConnectorService({
     repository,
     dispatcher,
     logger: fastify.log,
-    emitEvent: async (event, payload) => {
-      fastify.log.info({ event, payload }, 'Connector event emitted');
-    },
+    emitEvent,
     enqueueConnectorJob: async (queue, data, options) => {
       const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
       if (typeof boss.createQueue === 'function') {

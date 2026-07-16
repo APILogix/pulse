@@ -226,7 +226,7 @@ export class AlertBatchProcessor {
         },
         { 
           priority,
-          retryLimit: 3, 
+          retryLimit: 0, 
           retryDelay: 60, 
           retryBackoff: true, 
           expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS 
@@ -265,7 +265,7 @@ export class AlertBatchProcessor {
       title,
       body,
       correlationId: event.id,
-      dedupKey: event.fingerprint,
+      dedupKey: event.id,
       metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels },
     };
   }

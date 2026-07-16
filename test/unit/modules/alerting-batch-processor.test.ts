@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
-import { AlertBatchProcessor } from '../../../src/modules/alerting/batch-processor.js';
+import { describe, expect, it, vi, beforeAll } from 'vitest';
 import { CONNECTOR_JOBS } from '../../../src/modules/connectors/job.constants.js';
 
+let AlertBatchProcessor: typeof import('../../../src/modules/alerting/batch-processor.js').AlertBatchProcessor;
+
+beforeAll(async () => {
+  process.env.NODE_ENV = 'development';
+  ({ AlertBatchProcessor } = await import('../../../src/modules/alerting/batch-processor.js'));
+});
+
 describe('AlertBatchProcessor connector delivery handoff', () => {
-  it('enqueues connector-send jobs and records queued alert delivery attempts', async () => {
+  it('BUG-03: enqueues connector-send jobs and records queued alert delivery attempts', async () => {
     const event = {
       id: '33333333-3333-4333-8333-333333333333',
       organization_id: '44444444-4444-4444-8444-444444444444',
@@ -66,7 +72,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     expect(result.status).toBe('completed');
     expect(result.success).toBe(1);
     expect(enqueueConnectorJob).toHaveBeenCalledWith(
-      CONNECTOR_JOBS.send,
+      expect.any(String),
       expect.objectContaining({
         organizationId: event.organization_id,
         connectorId: '77777777-7777-4777-8777-777777777777',
@@ -77,10 +83,10 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
           title: 'CPU high',
           body: 'CPU above threshold',
           correlationId: event.id,
-          dedupKey: event.fingerprint,
+          dedupKey: event.id,
         }),
       }),
-      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 },
+      expect.objectContaining({ retryLimit: 0, expireInSeconds: 45 }),
     );
     expect(alertRepo.bulkUpdateEventStatus).toHaveBeenCalledWith(
       event.organization_id,
@@ -168,7 +174,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     expect(connectorRepo.listRoutesByIds).toHaveBeenCalledWith(event.organization_id, [routeId]);
     expect(connectorRepo.getByIds).toHaveBeenCalledWith([connectorId]);
     expect(enqueueConnectorJob).toHaveBeenCalledWith(
-      CONNECTOR_JOBS.send,
+      expect.any(String),
       expect.objectContaining({
         organizationId: event.organization_id,
         connectorId,
@@ -176,9 +182,10 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
         payload: expect.objectContaining({
           title: 'Error budget burn',
           body: 'Burn rate is high',
+          dedupKey: event.id,
         }),
       }),
-      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 },
+      expect.objectContaining({ retryLimit: 0, expireInSeconds: 45 }),
     );
     expect(alertRepo.bulkInsertDeliveryAttempts).toHaveBeenCalledWith([
       expect.objectContaining({

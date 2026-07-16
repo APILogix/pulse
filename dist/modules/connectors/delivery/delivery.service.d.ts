@@ -24,9 +24,10 @@ export interface DispatchOutcome {
 export declare class NotificationDispatcher {
     private readonly repository;
     private readonly logger;
-    constructor(repository: ConnectorRepository, logger: FastifyBaseLogger);
+    private readonly emitEvent;
+    constructor(repository: ConnectorRepository, logger: FastifyBaseLogger, emitEvent?: (event: string, payload: any) => void);
     /** Build a live connector instance from a stored config row. */
-    instantiate(row: ConnectorConfigRow): BaseConnector;
+    instantiate(row: ConnectorConfigRow): Promise<BaseConnector>;
     /**
      * Dispatch a notification through a connector. Creates a delivery row and
      * runs the first attempt synchronously. Returns the outcome so callers
@@ -37,6 +38,7 @@ export declare class NotificationDispatcher {
     }): Promise<DispatchOutcome>;
     /** Process a single retry (invoked by the background worker). */
     processRetry(row: ConnectorConfigRow, delivery: DeliveryRow): Promise<DispatchOutcome>;
+    private circuitOpen;
     private attemptDelivery;
     private scheduleRetryOrFail;
     private payloadForStorage;

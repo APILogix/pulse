@@ -1,7 +1,7 @@
 import { pool } from '../../../config/database.js';
 import { ConnectorConflictError, ConnectorNotFoundError, } from '../types.js';
 const CONNECTOR_COLUMNS = `
-  id, organization_id, project_id, provider AS type, status, description,
+  id, organization_id, project_id, name, provider AS type, status, description,
   COALESCE(
     (SELECT encrypted_value FROM connector_credentials cc
      WHERE cc.connector_id = connector_configs.id AND cc.key_name = 'config'

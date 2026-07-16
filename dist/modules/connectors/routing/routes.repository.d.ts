@@ -21,6 +21,8 @@ export declare class ConnectorRoutesRepository {
     }): Promise<ConnectorOAuthStateRow>;
     consumeOAuthState(organizationId: string, connectorId: string, state: string): Promise<ConnectorOAuthStateRow | null>;
     cleanupExpiredOAuthStates(): Promise<number>;
+    findOAuthStateWithConnector(client: import('pg').PoolClient, state: string): Promise<any>;
+    deleteOAuthState(client: import('pg').PoolClient, id: string): Promise<void>;
     private requireOwnedConnector;
     private requireOwnedProject;
 }

@@ -17,6 +17,8 @@ export declare class SlackConnector extends BaseConnector {
     supportsRichFormatting(): boolean;
     supportsThreading(): boolean;
     supportsAttachments(): boolean;
+    private esc;
+    private safeUrl;
     private buildBlocks;
     protected deliver(notification: NotificationPayload): Promise<DeliveryResult>;
     private deliverViaWebhook;

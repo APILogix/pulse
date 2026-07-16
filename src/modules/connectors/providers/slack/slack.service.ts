@@ -24,32 +24,25 @@ export class SlackService {
       type: 'slack',
       name: `Slack Connection (${randomBytes(4).toString('hex')})`,
       description: 'Slack OAuth Integration',
-      config: { botToken: 'pending' },
+      config: { pendingOAuth: true },
       displayConfig: {},
     });
 
-    const oauthStart = await this.deps.connectorService.startOAuth(orgId, actorContext, connector.id);
+    const { state } = await this.deps.connectorService.startOAuth(orgId, actorContext, connector.id);
+    // Slack v2 OAuth does not support PKCE — state-only flow by design.
 
     const clientId = env.SLACK_CLIENT_ID || '';
     const redirectUri = env.SLACK_REDIRECT_URI || '';
     const scopes = 'chat:write,channels:read,groups:read,team:read';
     
-    const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${scopes}&state=${oauthStart.state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+    const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${scopes}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 
     return { url, connectorId: connector.id };
   }
 
   async handleCallback(code: string, state: string) {
     const row = await this.deps.repository.withTransaction(async (client: PoolClient) => {
-      const res = await client.query(
-        `SELECT s.id, s.connector_id, c.organization_id
-         FROM connector_oauth_states s
-         JOIN connector_configs c ON c.id = s.connector_id
-         WHERE s.state = $1 AND s.expires_at > NOW()
-         FOR UPDATE`,
-        [state]
-      );
-      return res.rows[0];
+      return this.deps.repository.findOAuthStateWithConnector(client, state);
     });
 
     if (!row) {
@@ -111,7 +104,7 @@ export class SlackService {
     });
 
     await this.deps.repository.withTransaction(async (client: PoolClient) => {
-      await client.query(`DELETE FROM connector_oauth_states WHERE id = $1`, [row.id]);
+      await this.deps.repository.deleteOAuthState(client, row.id);
     });
 
     return { connectorId, orgId };

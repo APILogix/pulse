@@ -37,8 +37,11 @@ export class ConnectorRepository {
     async claimRetryableDeliveries(limit) { return this.delivery.claimRetryableDeliveries(limit); }
     async listDeliveries(organizationId, filters) { return this.delivery.listDeliveries(organizationId, filters); }
     async getDelivery(organizationId, id) { return this.delivery.getDelivery(organizationId, id); }
+    async insertDeliveryIdempotent(input) { return this.delivery.insertDeliveryIdempotent(input); }
+    async findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes) { return this.delivery.findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes); }
     async listAttempts(organizationId, connectorId, deliveryId, filters) { return this.delivery.listAttempts(organizationId, connectorId, deliveryId, filters); }
     async retryDelivery(organizationId, id) { return this.delivery.retryDelivery(organizationId, id); }
+    async getDlqGrowth(windowMinutes) { return this.delivery.getDlqGrowth(windowMinutes); }
     async insertDeadLetter(input) { return this.delivery.insertDeadLetter(input); }
     // Metrics
     async recordSuccess(connectorId) { return this.metrics.recordSuccess(connectorId); }
@@ -59,5 +62,7 @@ export class ConnectorRepository {
     async createOAuthState(input) { return this.routes.createOAuthState(input); }
     async consumeOAuthState(organizationId, connectorId, state) { return this.routes.consumeOAuthState(organizationId, connectorId, state); }
     async cleanupExpiredOAuthStates() { return this.routes.cleanupExpiredOAuthStates(); }
+    async findOAuthStateWithConnector(client, state) { return this.routes.findOAuthStateWithConnector(client, state); }
+    async deleteOAuthState(client, id) { return this.routes.deleteOAuthState(client, id); }
 }
 //# sourceMappingURL=repository.js.map

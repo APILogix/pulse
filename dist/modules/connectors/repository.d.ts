@@ -48,6 +48,11 @@ export declare class ConnectorRepository {
         total: number;
     }>;
     getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
+    insertDeliveryIdempotent(input: import('./delivery/delivery.repository.js').InsertDeliveryInput): Promise<{
+        row: DeliveryRow;
+        existed: boolean;
+    }>;
+    findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number): Promise<DeliveryRow | null>;
     listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
         limit: number;
         offset: number;
@@ -56,6 +61,7 @@ export declare class ConnectorRepository {
         total: number;
     }>;
     retryDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
+    getDlqGrowth(windowMinutes: number): Promise<number>;
     insertDeadLetter(input: {
         originalDeliveryId: string;
         organizationId: string;
@@ -132,5 +138,7 @@ export declare class ConnectorRepository {
     }): Promise<import("./types.js").ConnectorOAuthStateRow>;
     consumeOAuthState(organizationId: string, connectorId: string, state: string): Promise<import("./types.js").ConnectorOAuthStateRow | null>;
     cleanupExpiredOAuthStates(): Promise<number>;
+    findOAuthStateWithConnector(client: PoolClient, state: string): Promise<any>;
+    deleteOAuthState(client: PoolClient, id: string): Promise<void>;
 }
 //# sourceMappingURL=repository.d.ts.map

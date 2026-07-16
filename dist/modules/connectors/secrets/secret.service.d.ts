@@ -3,6 +3,8 @@ import type { ConnectorConfig } from '../types.js';
 export declare function encryptConfig(config: ConnectorConfig): Buffer;
 /** Decrypt a `bytea` config blob back into the original object. */
 export declare function decryptConfig(blob: Buffer): ConnectorConfig;
+/** Decrypt a `bytea` config blob back into the original object asynchronously. */
+export declare function decryptConfigAsync(blob: Buffer): Promise<ConnectorConfig>;
 /** Encrypt an arbitrary secret string (OAuth tokens, signing secrets). */
 export declare function encryptSecret(value: string): Buffer;
 /** Decrypt a secret string previously stored with {@link encryptSecret}. */
