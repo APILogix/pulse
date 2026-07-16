@@ -23,6 +23,8 @@ import { ConnectorService } from './service.js';
 import { ConnectorMonitor } from './monitor.js';
 import { connectorRoutes } from './routes.js';
 import { slackConnectorRoutes } from './providers/slack/slack.routes.js';
+import { CONNECTOR_JOBS } from './job.constants.js';
+import { env } from '../../config/env.js';
 import './registry.js'; // ensure built-in connector types register at boot
 
 const moduleLogger = logger.child({ component: 'connectors-module' });
@@ -56,7 +58,22 @@ async function connectorsModule(
       if (typeof boss.createQueue === 'function') {
         await boss.createQueue(queue).catch(() => undefined);
       }
-      return pgboss.send(queue, data, options as never);
+
+      let expireInSeconds = 60; // fallback
+      if (queue.startsWith(CONNECTOR_JOBS.send)) {
+        expireInSeconds = env.CONNECTOR_SEND_EXPIRE_SECONDS;
+      } else if (queue === CONNECTOR_JOBS.healthCheck) {
+        expireInSeconds = env.CONNECTOR_HEALTH_EXPIRE_SECONDS;
+      } else if (queue === CONNECTOR_JOBS.cleanup) {
+        expireInSeconds = env.CONNECTOR_CLEANUP_EXPIRE_SECONDS;
+      } else if (queue === CONNECTOR_JOBS.secretRotation || queue === CONNECTOR_JOBS.oauthRefresh) {
+        expireInSeconds = env.CONNECTOR_SECRET_EXPIRE_SECONDS;
+      } else if (queue === CONNECTOR_JOBS.deliveryRetry || queue === CONNECTOR_JOBS.deadLetterRetry) {
+        expireInSeconds = env.CONNECTOR_RETRY_EXPIRE_SECONDS;
+      }
+
+      const mergedOptions = { expireInSeconds, ...options };
+      return pgboss.send(queue, data, mergedOptions as never);
     },
   });
   const monitor = new ConnectorMonitor(repository, dispatcher, service, fastify.log);

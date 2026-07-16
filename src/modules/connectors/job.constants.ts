@@ -1,3 +1,5 @@
+import type { NotificationSeverity } from './types.js';
+
 export const CONNECTOR_JOBS = {
   send: 'connector-send',
   healthCheck: 'connector-health-check',
@@ -9,4 +11,18 @@ export const CONNECTOR_JOBS = {
   deliveryRetry: 'connector-delivery-retry',
 } as const;
 
-export type ConnectorJobName = (typeof CONNECTOR_JOBS)[keyof typeof CONNECTOR_JOBS];
+export type ConnectorJobName = (typeof CONNECTOR_JOBS)[keyof typeof CONNECTOR_JOBS] | string;
+
+export const CONNECTOR_SEND_QUEUES: Record<NotificationSeverity, string> = {
+  critical: 'connector-send-critical',
+  error: 'connector-send-error',
+  warning: 'connector-send-warning',
+  info: 'connector-send-info',
+};
+
+export const CONNECTOR_PRIORITY: Record<NotificationSeverity, number> = {
+  critical: 100,
+  error: 80,
+  warning: 50,
+  info: 20,
+};

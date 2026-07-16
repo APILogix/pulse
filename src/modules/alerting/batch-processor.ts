@@ -24,7 +24,8 @@ import type {
   NotificationPayload,
   NotificationSeverity,
 } from '../connectors/types.js';
-import { CONNECTOR_JOBS, type ConnectorJobName } from '../connectors/job.constants.js';
+import { CONNECTOR_JOBS, CONNECTOR_PRIORITY, type ConnectorJobName } from '../connectors/job.constants.js';
+import { env } from '../../config/env.js';
 
 export interface BatchJobData {
   batchId: string;
@@ -212,15 +213,24 @@ export class AlertBatchProcessor {
     }
 
     try {
+      const queueName = `${CONNECTOR_JOBS.send}-${connector.type}` as ConnectorJobName;
+      const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+
       const jobId = await this.enqueueConnectorJob(
-        CONNECTOR_JOBS.send,
+        queueName,
         {
           organizationId: event.organization_id,
           connectorId,
           payload,
           routeId,
         },
-        { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 },
+        { 
+          priority,
+          retryLimit: 3, 
+          retryDelay: 60, 
+          retryBackoff: true, 
+          expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS 
+        },
       );
       return {
         log: {
