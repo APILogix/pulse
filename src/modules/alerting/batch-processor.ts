@@ -284,7 +284,7 @@ export class AlertBatchProcessor {
       title,
       body,
       correlationId: event.id,
-      dedupKey: event.id,
+      dedupKey: event.fingerprint,
       metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels },
     };
   }

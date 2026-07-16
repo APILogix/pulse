@@ -6,6 +6,8 @@ config()
 const envSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+  // Threadpool size for crypto/DNS libuv offload. Default is 4, tune up to 8+ for heavy async scrypt loads.
+  UV_THREADPOOL_SIZE: z.coerce.number().int().min(1).max(64).default(8),
   PORT: z.string().transform(Number).default(3000),
   HOST: z.string().default('0.0.0.0'),
   APP_NAME: z.string().default('Pulsiv'),

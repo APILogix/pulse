@@ -83,7 +83,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
           title: 'CPU high',
           body: 'CPU above threshold',
           correlationId: event.id,
-          dedupKey: event.id,
+          dedupKey: event.fingerprint,
         }),
       }),
       expect.objectContaining({ retryLimit: 0, expireInSeconds: 45 }),
@@ -182,7 +182,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
         payload: expect.objectContaining({
           title: 'Error budget burn',
           body: 'Burn rate is high',
-          dedupKey: event.id,
+          dedupKey: event.fingerprint,
         }),
       }),
       expect.objectContaining({ retryLimit: 0, expireInSeconds: 45 }),
