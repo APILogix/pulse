@@ -133,6 +133,18 @@ export class PoliciesRepository {
     return r.rows;
   }
 
+  /** Bulk-load active steps for many policies in ONE query (batch/escalation workers). */
+  async listEscalationStepsByPolicyIds(policyIds: string[]): Promise<AlertEscalationStepRow[]> {
+    if (policyIds.length === 0) return [];
+    const r = await this.db.query<AlertEscalationStepRow>(
+      `SELECT * FROM alert_escalation_steps
+       WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE
+       ORDER BY policy_id, step_number ASC`,
+      [policyIds],
+    );
+    return r.rows;
+  }
+
   // ── Templates ────────────────────────────────────────────────────────────
   // ── Routing rules ──────────────────────────────────────────────────────
   // ── Metrics + stats ──────────────────────────────────────────────────────

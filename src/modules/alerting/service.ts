@@ -8,7 +8,7 @@ import { TemplatesService } from './templates/templates.service.js';
 import { RoutingService } from './routing/routing.service.js';
 import { MetricsService } from './metrics/metrics.service.js';
 import type { RequestMeta } from './types.js';
-import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
+import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, ListDeadLettersQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
 
 export * from './rules/rules.service.js';
 export * from './events/events.service.js';
@@ -100,6 +100,18 @@ export class AlertingService {
 
   async silenceFromEvent(orgId: string, meta: RequestMeta, id: string, durationMinutes: number, comment: string | null): Promise<Promise<Record<string, unknown>>> {
     return this.events.silenceFromEvent(orgId, meta, id, durationMinutes, comment);
+  }
+
+  async listDeadLetters(orgId: string, query: ListDeadLettersQuery): Promise<Promise<{ data: Record<string, unknown>[]; total: number }>> {
+    return this.events.listDeadLetters(orgId, query);
+  }
+
+  async retryDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Promise<Record<string, unknown>>> {
+    return this.events.retryDeadLetter(orgId, meta, id);
+  }
+
+  async discardDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Promise<void>> {
+    return this.events.discardDeadLetter(orgId, meta, id);
   }
 
   async createSilence(orgId: string, meta: RequestMeta, body: CreateSilenceBody): Promise<Promise<Record<string, unknown>>> {

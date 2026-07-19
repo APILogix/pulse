@@ -20,6 +20,7 @@ import {
   CreateSilenceSchema,
   CreateTemplateSchema,
   IngestEventSchema,
+  ListDeadLettersQuerySchema,
   ListEventsQuerySchema,
   ListRulesQuerySchema,
   ListSilencesQuerySchema,
@@ -123,6 +124,28 @@ export async function eventsRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/events/:id/deliveries', guard, withErrorHandling(async (request, reply) => {
     const { orgId, id } = OrgEventParamsSchema.parse(request.params);
     return reply.send({ success: true, data: await svc.getEventDeliveries(orgId, id) });
+  }));
+
+  // ═══════════════════ DEAD-LETTER QUEUE (ADMIN) ═══════════════════
+  // Failed batch jobs land here after pg-boss retries are exhausted. Operators
+  // can inspect them, manually re-drive a still-processing batch, or discard
+  // entries whose events were already recovered by the orphan sweeper.
+  fastify.get('/dead-letters', guard, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = ListDeadLettersQuerySchema.parse(request.query ?? {});
+    const result = await svc.listDeadLetters(orgId, query);
+    return reply.send({ success: true, data: result.data, meta: { total: result.total, limit: query.limit, offset: query.offset } });
+  }));
+
+  fastify.post('/dead-letters/:id/retry', guard, withErrorHandling(async (request, reply) => {
+    const { orgId, id } = OrgEventParamsSchema.parse(request.params);
+    return reply.send({ success: true, data: await svc.retryDeadLetter(orgId, buildMeta(request), id) });
+  }));
+
+  fastify.delete('/dead-letters/:id', guard, withErrorHandling(async (request, reply) => {
+    const { orgId, id } = OrgEventParamsSchema.parse(request.params);
+    await svc.discardDeadLetter(orgId, buildMeta(request), id);
+    return reply.send({ success: true });
   }));
 
   // ═══════════════════ SILENCES ═══════════════════

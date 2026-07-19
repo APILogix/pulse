@@ -17,7 +17,7 @@ export * from './metrics/metrics.repository.js';
 
 import type { CreateRuleInput, RuleConditionInsert, RuleActionInsert } from './rules/rules.repository.js';
 import type { InsertEventInput, DeliveryAttemptInsert } from './events/events.repository.js';
-import type { AlertRuleRow, AlertRuleConditionRow, AlertRuleActionRow, AlertEventRow, AlertDeliveryAttemptRow, AlertBatchRow, AlertSilenceRow, AlertEscalationPolicyRow, AlertEscalationStepRow, AlertTemplateRow, AlertRoutingRuleRow, AlertMetricRow, ListRulesQuery, ListEventsQuery, AlertEventStatus, MetricGranularity } from './types.js';
+import type { AlertRuleRow, AlertRuleConditionRow, AlertRuleActionRow, AlertEventRow, AlertDeliveryAttemptRow, AlertBatchRow, AlertSilenceRow, AlertEscalationPolicyRow, AlertEscalationStepRow, AlertTemplateRow, AlertRoutingRuleRow, AlertMetricRow, AlertDeadLetterRow, AlertThrottleWindowRow, ListRulesQuery, ListEventsQuery, ListDeadLettersQuery, AlertEventStatus, MetricGranularity } from './types.js';
 
 export class AlertingRepository {
 
@@ -47,6 +47,10 @@ export class AlertingRepository {
 
     async getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]> {
         return this.rules.getRuleActions(ruleId);
+    }
+
+    async getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]> {
+        return this.rules.getRuleActionsByRuleIds(ruleIds);
     }
 
     async listRules(organizationId: string, query: ListRulesQuery): Promise<{ data: AlertRuleRow[]; total: number }> {
@@ -121,7 +125,7 @@ export class AlertingRepository {
         return this.events.completeBatch(batchId, counts, durationMs, status, errorMessage);
     }
 
-    async bulkUpdateEventStatus(organizationId: string, updates: Array<{ id: string; status: AlertEventStatus }>): Promise<void> {
+    async bulkUpdateEventStatus(organizationId: string, updates: Array<{ id: string; status: AlertEventStatus; escalationPolicyId?: string | null; escalationStepNumber?: number | null; nextEscalationAt?: Date | null }>): Promise<void> {
         return this.events.bulkUpdateEventStatus(organizationId, updates);
     }
 
@@ -135,6 +139,89 @@ export class AlertingRepository {
 
     async claimAutoResolvable(limit: number): Promise<AlertEventRow[]> {
         return this.events.claimAutoResolvable(limit);
+    }
+
+    async claimEscalationDue(limit: number): Promise<AlertEventRow[]> {
+        return this.events.claimEscalationDue(limit);
+    }
+
+    async advanceEscalation(eventId: string, stepNumber: number, repeatCount: number, nextEscalationAt: Date | null): Promise<void> {
+        return this.events.advanceEscalation(eventId, stepNumber, repeatCount, nextEscalationAt);
+    }
+
+    async resumeExpiredAcknowledgments(limit: number): Promise<AlertEventRow[]> {
+        return this.events.resumeExpiredAcknowledgments(limit);
+    }
+
+    async requeueStuckProcessingEvents(staleMinutes: number, limit: number): Promise<AlertEventRow[]> {
+        return this.events.requeueStuckProcessingEvents(staleMinutes, limit);
+    }
+
+    async failStaleBatches(staleMinutes: number): Promise<number> {
+        return this.events.failStaleBatches(staleMinutes);
+    }
+
+    async setBatchJobId(batchId: string, jobId: string | null): Promise<void> {
+        return this.events.setBatchJobId(batchId, jobId);
+    }
+
+    async getThrottleStates(actionIds: string[]): Promise<AlertThrottleWindowRow[]> {
+        return this.events.getThrottleStates(actionIds);
+    }
+
+    async recordThrottleNotifications(actionIds: string[]): Promise<void> {
+        return this.events.recordThrottleNotifications(actionIds);
+    }
+
+    async insertDeadLetter(input: {
+        organizationId: string; sourceQueue: string; pgBossJobId: string | null; batchId: string | null;
+        eventIds: string[]; jobPayload: Record<string, unknown>; errorMessage: string | null; maxRetries: number;
+    }): Promise<AlertDeadLetterRow> {
+        return this.events.insertDeadLetter(input);
+    }
+
+    async listDeadLetters(organizationId: string, query: ListDeadLettersQuery): Promise<{ data: AlertDeadLetterRow[]; total: number }> {
+        return this.events.listDeadLetters(organizationId, query);
+    }
+
+    async findDeadLetterById(organizationId: string, id: string): Promise<AlertDeadLetterRow | null> {
+        return this.events.findDeadLetterById(organizationId, id);
+    }
+
+    async claimRetryableDeadLetters(limit: number): Promise<AlertDeadLetterRow[]> {
+        return this.events.claimRetryableDeadLetters(limit);
+    }
+
+    async markDeadLetterRetried(id: string): Promise<void> {
+        return this.events.markDeadLetterRetried(id);
+    }
+
+    async markDeadLetterExhausted(id: string): Promise<void> {
+        return this.events.markDeadLetterExhausted(id);
+    }
+
+    async discardDeadLetter(organizationId: string, id: string, userId: string): Promise<void> {
+        return this.events.discardDeadLetter(organizationId, id, userId);
+    }
+
+    async purgeOldTerminalEvents(days: number): Promise<number> {
+        return this.events.purgeOldTerminalEvents(days);
+    }
+
+    async purgeOldBatches(days: number): Promise<number> {
+        return this.events.purgeOldBatches(days);
+    }
+
+    async purgeOldDeliveryAttempts(days: number): Promise<number> {
+        return this.events.purgeOldDeliveryAttempts(days);
+    }
+
+    async purgeOldDeadLetters(days: number): Promise<number> {
+        return this.events.purgeOldDeadLetters(days);
+    }
+
+    async purgeOldThrottleWindows(): Promise<number> {
+        return this.events.purgeOldThrottleWindows();
     }
 
     async createSilence(input: {
@@ -184,6 +271,10 @@ export class AlertingRepository {
 
     async listEscalationSteps(policyId: string): Promise<AlertEscalationStepRow[]> {
         return this.policies.listEscalationSteps(policyId);
+    }
+
+    async listEscalationStepsByPolicyIds(policyIds: string[]): Promise<AlertEscalationStepRow[]> {
+        return this.policies.listEscalationStepsByPolicyIds(policyIds);
     }
 
     async createTemplate(input: {

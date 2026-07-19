@@ -2,11 +2,23 @@
  * Alert event batch processor (CRITICAL performance path).
  *
  * Processes a batch of up to 100 alert events with STRICT concurrency rules:
- *   - ALL per-event work runs concurrently via Promise.allSettled — there is
+ *   - ALL per-event work runs concurrently via a bounded lane map — there is
  *     NO sequential `for`/`forEach` over events doing async work.
- *   - Connectors for the whole batch are fetched in ONE query (no N+1).
+ *   - Routing rules, rule actions, connectors, routes, escalation steps and
+ *     throttle windows are fetched in ONE bulk query each (no N+1).
  *   - Event status updates and delivery-attempt logs are written with ONE
  *     bulk statement each (UNNEST), not per row.
+ *
+ * Delivery model (enterprise):
+ *   - Targets come from BOTH the rule's own actions (notify/webhook with
+ *     connector/route refs) and the org's routing rules, deduplicated per
+ *     connector+route pair.
+ *   - Rule actions with throttle settings are enforced via
+ *     `alert_throttle_windows`; throttled targets are skipped and logged as
+ *     cancelled attempts (error_category 'throttled').
+ *   - When an event fires and its rule has an `escalate` action, escalation
+ *     tracking is initialized (policy + first-step wait) so the
+ *     `alert.escalation-sweep` worker can advance it.
  *
  * Delivery reuses the connector module by enqueuing connector-send jobs. This
  * batch processor resolves routes and records queued attempts; connector
@@ -15,7 +27,14 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { AlertingRepository, DeliveryAttemptInsert } from './repository.js';
 import { resolveRouting, type RoutableAlert } from './routing.js';
-import type { AlertEventRow, AlertEventStatus, AlertRoutingRuleRow } from './types.js';
+import type {
+  AlertEscalationStepRow,
+  AlertEventRow,
+  AlertEventStatus,
+  AlertRoutingRuleRow,
+  AlertRuleActionRow,
+  AlertThrottleWindowRow,
+} from './types.js';
 import type { ConnectorRepository } from '../connectors/repository.js';
 import type {
   ConnectorConfigRow,
@@ -38,6 +57,7 @@ export interface BatchProcessSummary {
   success: number;
   failure: number;
   skipped: number;
+  throttled: number;
   durationMs: number;
   status: 'completed' | 'partial' | 'failed';
 }
@@ -49,11 +69,17 @@ interface EventOutcome {
   deliveries: DeliveryAttemptInsert[];
   delivered: boolean;
   skipped: boolean;
+  throttled: boolean;
+  escalationPolicyId: string | null;
+  nextEscalationAt: Date | null;
+  deliveredActionIds: string[];
 }
 
 interface DeliveryTarget {
   connectorId: string;
   routeId: string | null;
+  /** Rule action that produced this target (null when from routing rules). */
+  actionId: string | null;
 }
 
 interface RouteMatchContext {
@@ -102,39 +128,87 @@ export class AlertBatchProcessor {
     const loaded = await this.alertRepo.getBatchWithEvents(data.batchId, data.organizationId);
     if (!loaded) {
       log.warn('Batch not found — nothing to process');
-      return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, durationMs: 0, status: 'completed' };
+      return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, throttled: 0, durationMs: 0, status: 'completed' };
     }
-    const { events } = loaded;
+    const { batch, events } = loaded;
 
-    // 2. Load routing rules + every referenced connector in single queries.
+    // Idempotency guard: a re-driven or duplicate job for an already-terminal
+    // batch is a no-op (dead-letter retry + orphan recovery both rely on this).
+    if (batch.status !== 'processing') {
+      log.info({ batchStatus: batch.status }, 'Batch already terminal — skipping');
+      return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, throttled: 0, durationMs: 0, status: 'completed' };
+    }
+
+    // 2. Load routing rules, rule actions, connectors, routes, escalation steps
+    //    and throttle windows — each in ONE bulk query (no N+1).
+    const ruleIds = [...new Set(events.map((e) => e.rule_id).filter((id): id is string => id !== null))];
+    const ruleActions = await this.alertRepo.getRuleActionsByRuleIds(ruleIds);
+    const actionsByRuleId = new Map<string, AlertRuleActionRow[]>();
+    for (const action of ruleActions) {
+      const list = actionsByRuleId.get(action.rule_id) ?? [];
+      list.push(action);
+      actionsByRuleId.set(action.rule_id, list);
+    }
+
     const routingRules = await this.alertRepo.listRoutingRules(data.organizationId);
     const connectorRoutes = await this.connectorRepo.listRoutesByIds(
       data.organizationId,
-      this.uniqueRouteIds(routingRules),
+      this.uniqueRouteIds(routingRules, ruleActions),
     );
-    const connectorIds = this.uniqueConnectorIds(events, routingRules, connectorRoutes);
+    const connectorIds = this.uniqueConnectorIds(events, routingRules, actionsByRuleId, connectorRoutes);
     const connectors = await this.connectorRepo.getByIds(connectorIds);
     const connectorMap = new Map<string, ConnectorConfigRow>(connectors.map((c) => [c.id, c]));
 
-    // 3. Process ALL events concurrently but bounded. Promise.allSettled guarantees one
+    const escalationPolicyIds = [...new Set(
+      ruleActions.map((a) => a.escalation_policy_id).filter((id): id is string => id !== null),
+    )];
+    const escalationSteps = await this.alertRepo.listEscalationStepsByPolicyIds(escalationPolicyIds);
+    const firstStepByPolicyId = new Map<string, AlertEscalationStepRow>();
+    for (const step of escalationSteps) {
+      if (!firstStepByPolicyId.has(step.policy_id)) firstStepByPolicyId.set(step.policy_id, step);
+    }
+
+    const throttleStates = await this.alertRepo.getThrottleStates(
+      ruleActions
+        .filter((a) => a.throttle_duration_seconds > 0 || a.max_notifications_per_hour !== null)
+        .map((a) => a.id),
+    );
+    const throttleByActionId = new Map<string, AlertThrottleWindowRow>(throttleStates.map((t) => [t.rule_action_id, t]));
+
+    // 3. Process ALL events concurrently but bounded. mapBounded guarantees one
     //    failing event never aborts the batch.
     const settled = await this.mapBounded(
       events,
       AlertBatchProcessor.EVENT_CONCURRENCY,
-      (event) => this.processSingleEvent(event, routingRules, connectorRoutes, connectorMap, data.batchId),
+      (event) => this.processSingleEvent(
+        event, routingRules, actionsByRuleId, connectorRoutes, connectorMap,
+        firstStepByPolicyId, throttleByActionId, data.batchId,
+      ),
     );
 
     // 4. Fold results into bulk-update + bulk-insert payloads.
-    const statusUpdates: Array<{ id: string; status: AlertEventStatus }> = [];
+    const statusUpdates: Array<{
+      id: string; status: AlertEventStatus;
+      escalationPolicyId?: string | null; escalationStepNumber?: number | null; nextEscalationAt?: Date | null;
+    }> = [];
     const deliveryLogs: DeliveryAttemptInsert[] = [];
-    let success = 0, failure = 0, skipped = 0;
+    const deliveredActionIds = new Set<string>();
+    let success = 0, failure = 0, skipped = 0, throttled = 0;
 
     settled.forEach((res, i) => {
       const event = events[i]!;
       if (res.status === 'fulfilled') {
         const outcome = res.value;
-        statusUpdates.push({ id: outcome.eventId, status: outcome.newStatus });
+        statusUpdates.push({
+          id: outcome.eventId,
+          status: outcome.newStatus,
+          escalationPolicyId: outcome.escalationPolicyId,
+          escalationStepNumber: outcome.escalationPolicyId !== null ? 0 : null,
+          nextEscalationAt: outcome.nextEscalationAt,
+        });
         deliveryLogs.push(...outcome.deliveries);
+        outcome.deliveredActionIds.forEach((id) => deliveredActionIds.add(id));
+        if (outcome.throttled) throttled += 1;
         if (outcome.skipped) skipped += 1;
         else if (outcome.delivered) success += 1;
         else failure += 1;
@@ -146,54 +220,102 @@ export class AlertBatchProcessor {
       }
     });
 
-    // 5 + 6. Bulk update statuses and insert delivery attempts (one query each).
+    // 5 + 6. Bulk update statuses, insert delivery attempts, record throttle
+    //    usage (one query each).
     await this.alertRepo.bulkUpdateEventStatus(data.organizationId, statusUpdates);
     await this.alertRepo.bulkInsertDeliveryAttempts(deliveryLogs);
+    await this.alertRepo.recordThrottleNotifications([...deliveredActionIds]);
 
     // 7. Mark the batch complete.
     const durationMs = Date.now() - start;
-    const status: BatchProcessSummary['status'] = failure === 0 ? 'completed' : success === 0 ? 'failed' : 'partial';
+    const status: BatchProcessSummary['status'] = failure === 0 ? 'completed' : success === 0 && skipped === 0 ? 'failed' : 'partial';
     await this.alertRepo.completeBatch(
       data.batchId, { success, failure, skipped }, durationMs, status,
       failure > 0 ? `${failure}/${events.length} deliveries failed` : null,
     );
 
-    log.info({ total: events.length, success, failure, skipped, durationMs, status }, 'Batch processed');
-    return { batchId: data.batchId, total: events.length, success, failure, skipped, durationMs, status };
+    log.info({ total: events.length, success, failure, skipped, throttled, durationMs, status }, 'Batch processed');
+    return { batchId: data.batchId, total: events.length, success, failure, skipped, throttled, durationMs, status };
   }
 
   /** Deliver a single event to all routed connectors concurrently. */
   private async processSingleEvent(
     event: AlertEventRow,
     routingRules: AlertRoutingRuleRow[],
+    actionsByRuleId: Map<string, AlertRuleActionRow[]>,
     connectorRoutes: ConnectorRouteRow[],
     connectorMap: Map<string, ConnectorConfigRow>,
+    firstStepByPolicyId: Map<string, AlertEscalationStepRow>,
+    throttleByActionId: Map<string, AlertThrottleWindowRow>,
     batchId: string,
   ): Promise<EventOutcome> {
+    const noEscalation = { escalationPolicyId: null, nextEscalationAt: null };
     const routable: RoutableAlert = { severity: event.severity, source: event.source, labels: event.labels };
     const decision = resolveRouting(routable, routingRules);
-    const targets = this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes);
+    const ruleActions = event.rule_id ? actionsByRuleId.get(event.rule_id) ?? [] : [];
+
+    // Split rule actions into deliverable (throttle-passing) and throttled.
+    const now = Date.now();
+    const deliverableActions: AlertRuleActionRow[] = [];
+    const throttledActions: AlertRuleActionRow[] = [];
+    for (const action of ruleActions) {
+      if (!this.isDeliverAction(action)) continue;
+      if (this.isThrottled(action, throttleByActionId.get(action.id), now)) throttledActions.push(action);
+      else deliverableActions.push(action);
+    }
+
+    const targets = this.resolveDeliveryTargets(event, decision, deliverableActions, connectorRoutes);
+
+    const deliveries: DeliveryAttemptInsert[] = [];
+    // Throttled targets are skipped but audited as cancelled attempts.
+    for (const action of throttledActions) {
+      for (const target of this.actionTargets(event, action, connectorRoutes)) {
+        deliveries.push(this.throttledAttempt(event, target, batchId));
+      }
+    }
 
     if (targets.length === 0) {
       // No route matched — nothing to deliver. Event still transitions to firing.
-      return { eventId: event.id, newStatus: 'firing', deliveries: [], delivered: false, skipped: true };
+      return {
+        eventId: event.id, newStatus: 'firing', deliveries, delivered: false,
+        skipped: true, throttled: throttledActions.length > 0, ...noEscalation, deliveredActionIds: [],
+      };
     }
 
-    const payload = this.toPayload(event);
+    const payload = this.toPayload(event, decision.templateId);
 
     // Fan out to every target connector concurrently (Bulkhead per connector).
     const perConnector = await Promise.allSettled(
       targets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)),
     );
 
-    const deliveries: DeliveryAttemptInsert[] = [];
     let anyDelivered = false;
-    perConnector.forEach((res) => {
+    const deliveredActionIds = new Set<string>();
+    perConnector.forEach((res, i) => {
       if (res.status === 'fulfilled') {
         deliveries.push(res.value.log);
-        if (res.value.delivered) anyDelivered = true;
+        if (res.value.delivered) {
+          anyDelivered = true;
+          const actionId = targets[i]!.actionId;
+          if (actionId) deliveredActionIds.add(actionId);
+        }
       }
     });
+
+    // Initialize escalation tracking when the event fires and the rule has an
+    // escalate action with an active first step.
+    let escalationPolicyId: string | null = null;
+    let nextEscalationAt: Date | null = null;
+    if (anyDelivered) {
+      const escalateAction = ruleActions.find((a) => a.action_type === 'escalate' && a.escalation_policy_id !== null);
+      if (escalateAction?.escalation_policy_id) {
+        const firstStep = firstStepByPolicyId.get(escalateAction.escalation_policy_id);
+        if (firstStep) {
+          escalationPolicyId = escalateAction.escalation_policy_id;
+          nextEscalationAt = new Date(now + firstStep.wait_minutes * 60_000);
+        }
+      }
+    }
 
     return {
       eventId: event.id,
@@ -201,6 +323,46 @@ export class AlertBatchProcessor {
       deliveries,
       delivered: anyDelivered,
       skipped: false,
+      throttled: throttledActions.length > 0,
+      escalationPolicyId,
+      nextEscalationAt,
+      deliveredActionIds: [...deliveredActionIds],
+    };
+  }
+
+  /** Actions that produce direct deliveries (escalate/suppress/group do not). */
+  private isDeliverAction(action: AlertRuleActionRow): boolean {
+    return (action.action_type === 'notify' || action.action_type === 'webhook')
+      && (action.connector_id !== null || action.route_id !== null);
+  }
+
+  /** Throttle check: min interval between notifications and/or per-hour cap. */
+  private isThrottled(action: AlertRuleActionRow, window: AlertThrottleWindowRow | undefined, nowMs: number): boolean {
+    if (action.throttle_duration_seconds <= 0 && action.max_notifications_per_hour === null) return false;
+    if (!window) return false;
+    if (
+      action.throttle_duration_seconds > 0
+      && window.last_notified_at !== null
+      && new Date(window.last_notified_at).getTime() + action.throttle_duration_seconds * 1000 > nowMs
+    ) {
+      return true;
+    }
+    return action.max_notifications_per_hour !== null && window.notification_count >= action.max_notifications_per_hour;
+  }
+
+  private throttledAttempt(event: AlertEventRow, target: DeliveryTarget, batchId: string): DeliveryAttemptInsert {
+    return {
+      organizationId: event.organization_id,
+      eventId: event.id,
+      connectorId: target.connectorId,
+      routeId: target.routeId,
+      batchId,
+      status: 'cancelled',
+      responseStatusCode: null,
+      errorMessage: 'throttled by rule action rate limits',
+      errorCategory: 'throttled',
+      latencyMs: null,
+      externalMessageId: null,
     };
   }
 
@@ -243,12 +405,12 @@ export class AlertBatchProcessor {
           payload,
           routeId,
         },
-        { 
+        {
           priority,
-          retryLimit: 0, 
-          retryDelay: 60, 
-          retryBackoff: true, 
-          expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS 
+          retryLimit: 0,
+          retryDelay: 60,
+          retryBackoff: true,
+          expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
         },
       );
       return {
@@ -272,7 +434,7 @@ export class AlertBatchProcessor {
     }
   }
 
-  private toPayload(event: AlertEventRow): NotificationPayload {
+  private toPayload(event: AlertEventRow, templateId: string | null): NotificationPayload {
     const p = event.payload as Record<string, unknown>;
     const title = typeof p.title === 'string' ? p.title : `Alert: ${event.source}`;
     const body = typeof p.message === 'string' ? p.message
@@ -285,13 +447,14 @@ export class AlertBatchProcessor {
       body,
       correlationId: event.id,
       dedupKey: event.fingerprint,
-      metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels },
+      metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels, templateId },
     };
   }
 
   private uniqueConnectorIds(
     events: AlertEventRow[],
     routingRules: AlertRoutingRuleRow[],
+    actionsByRuleId: Map<string, AlertRuleActionRow[]>,
     connectorRoutes: ConnectorRouteRow[],
   ): string[] {
     const ids = new Set<string>();
@@ -300,44 +463,79 @@ export class AlertBatchProcessor {
         { severity: event.severity, source: event.source, labels: event.labels },
         routingRules,
       );
-      this.resolveDeliveryTargets(event, decision.connectorIds, decision.routeIds, connectorRoutes)
+      const actions = event.rule_id ? actionsByRuleId.get(event.rule_id) ?? [] : [];
+      this.resolveDeliveryTargets(event, decision, actions.filter((a) => this.isDeliverAction(a)), connectorRoutes)
         .forEach((target) => ids.add(target.connectorId));
     }
     return [...ids];
   }
 
-  private uniqueRouteIds(routingRules: AlertRoutingRuleRow[]): string[] {
+  private uniqueRouteIds(routingRules: AlertRoutingRuleRow[], ruleActions: AlertRuleActionRow[]): string[] {
     const ids = new Set<string>();
     for (const rule of routingRules) {
       for (const routeId of rule.target_route_ids ?? []) ids.add(routeId);
     }
+    for (const action of ruleActions) {
+      if (action.route_id) ids.add(action.route_id);
+    }
     return [...ids];
   }
 
+  /**
+   * Merge routing-rule targets and rule-action targets, deduplicated per
+   * connector+route pair. Rule-action targets win the dedup so throttle
+   * accounting stays attached to the action.
+   */
   private resolveDeliveryTargets(
     event: AlertEventRow,
-    connectorIds: string[],
-    routeIds: string[],
+    decision: { connectorIds: string[]; routeIds: string[] },
+    actions: AlertRuleActionRow[],
     connectorRoutes: ConnectorRouteRow[],
   ): DeliveryTarget[] {
     const targets = new Map<string, DeliveryTarget>();
-    for (const connectorId of connectorIds) {
-      targets.set(`${connectorId}:direct`, { connectorId, routeId: null });
+
+    for (const connectorId of decision.connectorIds) {
+      targets.set(`${connectorId}:direct`, { connectorId, routeId: null, actionId: null });
     }
 
-    if (routeIds.length === 0) return [...targets.values()];
-
-    const routeIdSet = new Set(routeIds);
     const context = this.routeMatchContext(event);
+    const routeIdSet = new Set(decision.routeIds);
     for (const route of connectorRoutes) {
       if (!routeIdSet.has(route.id)) continue;
       if (!this.routeMatches(route, context)) continue;
       targets.set(`${route.connector_id}:${route.id}`, {
         connectorId: route.connector_id,
         routeId: route.id,
+        actionId: null,
       });
     }
+
+    for (const action of actions) {
+      for (const target of this.actionTargets(event, action, connectorRoutes)) {
+        targets.set(`${target.connectorId}:${target.routeId ?? 'direct'}`, target);
+      }
+    }
+
     return [...targets.values()];
+  }
+
+  /** Targets produced by a single rule action (direct connector and/or route). */
+  private actionTargets(
+    event: AlertEventRow,
+    action: AlertRuleActionRow,
+    connectorRoutes: ConnectorRouteRow[],
+  ): DeliveryTarget[] {
+    const targets: DeliveryTarget[] = [];
+    if (action.connector_id) {
+      targets.push({ connectorId: action.connector_id, routeId: null, actionId: action.id });
+    }
+    if (action.route_id) {
+      const route = connectorRoutes.find((r) => r.id === action.route_id);
+      if (route && this.routeMatches(route, this.routeMatchContext(event))) {
+        targets.push({ connectorId: route.connector_id, routeId: route.id, actionId: action.id });
+      }
+    }
+    return targets;
   }
 
   private routeMatches(route: ConnectorRouteRow, context: RouteMatchContext): boolean {

@@ -16,6 +16,7 @@ import {
   AlertConflictError,
   AlertNotFoundError,
   type AlertBatchRow,
+  type AlertDeadLetterRow,
   type AlertDeliveryAttemptRow,
   type AlertEscalationPolicyRow,
   type AlertEscalationStepRow,
@@ -28,7 +29,10 @@ import {
   type AlertRuleRow,
   type AlertSilenceRow,
   type AlertTemplateRow,
+  type AlertThrottleWindowRow,
+  type DeadLetterStatus,
   type DeliveryAttemptStatus,
+  type ListDeadLettersQuery,
   type ListEventsQuery,
   type ListRulesQuery,
   type MetricGranularity,
@@ -301,20 +305,39 @@ export class EventsRepository {
 
   /**
    * Bulk-update event statuses in ONE statement via UNNEST. `last_notified_at`
-   * is set for events that were delivered (status 'firing').
+   * is set for events that were delivered (status 'firing'). Escalation columns
+   * are only overwritten when the caller provides a non-null value (COALESCE),
+   * so non-escalating status changes leave escalation state untouched.
    */
   async bulkUpdateEventStatus(
     organizationId: string,
-    updates: Array<{ id: string; status: AlertEventStatus }>,
+    updates: Array<{
+      id: string;
+      status: AlertEventStatus;
+      escalationPolicyId?: string | null;
+      escalationStepNumber?: number | null;
+      nextEscalationAt?: Date | null;
+    }>,
   ): Promise<void> {
     if (updates.length === 0) return;
     await this.db.query(
       `UPDATE alert_events e
        SET status = u.status::alert_event_status,
-           last_notified_at = CASE WHEN u.status='firing' THEN NOW() ELSE e.last_notified_at END
-       FROM (SELECT * FROM UNNEST($1::uuid[], $2::text[]) AS t(id, status)) u
-       WHERE e.id = u.id AND e.organization_id = $3`,
-      [updates.map((u) => u.id), updates.map((u) => u.status), organizationId],
+           last_notified_at = CASE WHEN u.status='firing' THEN NOW() ELSE e.last_notified_at END,
+           escalation_policy_id = COALESCE(u.escalation_policy_id, e.escalation_policy_id),
+           escalation_step_number = COALESCE(u.escalation_step_number, e.escalation_step_number),
+           next_escalation_at = COALESCE(u.next_escalation_at, e.next_escalation_at)
+       FROM (SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::uuid[], $4::int[], $5::timestamptz[])
+             AS t(id, status, escalation_policy_id, escalation_step_number, next_escalation_at)) u
+       WHERE e.id = u.id AND e.organization_id = $6`,
+      [
+        updates.map((u) => u.id),
+        updates.map((u) => u.status),
+        updates.map((u) => u.escalationPolicyId ?? null),
+        updates.map((u) => u.escalationStepNumber ?? null),
+        updates.map((u) => u.nextEscalationAt ?? null),
+        organizationId,
+      ],
     );
   }
 
@@ -370,6 +393,276 @@ export class EventsRepository {
       );
       return r.rows;
     });
+  }
+
+  // ── Escalation execution sweeps ──────────────────────────────────────────
+  /**
+   * Claim firing events whose next escalation step is due. SKIP LOCKED makes
+   * concurrent sweep workers safe — no two workers process the same event.
+   */
+  async claimEscalationDue(limit: number): Promise<AlertEventRow[]> {
+    return this.withTransaction(async (client) => {
+      const r = await client.query<AlertEventRow>(
+        `SELECT * FROM alert_events
+         WHERE status='firing'
+           AND escalation_policy_id IS NOT NULL
+           AND next_escalation_at IS NOT NULL
+           AND next_escalation_at <= NOW()
+         ORDER BY next_escalation_at ASC LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [limit],
+      );
+      return r.rows;
+    });
+  }
+
+  /** Advance an event to a given escalation step and schedule the next run (or stop). */
+  async advanceEscalation(
+    eventId: string,
+    stepNumber: number,
+    repeatCount: number,
+    nextEscalationAt: Date | null,
+  ): Promise<void> {
+    await this.db.query(
+      `UPDATE alert_events
+       SET escalation_step_number=$2, escalation_repeat_count=$3, next_escalation_at=$4
+       WHERE id=$1 AND status='firing'`,
+      [eventId, stepNumber, repeatCount, nextEscalationAt],
+    );
+  }
+
+  /**
+   * Flip expired acknowledgments back to firing so escalation resumes.
+   * Returns the affected rows (already locked + transitioned in one statement).
+   */
+  async resumeExpiredAcknowledgments(limit: number): Promise<AlertEventRow[]> {
+    const r = await this.db.query<AlertEventRow>(
+      `UPDATE alert_events
+       SET status='firing', acknowledged_by=NULL, acknowledged_at=NULL,
+           acknowledgment_expires_at=NULL,
+           next_escalation_at = CASE WHEN escalation_policy_id IS NOT NULL THEN NOW() ELSE NULL END
+       WHERE id IN (
+         SELECT id FROM alert_events
+         WHERE status='acknowledged'
+           AND acknowledgment_expires_at IS NOT NULL
+           AND acknowledgment_expires_at <= NOW()
+         ORDER BY acknowledgment_expires_at ASC LIMIT $1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [limit],
+    );
+    return r.rows;
+  }
+
+  // ── Orphan (stuck processing) recovery ───────────────────────────────────
+  /**
+   * Requeue events stuck in 'processing' for longer than `staleMinutes`
+   * (worker crash or pg-boss job expiry) back to 'pending'. SKIP LOCKED on the
+   * claim; the UPDATE is idempotent because it only touches rows still in
+   * 'processing'.
+   */
+  async requeueStuckProcessingEvents(staleMinutes: number, limit: number): Promise<AlertEventRow[]> {
+    const r = await this.db.query<AlertEventRow>(
+      `UPDATE alert_events
+       SET status='pending'
+       WHERE id IN (
+         SELECT id FROM alert_events
+         WHERE status='processing' AND updated_at < NOW() - ($1 || ' minutes')::interval
+         ORDER BY updated_at ASC LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING *`,
+      [String(staleMinutes), limit],
+    );
+    return r.rows;
+  }
+
+  /** Fail batches stuck in 'processing' for longer than `staleMinutes`. */
+  async failStaleBatches(staleMinutes: number): Promise<number> {
+    const r = await this.db.query(
+      `UPDATE alert_event_batches
+       SET status='failed', completed_at=NOW(), error_message='orphaned: worker lost the job',
+           retry_count = retry_count + 1
+       WHERE status='processing' AND started_at < NOW() - ($1 || ' minutes')::interval`,
+      [String(staleMinutes)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async setBatchJobId(batchId: string, jobId: string | null): Promise<void> {
+    await this.db.query(
+      `UPDATE alert_event_batches SET pg_boss_job_id=$2 WHERE id=$1`,
+      [batchId, jobId],
+    );
+  }
+
+  // ── Throttle windows ─────────────────────────────────────────────────────
+  /** Fetch current-hour throttle windows for the given rule actions (one query). */
+  async getThrottleStates(actionIds: string[]): Promise<AlertThrottleWindowRow[]> {
+    if (actionIds.length === 0) return [];
+    const r = await this.db.query<AlertThrottleWindowRow>(
+      `SELECT * FROM alert_throttle_windows
+       WHERE rule_action_id = ANY($1::uuid[])
+         AND window_start = date_trunc('hour', NOW())`,
+      [actionIds],
+    );
+    return r.rows;
+  }
+
+  /** Increment the current-hour window for each action (bulk upsert). */
+  async recordThrottleNotifications(actionIds: string[]): Promise<void> {
+    if (actionIds.length === 0) return;
+    await this.db.query(
+      `INSERT INTO alert_throttle_windows (rule_action_id, window_start, notification_count, last_notified_at)
+       SELECT t.action_id, date_trunc('hour', NOW()), 1, NOW()
+       FROM UNNEST($1::uuid[]) AS t(action_id)
+       ON CONFLICT (rule_action_id, window_start) DO UPDATE SET
+         notification_count = alert_throttle_windows.notification_count + 1,
+         last_notified_at = NOW()`,
+      [actionIds],
+    );
+  }
+
+  // ── Dead-letter events ───────────────────────────────────────────────────
+  async insertDeadLetter(input: {
+    organizationId: string;
+    sourceQueue: string;
+    pgBossJobId: string | null;
+    batchId: string | null;
+    eventIds: string[];
+    jobPayload: Record<string, unknown>;
+    errorMessage: string | null;
+    maxRetries: number;
+  }): Promise<AlertDeadLetterRow> {
+    const r = await this.db.query<AlertDeadLetterRow>(
+      `INSERT INTO alert_dead_letter_events
+         (organization_id, source_queue, pg_boss_job_id, batch_id, event_ids,
+          job_payload, error_message, max_retries)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [
+        input.organizationId, input.sourceQueue, input.pgBossJobId, input.batchId,
+        input.eventIds, JSON.stringify(input.jobPayload), input.errorMessage, input.maxRetries,
+      ],
+    );
+    return r.rows[0]!;
+  }
+
+  async listDeadLetters(
+    organizationId: string,
+    query: ListDeadLettersQuery,
+  ): Promise<{ data: AlertDeadLetterRow[]; total: number }> {
+    const conditions = ['organization_id=$1'];
+    const params: unknown[] = [organizationId];
+    if (query.status) { params.push(query.status); conditions.push(`status=$${params.length}`); }
+    const where = conditions.join(' AND ');
+
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alert_dead_letter_events WHERE ${where}`, params,
+    );
+    params.push(query.limit, query.offset);
+    const r = await this.db.query<AlertDeadLetterRow>(
+      `SELECT * FROM alert_dead_letter_events WHERE ${where}
+       ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params,
+    );
+    return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+  }
+
+  async findDeadLetterById(organizationId: string, id: string): Promise<AlertDeadLetterRow | null> {
+    const r = await this.db.query<AlertDeadLetterRow>(
+      `SELECT * FROM alert_dead_letter_events WHERE id=$1 AND organization_id=$2`, [id, organizationId],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  /** Retryable dead letters for the scheduled retry sweep (SKIP LOCKED claim). */
+  async claimRetryableDeadLetters(limit: number): Promise<AlertDeadLetterRow[]> {
+    return this.withTransaction(async (client) => {
+      const r = await client.query<AlertDeadLetterRow>(
+        `SELECT * FROM alert_dead_letter_events
+         WHERE status='pending_retry' AND retry_count < max_retries
+         ORDER BY created_at ASC LIMIT $1
+         FOR UPDATE SKIP LOCKED`,
+        [limit],
+      );
+      return r.rows;
+    });
+  }
+
+  async markDeadLetterRetried(id: string): Promise<void> {
+    await this.db.query(
+      `UPDATE alert_dead_letter_events
+       SET status='retried', retry_count = retry_count + 1, last_retry_at=NOW(), retried_at=NOW()
+       WHERE id=$1`,
+      [id],
+    );
+  }
+
+  async markDeadLetterExhausted(id: string): Promise<void> {
+    await this.db.query(
+      `UPDATE alert_dead_letter_events SET status='exhausted', retry_count = retry_count + 1, last_retry_at=NOW()
+       WHERE id=$1`,
+      [id],
+    );
+  }
+
+  async discardDeadLetter(organizationId: string, id: string, userId: string): Promise<void> {
+    const r = await this.db.query(
+      `UPDATE alert_dead_letter_events
+       SET status='discarded', discarded_at=NOW(), discarded_by=$3
+       WHERE id=$1 AND organization_id=$2 AND status IN ('pending_retry','exhausted')`,
+      [id, organizationId, userId],
+    );
+    if (r.rowCount === 0) throw new AlertNotFoundError('Dead-letter event');
+  }
+
+  // ── Cleanup / retention ──────────────────────────────────────────────────
+  /** Purge resolved/suppressed/silenced events older than `days` (history + deliveries cascade). */
+  async purgeOldTerminalEvents(days: number): Promise<number> {
+    const r = await this.db.query(
+      `DELETE FROM alert_events
+       WHERE status IN ('resolved','suppressed','silenced')
+         AND COALESCE(ended_at, updated_at) < NOW() - ($1 || ' days')::interval`,
+      [String(days)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async purgeOldBatches(days: number): Promise<number> {
+    const r = await this.db.query(
+      `DELETE FROM alert_event_batches
+       WHERE status IN ('completed','failed','partial')
+         AND completed_at < NOW() - ($1 || ' days')::interval`,
+      [String(days)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async purgeOldDeliveryAttempts(days: number): Promise<number> {
+    const r = await this.db.query(
+      `DELETE FROM alert_delivery_attempts
+       WHERE created_at < NOW() - ($1 || ' days')::interval`,
+      [String(days)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async purgeOldDeadLetters(days: number): Promise<number> {
+    const r = await this.db.query(
+      `DELETE FROM alert_dead_letter_events
+       WHERE status IN ('retried','discarded') AND updated_at < NOW() - ($1 || ' days')::interval`,
+      [String(days)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async purgeOldThrottleWindows(): Promise<number> {
+    const r = await this.db.query(
+      `DELETE FROM alert_throttle_windows WHERE window_start < NOW() - INTERVAL '2 days'`,
+    );
+    return r.rowCount ?? 0;
   }
 
   // ── Silences ─────────────────────────────────────────────────────────────

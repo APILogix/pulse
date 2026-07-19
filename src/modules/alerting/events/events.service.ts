@@ -20,9 +20,11 @@ import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting, type RoutableAlert } from '../routing.js';
 import {
+  AlertConflictError,
   AlertNotFoundError,
   AlertValidationError,
   type AcknowledgeEventBody,
+  type AlertDeadLetterRow,
   type AlertEventRow,
   type AlertRuleRow,
   type CreateEscalationPolicyBody,
@@ -31,6 +33,7 @@ import {
   type CreateSilenceBody,
   type CreateTemplateBody,
   type IngestEventBody,
+  type ListDeadLettersQuery,
   type ListEventsQuery,
   type ListRulesQuery,
   type MetricsQuery,
@@ -41,6 +44,8 @@ import {
   type UpdateRuleBody,
   type UpsertEscalationStepBody,
 } from '../types.js';
+import { pgboss } from '../../../lib/pgboss.js';
+import { ALERT_JOBS } from '../queue.js';
 
 export interface AlertingServiceDeps {
   repository: AlertingRepository;
@@ -122,6 +127,46 @@ export class EventsService {
   async getEventDeliveries(orgId: string, id: string): Promise<Record<string, unknown>[]> {
     await this.requireEvent(orgId, id);
     return this.repo.getEventDeliveries(id) as unknown as Record<string, unknown>[];
+  }
+
+  // ── Dead-letter queue (admin) ──────────────────────────────────────────
+  async listDeadLetters(orgId: string, query: ListDeadLettersQuery): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    const { data, total } = await this.repo.listDeadLetters(orgId, query);
+    return { data: data.map((d) => this.deadLetterToDto(d)), total };
+  }
+
+  /**
+   * Manual re-drive of a dead-lettered batch job. Only allowed while the batch
+   * is still `processing` — once it has moved on, the orphan sweeper / normal
+   * recovery owns the events and re-sending would double-deliver.
+   */
+  async retryDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Record<string, unknown>> {
+    const deadLetter = await this.repo.findDeadLetterById(orgId, id);
+    if (!deadLetter) throw new AlertNotFoundError('Dead-letter event');
+    if (deadLetter.status === 'discarded') throw new AlertConflictError('Dead letter has been discarded');
+    if (!deadLetter.batch_id) throw new AlertValidationError('Dead letter has no batch to re-drive');
+
+    const loaded = await this.repo.getBatchWithEvents(deadLetter.batch_id, orgId).catch(() => null);
+    if (!loaded || loaded.batch.status !== 'processing') {
+      throw new AlertConflictError('Batch is no longer processing; automatic recovery owns it now');
+    }
+
+    await pgboss.send(
+      ALERT_JOBS.processBatch,
+      { batchId: deadLetter.batch_id, organizationId: orgId },
+      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 } as never,
+    );
+    await this.repo.markDeadLetterRetried(id);
+    this.audit(orgId, meta, 'alert_dead_letter.retried', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
+    return { id, batchId: deadLetter.batch_id, retried: true };
+  }
+
+  async discardDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<void> {
+    const deadLetter = await this.repo.findDeadLetterById(orgId, id);
+    if (!deadLetter) throw new AlertNotFoundError('Dead-letter event');
+    if (deadLetter.status === 'discarded') return; // idempotent
+    await this.repo.discardDeadLetter(orgId, id, meta.actorUserId);
+    this.audit(orgId, meta, 'alert_dead_letter.discarded', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
   }
 
   async acknowledgeEvent(orgId: string, meta: RequestMeta, id: string, body: AcknowledgeEventBody): Promise<Record<string, unknown>> {
@@ -213,6 +258,18 @@ export class EventsService {
       acknowledgedBy: e.acknowledged_by, acknowledgedAt: e.acknowledged_at,
       resolvedBy: e.resolved_by, resolvedAt: e.resolved_at, resolutionReason: e.resolution_reason,
       labels: e.labels, annotations: e.annotations, createdAt: e.created_at,
+    };
+  }
+
+  private deadLetterToDto(d: AlertDeadLetterRow): Record<string, unknown> {
+    return {
+      id: d.id, organizationId: d.organization_id, sourceQueue: d.source_queue,
+      pgBossJobId: d.pg_boss_job_id, batchId: d.batch_id, eventIds: d.event_ids,
+      jobPayload: d.job_payload, errorMessage: d.error_message, status: d.status,
+      retryCount: d.retry_count, maxRetries: d.max_retries,
+      lastRetryAt: d.last_retry_at, retriedAt: d.retried_at,
+      discardedAt: d.discarded_at, discardedBy: d.discarded_by,
+      metadata: d.metadata, createdAt: d.created_at, updatedAt: d.updated_at,
     };
   }
 

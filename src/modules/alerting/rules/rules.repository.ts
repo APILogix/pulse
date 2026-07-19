@@ -235,6 +235,18 @@ export class RulesRepository {
     return r.rows;
   }
 
+  /** Bulk-load active actions for many rules in ONE query (batch worker — no N+1). */
+  async getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]> {
+    if (ruleIds.length === 0) return [];
+    const r = await this.db.query<AlertRuleActionRow>(
+      `SELECT * FROM alert_rule_actions
+       WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE
+       ORDER BY rule_id, order_index ASC, priority DESC`,
+      [ruleIds],
+    );
+    return r.rows;
+  }
+
   async listRules(organizationId: string, query: ListRulesQuery): Promise<{ data: AlertRuleRow[]; total: number }> {
     const conditions = ['organization_id=$1', 'deleted_at IS NULL'];
     const params: unknown[] = [organizationId];
