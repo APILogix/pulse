@@ -42,7 +42,6 @@ import type {
   ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
-  ProjectEnvironment,
   ProjectEnvironmentConfig,
   ProjectListItem,
   ProjectUsageCounter,
@@ -53,16 +52,11 @@ import type {
   UpdateProjectBody,
   ValidatedApiKey, ProjectUpdateInput, ApiKeyUpdateInput } from "../types.js";
 import {
-  buildApiPrefixes,
-  constantTimeEqualHex,
-  createApiKey,
-  defaultPermissionsForType,
-  extractApiKeyPrefix,
   hasRequiredRole,
-  hashApiKey,
   ProjectError,
   slugifyProjectName,
   validateStatusTransition,
+  isReservedProjectSlug,
 } from "../shared/utils.js";
 
 // Audit/request footprint passed from routes. Mirrors the organization
@@ -96,6 +90,7 @@ const ROLE_HIERARCHY: Record<ProjectMemberRole, number> = {
   [ProjectMemberRole.OWNER]: 4,
   [ProjectMemberRole.ADMIN]: 3,
   [ProjectMemberRole.DEVELOPER]: 2,
+  [ProjectMemberRole.QA]: 2,
   [ProjectMemberRole.VIEWER]: 1,
 };
 
@@ -179,27 +174,30 @@ export class BaseProjectService {
     const project = await this.repository.findProjectById(orgId, projectId);
     if (!project) throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
 
-    if (requiredRole === "owner" || requiredRole === "admin" || requiredRole === "member" || requiredRole === "billing") {
-      await this.requireOrganizationAccess(orgId, userId, requiredRole);
+    // Org-only roles (member, billing, security) are governed by organization
+    // membership. Every project-level role requires an explicit project_members
+    // row; organization ownership/adminship is not sufficient by itself.
+    const orgOnlyRoles: OrgRole[] = ["member", "billing", "security"];
+    if (orgOnlyRoles.includes(requiredRole as OrgRole)) {
+      await this.requireOrganizationAccess(orgId, userId, requiredRole as OrgRole);
       return project;
     }
 
-    try {
-      await this.requireOrganizationAccess(orgId, userId);
-    } catch (err) {
-      throw err;
+    const userProjectRole = await this.repository.getProjectMemberRole(orgId, projectId, userId);
+    if (!userProjectRole) {
+      throw new ProjectError(
+        "INSUFFICIENT_PERMISSIONS",
+        "You do not have access to this project",
+        403,
+      );
     }
-
-    if ((this.repository as any).getProjectMemberRole) {
-      const userProjectRole = await (this.repository as any).getProjectMemberRole(orgId, projectId, userId);
-      if (userProjectRole) {
-         if (!hasProjectRole(userProjectRole, requiredRole as ProjectMemberRole)) {
-           throw new ProjectError("FORBIDDEN", "Insufficient project role", 403);
-         }
-         return project;
-      }
+    if (!hasProjectRole(userProjectRole, requiredRole as ProjectMemberRole)) {
+      throw new ProjectError(
+        "INSUFFICIENT_PERMISSIONS",
+        "Insufficient project role",
+        403,
+      );
     }
-
     return project;
   }
 
@@ -292,36 +290,14 @@ export class BaseProjectService {
 
   // ── Internal helpers ────────────────────────────────────────────────────────
 
-  public assignProjectConfig(
-    target: ProjectUpdateInput,
-    body: CreateProjectBody | UpdateProjectBody,
-  ): void {
-    if (body.rateLimitPerSecond !== undefined) target.rateLimitPerSecond = body.rateLimitPerSecond;
-    if (body.rateLimitPerMinute !== undefined) target.rateLimitPerMinute = body.rateLimitPerMinute;
-    if (body.rateLimitPerHour !== undefined) target.rateLimitPerHour = body.rateLimitPerHour;
-    if (body.burstLimit !== undefined) target.burstLimit = body.burstLimit;
-    if (body.allowedEventTypes !== undefined) target.allowedEventTypes = body.allowedEventTypes;
-    if (body.maxEventSizeBytes !== undefined) target.maxEventSizeBytes = body.maxEventSizeBytes;
-    if (body.maxBatchSize !== undefined) target.maxBatchSize = body.maxBatchSize;
-    if (body.allowedOrigins !== undefined) target.allowedOrigins = body.allowedOrigins;
-    if (body.requireHttps !== undefined) target.requireHttps = body.requireHttps;
-    if (body.ipAllowlist !== undefined) target.ipAllowlist = body.ipAllowlist;
-    if (body.ipBlocklist !== undefined) target.ipBlocklist = body.ipBlocklist;
-    if (body.geoRestrictionEnabled !== undefined) target.geoRestrictionEnabled = body.geoRestrictionEnabled;
-    if (body.allowedCountries !== undefined) target.allowedCountries = body.allowedCountries;
-    if (body.alertEmail !== undefined) target.alertEmail = body.alertEmail;
-    if (body.alertWebhookUrl !== undefined) target.alertWebhookUrl = body.alertWebhookUrl;
-    if (body.alertOnErrorRateThreshold !== undefined) target.alertOnErrorRateThreshold = body.alertOnErrorRateThreshold;
-    if (body.alertOnLatencyThresholdMs !== undefined) target.alertOnLatencyThresholdMs = body.alertOnLatencyThresholdMs;
-    if (body.metadata !== undefined) target.metadata = body.metadata;
-    if (body.settings !== undefined) target.settings = body.settings;
-  }
-
   public async generateUniqueSlug(orgId: string, name: string): Promise<string> {
     const baseSlug = slugifyProjectName(name);
     let candidate = baseSlug;
     let suffix = 1;
-    while (await this.repository.findProjectBySlug(orgId, candidate)) {
+    while (
+      isReservedProjectSlug(candidate) ||
+      (await this.repository.findProjectBySlug(orgId, candidate))
+    ) {
       candidate = `${baseSlug}-${suffix}`;
       suffix += 1;
     }

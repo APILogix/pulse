@@ -14,7 +14,7 @@
  *     latency is dominated by network round-trips, not bcrypt; the same
  *     change makes offline cracking 16x faster after a DB compromise.
  */
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync, scrypt, } from 'crypto';
+import crypto, { createCipheriv, createDecipheriv, randomBytes, scryptSync, } from 'crypto';
 import bcrypt from 'bcrypt';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM standard; 96-bit IV
@@ -27,16 +27,30 @@ function deriveKey(secret, salt) {
     // is acceptable for MFA secret encryption that runs once per device write.
     return scryptSync(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 });
 }
-async function deriveKeyAsync(secret, salt) {
-    return new Promise((resolve, reject) => {
-        scrypt(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
-            if (err)
-                reject(err);
-            else
-                resolve(derivedKey);
-        });
+let KEY_CACHE_MAX = 500;
+/** saltHex → derived key promise. Map preserves insertion order → LRU via delete+set. */
+const derivedKeyCache = new Map();
+async function deriveKeyAsync(secret, salt, saltHex) {
+    const hit = derivedKeyCache.get(saltHex);
+    if (hit) {
+        derivedKeyCache.delete(saltHex);
+        derivedKeyCache.set(saltHex, hit); // refresh recency
+        return hit;
+    }
+    const keyPromise = new Promise((resolve, reject) => {
+        crypto.scrypt(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 }, (err, k) => err ? reject(err) : resolve(k));
     });
+    if (derivedKeyCache.size >= KEY_CACHE_MAX) {
+        derivedKeyCache.delete(derivedKeyCache.keys().next().value); // evict oldest
+    }
+    derivedKeyCache.set(saltHex, keyPromise);
+    return keyPromise;
 }
+export const _testEncryptionCache = {
+    get size() { return derivedKeyCache.size; },
+    clear() { derivedKeyCache.clear(); },
+    setMax(max) { KEY_CACHE_MAX = max; }
+};
 /**
  * Encrypt a UTF-8 string using AES-256-GCM with a per-record random scrypt
  * salt and IV.
@@ -109,7 +123,7 @@ export async function decryptAsync(payload, secret) {
         const iv = Buffer.from(ivHex, 'hex');
         const authTag = Buffer.from(authTagHex, 'hex');
         const ciphertext = Buffer.from(ciphertextHex, 'hex');
-        const key = await deriveKeyAsync(secret, salt);
+        const key = await deriveKeyAsync(secret, salt, saltHex);
         const decipher = createDecipheriv(ALGORITHM, key, iv);
         decipher.setAuthTag(authTag);
         const plaintext = Buffer.concat([
@@ -125,7 +139,7 @@ export async function decryptAsync(payload, secret) {
         const authTag = Buffer.from(authTagHex, 'hex');
         const ciphertext = Buffer.from(ciphertextHex, 'hex');
         const legacyKey = await new Promise((resolve, reject) => {
-            scrypt(secret, 'salt', KEY_LENGTH, (err, derivedKey) => {
+            crypto.scrypt(secret, 'salt', KEY_LENGTH, (err, derivedKey) => {
                 if (err)
                     reject(err);
                 else

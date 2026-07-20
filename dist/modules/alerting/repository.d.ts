@@ -8,7 +8,7 @@ export * from './routing/routing.repository.js';
 export * from './metrics/metrics.repository.js';
 import type { CreateRuleInput, RuleConditionInsert, RuleActionInsert } from './rules/rules.repository.js';
 import type { InsertEventInput, DeliveryAttemptInsert } from './events/events.repository.js';
-import type { AlertRuleRow, AlertRuleConditionRow, AlertRuleActionRow, AlertEventRow, AlertDeliveryAttemptRow, AlertBatchRow, AlertSilenceRow, AlertEscalationPolicyRow, AlertEscalationStepRow, AlertTemplateRow, AlertRoutingRuleRow, AlertMetricRow, ListRulesQuery, ListEventsQuery, AlertEventStatus, MetricGranularity } from './types.js';
+import type { AlertRuleRow, AlertRuleConditionRow, AlertRuleActionRow, AlertEventRow, AlertDeliveryAttemptRow, AlertBatchRow, AlertSilenceRow, AlertEscalationPolicyRow, AlertEscalationStepRow, AlertTemplateRow, AlertRoutingRuleRow, AlertMetricRow, AlertDeadLetterRow, AlertThrottleWindowRow, ListRulesQuery, ListEventsQuery, ListDeadLettersQuery, AlertEventStatus, MetricGranularity } from './types.js';
 export declare class AlertingRepository {
     private rules;
     private events;
@@ -22,6 +22,7 @@ export declare class AlertingRepository {
     findRuleById(organizationId: string, id: string): Promise<AlertRuleRow | null>;
     getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]>;
     getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]>;
+    getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]>;
     listRules(organizationId: string, query: ListRulesQuery): Promise<{
         data: AlertRuleRow[];
         total: number;
@@ -29,7 +30,7 @@ export declare class AlertingRepository {
     updateRule(organizationId: string, id: string, fields: Record<string, unknown>, conditions: RuleConditionInsert[] | null, actions: RuleActionInsert[] | null, updatedBy: string): Promise<AlertRuleRow>;
     softDeleteRule(organizationId: string, id: string): Promise<void>;
     setRuleEnabled(organizationId: string, id: string, enabled: boolean): Promise<AlertRuleRow>;
-    findActiveEventByFingerprint(organizationId: string, fingerprint: string, windowSeconds: number): Promise<AlertEventRow | null>;
+    findActiveEventByFingerprint(organizationId: string, fingerprint: string, windowSeconds: number, projectId?: string | null): Promise<AlertEventRow | null>;
     incrementDuplicate(eventId: string): Promise<AlertEventRow>;
     insertEvent(input: InsertEventInput): Promise<AlertEventRow>;
     findEventById(organizationId: string, id: string): Promise<AlertEventRow | null>;
@@ -65,10 +66,45 @@ export declare class AlertingRepository {
     bulkUpdateEventStatus(organizationId: string, updates: Array<{
         id: string;
         status: AlertEventStatus;
+        escalationPolicyId?: string | null;
+        escalationStepNumber?: number | null;
+        nextEscalationAt?: Date | null;
     }>): Promise<void>;
     bulkInsertDeliveryAttempts(rows: DeliveryAttemptInsert[]): Promise<void>;
     findOrgsWithPendingEvents(limit: number): Promise<string[]>;
     claimAutoResolvable(limit: number): Promise<AlertEventRow[]>;
+    claimEscalationDue(limit: number): Promise<AlertEventRow[]>;
+    advanceEscalation(eventId: string, stepNumber: number, repeatCount: number, nextEscalationAt: Date | null): Promise<void>;
+    resumeExpiredAcknowledgments(limit: number): Promise<AlertEventRow[]>;
+    requeueStuckProcessingEvents(staleMinutes: number, limit: number): Promise<AlertEventRow[]>;
+    failStaleBatches(staleMinutes: number): Promise<number>;
+    setBatchJobId(batchId: string, jobId: string | null): Promise<void>;
+    getThrottleStates(actionIds: string[]): Promise<AlertThrottleWindowRow[]>;
+    recordThrottleNotifications(actionIds: string[]): Promise<void>;
+    insertDeadLetter(input: {
+        organizationId: string;
+        sourceQueue: string;
+        pgBossJobId: string | null;
+        batchId: string | null;
+        eventIds: string[];
+        jobPayload: Record<string, unknown>;
+        errorMessage: string | null;
+        maxRetries: number;
+    }): Promise<AlertDeadLetterRow>;
+    listDeadLetters(organizationId: string, query: ListDeadLettersQuery): Promise<{
+        data: AlertDeadLetterRow[];
+        total: number;
+    }>;
+    findDeadLetterById(organizationId: string, id: string): Promise<AlertDeadLetterRow | null>;
+    claimRetryableDeadLetters(limit: number): Promise<AlertDeadLetterRow[]>;
+    markDeadLetterRetried(id: string): Promise<void>;
+    markDeadLetterExhausted(id: string): Promise<void>;
+    discardDeadLetter(organizationId: string, id: string, userId: string): Promise<void>;
+    purgeOldTerminalEvents(days: number): Promise<number>;
+    purgeOldBatches(days: number): Promise<number>;
+    purgeOldDeliveryAttempts(days: number): Promise<number>;
+    purgeOldDeadLetters(days: number): Promise<number>;
+    purgeOldThrottleWindows(): Promise<number>;
     createSilence(input: {
         organizationId: string;
         ruleId: string | null;
@@ -109,6 +145,7 @@ export declare class AlertingRepository {
         isActive: boolean;
     }): Promise<AlertEscalationStepRow>;
     listEscalationSteps(policyId: string): Promise<AlertEscalationStepRow[]>;
+    listEscalationStepsByPolicyIds(policyIds: string[]): Promise<AlertEscalationStepRow[]>;
     createTemplate(input: {
         organizationId: string;
         name: string;

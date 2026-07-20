@@ -10,21 +10,36 @@ import type {
   NormalizedErrorEventListQuery,
 } from './types.js';
 import { TelemetryReader } from './pipeline/telemetry-reader.js';
+import { extractApiKeyPrefix, hashApiKey, constantTimeEqualHex } from '../projects/shared/utils.js';
 
 export interface ProjectAuthResult {
   projectId: string;
   orgId: string;
   projectName: string;
   projectStatus: string;
-  environment: string;
+  environmentId: string;
+  environmentName: string;
+  environmentSlug: string;
   apiKeyId: string;
+  keyType: string;
+  rotationVersion: number;
   isActive: boolean;
+  status: string;
   expiresAt: Date | null;
   permissions: string[];
   allowedEndpoints: string[];
   blockedEndpoints: string[];
+  allowedEventTypes: string[];
+  allowedOrigins: string[];
+  allowedIps: string[];
+  allowedDomains: string[];
+  allowedSdks: string[];
+  samplingRules: Record<string, unknown>;
+  featureFlags: Record<string, unknown>;
+  sdkConfig: Record<string, unknown>;
   rateLimitPerSecond: number | null;
   rateLimitPerMinute: number | null;
+  rateLimitPerHour: number | null;
   /**
    * Raw billing plan tier (plans.tier) resolved via the organization's latest
    * live subscription. NULL when the org has no trialing/active/past_due
@@ -47,7 +62,18 @@ export class PostgresWriter {
     this.reader = new TelemetryReader(pool);
   }
 
-  async getProjectByApiKeyHash(keyHash: string): Promise<ProjectAuthResult | null> {
+  /**
+   * Resolve an ingestion API key by extracting its public prefix, looking up
+   * candidate rows, and comparing the SHA-256 secret hash in constant time.
+   * Returns the full project/auth context needed by the gateway, including the
+   * environment, scoping fields, and billing plan tier.
+   */
+  async resolveApiKey(rawKey: string): Promise<ProjectAuthResult | null> {
+    const publicKey = extractApiKeyPrefix(rawKey);
+    if (!publicKey) return null;
+
+    const rawHash = hashApiKey(rawKey);
+
     const result = await this.pool.query(
       `
       SELECT
@@ -55,18 +81,34 @@ export class PostgresWriter {
         p.org_id,
         p.name as project_name,
         p.status as project_status,
-        k.environment,
         k.id as key_id,
+        k.environment_id,
+        e.name as environment_name,
+        e.slug as environment_slug,
         k.is_active,
+        k.status as key_status,
+        k.key_type,
+        k.rotation_version,
         k.expires_at,
+        k.secret_hash,
         k.permissions,
         k.allowed_endpoints,
         k.blocked_endpoints,
-        COALESCE(k.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
-        COALESCE(k.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute,
+        k.allowed_event_types,
+        k.allowed_origins,
+        k.allowed_ips,
+        k.allowed_domains,
+        k.allowed_sdks,
+        k.sampling_rules,
+        k.feature_flags,
+        k.sdk_config,
+        COALESCE(k.rate_limit_per_second, e.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
+        COALESCE(k.rate_limit_per_minute, e.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute,
+        COALESCE(k.rate_limit_per_hour, e.rate_limit_per_hour, p.rate_limit_per_hour) AS rate_limit_per_hour,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
+      LEFT JOIN project_environments e ON e.id = k.environment_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
        AND s.status IN ('trialing', 'active', 'past_due')
@@ -74,46 +116,63 @@ export class PostgresWriter {
       LEFT JOIN plans pl
         ON pl.id = s.plan_id
        AND pl.deleted_at IS NULL
-      WHERE k.key_hash = $1
+      WHERE k.public_key = $1
+        AND p.deleted_at IS NULL
+        AND k.deleted_at IS NULL
+        AND (k.expires_at IS NULL OR k.expires_at > NOW())
         AND (
           k.is_active = TRUE
           OR (k.status = 'rotated' AND k.grace_period_ends_at IS NOT NULL AND k.grace_period_ends_at > NOW())
         )
-        AND (k.expires_at IS NULL OR k.expires_at > NOW())
-        AND p.status = 'active'
-        AND p.deleted_at IS NULL
-      ORDER BY s.created_at DESC NULLS LAST
-      LIMIT 1
+      ORDER BY s.created_at DESC NULLS LAST, k.created_at DESC
     `,
-      [keyHash],
+      [publicKey],
     );
 
-    if (result.rows.length === 0) return null;
+    for (const row of result.rows) {
+      if (!constantTimeEqualHex(row.secret_hash as string, rawHash)) continue;
+      if (row.project_status !== 'active') return null;
 
-    const row = result.rows[0];
-    return {
-      projectId: row.project_id,
-      orgId: row.org_id,
-      projectName: row.project_name,
-      projectStatus: row.project_status,
-      environment: row.environment,
-      apiKeyId: row.key_id,
-      isActive: row.is_active,
-      expiresAt: row.expires_at,
-      permissions: row.permissions ?? [],
-      allowedEndpoints: row.allowed_endpoints ?? [],
-      blockedEndpoints: row.blocked_endpoints ?? [],
-      rateLimitPerSecond: row.rate_limit_per_second ?? null,
-      rateLimitPerMinute: row.rate_limit_per_minute ?? null,
-      planTier: row.plan_tier ?? null,
-      orgRateLimitPerSecond: null,
-      orgRateLimitPerMinute: null,
-    };
+      return {
+        projectId: row.project_id as string,
+        orgId: row.org_id as string,
+        projectName: row.project_name as string,
+        projectStatus: row.project_status as string,
+        environmentId: row.environment_id as string,
+        environmentName: row.environment_name as string,
+        environmentSlug: row.environment_slug as string,
+        apiKeyId: row.key_id as string,
+        keyType: row.key_type as string,
+        rotationVersion: Number(row.rotation_version ?? 1),
+        isActive: row.is_active as boolean,
+        status: row.key_status as string,
+        expiresAt: row.expires_at as Date | null,
+        permissions: (row.permissions as string[] | null) ?? [],
+        allowedEndpoints: (row.allowed_endpoints as string[] | null) ?? [],
+        blockedEndpoints: (row.blocked_endpoints as string[] | null) ?? [],
+        allowedEventTypes: (row.allowed_event_types as string[] | null) ?? [],
+        allowedOrigins: (row.allowed_origins as string[] | null) ?? [],
+        allowedIps: (row.allowed_ips as string[] | null) ?? [],
+        allowedDomains: (row.allowed_domains as string[] | null) ?? [],
+        allowedSdks: (row.allowed_sdks as string[] | null) ?? [],
+        samplingRules: (row.sampling_rules as Record<string, unknown> | null) ?? {},
+        featureFlags: (row.feature_flags as Record<string, unknown> | null) ?? {},
+        sdkConfig: (row.sdk_config as Record<string, unknown> | null) ?? {},
+        rateLimitPerSecond: row.rate_limit_per_second as number | null,
+        rateLimitPerMinute: row.rate_limit_per_minute as number | null,
+        rateLimitPerHour: row.rate_limit_per_hour as number | null,
+        planTier: row.plan_tier as string | null,
+        orgRateLimitPerSecond: null,
+        orgRateLimitPerMinute: null,
+      };
+    }
+
+    return null;
   }
 
   /**
    * Billing context for a project (org + plan tier). Used by the admin replay
-   * path, which has no API key to resolve through getProjectByApiKeyHash().
+   * path, which has no API key to resolve through resolveApiKey().
    */
   async getProjectPlanContext(
     projectId: string,

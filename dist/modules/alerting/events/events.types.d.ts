@@ -40,10 +40,22 @@ export declare const HistoryActionSchema: z.ZodEnum<{
     grouped: "grouped";
     auto_resolved: "auto_resolved";
     rule_modified: "rule_modified";
+    escalation_step: "escalation_step";
+    throttled: "throttled";
+    dead_lettered: "dead_lettered";
+    requeued: "requeued";
 }>;
 export type HistoryAction = z.infer<typeof HistoryActionSchema>;
+export declare const DeadLetterStatusSchema: z.ZodEnum<{
+    pending_retry: "pending_retry";
+    retried: "retried";
+    exhausted: "exhausted";
+    discarded: "discarded";
+}>;
+export type DeadLetterStatus = z.infer<typeof DeadLetterStatusSchema>;
 export declare const IngestEventSchema: z.ZodObject<{
     ruleId: z.ZodOptional<z.ZodString>;
+    projectId: z.ZodOptional<z.ZodString>;
     severity: z.ZodEnum<{
         error: "error";
         info: "info";
@@ -96,10 +108,28 @@ export declare const ResolveEventSchema: z.ZodObject<{
     comment: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type ResolveEventBody = z.infer<typeof ResolveEventSchema>;
+export declare const ListDeadLettersQuerySchema: z.ZodObject<{
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    sortBy: z.ZodOptional<z.ZodString>;
+    sortOrder: z.ZodDefault<z.ZodEnum<{
+        asc: "asc";
+        desc: "desc";
+    }>>;
+    status: z.ZodOptional<z.ZodEnum<{
+        pending_retry: "pending_retry";
+        retried: "retried";
+        exhausted: "exhausted";
+        discarded: "discarded";
+    }>>;
+}, z.core.$strip>;
+export type ListDeadLettersQuery = z.infer<typeof ListDeadLettersQuerySchema>;
 export interface AlertEventRow {
     id: string;
     organization_id: string;
     rule_id: string | null;
+    /** Optional project scope (NULL = org-level event). */
+    project_id: string | null;
     status: AlertEventStatus;
     severity: AlertSeverity;
     fingerprint: string;
@@ -117,6 +147,9 @@ export interface AlertEventRow {
     ended_at: Date | null;
     last_notified_at: Date | null;
     next_escalation_at: Date | null;
+    escalation_policy_id: string | null;
+    escalation_step_number: number;
+    escalation_repeat_count: number;
     auto_resolve_at: Date | null;
     acknowledged_by: string | null;
     acknowledged_at: Date | null;
@@ -140,6 +173,7 @@ export interface AlertBatchRow {
     worker_id: string | null;
     pg_boss_job_id: string | null;
     event_count: number;
+    processed_count: number;
     success_count: number;
     failure_count: number;
     skipped_count: number;
@@ -169,6 +203,35 @@ export interface AlertDeliveryAttemptRow {
     latency_ms: number | null;
     retry_count: number;
     external_message_id: string | null;
+    created_at: Date;
+    updated_at: Date;
+}
+export interface AlertThrottleWindowRow {
+    id: string;
+    rule_action_id: string;
+    window_start: Date;
+    notification_count: number;
+    last_notified_at: Date | null;
+    created_at: Date;
+    updated_at: Date;
+}
+export interface AlertDeadLetterRow {
+    id: string;
+    organization_id: string;
+    source_queue: string;
+    pg_boss_job_id: string | null;
+    batch_id: string | null;
+    event_ids: string[];
+    job_payload: Record<string, unknown>;
+    error_message: string | null;
+    status: DeadLetterStatus;
+    retry_count: number;
+    max_retries: number;
+    last_retry_at: Date | null;
+    retried_at: Date | null;
+    discarded_at: Date | null;
+    discarded_by: string | null;
+    metadata: Record<string, unknown>;
     created_at: Date;
     updated_at: Date;
 }

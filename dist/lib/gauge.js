@@ -3,9 +3,10 @@ const gaugeLogger = logger.child({ component: 'backpressure-gauge' });
 /**
  * Cross-process backpressure gauge.
  *
- * The singleton row is shared by all API and worker processes through Postgres.
- * Workers write; API servers read. Reads are O(1) and intentionally fail open
- * to the caller so readiness policy decides how to react.
+ * After the pg-boss cutover there is no writer-side singleton row: the gauge
+ * reads the pg-boss job table directly (pending = created + retry across the
+ * ingest.<type> queues), so every API process sees the same live depth. Reads
+ * fail open (return null) so readiness policy decides how to react.
  */
 export class BackpressureGauge {
     db;
@@ -14,34 +15,32 @@ export class BackpressureGauge {
     }
     async read() {
         try {
-            const result = await this.db.query(`SELECT pending_depth, updated_at, last_worker_id
-         FROM backpressure_gauge
-         WHERE id = 1`);
+            const result = await this.db.query(`SELECT COUNT(*)::bigint AS pending_depth
+         FROM pgboss.job
+         WHERE name LIKE 'ingest.%' AND state IN ('created', 'retry')`);
             const row = result.rows[0];
             if (!row)
                 return null;
             return {
                 pendingDepth: Number(row.pending_depth ?? 0),
-                updatedAt: new Date(row.updated_at),
-                lastWorkerId: typeof row.last_worker_id === 'string' ? row.last_worker_id : null,
+                // Fresh on every read, so callers' staleness checks always pass.
+                updatedAt: new Date(),
+                lastWorkerId: null,
             };
         }
         catch (err) {
+            // pgboss schema not yet created (first boot) or transient error.
             gaugeLogger.error({ err }, 'Failed to read backpressure gauge');
             return null;
         }
     }
-    async update(depth, workerId) {
-        try {
-            await this.db.query(`UPDATE backpressure_gauge
-         SET pending_depth = $1,
-             updated_at = NOW(),
-             last_worker_id = $2
-         WHERE id = 1`, [Math.max(0, Math.trunc(depth)), workerId]);
-        }
-        catch (err) {
-            gaugeLogger.error({ err, depth, workerId }, 'Failed to update backpressure gauge');
-        }
+    /**
+     * @deprecated No-op since the pg-boss cutover — depth is read live from
+     * pgboss.job; nothing needs to write the gauge. Retained so legacy callers
+     * still compile.
+     */
+    async update(_depth, _workerId) {
+        // intentionally a no-op
     }
     isStale(state, maxAgeMs) {
         return Date.now() - state.updatedAt.getTime() > maxAgeMs;

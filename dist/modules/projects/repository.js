@@ -4,31 +4,6 @@ import { ProjectRepository } from "./core/project.repository.js";
 import { MemberRepository } from "./members/member.repository.js";
 import { ProjectUsageRepository } from "./usage/project-usage.repository.js";
 import { ProjectSettingsRepository } from "./settings/project-settings.repository.js";
-// Column list selected for every project read. Centralized so the projection
-// stays consistent across find/list/update.
-const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, default_environment AS environment,
-  archived_at, deleted_at, created_at, updated_at
-`;
-const API_KEY_COLUMNS = `
-  id, project_id, org_id, key_hash, key_prefix, key_type, environment,
-  name, description, is_active, status, created_by,
-  rotated_from_key_id, rotated_at, rotated_by, rotation_reason, grace_period_ends_at,
-  revoked_at, revoked_by, revoked_reason, expires_at,
-  auto_rotate_enabled, auto_rotate_days,
-  last_used_at, last_used_ip, usage_count, error_count,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
-  permissions, allowed_endpoints, blocked_endpoints, metadata,
-  created_at, updated_at
-`;
-const ENV_COLUMNS = `
-  id, project_id, org_id, environment, is_active,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-  created_by, created_at, updated_at
-`;
-const DEFAULT_PROJECT_ENVIRONMENTS = ["development", "staging", "production"];
 export class ProjectsRepository {
     db;
     core;
@@ -43,11 +18,24 @@ export class ProjectsRepository {
         this.settings = new ProjectSettingsRepository(db);
     }
     async withTransaction(callback) {
-        return this.core.withTransaction(arguments[0]);
+        return this.core.withTransaction(callback);
     }
     // ── Membership ────────────────────────────────────────────────────────────
     async findOrganizationMembership(orgId, userId, client) {
         return this.members.findOrganizationMembership(orgId, userId, client);
+    }
+    async getProjectMemberRole(orgId, projectId, userId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT role
+         FROM project_members
+        WHERE project_id = $1
+          AND user_id = $2
+          AND (status IS NULL OR status = 'active')
+        LIMIT 1`, [projectId, userId]);
+        return result.rows[0]?.role ?? null;
+    }
+    async addProjectMember(projectId, organizationId, userId, role, addedByUserId, client) {
+        return this.members.addProjectMember(projectId, organizationId, userId, role, addedByUserId, client);
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, query, client) {

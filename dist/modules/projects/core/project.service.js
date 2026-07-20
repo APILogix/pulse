@@ -6,29 +6,8 @@ import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
+import { ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
-// Per-key defaults used when warming the cache. Aligned with the ingestion
-// service defaults so a key gets the same limit regardless of which path warmed
-// the cache. A per-key override (if set) takes precedence.
-const DEFAULT_API_KEY_RATE_LIMITS = {
-    perSecond: 1000,
-    perMinute: 10000,
-};
-const MAX_ACTIVE_KEYS_ON_CREATE = 5;
-const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
-const DEFAULT_GRACE_PERIOD_HOURS = 24;
-const DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT = 3;
-const BILLING_MUTABLE_STATUSES = new Set(["trialing", "active"]);
-const ROLE_HIERARCHY = {
-    [ProjectMemberRole.OWNER]: 4,
-    [ProjectMemberRole.ADMIN]: 3,
-    [ProjectMemberRole.DEVELOPER]: 2,
-    [ProjectMemberRole.VIEWER]: 1,
-};
-export function hasProjectRole(userRole, required) {
-    return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[required];
-}
 export class ProjectService extends BaseProjectService {
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
@@ -45,45 +24,24 @@ export class ProjectService extends BaseProjectService {
     }
     async createProject(orgId, userId, body, meta) {
         await this.requireOrganizationAccess(orgId, userId, "admin");
-        const entitlements = await this.enforceProjectModuleLimit(orgId, "project");
-        await this.enforceProjectModuleLimit(orgId, "environment", DEFAULT_PROJECT_BOOTSTRAP_ENVIRONMENT_COUNT);
+        await this.enforceProjectModuleLimit(orgId, "project");
         const slug = await this.generateUniqueSlug(orgId, body.name);
-        const prefixes = buildApiPrefixes();
-        const config = {};
-        this.assignProjectConfig(config, body);
         const project = await this.repository.withTransaction(async (client) => {
             const created = await this.repository.createProject({
                 orgId,
                 name: body.name,
                 slug,
                 description: body.description ?? null,
-                environment: body.environment,
-                productionApiPrefix: body.productionApiPrefix ?? prefixes.productionApiPrefix,
-                developmentApiPrefix: body.developmentApiPrefix ?? prefixes.developmentApiPrefix,
-                stagingApiPrefix: body.stagingApiPrefix ?? prefixes.stagingApiPrefix,
-                config,
+                visibility: body.visibility ?? "private",
+                status: body.status ?? "active",
+                timezone: body.timezone ?? "UTC",
+                tags: body.tags ?? [],
+                icon: body.icon ?? null,
+                color: body.color ?? null,
+                metadata: body.metadata ?? {},
+                createdBy: userId,
             }, client);
-            for (const environment of ["development", "staging", "production"]) {
-                await this.environmentRepository.createEnvironment({
-                    projectId: created.id,
-                    orgId: created.orgId,
-                    environment,
-                    createdBy: userId,
-                }, client);
-            }
-            await this.repository.createDefaultSdkConfigs(created, userId, entitlements.plan_key, client);
-            // [DISABLED] RemoteSDK configuration is deferred until Phase 2.
-            // The project is created without remote infrastructure provisioning.
-            // To enable: uncomment the block below and ensure RemoteSDK credentials
-            // are available in the environment.
-            /*
-            const remoteSdk = new RemoteSDK({ orgId: created.org_id });
-            await remoteSdk.configureProject({
-              projectId: created.id,
-              slug: created.slug,
-              environment: created.environment,
-            });
-            */
+            await this.repository.addProjectMember(created.id, orgId, userId, ProjectMemberRole.OWNER, userId, client);
             return created;
         });
         await this.audit(meta, {
@@ -92,7 +50,7 @@ export class ProjectService extends BaseProjectService {
             entityType: "project",
             entityId: project.id,
             entityName: project.name,
-            newValues: { name: project.name, slug: project.slug, environment: project.environment },
+            newValues: { name: project.name, slug: project.slug, visibility: project.visibility },
         });
         this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
         return project;
@@ -145,15 +103,18 @@ export class ProjectService extends BaseProjectService {
             updates.status = body.status;
             updates.archivedAt = body.status === "archived" ? new Date() : null;
         }
-        if (body.environment !== undefined)
-            updates.environment = body.environment;
-        if (body.productionApiPrefix !== undefined)
-            updates.productionApiPrefix = body.productionApiPrefix;
-        if (body.developmentApiPrefix !== undefined)
-            updates.developmentApiPrefix = body.developmentApiPrefix;
-        if (body.stagingApiPrefix !== undefined)
-            updates.stagingApiPrefix = body.stagingApiPrefix;
-        this.assignProjectConfig(updates, body);
+        if (body.visibility !== undefined)
+            updates.visibility = body.visibility;
+        if (body.timezone !== undefined)
+            updates.timezone = body.timezone;
+        if (body.tags !== undefined)
+            updates.tags = body.tags;
+        if (body.icon !== undefined)
+            updates.icon = body.icon;
+        if (body.color !== undefined)
+            updates.color = body.color;
+        if (body.metadata !== undefined)
+            updates.metadata = body.metadata;
         const updated = await this.repository.updateProject(orgId, projectId, updates);
         // If the project is no longer active, evict its cached keys now so ingestion
         // stops accepting data within this request rather than after the LRU TTL.

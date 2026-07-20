@@ -5,7 +5,10 @@ import { ApiKeyRepository } from './api-keys/api-key.repository.js';
 import { EnvironmentRepository } from './environments/environment.repository.js';
 import { ActivityRepository } from './activity/activity.repository.js';
 import { UsageRepository } from './usage/usage.repository.js';
+import { MemberRepository } from './members/member.repository.js';
 import { projectsRoutes } from './routes.js';
+import { projectMemberRoutes } from './members/member.routes.js';
+import { projectConnectorSubscriptionRoutes } from './alerts/subscriptions/connector-subscription.routes.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
 import { pool } from '../../config/database.js';
@@ -17,6 +20,7 @@ async function projectsModule(fastify, _options) {
     const environmentRepository = new EnvironmentRepository();
     const activityRepository = new ActivityRepository();
     const usageRepository = new UsageRepository();
+    const membersRepository = new MemberRepository(pool);
     // Caching is in-process LRU only (no Redis dependency). The ingestion module
     // still owns its own caches; the projects service only warms/evicts the
     // shared apiKeyCache LRU used for API-key resolution.
@@ -35,7 +39,7 @@ async function projectsModule(fastify, _options) {
     const alertRoutesRepository = new AlertRoutesRepository();
     const alertPreferencesRepository = new AlertPreferencesRepository();
     const alertRoutesService = new ProjectAlertRouteService(alertRoutesRepository, service, fastify.organization.repository, fastify.log);
-    const alertPreferencesService = new ProjectMemberAlertPreferenceService(alertPreferencesRepository, alertRoutesRepository, service, fastify.organization.repository, fastify.log);
+    const alertPreferencesService = new ProjectMemberAlertPreferenceService(alertPreferencesRepository, service, fastify.organization.repository, fastify.log);
     fastify.decorate('projects', {
         repository,
         settingsRepository,
@@ -43,6 +47,8 @@ async function projectsModule(fastify, _options) {
         environmentRepository,
         activityRepository,
         usageRepository,
+        membersRepository,
+        connectorSubscriptionsService: service.connectorSubscriptions,
         service,
         alertRoutesRepository,
         alertRoutesService,

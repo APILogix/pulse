@@ -1,3 +1,5 @@
+import { createGunzip } from "zlib";
+import { Transform } from "stream";
 import { authenticate, requireAdmin } from "../../shared/middleware/auth.js";
 import { requireProjectMembershipFromBody, requireProjectMembershipFromQuery, } from "../../shared/middleware/tenant.js";
 import { extractApiKeyFromRequest } from "./utils/api-key.js";
@@ -44,6 +46,33 @@ function assertControllerMethods(controller) {
         }
     }
 }
+/**
+ * Cumulative decompressed-byte guard for gzip ingest bodies. The SDK
+ * transport contract allows `Content-Encoding: gzip` batches; this caps the
+ * INFLATED size (zip-bomb protection) so a small compressed payload cannot
+ * expand into unbounded memory in the JSON parser. On overflow the stream
+ * errors with a 413-tagged failure, which the global error handler maps to
+ * "Request body too large".
+ */
+class DecompressedSizeGuard extends Transform {
+    maxBytes;
+    seen = 0;
+    constructor(maxBytes) {
+        super();
+        this.maxBytes = maxBytes;
+    }
+    _transform(chunk, _encoding, callback) {
+        this.seen += chunk.length;
+        if (this.seen > this.maxBytes) {
+            const err = new Error("Decompressed body exceeds maximum allowed size");
+            err.statusCode = 413;
+            err.code = "FST_ERR_GZIP_BODY_TOO_LARGE";
+            callback(err);
+            return;
+        }
+        callback(null, chunk);
+    }
+}
 export async function ingestionRoutes(fastify) {
     const postgresWriter = requireFastifyDecorator(fastify, "postgresWriter");
     const service = new IngestionService(postgresWriter.pool, postgresWriter, {
@@ -54,6 +83,20 @@ export async function ingestionRoutes(fastify) {
     const controller = new IngestionController(service);
     assertControllerMethods(controller);
     fastify.addHook("onClose", async () => service.shutdown());
+    // ── Gzip request decompression (SDK transport contract) ─────────────────
+    // Registered in this encapsulated plugin scope, so it only affects
+    // ingestion routes. When the SDK sends `Content-Encoding: gzip`, the raw
+    // body stream is inflated through zlib plus a cumulative byte guard BEFORE
+    // the JSON parser sees it; non-gzip requests pass through untouched.
+    fastify.addHook("preParsing", (request, _reply, payload, done) => {
+        if (request.headers["content-encoding"] === "gzip") {
+            const gunzip = createGunzip();
+            const guard = new DecompressedSizeGuard(env.INGESTION_GZIP_MAX_BYTES);
+            done(null, payload.pipe(gunzip).pipe(guard));
+            return;
+        }
+        done(null, payload);
+    });
     // ── SDK ingestion endpoints ─────────────────────────────────────────────
     // All ingestion endpoints validate their bodies via JSON Schema. The schema
     // is the only line of defense against malformed input reaching handlers,

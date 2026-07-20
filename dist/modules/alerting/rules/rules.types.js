@@ -37,6 +37,7 @@ export const CreateRuleSchema = z.object({
     description: z.string().max(2000).optional(),
     severity: AlertSeveritySchema.default('warning'),
     enabled: z.boolean().default(true),
+    projectId: UuidSchema.optional(),
     evaluationIntervalSeconds: z.number().int().min(1).max(86_400).default(60),
     cooldownSeconds: z.number().int().min(0).max(86_400).default(300),
     autoResolveAfterMinutes: z.number().int().min(1).max(20_160).optional(),

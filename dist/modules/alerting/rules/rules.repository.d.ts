@@ -42,6 +42,12 @@ export interface CreateRuleInput {
     description: string | null;
     severity: string;
     enabled: boolean;
+    /** Optional project scope (null = org-level rule). */
+    projectId?: string | null;
+    /** Platform preset identifier (seeded default rules only). */
+    presetKey?: string | null;
+    /** TRUE for platform-managed default (preset) rules. */
+    isDefault?: boolean;
     evaluationIntervalSeconds: number;
     cooldownSeconds: number;
     autoResolveAfterMinutes: number | null;
@@ -66,6 +72,8 @@ export declare class RulesRepository {
     findRuleById(organizationId: string, id: string): Promise<AlertRuleRow | null>;
     getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]>;
     getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]>;
+    /** Bulk-load active actions for many rules in ONE query (batch worker — no N+1). */
+    getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]>;
     listRules(organizationId: string, query: ListRulesQuery): Promise<{
         data: AlertRuleRow[];
         total: number;

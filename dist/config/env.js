@@ -4,6 +4,8 @@ config();
 const envSchema = z.object({
     // Server
     NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+    // Threadpool size for crypto/DNS libuv offload. Default is 4, tune up to 8+ for heavy async scrypt loads.
+    UV_THREADPOOL_SIZE: z.coerce.number().int().min(1).max(64).default(8),
     PORT: z.string().transform(Number).default(3000),
     HOST: z.string().default('0.0.0.0'),
     APP_NAME: z.string().default('Pulsiv'),
@@ -150,7 +152,7 @@ const envSchema = z.object({
     INGESTION_RATE_BUCKET_SWEEP_MS: z.coerce.number().int().min(5_000).default(60_000), // 1m
     INGESTION_ENDPOINT: z.string().url().optional(),
     // ── Connector Pipeline Tunables ────────────────────────────────────────
-    CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(10),
+    CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(3),
     CONNECTOR_SEND_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
     CONNECTOR_SEND_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(45),
     CONNECTOR_RETRY_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
@@ -172,7 +174,7 @@ const envSchema = z.object({
     INGESTION_SPECIALIZED_VISIBILITY_TIMEOUT_MS: z.coerce.number().int().min(1000).default(600_000), // 10m
     INGESTION_POLL_MS: z.coerce.number().int().min(1).max(10_000).default(25),
     INGESTION_IDLE_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
-    INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(20),
+    INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(8),
     INGESTION_DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
     INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(5_000),
     MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
@@ -193,6 +195,32 @@ const envSchema = z.object({
     INGESTION_LOG_DB_POOL_SIZE: z.coerce.number().int().min(1).max(50).default(5),
     INGESTION_ADMIN_LOG_BUFFER_SIZE: z.coerce.number().int().min(10).default(100),
     INGESTION_ADMIN_LOG_FLUSH_MS: z.coerce.number().int().min(1000).default(5000),
+    // ── Enterprise ingestion pipeline (pg-boss) ─────────────────────────────
+    // Events per pg-boss job. Chunks bound job payload size and worker unit of
+    // work; smaller = fairer scheduling, larger = fewer round trips.
+    INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(200),
+    INGESTION_JOB_EXPIRE_SECONDS: z.coerce.number().int().min(30).default(300),
+    INGESTION_JOB_RETRY_LIMIT: z.coerce.number().int().min(0).max(10).default(3),
+    INGESTION_JOB_RETRY_DELAY_SECONDS: z.coerce.number().int().min(1).default(5),
+    // Max decompressed body size for gzip ingestion payloads (zip-bomb guard).
+    INGESTION_GZIP_MAX_BYTES: z.coerce.number().int().min(1024).default(20 * 1024 * 1024),
+    // Organization-wide rate limits (noisy-neighbor protection at the gateway).
+    INGESTION_ORG_RATE_LIMIT_PER_SECOND: z.coerce.number().int().min(1).default(5000),
+    INGESTION_ORG_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(100_000),
+    // TTL for the cached organization_usage_current_period quota read.
+    INGESTION_QUOTA_CACHE_TTL_MS: z.coerce.number().int().min(1000).default(60_000),
+    // Tenant fairness: how often a job may be deferred for exceeding the per-org
+    // in-flight budget before aging forces it through (starvation guard).
+    INGESTION_FAIRNESS_MAX_DEFERS: z.coerce.number().int().min(0).max(20).default(5),
+    INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: z.coerce.number().int().min(1).max(60).default(2),
+    // Per-event-type worker concurrency (pg-boss localConcurrency / batchSize).
+    INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(8),
+    INGESTION_TYPE_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(4),
+    // Metrics HTTP endpoint exposed by worker processes.
+    INGESTION_WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65535).default(9465),
+    // Cron schedules (pg-boss) for the usage rollup and alert rule evaluator.
+    INGESTION_USAGE_ROLLUP_CRON: z.string().default('* * * * *'),
+    INGESTION_ALERT_EVAL_CRON: z.string().default('* * * * *'),
 });
 export const env = envSchema.parse(process.env);
 // Defense-in-depth: refuse to boot if any two crypto secrets are identical.

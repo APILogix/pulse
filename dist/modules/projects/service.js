@@ -13,6 +13,12 @@ import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
+import { MemberRepository } from "./members/member.repository.js";
+import { ProjectMemberService } from "./members/member.service.js";
+import { ProjectConnectorSubscriptionService } from "./alerts/subscriptions/connector-subscription.service.js";
+import { ConnectorSubscriptionRepository } from "./alerts/subscriptions/connector-subscription.repository.js";
+import { UsageAnalyticsRepository } from "./usage/analytics.repository.js";
+import { UsageAnalyticsService } from "./usage/analytics.service.js";
 // Per-key defaults used when warming the cache. Aligned with the ingestion
 // service defaults so a key gets the same limit regardless of which path warmed
 // the cache. A per-key override (if set) takes precedence.
@@ -29,6 +35,7 @@ const ROLE_HIERARCHY = {
     [ProjectMemberRole.OWNER]: 4,
     [ProjectMemberRole.ADMIN]: 3,
     [ProjectMemberRole.DEVELOPER]: 2,
+    [ProjectMemberRole.QA]: 2,
     [ProjectMemberRole.VIEWER]: 1,
 };
 export function hasProjectRole(userRole, required) {
@@ -49,6 +56,9 @@ export class ProjectsService {
     environments;
     apiKeys;
     base;
+    members;
+    connectorSubscriptions;
+    analytics;
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
@@ -67,6 +77,19 @@ export class ProjectsService {
         this.environments = new EnvironmentService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
         this.apiKeys = new ApiKeyService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
         this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+        this.members = new ProjectMemberService({
+            repository,
+            membersRepository: new MemberRepository(),
+            logger,
+            orgRepo,
+            settingsRepository,
+            apiKeyRepository,
+            environmentRepository,
+            activityRepository,
+            usageRepository,
+        });
+        this.connectorSubscriptions = new ProjectConnectorSubscriptionService(new ConnectorSubscriptionRepository(), this.base, orgRepo, logger);
+        this.analytics = new UsageAnalyticsService(new UsageAnalyticsRepository(), this.base, logger);
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, userId, query) {
@@ -121,17 +144,17 @@ export class ProjectsService {
     async listEnvironments(orgId, projectId, userId) {
         return this.environments.listEnvironments(orgId, projectId, userId);
     }
-    async getEnvironment(orgId, projectId, environment, userId) {
-        return this.environments.getEnvironment(orgId, projectId, environment, userId);
+    async getEnvironment(orgId, projectId, environmentId, userId) {
+        return this.environments.getEnvironment(orgId, projectId, environmentId, userId);
     }
     async createEnvironment(orgId, projectId, userId, body, meta) {
         return this.environments.createEnvironment(orgId, projectId, userId, body, meta);
     }
-    async updateEnvironment(orgId, projectId, environment, userId, body, meta) {
-        return this.environments.updateEnvironment(orgId, projectId, environment, userId, body, meta);
+    async updateEnvironment(orgId, projectId, environmentId, userId, body, meta) {
+        return this.environments.updateEnvironment(orgId, projectId, environmentId, userId, body, meta);
     }
-    async deleteEnvironment(orgId, projectId, environment, userId, meta) {
-        return this.environments.deleteEnvironment(orgId, projectId, environment, userId, meta);
+    async deleteEnvironment(orgId, projectId, environmentId, userId, meta) {
+        return this.environments.deleteEnvironment(orgId, projectId, environmentId, userId, meta);
     }
     // ── API keys ─────────────────────────────────────────────────────────────
     async listApiKeys(orgId, projectId, userId, query) {
@@ -201,9 +224,6 @@ export class ProjectsService {
         return this.base.enforceProjectModuleLimit(orgId, capability, increment);
     }
     // ── Internal helpers ────────────────────────────────────────────────────────
-    assignProjectConfig(target, body) {
-        this.base.assignProjectConfig(target, body);
-    }
     async generateUniqueSlug(orgId, name) {
         return this.base.generateUniqueSlug(orgId, name);
     }

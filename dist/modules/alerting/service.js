@@ -75,6 +75,15 @@ export class AlertingService {
     async silenceFromEvent(orgId, meta, id, durationMinutes, comment) {
         return this.events.silenceFromEvent(orgId, meta, id, durationMinutes, comment);
     }
+    async listDeadLetters(orgId, query) {
+        return this.events.listDeadLetters(orgId, query);
+    }
+    async retryDeadLetter(orgId, meta, id) {
+        return this.events.retryDeadLetter(orgId, meta, id);
+    }
+    async discardDeadLetter(orgId, meta, id) {
+        return this.events.discardDeadLetter(orgId, meta, id);
+    }
     async createSilence(orgId, meta, body) {
         return this.silences.createSilence(orgId, meta, body);
     }

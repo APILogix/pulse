@@ -166,7 +166,18 @@ export declare class EventAnalyticsRepository {
     exportDataset(orgId: string, dataset: 'errors' | 'requests' | 'logs' | 'metrics', range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     refreshHourlyRollup(orgId: string, startHour: Date, endHour: Date): Promise<void>;
     listOrgsWithRecentErrors(sinceHours: number): Promise<string[]>;
-    /** Upsert error groups from recent error events (single statement). */
+    /**
+     * Reconcile error groups from recent error events (single statement).
+     *
+     * The ingestion worker's inline grouper owns occurrence counts in real time
+     * (analytics_error_groups.total_count etc. are incremented per inserted
+     * event). This periodic job must NOT add to counts — re-adding a trailing
+     * window's COUNT(*) double-counts on every overlapping run (it did even
+     * before inline grouping existed). It now only:
+     *   - INSERTs groups the inline path missed (e.g. grouping failed while the
+     *     event insert succeeded), with the window count as the initial total;
+     *   - refreshes descriptive fields and last_seen_at for existing groups.
+     */
     refreshErrorGroups(orgId: string, sinceHours: number): Promise<void>;
     ping(): Promise<boolean>;
 }

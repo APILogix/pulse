@@ -1,80 +1,46 @@
-/**
- * WorkerRegistry — constructs and supervises the ingestion worker tier.
- *
- * Four worker classes, isolated so a slow signal never starves a fast one:
- *
- *   1. GENERAL workers   — drain the fast path (error, message, request, span,
- *      metric, log, cron_checkin). Many workers, high concurrency, small
- *      visibility timeout. Re-validate the payload, route to the
- *      TelemetryWriter, and fire-and-forget a usage increment.
- *
- *   2. SPECIALIZED workers — isolate heavy signals (profile, replay, trace).
- *      Fewer workers, longer visibility timeout, smaller batches. They claim
- *      ONLY their job types so a 30s profile upload never blocks an error from
- *      being persisted. They use a dedicated PgQueue with a longer lease.
- *
- *   3. RETRY worker      — owns queue maintenance (no job claiming): recover
- *      expired leases, prune completed rows, flush usage counters, flush admin
- *      logs. Runs every INGESTION_RETRY_INTERVAL_MS.
- *
- *   4. MAINTENANCE worker — partition automation + retention for the telemetry
- *      tables (TelemetryMaintenanceWorker). Runs every 6h.
- *
- * The general/specialized workers also report rolling performance stats to the
- * TimescaleDB LogDatabase each retry cycle.
- *
- * SKIP LOCKED makes horizontal scaling safe: run multiple worker processes and
- * each job is still handed to exactly one worker.
- */
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
-export interface WorkerRegistryOptions {
-    /** Logical queue name. Default 'ingestion'. */
-    queue?: string;
-    generalWorkers?: number;
-    generalConcurrency?: number;
-    generalBatchSize?: number;
-    specializedWorkers?: number;
-    specializedConcurrency?: number;
-    specializedBatchSize?: number;
-    visibilityTimeoutMs?: number;
-    specializedVisibilityTimeoutMs?: number;
-    busyPollMs?: number;
-    idlePollMs?: number;
-    retryIntervalMs?: number;
-    maintenanceIntervalMs?: number;
-    completedRetentionMs?: number;
-}
 export declare class WorkerRegistry {
     private readonly pool;
     private readonly log;
-    private readonly queueName;
-    private readonly generalQueue;
-    private readonly specializedQueue;
-    private readonly writer;
-    private readonly usage;
-    private readonly logDb;
-    private readonly adminLogger;
-    private readonly maintenance;
-    private readonly gauge;
-    private readonly generalPool;
-    private readonly specializedPool;
-    private gaugeBatchCounter;
-    private retryTimer;
+    private readonly metrics;
+    private readonly processor;
+    private readonly rollup;
+    private readonly metricsServer;
+    /** Tenant fairness: per-org in-flight job count for THIS process. */
+    private readonly inFlight;
+    private readonly registeredQueues;
     private started;
-    private readonly opts;
-    constructor(pool: Pool, log: Logger, options?: WorkerRegistryOptions);
-    /** Construct + start every worker class. */
+    constructor(pool: Pool, log: Logger);
+    /** Provision queues, then register every worker + cron + metrics. */
     start(): Promise<void>;
-    /**
-     * Retry/maintenance cycle: recover expired leases, prune completed rows,
-     * flush usage counters + admin logs, and report per-worker performance to the
-     * logging database.
-     */
-    private retryCycle;
-    private updateGauge;
-    private workerId;
-    /** Drain all workers and close logging resources. */
+    /** offWork every queue (waiting for in-flight jobs), then drain the rest. */
     stop(): Promise<void>;
+    private handleIngestBatch;
+    /**
+     * Per-job wrapper: fairness gate → process. Deferred jobs resolve
+     * 'completed' (the re-enqueued copy carries the work); admitted jobs release
+     * their in-flight slot in `finally`.
+     */
+    private runOne;
+    private handleDlqBatch;
+    /**
+     * Both dead-letter shapes land here:
+     *   - DlqIntakePayload (has `sourceQueue`): validation rejects routed by the
+     *     EventProcessor. The intake job is freshly sent, so the original
+     *     ingest-job id is unknown (original_job_id = null).
+     *   - Raw IngestJobPayload: pg-boss redelivers the original job (same job
+     *     id) after retries/expiry are exhausted → original_job_id = job.id.
+     */
+    private persistDeadLetter;
+    private insertDeadLetter;
+    /**
+     * Per-job isolation: resolve a JobResult[] so pg-boss settles each job
+     * individually (failed jobs are retried, completed ones are not). When EVERY
+     * job in the batch failed, throw the first error instead — the outcome is
+     * identical (whole batch retried) and matches the plain-throw idiom used by
+     * the other pg-boss processors.
+     */
+    private settle;
 }
 //# sourceMappingURL=worker-registry.d.ts.map

@@ -1,29 +1,4 @@
 import { pool } from "../../../config/database.js";
-import { ProjectError } from "../shared/utils.js";
-// Column list selected for every project read. Centralized so the projection
-// stays consistent across find/list/update.
-const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, default_environment AS environment,
-  archived_at, deleted_at, created_at, updated_at
-`;
-const API_KEY_COLUMNS = `
-  id, project_id, org_id, key_hash, key_prefix, key_type, environment,
-  name, description, is_active, status, created_by,
-  rotated_from_key_id, rotated_at, rotated_by, rotation_reason, grace_period_ends_at,
-  revoked_at, revoked_by, revoked_reason, expires_at,
-  auto_rotate_enabled, auto_rotate_days,
-  last_used_at, last_used_ip, usage_count, error_count,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
-  permissions, allowed_endpoints, blocked_endpoints, metadata,
-  created_at, updated_at
-`;
-const ENV_COLUMNS = `
-  id, project_id, org_id, environment, is_active,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-  created_by, created_at, updated_at
-`;
 const DEFAULT_PROJECT_ENVIRONMENTS = ["development", "staging", "production"];
 export class ProjectSettingsRepository {
     db;
@@ -46,8 +21,7 @@ export class ProjectSettingsRepository {
             client.release();
         }
     }
-    // ── Membership ────────────────────────────────────────────────────────────
-    // ── Projects ────────────────────────────────────────────────────────────────
+    // ── SDK config provisioning ────────────────────────────────────────────────
     async findSdkConfigPlanKey(orgId, client) {
         const db = client ?? this.db;
         try {

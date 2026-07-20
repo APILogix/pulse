@@ -4,6 +4,7 @@
  */
 import {} from 'pg';
 import { TelemetryReader } from './pipeline/telemetry-reader.js';
+import { extractApiKeyPrefix, hashApiKey, constantTimeEqualHex } from '../projects/shared/utils.js';
 export class PostgresWriter {
     pool;
     reader;
@@ -11,51 +12,135 @@ export class PostgresWriter {
         this.pool = pool;
         this.reader = new TelemetryReader(pool);
     }
-    async getProjectByApiKeyHash(keyHash) {
+    /**
+     * Resolve an ingestion API key by extracting its public prefix, looking up
+     * candidate rows, and comparing the SHA-256 secret hash in constant time.
+     * Returns the full project/auth context needed by the gateway, including the
+     * environment, scoping fields, and billing plan tier.
+     */
+    async resolveApiKey(rawKey) {
+        const publicKey = extractApiKeyPrefix(rawKey);
+        if (!publicKey)
+            return null;
+        const rawHash = hashApiKey(rawKey);
         const result = await this.pool.query(`
       SELECT
         p.id as project_id,
         p.org_id,
         p.name as project_name,
         p.status as project_status,
-        k.environment,
         k.id as key_id,
+        k.environment_id,
+        e.name as environment_name,
+        e.slug as environment_slug,
         k.is_active,
+        k.status as key_status,
+        k.key_type,
+        k.rotation_version,
         k.expires_at,
+        k.secret_hash,
         k.permissions,
         k.allowed_endpoints,
         k.blocked_endpoints,
-        COALESCE(k.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
-        COALESCE(k.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute
+        k.allowed_event_types,
+        k.allowed_origins,
+        k.allowed_ips,
+        k.allowed_domains,
+        k.allowed_sdks,
+        k.sampling_rules,
+        k.feature_flags,
+        k.sdk_config,
+        COALESCE(k.rate_limit_per_second, e.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
+        COALESCE(k.rate_limit_per_minute, e.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute,
+        COALESCE(k.rate_limit_per_hour, e.rate_limit_per_hour, p.rate_limit_per_hour) AS rate_limit_per_hour,
+        pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
-      WHERE k.key_hash = $1
+      LEFT JOIN project_environments e ON e.id = k.environment_id
+      LEFT JOIN organization_subscriptions s
+        ON s.organization_id = p.org_id
+       AND s.status IN ('trialing', 'active', 'past_due')
+       AND s.deleted_at IS NULL
+      LEFT JOIN plans pl
+        ON pl.id = s.plan_id
+       AND pl.deleted_at IS NULL
+      WHERE k.public_key = $1
+        AND p.deleted_at IS NULL
+        AND k.deleted_at IS NULL
+        AND (k.expires_at IS NULL OR k.expires_at > NOW())
         AND (
           k.is_active = TRUE
           OR (k.status = 'rotated' AND k.grace_period_ends_at IS NOT NULL AND k.grace_period_ends_at > NOW())
         )
-        AND (k.expires_at IS NULL OR k.expires_at > NOW())
-        AND p.status = 'active'
+      ORDER BY s.created_at DESC NULLS LAST, k.created_at DESC
+    `, [publicKey]);
+        for (const row of result.rows) {
+            if (!constantTimeEqualHex(row.secret_hash, rawHash))
+                continue;
+            if (row.project_status !== 'active')
+                return null;
+            return {
+                projectId: row.project_id,
+                orgId: row.org_id,
+                projectName: row.project_name,
+                projectStatus: row.project_status,
+                environmentId: row.environment_id,
+                environmentName: row.environment_name,
+                environmentSlug: row.environment_slug,
+                apiKeyId: row.key_id,
+                keyType: row.key_type,
+                rotationVersion: Number(row.rotation_version ?? 1),
+                isActive: row.is_active,
+                status: row.key_status,
+                expiresAt: row.expires_at,
+                permissions: row.permissions ?? [],
+                allowedEndpoints: row.allowed_endpoints ?? [],
+                blockedEndpoints: row.blocked_endpoints ?? [],
+                allowedEventTypes: row.allowed_event_types ?? [],
+                allowedOrigins: row.allowed_origins ?? [],
+                allowedIps: row.allowed_ips ?? [],
+                allowedDomains: row.allowed_domains ?? [],
+                allowedSdks: row.allowed_sdks ?? [],
+                samplingRules: row.sampling_rules ?? {},
+                featureFlags: row.feature_flags ?? {},
+                sdkConfig: row.sdk_config ?? {},
+                rateLimitPerSecond: row.rate_limit_per_second,
+                rateLimitPerMinute: row.rate_limit_per_minute,
+                rateLimitPerHour: row.rate_limit_per_hour,
+                planTier: row.plan_tier,
+                orgRateLimitPerSecond: null,
+                orgRateLimitPerMinute: null,
+            };
+        }
+        return null;
+    }
+    /**
+     * Billing context for a project (org + plan tier). Used by the admin replay
+     * path, which has no API key to resolve through resolveApiKey().
+     */
+    async getProjectPlanContext(projectId) {
+        const result = await this.pool.query(`
+      SELECT
+        p.org_id,
+        pl.tier AS plan_tier
+      FROM projects p
+      LEFT JOIN organization_subscriptions s
+        ON s.organization_id = p.org_id
+       AND s.status IN ('trialing', 'active', 'past_due')
+       AND s.deleted_at IS NULL
+      LEFT JOIN plans pl
+        ON pl.id = s.plan_id
+       AND pl.deleted_at IS NULL
+      WHERE p.id = $1
         AND p.deleted_at IS NULL
+      ORDER BY s.created_at DESC NULLS LAST
       LIMIT 1
-    `, [keyHash]);
+    `, [projectId]);
         if (result.rows.length === 0)
             return null;
-        const row = result.rows[0];
         return {
-            projectId: row.project_id,
-            orgId: row.org_id,
-            projectName: row.project_name,
-            projectStatus: row.project_status,
-            environment: row.environment,
-            apiKeyId: row.key_id,
-            isActive: row.is_active,
-            expiresAt: row.expires_at,
-            permissions: row.permissions ?? [],
-            allowedEndpoints: row.allowed_endpoints ?? [],
-            blockedEndpoints: row.blocked_endpoints ?? [],
-            rateLimitPerSecond: row.rate_limit_per_second ?? null,
-            rateLimitPerMinute: row.rate_limit_per_minute ?? null,
+            orgId: result.rows[0].org_id,
+            planTier: result.rows[0].plan_tier ?? null,
         };
     }
     async updateApiKeyLastUsed(apiKeyId) {

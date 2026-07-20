@@ -21,7 +21,7 @@ import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import type { CreateProjectBody, OrgRole, Project, ProjectUsageCounter, ProjectWithStats, UpdateProjectBody, ProjectUpdateInput } from "../types.js";
+import type { OrgRole, Project, ProjectUsageCounter, ProjectWithStats } from "../types.js";
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -51,7 +51,6 @@ export declare class BaseProjectService {
     assertWithinLimit(name: string, used: number, limit: number, increment?: number): void;
     requireMutableBilling(orgId: string): Promise<BillingEntitlementsRow>;
     enforceProjectModuleLimit(orgId: string, capability: "project" | "environment" | "apiKey", increment?: number): Promise<BillingEntitlementsRow>;
-    assignProjectConfig(target: ProjectUpdateInput, body: CreateProjectBody | UpdateProjectBody): void;
     generateUniqueSlug(orgId: string, name: string): Promise<string>;
     /**
      * Write a project/API-key lifecycle event to the organization audit trail.

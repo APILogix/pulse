@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type ProjectEnvironment } from "../environments/environment.types.js";
+import type { EnvironmentReference } from "../environments/environment.types.js";
 export declare const ApiKeyStatusSchema: z.ZodEnum<{
     active: "active";
     suspended: "suspended";
@@ -9,10 +9,10 @@ export declare const ApiKeyStatusSchema: z.ZodEnum<{
 }>;
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatusSchema>;
 export declare const ApiKeyTypeSchema: z.ZodEnum<{
-    admin: "admin";
-    standard: "standard";
+    read_write: "read_write";
     read_only: "read_only";
-    ingestion_only: "ingestion_only";
+    write_only: "write_only";
+    temporary: "temporary";
 }>;
 export type ApiKeyType = z.infer<typeof ApiKeyTypeSchema>;
 export declare const ApiKeyPermissionSchema: z.ZodEnum<{
@@ -23,22 +23,25 @@ export declare const ApiKeyPermissionSchema: z.ZodEnum<{
     "config:read": "config:read";
 }>;
 export type ApiKeyPermission = z.infer<typeof ApiKeyPermissionSchema>;
+export declare const ApiKeyRotationStateSchema: z.ZodEnum<{
+    none: "none";
+    rotating: "rotating";
+    grace_period: "grace_period";
+    completed: "completed";
+}>;
+export type ApiKeyRotationState = z.infer<typeof ApiKeyRotationStateSchema>;
 export declare const ApiKeyParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     projectId: z.ZodString;
     apiKeyId: z.ZodString;
 }, z.core.$strip>;
 export declare const ListApiKeysQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    environment: z.ZodOptional<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
-    }>>;
+    environmentId: z.ZodOptional<z.ZodString>;
     keyType: z.ZodOptional<z.ZodEnum<{
-        admin: "admin";
-        standard: "standard";
+        read_write: "read_write";
         read_only: "read_only";
-        ingestion_only: "ingestion_only";
+        write_only: "write_only";
+        temporary: "temporary";
     }>>;
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
@@ -55,18 +58,14 @@ export declare const ListApiKeysQuerySchema: z.ZodPipe<z.ZodTransform<unknown, u
 }, z.core.$strip>>;
 export type ListApiKeysQuery = z.infer<typeof ListApiKeysQuerySchema>;
 export declare const CreateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    environment: z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
-    }>;
+    environmentId: z.ZodString;
     name: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     keyType: z.ZodDefault<z.ZodEnum<{
-        admin: "admin";
-        standard: "standard";
+        read_write: "read_write";
         read_only: "read_only";
-        ingestion_only: "ingestion_only";
+        write_only: "write_only";
+        temporary: "temporary";
     }>>;
     expiresAt: z.ZodPipe<z.ZodTransform<{} | null | undefined, unknown>, z.ZodOptional<z.ZodNullable<z.ZodDate>>>;
     autoRotateEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
@@ -80,6 +79,13 @@ export declare const CreateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
     }>>>;
     allowedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
     blockedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    samplingRules: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    featureFlags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    sdkConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
@@ -100,6 +106,13 @@ export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
     }>>>;
     allowedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
     blockedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    samplingRules: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    featureFlags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    sdkConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
@@ -117,21 +130,13 @@ export declare const RevokeApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
 }, z.core.$strip>>;
 export type RevokeApiKeyBody = z.infer<typeof RevokeApiKeyBodySchema>;
 export declare const BulkRotateBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    environment: z.ZodOptional<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
-    }>>;
+    environmentId: z.ZodOptional<z.ZodString>;
     rotationReason: z.ZodOptional<z.ZodString>;
     gracePeriodHours: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>>;
 export type BulkRotateBody = z.infer<typeof BulkRotateBodySchema>;
 export declare const BulkRevokeBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    environment: z.ZodOptional<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
-    }>>;
+    environmentId: z.ZodOptional<z.ZodString>;
     apiKeyIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
     revokedReason: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>>;
@@ -140,13 +145,16 @@ export interface ProjectApiKey {
     id: string;
     projectId: string;
     orgId: string | null;
-    keyPrefix: string;
+    publicKey: string;
     keyType: ApiKeyType;
-    environment: ProjectEnvironment;
+    environmentId: string;
+    environment: EnvironmentReference | null;
     name: string | null;
     description: string | null;
     isActive: boolean;
     status: ApiKeyStatus;
+    rotationState: ApiKeyRotationState;
+    rotationVersion: number;
     createdBy: string | null;
     rotatedFromKeyId: string | null;
     rotatedAt: Date | null;
@@ -169,12 +177,21 @@ export interface ProjectApiKey {
     permissions: string[];
     allowedEndpoints: string[];
     blockedEndpoints: string[];
+    allowedEventTypes: string[];
+    allowedOrigins: string[];
+    allowedIps: string[];
+    allowedDomains: string[];
+    allowedSdks: string[];
+    samplingRules: Record<string, unknown>;
+    featureFlags: Record<string, unknown>;
+    sdkConfig: Record<string, unknown>;
     metadata: Record<string, unknown>;
     createdAt: Date;
     updatedAt: Date;
+    version: number;
 }
 export interface ProjectApiKeyRecord extends ProjectApiKey {
-    keyHash: string;
+    secretHash: string;
 }
 export interface CreateApiKeyResponse {
     apiKey: ProjectApiKey;
@@ -184,14 +201,23 @@ export interface ValidatedApiKey {
     id: string;
     projectId: string;
     orgId: string;
-    environment: ProjectEnvironment;
+    environmentId: string;
+    environmentName: string;
     keyType: ApiKeyType;
     permissions: string[];
     allowedEndpoints: string[];
     blockedEndpoints: string[];
+    allowedEventTypes: string[];
+    allowedOrigins: string[];
+    allowedIps: string[];
+    allowedDomains: string[];
+    allowedSdks: string[];
     rateLimitPerSecond: number | null;
     rateLimitPerMinute: number | null;
     rateLimitPerHour: number | null;
+    samplingRules: Record<string, unknown>;
+    featureFlags: Record<string, unknown>;
+    sdkConfig: Record<string, unknown>;
 }
 export interface ApiKeyUsage {
     keyId: string;
@@ -227,6 +253,13 @@ export interface ApiKeyUpdateInput {
     permissions?: string[];
     allowedEndpoints?: string[];
     blockedEndpoints?: string[];
+    allowedEventTypes?: string[];
+    allowedOrigins?: string[];
+    allowedIps?: string[];
+    allowedDomains?: string[];
+    samplingRules?: Record<string, unknown>;
+    featureFlags?: Record<string, unknown>;
+    sdkConfig?: Record<string, unknown>;
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;

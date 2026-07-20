@@ -4,9 +4,9 @@ export { AlertSeveritySchema } from '../common.js';
 export type { AlertSeverity } from '../common.js';
 export declare const ConditionTypeSchema: z.ZodEnum<{
     threshold: "threshold";
+    static: "static";
     change: "change";
     anomaly: "anomaly";
-    static: "static";
     composite: "composite";
 }>;
 export type ConditionType = z.infer<typeof ConditionTypeSchema>;
@@ -25,8 +25,8 @@ export declare const ConditionOperatorSchema: z.ZodEnum<{
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export declare const ActionTypeSchema: z.ZodEnum<{
     group: "group";
-    notify: "notify";
     webhook: "webhook";
+    notify: "notify";
     suppress: "suppress";
     escalate: "escalate";
 }>;
@@ -35,9 +35,9 @@ export declare const AGGREGATE_FUNCTIONS: readonly ["avg", "sum", "count", "max"
 export declare const RuleConditionSchema: z.ZodObject<{
     conditionType: z.ZodDefault<z.ZodEnum<{
         threshold: "threshold";
+        static: "static";
         change: "change";
         anomaly: "anomaly";
-        static: "static";
         composite: "composite";
     }>>;
     conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -71,8 +71,8 @@ export type RuleConditionInput = z.infer<typeof RuleConditionSchema>;
 export declare const RuleActionSchema: z.ZodObject<{
     actionType: z.ZodDefault<z.ZodEnum<{
         group: "group";
-        notify: "notify";
         webhook: "webhook";
+        notify: "notify";
         suppress: "suppress";
         escalate: "escalate";
     }>>;
@@ -98,6 +98,7 @@ export declare const CreateRuleSchema: z.ZodObject<{
         critical: "critical";
     }>>;
     enabled: z.ZodDefault<z.ZodBoolean>;
+    projectId: z.ZodOptional<z.ZodString>;
     evaluationIntervalSeconds: z.ZodDefault<z.ZodNumber>;
     cooldownSeconds: z.ZodDefault<z.ZodNumber>;
     autoResolveAfterMinutes: z.ZodOptional<z.ZodNumber>;
@@ -112,9 +113,9 @@ export declare const CreateRuleSchema: z.ZodObject<{
     conditions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         conditionType: z.ZodDefault<z.ZodEnum<{
             threshold: "threshold";
+            static: "static";
             change: "change";
             anomaly: "anomaly";
-            static: "static";
             composite: "composite";
         }>>;
         conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -147,8 +148,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
     actions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            notify: "notify";
             webhook: "webhook";
+            notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
         }>>;
@@ -166,6 +167,7 @@ export declare const CreateRuleSchema: z.ZodObject<{
 }, z.core.$strip>;
 export type CreateRuleBody = z.infer<typeof CreateRuleSchema>;
 export declare const UpdateRuleSchema: z.ZodObject<{
+    projectId: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     name: z.ZodOptional<z.ZodString>;
     enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
@@ -189,9 +191,9 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     conditions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         conditionType: z.ZodDefault<z.ZodEnum<{
             threshold: "threshold";
+            static: "static";
             change: "change";
             anomaly: "anomaly";
-            static: "static";
             composite: "composite";
         }>>;
         conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -224,8 +226,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     actions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            notify: "notify";
             webhook: "webhook";
+            notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
         }>>;
@@ -289,6 +291,14 @@ export interface AlertRuleRow {
     created_at: Date;
     updated_at: Date;
     deleted_at: Date | null;
+    /** Optional project scope (NULL = org-level rule). */
+    project_id: string | null;
+    /** Platform preset identifier for seeded default rules. */
+    preset_key: string | null;
+    /** TRUE for platform-managed default (preset) rules. */
+    is_default: boolean;
+    /** Evaluator watermark — last time the scheduled evaluator ran this rule. */
+    last_evaluated_at: Date | null;
 }
 export interface AlertRuleConditionRow {
     id: string;

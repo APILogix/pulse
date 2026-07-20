@@ -20,6 +20,7 @@ export class RulesService {
             description: body.description ?? null,
             severity: body.severity,
             enabled: body.enabled,
+            projectId: body.projectId ?? null,
             evaluationIntervalSeconds: body.evaluationIntervalSeconds,
             cooldownSeconds: body.cooldownSeconds,
             autoResolveAfterMinutes: body.autoResolveAfterMinutes ?? null,
@@ -54,6 +55,7 @@ export class RulesService {
         await this.requireRule(orgId, id);
         const fields = {
             name: body.name, description: body.description, severity: body.severity, enabled: body.enabled,
+            projectId: body.projectId,
             evaluationIntervalSeconds: body.evaluationIntervalSeconds, cooldownSeconds: body.cooldownSeconds,
             autoResolveAfterMinutes: body.autoResolveAfterMinutes,
             deduplicationWindowSeconds: body.deduplicationWindowSeconds,
@@ -87,6 +89,7 @@ export class RulesService {
             description: rule.description,
             severity: rule.severity,
             enabled: false,
+            projectId: rule.project_id,
             evaluationIntervalSeconds: rule.evaluation_interval_seconds,
             cooldownSeconds: rule.cooldown_seconds,
             autoResolveAfterMinutes: rule.auto_resolve_after_minutes,
@@ -148,6 +151,8 @@ export class RulesService {
         return {
             id: r.id, organizationId: r.organization_id, name: r.name, description: r.description,
             severity: r.severity, enabled: r.enabled,
+            projectId: r.project_id, presetKey: r.preset_key, isDefault: r.is_default,
+            lastEvaluatedAt: r.last_evaluated_at,
             evaluationIntervalSeconds: r.evaluation_interval_seconds, cooldownSeconds: r.cooldown_seconds,
             autoResolveAfterMinutes: r.auto_resolve_after_minutes,
             deduplicationWindowSeconds: r.deduplication_window_seconds,

@@ -4,13 +4,26 @@ export interface CachedProjectConfig {
   id: string;
   orgId: string;
   name: string;
+  /** Environment slug — kept for ingestion compatibility and SDK config resolution. */
   environment: string;
+  /** Environment UUID from project_environments. */
+  environmentId: string;
+  /** Human-readable environment name (null when not resolved). */
+  environmentName?: string | null;
   rateLimitPerSecond: number;
   rateLimitPerMinute: number;
+  rateLimitPerHour: number | null;
   allowedEventTypes: string[];
   permissions: string[];
   allowedEndpoints: string[];
   blockedEndpoints: string[];
+  allowedOrigins: string[];
+  allowedIps: string[];
+  allowedDomains: string[];
+  allowedSdks: string[];
+  samplingRules: Record<string, unknown>;
+  featureFlags: Record<string, unknown>;
+  sdkConfig: Record<string, unknown>;
   isActive: boolean;
   apiKeyId: string;
   /** Billing plan tier resolved at key-lookup time; drives queue priority. */
@@ -18,6 +31,7 @@ export interface CachedProjectConfig {
   /** Optional org-wide rate limits overriding the platform defaults. */
   orgRateLimitPerSecond?: number;
   orgRateLimitPerMinute?: number;
+  orgRateLimitPerHour?: number;
 }
 
 export const apiKeyCache = new LRUCache<string, CachedProjectConfig>({

@@ -98,6 +98,38 @@ type EnqueueConnectorJob = (
   options?: Record<string, unknown>,
 ) => Promise<unknown>;
 
+export type BatchAuthorizationResult = {
+  eligible: AlertEventRow[];
+  suppressedUpdates: Array<{ id: string; status: AlertEventStatus }>;
+  suppressedAttempts: DeliveryAttemptInsert[];
+};
+
+export type BatchAuthorizationVerifier = (
+  events: AlertEventRow[],
+  batchId: string,
+  organizationId: string,
+  log: FastifyBaseLogger,
+) => Promise<BatchAuthorizationResult>;
+
+export type ProjectSubscriptionResolver = {
+  resolveByProjectId(projectId: string): Promise<{
+    projectId: string;
+    organizationId: string;
+    environmentId: string | null;
+    apiKeyId: string;
+    subscriptions: {
+      subscriptionId: string;
+      connectorId: string;
+      enabled: boolean;
+      alertCategories: string[];
+      severityThreshold: string;
+      memberIds: string[];
+      channelOverrides: Record<string, unknown>;
+    }[];
+    members: { userId: string; role: string; email: string | null }[];
+  } | null>;
+};
+
 export class AlertBatchProcessor {
   private static readonly EVENT_CONCURRENCY = 10;
 
@@ -106,6 +138,7 @@ export class AlertBatchProcessor {
     private readonly connectorRepo: ConnectorRepository,
     private readonly enqueueConnectorJob: EnqueueConnectorJob,
     private readonly logger: FastifyBaseLogger,
+    private readonly projectSubscriptionResolver?: ProjectSubscriptionResolver,
   ) {}
 
   private async mapBounded<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
@@ -148,6 +181,17 @@ export class AlertBatchProcessor {
     // are suppressed and audited, never delivered.
     const authz = await this.verifyBatchAuthorization(events, data.batchId, data.organizationId, log);
     const authorizedEvents = authz.eligible;
+
+    // 1b. Pre-load project connector subscriptions so delivery targets can be gated
+    // by project membership. A project with no subscriptions falls back to the
+    // legacy routing-rule behavior (soft rollout); a missing project suppresses.
+    const projectIds = [...new Set(authorizedEvents.map((e) => e.project_id).filter((id): id is string => id !== null))];
+    const projectSubscriptions = new Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>();
+    if (this.projectSubscriptionResolver) {
+      for (const projectId of projectIds) {
+        projectSubscriptions.set(projectId, await this.projectSubscriptionResolver.resolveByProjectId(projectId));
+      }
+    }
 
     // 2. Load routing rules, rule actions, connectors, routes, escalation steps
     //    and throttle windows — each in ONE bulk query (no N+1).
@@ -192,7 +236,7 @@ export class AlertBatchProcessor {
       AlertBatchProcessor.EVENT_CONCURRENCY,
       (event) => this.processSingleEvent(
         event, routingRules, actionsByRuleId, connectorRoutes, connectorMap,
-        firstStepByPolicyId, throttleByActionId, data.batchId,
+        firstStepByPolicyId, throttleByActionId, data.batchId, projectSubscriptions,
       ),
     );
 
@@ -259,6 +303,7 @@ export class AlertBatchProcessor {
     firstStepByPolicyId: Map<string, AlertEscalationStepRow>,
     throttleByActionId: Map<string, AlertThrottleWindowRow>,
     batchId: string,
+    projectSubscriptions: Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>,
   ): Promise<EventOutcome> {
     const noEscalation = { escalationPolicyId: null, nextEscalationAt: null };
     const routable: RoutableAlert = { severity: event.severity, source: event.source, labels: event.labels };
@@ -276,6 +321,7 @@ export class AlertBatchProcessor {
     }
 
     const targets = this.resolveDeliveryTargets(event, decision, deliverableActions, connectorRoutes);
+    const filteredTargets = this.filterTargetsBySubscriptions(event, targets, projectSubscriptions);
 
     const deliveries: DeliveryAttemptInsert[] = [];
     // Throttled targets are skipped but audited as cancelled attempts.
@@ -285,8 +331,8 @@ export class AlertBatchProcessor {
       }
     }
 
-    if (targets.length === 0) {
-      // No route matched — nothing to deliver. Event still transitions to firing.
+    if (filteredTargets.length === 0) {
+      // No route matched or no subscribed connector — nothing to deliver.
       return {
         eventId: event.id, newStatus: 'firing', deliveries, delivered: false,
         skipped: true, throttled: throttledActions.length > 0, ...noEscalation, deliveredActionIds: [],
@@ -301,7 +347,7 @@ export class AlertBatchProcessor {
 
     // Fan out to every target connector concurrently (Bulkhead per connector).
     const perConnector = await Promise.allSettled(
-      targets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)),
+      filteredTargets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)),
     );
 
     let anyDelivered = false;
@@ -700,5 +746,32 @@ export class AlertBatchProcessor {
 
   private toRouteEnvironment(value: string | null): ConnectorRouteEnvironment | null {
     return value === 'development' || value === 'staging' || value === 'production' ? value : null;
+  }
+
+  /**
+   * Filter delivery targets to only connectors the originating project has
+   * explicitly subscribed to. This prevents alert leakage across projects and
+   * enforces the rule: alerts are scoped by Project -> Connector Subscriptions.
+   *
+   * If no resolver is configured, legacy routing-rule behavior is preserved.
+   * If the project has no active subscriptions, all targets are dropped.
+   */
+  private filterTargetsBySubscriptions(
+    event: AlertEventRow,
+    targets: DeliveryTarget[],
+    projectSubscriptions: Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>,
+  ): DeliveryTarget[] {
+    if (!this.projectSubscriptionResolver) return targets;
+    if (!event.project_id) return targets;
+
+    const routing = projectSubscriptions.get(event.project_id);
+    if (!routing) return [];
+
+    const allowedConnectorIds = new Set(
+      routing.subscriptions.filter((s) => s.enabled).map((s) => s.connectorId),
+    );
+    if (allowedConnectorIds.size === 0) return [];
+
+    return targets.filter((target) => allowedConnectorIds.has(target.connectorId));
   }
 }

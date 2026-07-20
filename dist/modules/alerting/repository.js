@@ -35,6 +35,9 @@ export class AlertingRepository {
     async getRuleActions(ruleId) {
         return this.rules.getRuleActions(ruleId);
     }
+    async getRuleActionsByRuleIds(ruleIds) {
+        return this.rules.getRuleActionsByRuleIds(ruleIds);
+    }
     async listRules(organizationId, query) {
         return this.rules.listRules(organizationId, query);
     }
@@ -47,8 +50,8 @@ export class AlertingRepository {
     async setRuleEnabled(organizationId, id, enabled) {
         return this.rules.setRuleEnabled(organizationId, id, enabled);
     }
-    async findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds) {
-        return this.events.findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds);
+    async findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds, projectId) {
+        return this.events.findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds, projectId);
     }
     async incrementDuplicate(eventId) {
         return this.events.incrementDuplicate(eventId);
@@ -98,6 +101,66 @@ export class AlertingRepository {
     async claimAutoResolvable(limit) {
         return this.events.claimAutoResolvable(limit);
     }
+    async claimEscalationDue(limit) {
+        return this.events.claimEscalationDue(limit);
+    }
+    async advanceEscalation(eventId, stepNumber, repeatCount, nextEscalationAt) {
+        return this.events.advanceEscalation(eventId, stepNumber, repeatCount, nextEscalationAt);
+    }
+    async resumeExpiredAcknowledgments(limit) {
+        return this.events.resumeExpiredAcknowledgments(limit);
+    }
+    async requeueStuckProcessingEvents(staleMinutes, limit) {
+        return this.events.requeueStuckProcessingEvents(staleMinutes, limit);
+    }
+    async failStaleBatches(staleMinutes) {
+        return this.events.failStaleBatches(staleMinutes);
+    }
+    async setBatchJobId(batchId, jobId) {
+        return this.events.setBatchJobId(batchId, jobId);
+    }
+    async getThrottleStates(actionIds) {
+        return this.events.getThrottleStates(actionIds);
+    }
+    async recordThrottleNotifications(actionIds) {
+        return this.events.recordThrottleNotifications(actionIds);
+    }
+    async insertDeadLetter(input) {
+        return this.events.insertDeadLetter(input);
+    }
+    async listDeadLetters(organizationId, query) {
+        return this.events.listDeadLetters(organizationId, query);
+    }
+    async findDeadLetterById(organizationId, id) {
+        return this.events.findDeadLetterById(organizationId, id);
+    }
+    async claimRetryableDeadLetters(limit) {
+        return this.events.claimRetryableDeadLetters(limit);
+    }
+    async markDeadLetterRetried(id) {
+        return this.events.markDeadLetterRetried(id);
+    }
+    async markDeadLetterExhausted(id) {
+        return this.events.markDeadLetterExhausted(id);
+    }
+    async discardDeadLetter(organizationId, id, userId) {
+        return this.events.discardDeadLetter(organizationId, id, userId);
+    }
+    async purgeOldTerminalEvents(days) {
+        return this.events.purgeOldTerminalEvents(days);
+    }
+    async purgeOldBatches(days) {
+        return this.events.purgeOldBatches(days);
+    }
+    async purgeOldDeliveryAttempts(days) {
+        return this.events.purgeOldDeliveryAttempts(days);
+    }
+    async purgeOldDeadLetters(days) {
+        return this.events.purgeOldDeadLetters(days);
+    }
+    async purgeOldThrottleWindows() {
+        return this.events.purgeOldThrottleWindows();
+    }
     async createSilence(input) {
         return this.silences.createSilence(input);
     }
@@ -127,6 +190,9 @@ export class AlertingRepository {
     }
     async listEscalationSteps(policyId) {
         return this.policies.listEscalationSteps(policyId);
+    }
+    async listEscalationStepsByPolicyIds(policyIds) {
+        return this.policies.listEscalationStepsByPolicyIds(policyIds);
     }
     async createTemplate(input) {
         return this.templates.createTemplate(input);

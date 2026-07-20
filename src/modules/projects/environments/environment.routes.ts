@@ -186,32 +186,32 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
   );
 
   fastify.get(
-    "/:projectId/environments/:environment",
+    "/:projectId/environments/:environmentId",
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
-      const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
-      const env = await service.getEnvironment(orgId, projectId, environment, authenticatedUser(request).id);
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      const env = await service.getEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id);
       return reply.send({ success: true, data: env });
     }),
   );
 
   fastify.patch(
-    "/:projectId/environments/:environment",
+    "/:projectId/environments/:environmentId",
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
-      const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
       const body = UpdateEnvironmentBodySchema.parse(request.body);
-      const env = await service.updateEnvironment(orgId, projectId, environment, authenticatedUser(request).id, body, requestMeta(request));
+      const env = await service.updateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, body, requestMeta(request));
       return reply.send({ success: true, data: env });
     }),
   );
 
   fastify.delete(
-    "/:projectId/environments/:environment",
+    "/:projectId/environments/:environmentId",
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
-      const { orgId, projectId, environment } = EnvironmentParamsSchema.parse(request.params);
-      await service.deleteEnvironment(orgId, projectId, environment, authenticatedUser(request).id, requestMeta(request));
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      await service.deleteEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
       return reply.code(204).send();
     }),
   );

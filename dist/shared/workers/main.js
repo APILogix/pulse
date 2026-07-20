@@ -3,10 +3,12 @@
  *
  * Flow:
  * 1. Open a dedicated Postgres pool for background work.
- * 2. Start N PgQueueWorkers (ingestion persistence) via initializeWorkers().
- * 3. Start the telemetry maintenance worker (partition automation + retention).
- * 4. Start auth housekeeping (expired sessions / stale tokens).
- * 5. Keep the process alive until SIGTERM/SIGINT, then drain + close cleanly.
+ * 2. Start pg-boss background workers (alerting, billing, connectors, auth,
+ *    analytics, org cleanup) plus the telemetry maintenance worker.
+ * 3. Keep the process alive until SIGTERM/SIGINT, then drain + close cleanly.
+ *
+ * NOTE: ingestion persistence runs in the DEDICATED ingestion worker process
+ * (src/shared/workers/ingestion-worker-main.ts), not here.
  *
  * Scale horizontally by running multiple copies of this process. SKIP LOCKED
  * makes that safe.
@@ -21,16 +23,16 @@ import { startConnectorMonitor } from '../../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../../modules/event-analytics/queue.js';
 import { registerOrganizationCleanupWorkers } from '../../modules/organization/shared/background/queue.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
+import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
-import { initializeWorkers } from './index.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
 import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
 const workerLogger = logger.child({ component: 'workers' });
 async function bootstrapWorkers() {
     const pgPool = new Pool({
         connectionString: env.DATABASE_URL,
-        max: 20,
+        max: 10,
         idleTimeoutMillis: 10000,
         connectionTimeoutMillis: 30000,
         application_name: 'ingestion_workers',
@@ -48,37 +50,49 @@ async function bootstrapWorkers() {
     let billingJobWorkers = null;
     let connectorMonitor = null;
     let orgCleanupWorkers = null;
-    initializeWorkers({
-        pool: pgPool,
-        concurrency: Number(process.env.INGESTION_WORKER_CONCURRENCY ?? 4),
-        shutdown: async () => {
-            maintenance.stop();
-            stopAuthCleanupWorker();
-            stopAuthEmailWorker();
-            stopOrgEmailWorker();
-            if (authAutomationWorkers)
-                await authAutomationWorkers.stop();
-            if (billingJobWorkers)
-                await billingJobWorkers.stop();
-            if (alertingWorkers)
-                await alertingWorkers.stop();
-            if (analyticsWorkers)
-                await analyticsWorkers.stop();
-            if (connectorMonitor)
-                await connectorMonitor.stop();
-            if (orgCleanupWorkers)
-                await orgCleanupWorkers.stop();
-            await stopPgBoss();
-            await pgPool.end();
-        },
-    });
+    // Ingestion persistence moved to the dedicated ingestion worker process
+    // (src/shared/workers/ingestion-worker-main.ts — pg-boss per-type queues).
+    // This process no longer polls the legacy ingestion_jobs table; the legacy
+    // PgQueue wiring in ./index.ts is retained on disk only for reference.
+    let shuttingDown = false;
+    const gracefulShutdown = async (signal) => {
+        if (shuttingDown)
+            return;
+        shuttingDown = true;
+        workerLogger.info({ signal }, 'Shutdown signal received — draining workers');
+        maintenance.stop();
+        stopAuthCleanupWorker();
+        stopAuthEmailWorker();
+        stopOrgEmailWorker();
+        if (authAutomationWorkers)
+            await authAutomationWorkers.stop();
+        if (billingJobWorkers)
+            await billingJobWorkers.stop();
+        if (alertingWorkers)
+            await alertingWorkers.stop();
+        if (analyticsWorkers)
+            await analyticsWorkers.stop();
+        if (connectorMonitor)
+            await connectorMonitor.stop();
+        if (orgCleanupWorkers)
+            await orgCleanupWorkers.stop();
+        await stopPgBoss();
+        await pgPool.end();
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
     await startPgBoss();
     await startAuthEmailWorker();
     await startOrgEmailWorker();
     authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
     billingJobWorkers = await registerBillingJobWorkers(workerLogger);
     connectorMonitor = await startConnectorMonitor(workerLogger);
-    alertingWorkers = await registerAlertingWorkers(workerLogger);
+    const connectorSubRepo = new ConnectorSubscriptionRepository();
+    const projectSubscriptionResolver = {
+        resolveByProjectId: (projectId) => connectorSubRepo.resolveAlertRoutingTargetByProjectId(projectId),
+    };
+    alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver);
     analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
     if (process.env.ORG_CRON_ENABLED !== 'false') {
         orgCleanupWorkers = await registerOrganizationCleanupWorkers(workerLogger);
@@ -88,7 +102,7 @@ async function bootstrapWorkers() {
     }
     startAuthCleanupWorker();
     workerLogger.info('Worker process started');
-    workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
+    workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
 }
 bootstrapWorkers().catch((error) => {
     workerLogger.fatal({ error }, 'Failed to start worker process');

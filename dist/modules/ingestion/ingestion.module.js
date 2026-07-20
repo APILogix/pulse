@@ -1,16 +1,16 @@
 /**
- * Ingestion module for Fastify (PostgreSQL-queue cutover — no BullMQ/Redis).
+ * Ingestion module for Fastify (pg-boss enterprise pipeline).
  *
  * Flow:
  * 1. Reuse the shared Postgres pool from config/database.ts.
  * 2. Create the PostgresWriter (project auth + read endpoints).
- * 3. Decorate Fastify so routes can construct the IngestionService, which now
- *    enqueues into the Postgres-native queue (PgQueue) instead of BullMQ.
+ * 3. Decorate Fastify so routes can construct the IngestionService, which
+ *    validates and enqueues per-type jobs into pg-boss (ingest.<type> queues).
  * 4. Register ingestion routes under /api.
  *
- * The queue is durable in Postgres. There is no in-memory buffer and no Redis
- * queue. Persistence happens asynchronously in the PgQueueWorker (worker
- * process), not in this module.
+ * Durability comes from the pg-boss job rows in Postgres. Persistence into
+ * the typed events_* tables happens asynchronously in the dedicated ingestion
+ * worker process (per-type workers), never in this module.
  */
 import fp from 'fastify-plugin';
 import { pool } from '../../config/database.js';
@@ -22,7 +22,7 @@ export const ingestionModule = fp(async function ingestionPlugin(fastify) {
     const postgresWriter = new PostgresWriter(pool);
     fastify.decorate('postgresWriter', postgresWriter);
     await fastify.register(ingestionRoutes, { prefix: '/api' });
-    ingestionLogger.info('Ingestion module registered (pg-queue)');
+    ingestionLogger.info('Ingestion module registered (pg-boss gateway)');
 }, {
     name: 'ingestion-module',
 });

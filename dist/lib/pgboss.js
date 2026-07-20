@@ -41,7 +41,7 @@ export async function startPgBoss() {
  */
 export async function stopPgBoss() {
     bossLogger.info('Stopping PgBoss...');
-    await pgboss.stop({ graceful: true, timeout: 10000 });
+    await pgboss.stop({ graceful: true, timeout: 30000 });
     bossLogger.info('PgBoss stopped');
 }
 //# sourceMappingURL=pgboss.js.map

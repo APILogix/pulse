@@ -1,30 +1,9 @@
 import { pool } from "../../../config/database.js";
 import { ProjectError } from "../shared/utils.js";
-// Column list selected for every project read. Centralized so the projection
-// stays consistent across find/list/update.
 const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, default_environment AS environment,
-  archived_at, deleted_at, created_at, updated_at
+  id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
+  archived_at, deleted_at, deleted_by, created_at, updated_at, version
 `;
-const API_KEY_COLUMNS = `
-  id, project_id, org_id, key_hash, key_prefix, key_type, environment,
-  name, description, is_active, status, created_by,
-  rotated_from_key_id, rotated_at, rotated_by, rotation_reason, grace_period_ends_at,
-  revoked_at, revoked_by, revoked_reason, expires_at,
-  auto_rotate_enabled, auto_rotate_days,
-  last_used_at, last_used_ip, usage_count, error_count,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
-  permissions, allowed_endpoints, blocked_endpoints, metadata,
-  created_at, updated_at
-`;
-const ENV_COLUMNS = `
-  id, project_id, org_id, environment, is_active,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-  created_by, created_at, updated_at
-`;
-const DEFAULT_PROJECT_ENVIRONMENTS = ["development", "staging", "production"];
 export class ProjectRepository {
     db;
     constructor(db = pool) {
@@ -46,8 +25,6 @@ export class ProjectRepository {
             client.release();
         }
     }
-    // ── Membership ────────────────────────────────────────────────────────────
-    // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, query, client) {
         const db = client ?? this.db;
         const params = [orgId];
@@ -58,10 +35,6 @@ export class ProjectRepository {
         if (query.status) {
             params.push(query.status);
             whereClauses.push(`p.status = $${params.length}`);
-        }
-        if (query.environment) {
-            params.push(query.environment);
-            whereClauses.push(`p.default_environment = ${params.length}`);
         }
         if (query.search) {
             params.push(`%${query.search}%`);
@@ -83,7 +56,7 @@ export class ProjectRepository {
          COUNT(k.id)::int AS api_keys_count,
          COUNT(k.id) FILTER (WHERE k.is_active = TRUE)::int AS active_api_keys_count
        FROM projects p
-       LEFT JOIN project_api_keys k ON k.project_id = p.id
+       LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
        ${whereClause}
        GROUP BY p.id
        ORDER BY ${sortColumn} ${sortOrder}
@@ -98,16 +71,22 @@ export class ProjectRepository {
         const db = client ?? this.db;
         try {
             const result = await db.query(`INSERT INTO projects (
-           org_id, name, slug, description, default_environment
+           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by
          ) VALUES (
-           $1,$2,$3,$4,$5
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
          )
          RETURNING ${PROJECT_COLUMNS}`, [
                 input.orgId,
                 input.name,
                 input.slug,
                 input.description,
-                input.environment,
+                input.visibility ?? "private",
+                input.timezone ?? "UTC",
+                input.tags ?? [],
+                input.icon ?? null,
+                input.color ?? null,
+                input.metadata ?? {},
+                input.createdBy ?? null,
             ]);
             return this.mapProject(result.rows[0]);
         }
@@ -161,7 +140,6 @@ export class ProjectRepository {
         }
         return this.mapProject(result.rows[0]);
     }
-    /** Soft-delete: stamp deleted_at + deleted_by; row is retained for audit. */
     async softDeleteProject(orgId, projectId, deletedBy, client) {
         const db = client ?? this.db;
         const result = await db.query(`UPDATE projects
@@ -187,7 +165,69 @@ export class ProjectRepository {
         }
         return this.mapProject(result.rows[0]);
     }
-    // ── Mapping helpers ─────────────────────────────────────────────────────────
+    async findOrganizationMembership(orgId, userId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT org_id, user_id, role, (status = 'active') AS is_active
+         FROM organization_members
+        WHERE org_id = $1 AND user_id = $2
+        LIMIT 1`, [orgId, userId]);
+        const row = result.rows[0];
+        if (!row)
+            return null;
+        return {
+            orgId: row.org_id,
+            userId: row.user_id,
+            role: row.role,
+            isActive: row.is_active,
+        };
+    }
+    async getProjectModuleUsageCounts(orgId, client) {
+        const db = client ?? this.db;
+        const [projects, environments, apiKeys] = await Promise.all([
+            db.query(`SELECT COUNT(*)::text FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, [orgId]),
+            db.query(`SELECT COUNT(*)::text FROM project_environments WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
+            db.query(`SELECT COUNT(*)::text FROM project_api_keys WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
+        ]);
+        return {
+            projects: Number(projects.rows[0]?.count ?? 0),
+            environments: Number(environments.rows[0]?.count ?? 0),
+            apiKeys: Number(apiKeys.rows[0]?.count ?? 0),
+        };
+    }
+    async getProjectStats(projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT
+         COALESCE(SUM(total_events),0)::text AS total_requests,
+         COUNT(DISTINCT k.id)::text AS api_keys_count,
+         COUNT(DISTINCT k.id) FILTER (WHERE k.is_active = TRUE)::text AS active_keys_count,
+         COUNT(DISTINCT e.id)::text AS environment_count
+       FROM projects p
+       LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
+       LEFT JOIN project_environments e ON e.project_id = p.id AND e.deleted_at IS NULL
+       LEFT JOIN project_usage_daily u ON u.project_id = p.id
+       WHERE p.id = $1 AND p.deleted_at IS NULL
+       GROUP BY p.id`, [projectId]);
+        const row = result.rows[0];
+        return {
+            totalRequests: Number(row?.total_requests ?? 0),
+            apiKeysCount: Number(row?.api_keys_count ?? 0),
+            activeKeysCount: Number(row?.active_keys_count ?? 0),
+            environmentCount: Number(row?.environment_count ?? 0),
+        };
+    }
+    async getProjectUsageCounters(projectId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT counter_type, value, period_start
+         FROM project_usage
+        WHERE project_id = $1
+        ORDER BY period_start DESC
+        LIMIT 100`, [projectId]);
+        return result.rows.map((r) => ({
+            counterType: r.counter_type,
+            value: Number(r.value),
+            periodStart: r.period_start,
+        }));
+    }
     buildProjectAssignments(input) {
         const assignments = [];
         const values = [];
@@ -202,27 +242,21 @@ export class ProjectRepository {
             set("description", input.description);
         if (input.status !== undefined)
             set("status", input.status);
-        if (input.environment !== undefined)
-            set("default_environment", input.environment);
+        if (input.visibility !== undefined)
+            set("visibility", input.visibility);
+        if (input.timezone !== undefined)
+            set("timezone", input.timezone);
+        if (input.tags !== undefined)
+            set("tags", input.tags);
+        if (input.icon !== undefined)
+            set("icon", input.icon);
+        if (input.color !== undefined)
+            set("color", input.color);
+        if (input.metadata !== undefined)
+            set("metadata", input.metadata);
         if (input.archivedAt !== undefined)
             set("archived_at", input.archivedAt);
         return { assignments, values };
-    }
-    /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
-    prefixedProjectRow(row) {
-        return {
-            id: row.p_id,
-            org_id: row.p_org_id,
-            name: row.p_name,
-            slug: row.p_slug,
-            description: row.p_description,
-            status: row.p_status,
-            environment: row.p_environment,
-            archived_at: row.p_archived_at,
-            deleted_at: row.p_deleted_at,
-            created_at: row.p_created_at,
-            updated_at: row.p_updated_at,
-        };
     }
     mapProject(row) {
         return {
@@ -232,34 +266,18 @@ export class ProjectRepository {
             slug: row.slug,
             description: row.description,
             status: row.status,
-            environment: row.environment,
-            productionApiPrefix: null,
-            developmentApiPrefix: null,
-            stagingApiPrefix: null,
-            rateLimitPerSecond: 0,
-            rateLimitPerMinute: 0,
-            rateLimitPerHour: 0,
-            burstLimit: 0,
-            allowedEventTypes: [],
-            maxEventSizeBytes: 0,
-            maxBatchSize: 0,
-            allowedOrigins: [],
-            requireHttps: false,
-            ipAllowlist: null,
-            ipBlocklist: null,
-            geoRestrictionEnabled: false,
-            allowedCountries: null,
-            alertEmail: null,
-            alertWebhookUrl: null,
-            alertOnErrorRateThreshold: 0,
-            alertOnLatencyThresholdMs: 0,
-            metadata: {},
-            settings: {},
+            visibility: row.visibility,
+            timezone: row.timezone,
+            tags: row.tags ?? [],
+            icon: row.icon,
+            color: row.color,
+            metadata: row.metadata ?? {},
             archivedAt: row.archived_at,
             deletedAt: row.deleted_at,
-            deletedBy: null,
+            deletedBy: row.deleted_by,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            version: row.version,
         };
     }
     mapProjectWithCounts(row) {

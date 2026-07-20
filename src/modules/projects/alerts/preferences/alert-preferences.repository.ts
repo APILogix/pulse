@@ -1,14 +1,24 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { pool } from "../../../../config/database.js";
 import type {
   UpdateAlertPreferenceBody,
-  ProjectMemberAlertPreference,
+  ProjectMemberNotificationPreference,
+  ProjectNotificationPreference,
+  NotificationChannel,
 } from "./alert-preferences.types.js";
 import { ProjectError } from "../../shared/utils.js";
+import { AlertCategorySchema } from "../subscriptions/connector-subscription.types.js";
 
-const PREF_COLUMNS = `
-  id, project_id, user_id, route_id, is_subscribed,
-  min_severity, quiet_hours_start, quiet_hours_end, created_at, updated_at
+type DbClient = Pool | PoolClient;
+
+const MEMBER_PREF_COLUMNS = `
+  id, project_id, user_id, channel, category, enabled, severity_threshold,
+  digest_mode, quiet_hours, created_at, updated_at
+`;
+
+const PROJECT_PREF_COLUMNS = `
+  id, project_id, organization_id, category, enabled, severity_threshold,
+  connector_ids, member_ids, quiet_hours, digest_mode, created_at, updated_at
 `;
 
 export class AlertPreferencesRepository {
@@ -27,147 +37,234 @@ export class AlertPreferencesRepository {
     }
   }
 
-  private mapRow(row: any): ProjectMemberAlertPreference {
+  private mapMemberPreferenceRow(row: any): ProjectMemberNotificationPreference {
     return {
       id: row.id,
       projectId: row.project_id,
       userId: row.user_id,
-      routeId: row.route_id,
-      isSubscribed: row.is_subscribed,
-      minSeverity: row.min_severity,
-      quietHoursStart: row.quiet_hours_start,
-      quietHoursEnd: row.quiet_hours_end,
+      channel: row.channel,
+      category: row.category,
+      enabled: row.enabled,
+      severityThreshold: row.severity_threshold,
+      digestMode: row.digest_mode,
+      quietHours: row.quiet_hours,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  async getPreferences(projectId: string, userId: string): Promise<ProjectMemberAlertPreference[]> {
-    const res = await pool.query(
-      `SELECT ${PREF_COLUMNS} FROM project_member_alert_preferences WHERE project_id = $1 AND user_id = $2`,
-      [projectId, userId]
-    );
-    return res.rows.map(this.mapRow);
+  private mapProjectPreferenceRow(row: any): ProjectNotificationPreference {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      organizationId: row.organization_id,
+      category: row.category,
+      enabled: row.enabled,
+      severityThreshold: row.severity_threshold,
+      connectorIds: row.connector_ids ?? [],
+      memberIds: row.member_ids ?? [],
+      quietHours: row.quiet_hours,
+      digestMode: row.digest_mode,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
-  async createPreference(
+  async getMemberPreferences(
     projectId: string,
     userId: string,
-    routeId: string,
-    client: PoolClient = pool as unknown as PoolClient,
-  ): Promise<ProjectMemberAlertPreference> {
-    const res = await client.query(
-      `
-      INSERT INTO project_member_alert_preferences (
-        project_id, user_id, route_id
-      ) VALUES ($1, $2, $3)
-      ON CONFLICT (project_id, user_id, route_id) DO NOTHING
-      RETURNING ${PREF_COLUMNS}
-      `,
-      [projectId, userId, routeId]
+    client?: DbClient,
+  ): Promise<ProjectMemberNotificationPreference[]> {
+    const db = client ?? pool;
+    const res = await db.query(
+      `SELECT ${MEMBER_PREF_COLUMNS}
+         FROM project_member_notification_preferences
+        WHERE project_id = $1 AND user_id = $2`,
+      [projectId, userId],
     );
-    if (!res.rows.length) {
-      // It already exists, fetch it
-      const existing = await client.query(
-        `SELECT ${PREF_COLUMNS} FROM project_member_alert_preferences WHERE project_id = $1 AND user_id = $2 AND route_id = $3`,
-        [projectId, userId, routeId]
-      );
-      return this.mapRow(existing.rows[0]);
-    }
-    return this.mapRow(res.rows[0]);
+    return res.rows.map((row) => this.mapMemberPreferenceRow(row));
   }
 
-  async updatePreference(
+  async getProjectDefaults(
+    projectId: string,
+    client?: DbClient,
+  ): Promise<ProjectNotificationPreference[]> {
+    const db = client ?? pool;
+    const res = await db.query(
+      `SELECT ${PROJECT_PREF_COLUMNS}
+         FROM project_notification_preferences
+        WHERE project_id = $1`,
+      [projectId],
+    );
+    return res.rows.map((row) => this.mapProjectPreferenceRow(row));
+  }
+
+  async createMemberPreference(
+    projectId: string,
+    userId: string,
+    channel: NotificationChannel,
+    category: string,
+    client?: DbClient,
+  ): Promise<ProjectMemberNotificationPreference> {
+    const db = client ?? pool;
+    const res = await db.query(
+      `INSERT INTO project_member_notification_preferences (
+         project_id, user_id, channel, category
+       ) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (project_id, user_id, channel, category) DO NOTHING
+       RETURNING ${MEMBER_PREF_COLUMNS}`,
+      [projectId, userId, channel, category],
+    );
+    if (!res.rows.length) {
+      const existing = await db.query(
+        `SELECT ${MEMBER_PREF_COLUMNS}
+           FROM project_member_notification_preferences
+          WHERE project_id = $1 AND user_id = $2 AND channel = $3 AND category = $4`,
+        [projectId, userId, channel, category],
+      );
+      return this.mapMemberPreferenceRow(existing.rows[0]);
+    }
+    return this.mapMemberPreferenceRow(res.rows[0]);
+  }
+
+  async updateMemberPreference(
     prefId: string,
     projectId: string,
     userId: string,
     dto: UpdateAlertPreferenceBody,
-  ): Promise<ProjectMemberAlertPreference> {
+    client?: DbClient,
+  ): Promise<ProjectMemberNotificationPreference> {
+    const db = client ?? pool;
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: unknown[] = [];
     let idx = 1;
 
-    if (dto.is_subscribed !== undefined) {
-      fields.push(`is_subscribed = $${idx++}`);
-      values.push(dto.is_subscribed);
+    if (dto.enabled !== undefined) {
+      fields.push(`enabled = $${idx++}`);
+      values.push(dto.enabled);
     }
-    if (dto.min_severity !== undefined) {
-      fields.push(`min_severity = $${idx++}`);
-      values.push(dto.min_severity);
+    if (dto.severity_threshold !== undefined) {
+      fields.push(`severity_threshold = $${idx++}`);
+      values.push(dto.severity_threshold);
     }
-    if (dto.quiet_hours_start !== undefined) {
-      fields.push(`quiet_hours_start = $${idx++}`);
-      values.push(dto.quiet_hours_start);
+    if (dto.digest_mode !== undefined) {
+      fields.push(`digest_mode = $${idx++}`);
+      values.push(dto.digest_mode);
     }
-    if (dto.quiet_hours_end !== undefined) {
-      fields.push(`quiet_hours_end = $${idx++}`);
-      values.push(dto.quiet_hours_end);
+    if (dto.quiet_hours !== undefined) {
+      fields.push(`quiet_hours = $${idx++}`);
+      values.push(dto.quiet_hours);
     }
 
     if (fields.length === 0) {
-      const res = await pool.query(`SELECT ${PREF_COLUMNS} FROM project_member_alert_preferences WHERE id = $1`, [prefId]);
-      return this.mapRow(res.rows[0]);
+      const res = await db.query(
+        `SELECT ${MEMBER_PREF_COLUMNS}
+           FROM project_member_notification_preferences
+          WHERE id = $1`,
+        [prefId],
+      );
+      return this.mapMemberPreferenceRow(res.rows[0]);
     }
 
-    fields.push(`updated_at = NOW()`);
+    fields.push("updated_at = NOW()");
     values.push(prefId, projectId, userId);
 
-    const res = await pool.query(
-      `
-      UPDATE project_member_alert_preferences
-      SET ${fields.join(", ")}
-      WHERE id = $${idx - 3} AND project_id = $${idx - 2} AND user_id = $${idx - 1}
-      RETURNING ${PREF_COLUMNS}
-      `,
-      values
+    const res = await db.query(
+      `UPDATE project_member_notification_preferences
+          SET ${fields.join(", ")}
+        WHERE id = $${idx - 2} AND project_id = $${idx - 1} AND user_id = $${idx}
+        RETURNING ${MEMBER_PREF_COLUMNS}`,
+      values,
     );
 
     if (!res.rows.length) {
       throw new ProjectError("PREFERENCE_NOT_FOUND", "Preference not found", 404);
     }
-    return this.mapRow(res.rows[0]);
+    return this.mapMemberPreferenceRow(res.rows[0]);
   }
 
-  async bulkSubscribe(projectId: string, routeId: string, userIds: string[], client: PoolClient = pool as unknown as PoolClient): Promise<void> {
+  async bulkSubscribe(
+    projectId: string,
+    channel: NotificationChannel,
+    category: string,
+    userIds: string[],
+    client?: DbClient,
+  ): Promise<void> {
     if (userIds.length === 0) return;
-    
-    // We update is_subscribed = true for the batch, inserting if they don't exist.
-    const values = userIds.map((userId) => `('${projectId}', '${userId}', '${routeId}')`).join(", ");
-    await client.query(`
-      INSERT INTO project_member_alert_preferences (project_id, user_id, route_id, is_subscribed)
-      VALUES ${values}
-      ON CONFLICT (project_id, user_id, route_id) 
-      DO UPDATE SET is_subscribed = true, updated_at = NOW()
-    `);
+    const db = client ?? pool;
+
+    const values = userIds
+      .map((userId) => `('${projectId}', '${userId}', '${channel}', '${category}')`)
+      .join(", ");
+    await db.query(
+      `INSERT INTO project_member_notification_preferences (
+         project_id, user_id, channel, category, enabled
+       ) VALUES ${values}
+       ON CONFLICT (project_id, user_id, channel, category)
+       DO UPDATE SET enabled = true, updated_at = NOW()`,
+    );
   }
 
-  async resolveRecipients(projectId: string, routeId: string, severity: string): Promise<string[]> {
-    // The master prompt says:
-    // Returns list of user_ids from project_members JOIN project_member_alert_preferences 
-    // where is_subscribed = true AND min_severity <= $severity
-    // postgres enums can be compared but we should use standard mapping or an array of active severities.
-    
-    // Let's rely on standard logic for enum comparison if possible, or build an array of severities that match.
-    // Assuming ENUM is ordered, or we just map it.
+  async resolveRecipients(
+    projectId: string,
+    category: string,
+    severity: string,
+    client?: DbClient,
+  ): Promise<string[]> {
+    const db = client ?? pool;
     const severityOrder: Record<string, number> = {
-      'info': 0, 'warning': 1, 'error': 2, 'critical': 3
+      info: 0,
+      warning: 1,
+      error: 2,
+      critical: 3,
     };
     const minSeverityValue = severityOrder[severity] ?? 0;
-    const applicableSeverities = Object.keys(severityOrder).filter(k => (severityOrder[k] ?? 0) <= minSeverityValue);
+    const applicableSeverities = Object.keys(severityOrder).filter(
+      (k) => (severityOrder[k] ?? 0) <= minSeverityValue,
+    );
 
-    const res = await pool.query(
-      `
-      SELECT pmap.user_id 
-      FROM project_member_alert_preferences pmap
-      JOIN project_members pm ON pm.project_id = pmap.project_id AND pm.user_id = pmap.user_id
-      WHERE pmap.project_id = $1 
-        AND pmap.route_id = $2 
-        AND pmap.is_subscribed = true
-        AND pmap.min_severity = ANY($3::notification_severity[])
-      `,
-      [projectId, routeId, applicableSeverities]
+    const res = await db.query<{ user_id: string }>(
+      `SELECT user_id
+         FROM project_member_notification_preferences
+        WHERE project_id = $1
+          AND category = $2
+          AND enabled = true
+          AND severity_threshold = ANY($3::severity_threshold[])`,
+      [projectId, category, applicableSeverities],
     );
 
     return res.rows.map((row) => row.user_id);
+  }
+
+  async seedMissingMemberPreferences(
+    projectId: string,
+    userId: string,
+    client?: DbClient,
+  ): Promise<ProjectMemberNotificationPreference[]> {
+    const db = client ?? pool;
+    const categories = AlertCategorySchema.options;
+    const channels: NotificationChannel[] = ["email", "slack", "webhook", "push", "sms"];
+
+    const existing = await this.getMemberPreferences(projectId, userId, db);
+    const existingKeys = new Set(existing.map((p) => `${p.channel}:${p.category}`));
+
+    const missing: Array<{ channel: NotificationChannel; category: string }> = [];
+    for (const channel of channels) {
+      for (const category of categories) {
+        if (!existingKeys.has(`${channel}:${category}`)) {
+          missing.push({ channel, category });
+        }
+      }
+    }
+
+    if (missing.length > 0) {
+      await this.withTransaction(async (tx) => {
+        for (const { channel, category } of missing) {
+          await this.createMemberPreference(projectId, userId, channel, category, tx);
+        }
+      });
+    }
+
+    return this.getMemberPreferences(projectId, userId, db);
   }
 }

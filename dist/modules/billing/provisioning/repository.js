@@ -4,7 +4,7 @@ export class BillingProvisioningRepository {
     async provisionFreeSubscription(client, organizationId) {
         const planResult = await client.query(`SELECT id, trial_days
        FROM plans
-       WHERE key = 'business' AND is_active = TRUE AND deleted_at IS NULL
+       WHERE key = 'free' AND is_active = TRUE AND deleted_at IS NULL
        LIMIT 1
        FOR SHARE`);
         const plan = planResult.rows[0];

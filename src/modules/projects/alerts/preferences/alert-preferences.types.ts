@@ -1,30 +1,58 @@
 import { z } from "zod";
-import { AlertSeveritySchema } from "../../../alerting/types.js";
+import { AlertSeveritySchema } from "../../../alerting/common.js";
 import { UuidSchema } from "../../../alerting/types.js";
+import { normalizeObjectKeys } from "../../shared/schema-utils.js";
+import { AlertCategorySchema, type AlertCategory } from "../subscriptions/connector-subscription.types.js";
+
+export const NotificationChannelSchema = z.enum([
+  "slack",
+  "email",
+  "webhook",
+  "push",
+  "sms",
+]);
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 
 export const UpdateAlertPreferenceBodySchema = z.object({
-  is_subscribed: z.boolean().optional(),
-  min_severity: AlertSeveritySchema.optional(),
-  quiet_hours_start: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, "Must be HH:MM").optional(),
-  quiet_hours_end: z.string().regex(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/, "Must be HH:MM").optional(),
+  enabled: z.boolean().optional(),
+  severity_threshold: AlertSeveritySchema.optional(),
+  digest_mode: z.string().max(30).optional(),
+  quiet_hours: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export type UpdateAlertPreferenceBody = z.infer<typeof UpdateAlertPreferenceBodySchema>;
 
 export const BulkSubscribeBodySchema = z.object({
-  routeId: UuidSchema,
+  channel: NotificationChannelSchema,
+  category: AlertCategorySchema,
   userIds: z.array(UuidSchema),
 });
 export type BulkSubscribeBody = z.infer<typeof BulkSubscribeBodySchema>;
 
-export interface ProjectMemberAlertPreference {
+export interface ProjectMemberNotificationPreference {
   id: string;
   projectId: string;
   userId: string;
-  routeId: string;
-  isSubscribed: boolean;
-  minSeverity: string;
-  quietHoursStart: string | null;
-  quietHoursEnd: string | null;
+  channel: NotificationChannel;
+  category: AlertCategory;
+  enabled: boolean;
+  severityThreshold: string;
+  digestMode: string;
+  quietHours: Record<string, unknown> | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ProjectNotificationPreference {
+  id: string;
+  projectId: string;
+  organizationId: string;
+  category: AlertCategory;
+  enabled: boolean;
+  severityThreshold: string;
+  connectorIds: string[];
+  memberIds: string[];
+  quietHours: Record<string, unknown> | null;
+  digestMode: string;
   createdAt: Date;
   updatedAt: Date;
 }

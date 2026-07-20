@@ -46,6 +46,12 @@ export const normalizeObjectKeys = (value: unknown): unknown => {
   alias("isActive", "is_active");
   alias("includeInactive", "include_inactive");
   alias("includeDeleted", "include_deleted");
+  alias("environmentId", "environment_id");
+  alias("allowedIps", "allowed_ips");
+  alias("allowedDomains", "allowed_domains");
+  alias("samplingRules", "sampling_rules");
+  alias("featureFlags", "feature_flags");
+  alias("sdkConfig", "sdk_config");
 
   return r;
 };

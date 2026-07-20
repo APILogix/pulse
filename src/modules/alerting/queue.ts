@@ -38,6 +38,7 @@ import { AlertBatchProcessor, type BatchJobData } from './batch-processor.js';
 import { AlertEscalationSweep } from './escalation.js';
 import { AlertRuleEvaluator } from './evaluator/rule-evaluator.js';
 import { ConnectorRepository } from '../connectors/repository.js';
+import type { ProjectSubscriptionResolver } from './batch-processor.js';
 
 export const ALERT_JOBS = {
   formBatches: 'alert.form-batches',
@@ -107,6 +108,7 @@ function allJobs<T>(arg: unknown): Array<MinimalJob<T>> {
 export async function registerAlertingWorkers(
   logger: FastifyBaseLogger,
   config: AlertingWorkerConfig = {},
+  projectSubscriptionResolver?: ProjectSubscriptionResolver,
 ): Promise<{ stop: () => Promise<void> }> {
   const cfg = { ...DEFAULTS, ...config };
   const log = logger.child({ component: 'alerting-workers' });
@@ -115,7 +117,7 @@ export async function registerAlertingWorkers(
   const connectorRepo = new ConnectorRepository();
   const enqueueConnectorJob = async (queue: string, data: Record<string, unknown>, options?: Record<string, unknown>) =>
     pgboss.send(queue, data, options as never);
-  const processor = new AlertBatchProcessor(alertRepo, connectorRepo, enqueueConnectorJob, logger);
+  const processor = new AlertBatchProcessor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver);
   const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
   const ruleEvaluator = new AlertRuleEvaluator(logger);
 

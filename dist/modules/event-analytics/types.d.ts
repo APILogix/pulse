@@ -296,10 +296,10 @@ export declare const CreateAnalyticsAlertSchema: z.ZodObject<{
 export type CreateAnalyticsAlertBody = z.infer<typeof CreateAnalyticsAlertSchema>;
 export declare const ExportSchema: z.ZodObject<{
     dataset: z.ZodEnum<{
+        logs: "logs";
+        metrics: "metrics";
         requests: "requests";
         errors: "errors";
-        metrics: "metrics";
-        logs: "logs";
     }>;
     format: z.ZodDefault<z.ZodEnum<{
         json: "json";

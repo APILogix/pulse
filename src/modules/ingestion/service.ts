@@ -112,14 +112,27 @@ interface ServiceConfig {
 interface ResolvedProject {
   id: string;
   orgId: string;
-  environment: string;
+  environmentId: string;
+  environmentName: string;
+  environmentSlug: string;
   rateLimitPerSecond: number;
   rateLimitPerMinute: number;
+  rateLimitPerHour: number | null;
   isActive: boolean;
   apiKeyId: string;
+  keyType: string;
+  rotationVersion: number;
   permissions: string[];
   allowedEndpoints: string[];
   blockedEndpoints: string[];
+  allowedEventTypes: string[];
+  allowedOrigins: string[];
+  allowedIps: string[];
+  allowedDomains: string[];
+  allowedSdks: string[];
+  samplingRules: Record<string, unknown>;
+  featureFlags: Record<string, unknown>;
+  sdkConfig: Record<string, unknown>;
   planTier: PlanTier;
   orgRateLimitPerSecond: number;
   orgRateLimitPerMinute: number;
@@ -213,14 +226,27 @@ export class IngestionService {
       return {
         id: cached.id,
         orgId: cached.orgId,
-        environment: cached.environment,
+        environmentId: cached.environmentId,
+        environmentName: cached.environmentName ?? cached.environment,
+        environmentSlug: cached.environment,
         rateLimitPerSecond: cached.rateLimitPerSecond,
         rateLimitPerMinute: cached.rateLimitPerMinute,
+        rateLimitPerHour: cached.rateLimitPerHour ?? null,
         isActive: cached.isActive,
         apiKeyId: cached.apiKeyId,
+        keyType: 'read_write',
+        rotationVersion: 1,
         permissions: cached.permissions ?? [],
-        allowedEndpoints: cached.allowedEndpoints ?? ['*'],
+        allowedEndpoints: cached.allowedEndpoints.length ? cached.allowedEndpoints : ['*'],
         blockedEndpoints: cached.blockedEndpoints ?? [],
+        allowedEventTypes: cached.allowedEventTypes.length ? cached.allowedEventTypes : ['*'],
+        allowedOrigins: cached.allowedOrigins ?? [],
+        allowedIps: cached.allowedIps ?? [],
+        allowedDomains: cached.allowedDomains ?? [],
+        allowedSdks: cached.allowedSdks ?? [],
+        samplingRules: cached.samplingRules ?? {},
+        featureFlags: cached.featureFlags ?? {},
+        sdkConfig: cached.sdkConfig ?? {},
         planTier: normalizePlanTier(cached.planTier),
         orgRateLimitPerSecond:
           cached.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
@@ -229,20 +255,33 @@ export class IngestionService {
       };
     }
 
-    const auth = await this.writer.getProjectByApiKeyHash(keyHash);
+    const auth = await this.writer.resolveApiKey(apiKey);
     if (!auth) return null;
 
     const resolved: ResolvedProject = {
       id: auth.projectId,
       orgId: auth.orgId,
-      environment: auth.environment,
+      environmentId: auth.environmentId,
+      environmentName: auth.environmentName,
+      environmentSlug: auth.environmentSlug,
       rateLimitPerSecond: auth.rateLimitPerSecond ?? this.defaultRatePerSecond,
       rateLimitPerMinute: auth.rateLimitPerMinute ?? this.defaultRatePerMinute,
+      rateLimitPerHour: auth.rateLimitPerHour ?? null,
       isActive: auth.isActive && auth.projectStatus === 'active',
       apiKeyId: auth.apiKeyId,
+      keyType: auth.keyType,
+      rotationVersion: auth.rotationVersion,
       permissions: auth.permissions,
       allowedEndpoints: auth.allowedEndpoints.length ? auth.allowedEndpoints : ['*'],
       blockedEndpoints: auth.blockedEndpoints,
+      allowedEventTypes: auth.allowedEventTypes.length ? auth.allowedEventTypes : ['*'],
+      allowedOrigins: auth.allowedOrigins,
+      allowedIps: auth.allowedIps,
+      allowedDomains: auth.allowedDomains,
+      allowedSdks: auth.allowedSdks,
+      samplingRules: auth.samplingRules,
+      featureFlags: auth.featureFlags,
+      sdkConfig: auth.sdkConfig,
       planTier: normalizePlanTier(auth.planTier),
       orgRateLimitPerSecond:
         auth.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
@@ -254,13 +293,23 @@ export class IngestionService {
       id: resolved.id,
       orgId: resolved.orgId,
       name: auth.projectName,
-      environment: resolved.environment,
+      environment: resolved.environmentSlug,
+      environmentId: resolved.environmentId,
+      environmentName: resolved.environmentName,
       rateLimitPerSecond: resolved.rateLimitPerSecond,
       rateLimitPerMinute: resolved.rateLimitPerMinute,
-      allowedEventTypes: ['request', 'error', 'log', 'metric', 'custom'],
+      rateLimitPerHour: resolved.rateLimitPerHour,
+      allowedEventTypes: resolved.allowedEventTypes,
       permissions: resolved.permissions,
       allowedEndpoints: resolved.allowedEndpoints,
       blockedEndpoints: resolved.blockedEndpoints,
+      allowedOrigins: resolved.allowedOrigins,
+      allowedIps: resolved.allowedIps,
+      allowedDomains: resolved.allowedDomains,
+      allowedSdks: resolved.allowedSdks,
+      samplingRules: resolved.samplingRules,
+      featureFlags: resolved.featureFlags,
+      sdkConfig: resolved.sdkConfig,
       isActive: resolved.isActive,
       apiKeyId: resolved.apiKeyId,
       planTier: resolved.planTier,
@@ -481,6 +530,11 @@ export class IngestionService {
         continue;
       }
 
+      if (!this.isEventTypeAllowed(project, eventType)) {
+        errors.push({ eventId, reason: 'event_type_not_allowed' });
+        continue;
+      }
+
       const list = acceptedByType.get(eventType) ?? [];
       list.push(raw);
       acceptedByType.set(eventType, list);
@@ -494,7 +548,7 @@ export class IngestionService {
         projectId: project.id,
         apiKeyId: project.apiKeyId,
         planTier: project.planTier,
-        environment: project.environment,
+        environment: project.environmentSlug,
         batchId,
         receivedAt,
         byType: acceptedByType,
@@ -619,6 +673,12 @@ export class IngestionService {
     if (!allowed || blocked) {
       throw new Error('API_KEY_ENDPOINT_DENIED');
     }
+  }
+
+  private isEventTypeAllowed(project: ResolvedProject, eventType: SdkEventType): boolean {
+    const allowed = project.allowedEventTypes;
+    if (allowed.length === 0 || allowed.includes('*')) return true;
+    return allowed.includes(eventType);
   }
 
   // ── Health / observability ────────────────────────────────────────────────

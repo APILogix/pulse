@@ -21,13 +21,16 @@ import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "./environments/environment.repository.js";
 import { ActivityRepository } from "./activity/activity.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
-import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironment, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 import { ProjectService } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
 import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
+import { ProjectMemberService } from "./members/member.service.js";
+import { ProjectConnectorSubscriptionService } from "./alerts/subscriptions/connector-subscription.service.js";
+import { UsageAnalyticsService } from "./usage/analytics.service.js";
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -54,6 +57,9 @@ export declare class ProjectsService {
     readonly environments: EnvironmentService;
     readonly apiKeys: ApiKeyService;
     readonly base: BaseProjectService;
+    readonly members: ProjectMemberService;
+    readonly connectorSubscriptions: ProjectConnectorSubscriptionService;
+    readonly analytics: UsageAnalyticsService;
     constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
@@ -77,10 +83,10 @@ export declare class ProjectsService {
     getProjectUsage(orgId: string, projectId: string, userId: string): Promise<ProjectUsageCounter[]>;
     listProjectActivity(orgId: string, projectId: string, userId: string, query: ListProjectActivityQuery): Promise<ProjectActivityResult>;
     listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]>;
-    getEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string): Promise<ProjectEnvironmentConfig>;
+    getEnvironment(orgId: string, projectId: string, environmentId: string, userId: string): Promise<ProjectEnvironmentConfig>;
     createEnvironment(orgId: string, projectId: string, userId: string, body: CreateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
-    updateEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string, body: UpdateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
-    deleteEnvironment(orgId: string, projectId: string, environment: ProjectEnvironment, userId: string, meta: RequestMeta): Promise<void>;
+    updateEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, body: UpdateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
+    deleteEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<void>;
     listApiKeys(orgId: string, projectId: string, userId: string, query: ListApiKeysQuery): Promise<{
         keys: ProjectApiKey[];
         total: number;
@@ -112,7 +118,6 @@ export declare class ProjectsService {
     private assertWithinLimit;
     private requireMutableBilling;
     private enforceProjectModuleLimit;
-    private assignProjectConfig;
     private generateUniqueSlug;
     private assertFutureExpiry;
     private publicApiKey;

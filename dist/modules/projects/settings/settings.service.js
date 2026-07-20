@@ -24,7 +24,8 @@ const ROLE_HIERARCHY = {
     [ProjectMemberRole.OWNER]: 4,
     [ProjectMemberRole.ADMIN]: 3,
     [ProjectMemberRole.DEVELOPER]: 2,
-    [ProjectMemberRole.VIEWER]: 1,
+    [ProjectMemberRole.QA]: 1,
+    [ProjectMemberRole.VIEWER]: 0,
 };
 export function hasProjectRole(userRole, required) {
     return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[required];

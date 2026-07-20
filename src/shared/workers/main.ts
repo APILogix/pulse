@@ -23,6 +23,8 @@ import { startConnectorMonitor } from '../../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../../modules/event-analytics/queue.js';
 import { registerOrganizationCleanupWorkers } from '../../modules/organization/shared/background/queue.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
+import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
+import type { ProjectSubscriptionResolver } from '../../modules/alerting/batch-processor.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
@@ -89,7 +91,11 @@ async function bootstrapWorkers(): Promise<void> {
   authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
   billingJobWorkers = await registerBillingJobWorkers(workerLogger);
   connectorMonitor = await startConnectorMonitor(workerLogger);
-  alertingWorkers = await registerAlertingWorkers(workerLogger);
+  const connectorSubRepo = new ConnectorSubscriptionRepository();
+  const projectSubscriptionResolver: ProjectSubscriptionResolver = {
+    resolveByProjectId: (projectId) => connectorSubRepo.resolveAlertRoutingTargetByProjectId(projectId),
+  };
+  alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver);
   analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
 
   if (process.env.ORG_CRON_ENABLED !== 'false') {

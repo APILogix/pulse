@@ -22,9 +22,15 @@
  *     partition catching any gap so inserts never fail.
  *   - Enum-typed columns (severity/kind/status/level) are coerced to the exact
  *     migrations2 enum domains; unknown values fall back to a safe default.
+ *   - Every INSERT is idempotent: `ON CONFLICT DO NOTHING` (no column target)
+ *     drops rows that hit the `(project_id, event_id) NULLS NOT DISTINCT`
+ *     identity indexes (17_enterprise_ingestion/001), so at-least-once
+ *     delivery (pg-boss retries, DLQ replays, SDK retries) never duplicates
+ *     events. `RETURNING` keeps rowCount truthful: callers learn how many rows
+ *     were ACTUALLY inserted (duplicates excluded).
  *   - Rollups (analytics_hourly_rollup / analytics_error_groups) are owned by
- *     the event-analytics worker, NOT written here — this writer only persists
- *     raw events.
+ *     the event-analytics worker and the ingestion event-processor, NOT
+ *     written here — this writer only persists raw events.
  */
 import { randomUUID } from 'crypto';
 import { resolveTimestamp } from './event-normalizer.js';
@@ -87,9 +93,26 @@ function spanStatus(v) {
         return 'error';
     return 'unset';
 }
+/** Storage error_name for an error event (shared with the error grouper). */
+export function errorNameOf(event) {
+    const name = event.name;
+    return typeof name === 'string' && name.length > 0 ? name.slice(0, 256) : 'UnknownError';
+}
+/**
+ * Storage fingerprint for an error event (shared with the error grouper so
+ * events_errors.fingerprint and analytics_error_groups.fingerprint agree).
+ */
+export function errorFingerprint(event, errorName = errorNameOf(event)) {
+    const e = event;
+    const explicit = typeof e.fingerprint === 'string' && e.fingerprint.length > 0 ? e.fingerprint : null;
+    return (explicit ?? `auto:${errorName}:${e.message.slice(0, 48)}`).slice(0, 64);
+}
 /** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
- * (unknown→jsonb coercion handles the cast in an INSERT ... VALUES context). */
-function buildInsert(table, cols, rows) {
+ * (unknown→jsonb coercion handles the cast in an INSERT ... VALUES context).
+ * ON CONFLICT DO NOTHING (no column target) makes the insert idempotent
+ * against the (project_id, event_id) identity indexes; RETURNING keeps
+ * rowCount truthful — it counts only ACTUALLY inserted rows. */
+function buildInsert(table, cols, rows, returning = 'id') {
     const values = [];
     const tuples = [];
     let p = 1;
@@ -98,7 +121,7 @@ function buildInsert(table, cols, rows) {
         values.push(...row);
     }
     return {
-        text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')}`,
+        text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
         values,
     };
 }
@@ -112,10 +135,29 @@ export class TelemetryWriter {
      * types are grouped so each table gets one multi-row insert. Events without a
      * resolvable organization_id are skipped (events_* requires it) and counted
      * out of the return total.
+     *
+     * Returns the number of rows ACTUALLY inserted (delivery duplicates dropped
+     * by ON CONFLICT DO NOTHING are excluded). Kept for legacy callers — new
+     * code should use writeBatchDetailed().
      */
     async writeBatch(scoped) {
+        return (await this.writeBatchDetailed(scoped)).totalInserted;
+    }
+    /**
+     * writeBatch with the full outcome: per-type received/inserted counts and
+     * the error events confirmed inserted (for analytics_error_groups). The
+     * inserted counts drive usage accounting, so duplicates delivered by
+     * at-least-once retries are never billed twice.
+     */
+    async writeBatchDetailed(scoped) {
+        const result = {
+            totalReceived: 0,
+            totalInserted: 0,
+            perType: {},
+            insertedErrors: [],
+        };
         if (scoped.length === 0)
-            return 0;
+            return result;
         const byType = new Map();
         for (const s of scoped) {
             if (!s.orgId)
@@ -124,11 +166,15 @@ export class TelemetryWriter {
             list.push(s);
             byType.set(s.event.type, list);
         }
-        let total = 0;
         for (const [type, list] of byType) {
-            total += await this.writeTyped(type, list);
+            const res = await this.writeTyped(type, list);
+            result.perType[type] = { received: list.length, inserted: res.inserted };
+            result.totalReceived += list.length;
+            result.totalInserted += res.inserted;
+            if (res.insertedErrors)
+                result.insertedErrors.push(...res.insertedErrors);
         }
-        return total;
+        return result;
     }
     async writeTyped(type, list) {
         switch (type) {
@@ -142,7 +188,7 @@ export class TelemetryWriter {
             case 'profile': return this.writeProfiles(list);
             case 'cron_checkin': return this.writeCronCheckins(list);
             case 'replay': return this.writeReplays(list);
-            default: return 0;
+            default: return { inserted: 0 };
         }
     }
     /** Best-effort event id (events_*.event_id is NOT NULL). */
@@ -152,14 +198,14 @@ export class TelemetryWriter {
     }
     // ── events_errors ─────────────────────────────────────────────────────────
     async writeErrors(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const ids = list.map(({ event }) => this.eventId(event));
+        const rows = list.map(({ projectId, orgId, event }, i) => {
             const e = event;
             const r = rec(event);
-            const errorName = typeof e.name === 'string' ? e.name.slice(0, 256) : 'UnknownError';
-            const fingerprint = (e.fingerprint && e.fingerprint.slice(0, 64)) ||
-                `auto:${errorName}:${e.message.slice(0, 48)}`.slice(0, 64);
+            const errorName = errorNameOf(event);
+            const fingerprint = errorFingerprint(event, errorName);
             return [
-                orgId, projectId, this.eventId(event), fingerprint, e.message,
+                orgId, projectId, ids[i], fingerprint, e.message,
                 errorName, eventSeverity(e.severity, 'error'),
                 str(r.stackHash, 64), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(r.source, 100) ?? 'capture', str(r.mechanism, 50), str(r.service, 100),
@@ -175,9 +221,27 @@ export class TelemetryWriter {
             'error_name', 'severity', 'stack_hash', 'trace_id', 'span_id', 'request_id', 'session_id',
             'source', 'mechanism', 'service', 'environment', 'release', 'server_name',
             'stack_frames', 'source_context', 'user_id', 'user_email', 'user_ip',
-            'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'], rows, 'event_id');
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        // Pair each returned event_id with its first unpaired input occurrence, so
+        // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
+        // is not double-counted by downstream error grouping.
+        const unpaired = new Map();
+        for (const row of res.rows)
+            unpaired.set(row.event_id, (unpaired.get(row.event_id) ?? 0) + 1);
+        const insertedErrors = [];
+        for (let i = 0; i < list.length; i++) {
+            const id = ids[i];
+            const n = unpaired.get(id) ?? 0;
+            if (n > 0) {
+                insertedErrors.push(list[i]);
+                if (n === 1)
+                    unpaired.delete(id);
+                else
+                    unpaired.set(id, n - 1);
+            }
+        }
+        return { inserted: res.rowCount ?? 0, insertedErrors };
     }
     // ── events_messages ─────────────────────────────────────────────────────────
     async writeMessages(list) {
@@ -198,7 +262,7 @@ export class TelemetryWriter {
             'service', 'environment', 'release', 'user_id', 'user_ip',
             'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_requests ─────────────────────────────────────────────────────────
     async writeRequests(list) {
@@ -225,7 +289,7 @@ export class TelemetryWriter {
             'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
             'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_spans ─────────────────────────────────────────────────────────
     async writeSpans(list) {
@@ -255,7 +319,7 @@ export class TelemetryWriter {
             'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_traces ─────────────────────────────────────────────────────────
     async writeTraces(list) {
@@ -278,7 +342,7 @@ export class TelemetryWriter {
             'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_metrics ─────────────────────────────────────────────────────────
     async writeMetrics(list) {
@@ -302,7 +366,7 @@ export class TelemetryWriter {
             'trace_id', 'span_id', 'request_id', 'service', 'environment', 'release',
             'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_logs ─────────────────────────────────────────────────────────
     async writeLogs(list) {
@@ -322,7 +386,7 @@ export class TelemetryWriter {
             'service', 'environment', 'release', 'user_id', 'user_ip',
             'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_profiles ─────────────────────────────────────────────────────────
     async writeProfiles(list) {
@@ -344,7 +408,7 @@ export class TelemetryWriter {
             'trace_id', 'span_id', 'request_id', 'start_time', 'end_time', 'duration_ms',
             'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_cron_checkins ─────────────────────────────────────────────────────
     async writeCronCheckins(list) {
@@ -360,7 +424,7 @@ export class TelemetryWriter {
         const { text, values } = buildInsert('events_cron_checkins', ['organization_id', 'project_id', 'event_id', 'monitor_slug', 'status', 'duration_ms',
             'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
     // ── events_replays ─────────────────────────────────────────────────────────
     async writeReplays(list) {
@@ -377,7 +441,7 @@ export class TelemetryWriter {
         const { text, values } = buildInsert('events_replays', ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
             'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
-        return res.rowCount ?? 0;
+        return { inserted: res.rowCount ?? 0 };
     }
 }
 //# sourceMappingURL=telemetry-writer.js.map

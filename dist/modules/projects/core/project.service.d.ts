@@ -14,7 +14,7 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../../organization/repository.js";
-import { ProjectMemberRole, type ProjectOverviewDto } from "../types.js";
+import { type ProjectOverviewDto } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
@@ -33,7 +33,6 @@ export interface RequestMeta {
     httpMethod: string;
     endpoint: string;
 }
-export declare function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMemberRole): boolean;
 export declare class ProjectService extends BaseProjectService {
     constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{

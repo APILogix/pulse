@@ -15,6 +15,7 @@ import { ApiKeyRepository } from './api-keys/api-key.repository.js';
 import { EnvironmentRepository } from './environments/environment.repository.js';
 import { ActivityRepository } from './activity/activity.repository.js';
 import { UsageRepository } from './usage/usage.repository.js';
+import { MemberRepository } from './members/member.repository.js';
 import { ProjectsService } from './service.js';
 declare module 'fastify' {
     interface FastifyInstance {
@@ -25,6 +26,8 @@ declare module 'fastify' {
             environmentRepository: EnvironmentRepository;
             activityRepository: ActivityRepository;
             usageRepository: UsageRepository;
+            membersRepository: MemberRepository;
+            connectorSubscriptionsService: import('./alerts/subscriptions/connector-subscription.service.js').ProjectConnectorSubscriptionService;
             service: ProjectsService;
             alertRoutesRepository: import('./alerts/routes/alert-routes.repository.js').AlertRoutesRepository;
             alertRoutesService: import('./alerts/routes/alert-routes.service.js').ProjectAlertRouteService;

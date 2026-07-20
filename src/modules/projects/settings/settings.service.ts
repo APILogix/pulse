@@ -42,7 +42,6 @@ import type {
   ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
-  ProjectEnvironment,
   ProjectEnvironmentConfig,
   ProjectListItem,
   ProjectUsageCounter,
@@ -51,7 +50,10 @@ import type {
   UpdateApiKeyBody,
   UpdateEnvironmentBody,
   UpdateProjectBody,
-  ValidatedApiKey, ProjectUpdateInput, ApiKeyUpdateInput } from "../types.js";
+  ValidatedApiKey,
+  ProjectUpdateInput,
+  ApiKeyUpdateInput,
+} from "../types.js";
 import {
   buildApiPrefixes,
   constantTimeEqualHex,
@@ -97,7 +99,8 @@ const ROLE_HIERARCHY: Record<ProjectMemberRole, number> = {
   [ProjectMemberRole.OWNER]: 4,
   [ProjectMemberRole.ADMIN]: 3,
   [ProjectMemberRole.DEVELOPER]: 2,
-  [ProjectMemberRole.VIEWER]: 1,
+  [ProjectMemberRole.QA]: 1,
+  [ProjectMemberRole.VIEWER]: 0,
 };
 
 export function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMemberRole): boolean {

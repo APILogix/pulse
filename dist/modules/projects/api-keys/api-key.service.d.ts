@@ -1,23 +1,21 @@
 /**
- * Project business service.
+ * API key business service.
  *
  * Flow:
- * 1. Authorize via organization membership before any read/mutation (tenant
- *    isolation root check). Role gating is centralized in requireProjectAccess.
- * 2. Enforce project status transitions, API-key limits, and key lifecycle.
- * 3. Mint key material in memory; persist only hash + prefix; return the full
+ * 1. Authorize via organization membership before any read/mutation.
+ * 2. Enforce API-key limits and key lifecycle.
+ * 3. Mint key material in memory; persist only hash + public_key; return the full
  *    key exactly once.
  * 4. Warm/evict the in-process LRU (config/lrucashe.ts, 30-min TTL) so ingestion
  *    resolves keys without a Postgres round trip. NO Redis.
- * 5. Write every sensitive lifecycle event to organization_audit_logs (projects
- *    and API keys are org-owned resources, so they share the org audit trail).
+ * 5. Write every sensitive lifecycle event to organization_audit_logs.
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../../organization/repository.js";
 import { ProjectMemberRole } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
-import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
+import { ApiKeyRepository } from "./api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
@@ -56,7 +54,7 @@ export declare class ApiKeyService extends BaseProjectService {
     bulkRevokeKeys(orgId: string, projectId: string, userId: string, body: BulkRevokeBody, meta: RequestMeta): Promise<BulkOperationResult>;
     getApiKeyUsage(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ApiKeyUsage>;
     /**
-     * Resolve a raw key to its validated context. Prefix narrows the candidate
+     * Resolve a raw key to its validated context. Public key narrows the candidate
      * set, then a constant-time hash compare prevents timing leaks. Enforces
      * project status, expiry, and rotation grace. Touches last_used_at async.
      */
@@ -69,7 +67,11 @@ export declare class ApiKeyService extends BaseProjectService {
      * round trip. Only active keys on active projects are cached as active;
      * ingestion re-validates project status on a miss.
      */
-    warmApiKeyCache(keyHash: string, key: ProjectApiKeyRecord | ProjectApiKey, project: Project): void;
-    evictApiKeyConfig(keyHash: string): void;
+    warmApiKeyCache(secretHash: string, key: ProjectApiKeyRecord | ProjectApiKey, project: Project, env?: {
+        id: string;
+        name: string;
+        slug: string;
+    } | null): void;
+    evictApiKeyConfig(secretHash: string): void;
 }
 //# sourceMappingURL=api-key.service.d.ts.map

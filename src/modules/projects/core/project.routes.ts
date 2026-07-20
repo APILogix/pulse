@@ -12,6 +12,8 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../../shared/middleware/auth.js";
+import { rateLimit } from "../../../shared/middleware/rate-limit.js";
+import { idempotency, cacheIdempotencyResponse } from "../../../shared/middleware/idempotency.js";
 import {
   ListSdkConfigsQuerySchema,
   ResolveSdkConfigQuerySchema,
@@ -47,11 +49,19 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
   const service = fastify.projects.service;
   const sdkConfigService = fastify.organization.sdkConfigService;
 
+  const readRateLimit = rateLimit({ max: 120, window: 60 });
+  const writeRateLimit = rateLimit({ max: 30, window: 60 });
+  const idempotencyKey = idempotency();
+
+  fastify.addHook("onSend", async (request, reply, payload) => {
+    await cacheIdempotencyResponse(request, reply, payload);
+  });
+
   // ── Project CRUD ──────────────────────────────────────────────────────────
 
   fastify.get(
     "/",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, readRateLimit] },
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const query = ListProjectsQuerySchema.parse(request.query ?? {});
@@ -66,7 +76,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
 
   fastify.post(
     "/",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, writeRateLimit, idempotencyKey] },
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const body = CreateProjectBodySchema.parse(request.body);
@@ -77,7 +87,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
 
   fastify.get(
     "/:projectId",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, readRateLimit] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const project = await service.getProject(orgId, projectId, authenticatedUser(request).id);
@@ -87,7 +97,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
 
   fastify.get(
     "/:projectId/stats",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, readRateLimit] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const project = await service.getProjectStats(orgId, projectId, authenticatedUser(request).id);
@@ -97,7 +107,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
 
   fastify.get(
     "/:projectId/usage",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, readRateLimit] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const usage = await service.getProjectUsage(orgId, projectId, authenticatedUser(request).id);
@@ -106,7 +116,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
   );
   fastify.patch(
     "/:projectId",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, writeRateLimit, idempotencyKey] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const body = UpdateProjectBodySchema.parse(request.body);
@@ -117,7 +127,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
 
   fastify.delete(
     "/:projectId",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, writeRateLimit, idempotencyKey] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       await service.deleteProject(orgId, projectId, authenticatedUser(request).id, requestMeta(request));
@@ -134,7 +144,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
   ] as const) {
     fastify.post(
       `/:projectId/${path}`,
-      { preHandler: [authenticate] },
+      { preHandler: [authenticate, writeRateLimit, idempotencyKey] },
       withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
         const project = await service[method](orgId, projectId, authenticatedUser(request).id, requestMeta(request));
@@ -148,7 +158,7 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
   // ── Project Settings & Overview ─────────────────────────────────────────────
   fastify.get(
     "/:projectId/overview",
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, readRateLimit] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const overview = await service.getProjectOverview(orgId, projectId, authenticatedUser(request).id);

@@ -4,7 +4,9 @@ import { computeFingerprint } from '../fingerprint.js';
 import { evaluateRule } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting } from '../routing.js';
-import { AlertNotFoundError, AlertValidationError, } from '../types.js';
+import { AlertConflictError, AlertNotFoundError, AlertValidationError, } from '../types.js';
+import { pgboss } from '../../../lib/pgboss.js';
+import { ALERT_JOBS } from '../queue.js';
 export class EventsService {
     repo;
     logger;
@@ -25,7 +27,7 @@ export class EventsService {
                 dedupWindow = rule.deduplication_window_seconds;
         }
         // Deduplication: fold into an existing active event within the window.
-        const existing = await this.repo.findActiveEventByFingerprint(orgId, fingerprint, dedupWindow);
+        const existing = await this.repo.findActiveEventByFingerprint(orgId, fingerprint, dedupWindow, body.projectId ?? null);
         if (existing) {
             const updated = await this.repo.incrementDuplicate(existing.id);
             return { event: this.eventToDto(updated), deduplicated: true };
@@ -37,6 +39,7 @@ export class EventsService {
         const event = await this.repo.insertEvent({
             organizationId: orgId,
             ruleId: body.ruleId ?? null,
+            projectId: body.projectId ?? null,
             status: silenced ? 'silenced' : 'pending',
             severity: body.severity,
             fingerprint,
@@ -70,6 +73,42 @@ export class EventsService {
     async getEventDeliveries(orgId, id) {
         await this.requireEvent(orgId, id);
         return this.repo.getEventDeliveries(id);
+    }
+    // ── Dead-letter queue (admin) ──────────────────────────────────────────
+    async listDeadLetters(orgId, query) {
+        const { data, total } = await this.repo.listDeadLetters(orgId, query);
+        return { data: data.map((d) => this.deadLetterToDto(d)), total };
+    }
+    /**
+     * Manual re-drive of a dead-lettered batch job. Only allowed while the batch
+     * is still `processing` — once it has moved on, the orphan sweeper / normal
+     * recovery owns the events and re-sending would double-deliver.
+     */
+    async retryDeadLetter(orgId, meta, id) {
+        const deadLetter = await this.repo.findDeadLetterById(orgId, id);
+        if (!deadLetter)
+            throw new AlertNotFoundError('Dead-letter event');
+        if (deadLetter.status === 'discarded')
+            throw new AlertConflictError('Dead letter has been discarded');
+        if (!deadLetter.batch_id)
+            throw new AlertValidationError('Dead letter has no batch to re-drive');
+        const loaded = await this.repo.getBatchWithEvents(deadLetter.batch_id, orgId).catch(() => null);
+        if (!loaded || loaded.batch.status !== 'processing') {
+            throw new AlertConflictError('Batch is no longer processing; automatic recovery owns it now');
+        }
+        await pgboss.send(ALERT_JOBS.processBatch, { batchId: deadLetter.batch_id, organizationId: orgId }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 });
+        await this.repo.markDeadLetterRetried(id);
+        this.audit(orgId, meta, 'alert_dead_letter.retried', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
+        return { id, batchId: deadLetter.batch_id, retried: true };
+    }
+    async discardDeadLetter(orgId, meta, id) {
+        const deadLetter = await this.repo.findDeadLetterById(orgId, id);
+        if (!deadLetter)
+            throw new AlertNotFoundError('Dead-letter event');
+        if (deadLetter.status === 'discarded')
+            return; // idempotent
+        await this.repo.discardDeadLetter(orgId, id, meta.actorUserId);
+        this.audit(orgId, meta, 'alert_dead_letter.discarded', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
     }
     async acknowledgeEvent(orgId, meta, id, body) {
         const expiresAt = body.expiresInMinutes ? new Date(Date.now() + body.expiresInMinutes * 60_000) : null;
@@ -150,12 +189,24 @@ export class EventsService {
     }
     eventToDto(e) {
         return {
-            id: e.id, organizationId: e.organization_id, ruleId: e.rule_id, status: e.status, severity: e.severity,
+            id: e.id, organizationId: e.organization_id, ruleId: e.rule_id, projectId: e.project_id,
+            status: e.status, severity: e.severity,
             fingerprint: e.fingerprint, source: e.source, sourceId: e.source_id, payload: e.payload,
             duplicateCount: e.duplicate_count, startedAt: e.started_at, endedAt: e.ended_at,
             acknowledgedBy: e.acknowledged_by, acknowledgedAt: e.acknowledged_at,
             resolvedBy: e.resolved_by, resolvedAt: e.resolved_at, resolutionReason: e.resolution_reason,
             labels: e.labels, annotations: e.annotations, createdAt: e.created_at,
+        };
+    }
+    deadLetterToDto(d) {
+        return {
+            id: d.id, organizationId: d.organization_id, sourceQueue: d.source_queue,
+            pgBossJobId: d.pg_boss_job_id, batchId: d.batch_id, eventIds: d.event_ids,
+            jobPayload: d.job_payload, errorMessage: d.error_message, status: d.status,
+            retryCount: d.retry_count, maxRetries: d.max_retries,
+            lastRetryAt: d.last_retry_at, retriedAt: d.retried_at,
+            discardedAt: d.discarded_at, discardedBy: d.discarded_by,
+            metadata: d.metadata, createdAt: d.created_at, updatedAt: d.updated_at,
         };
     }
     silenceToDto(s) {

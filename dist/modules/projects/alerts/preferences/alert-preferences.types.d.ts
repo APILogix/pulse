@@ -1,30 +1,71 @@
 import { z } from "zod";
+import { type AlertCategory } from "../subscriptions/connector-subscription.types.js";
+export declare const NotificationChannelSchema: z.ZodEnum<{
+    push: "push";
+    sms: "sms";
+    email: "email";
+    webhook: "webhook";
+    slack: "slack";
+}>;
+export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
-    is_subscribed: z.ZodOptional<z.ZodBoolean>;
-    min_severity: z.ZodOptional<z.ZodEnum<{
+    enabled: z.ZodOptional<z.ZodBoolean>;
+    severity_threshold: z.ZodOptional<z.ZodEnum<{
         error: "error";
         info: "info";
         warning: "warning";
         critical: "critical";
     }>>;
-    quiet_hours_start: z.ZodOptional<z.ZodString>;
-    quiet_hours_end: z.ZodOptional<z.ZodString>;
+    digest_mode: z.ZodOptional<z.ZodString>;
+    quiet_hours: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
 }, z.core.$strip>;
 export type UpdateAlertPreferenceBody = z.infer<typeof UpdateAlertPreferenceBodySchema>;
 export declare const BulkSubscribeBodySchema: z.ZodObject<{
-    routeId: z.ZodString;
+    channel: z.ZodEnum<{
+        push: "push";
+        sms: "sms";
+        email: "email";
+        webhook: "webhook";
+        slack: "slack";
+    }>;
+    category: z.ZodEnum<{
+        error: "error";
+        release: "release";
+        security: "security";
+        billing: "billing";
+        ai: "ai";
+        usage: "usage";
+        deployment: "deployment";
+        performance: "performance";
+        cron: "cron";
+    }>;
     userIds: z.ZodArray<z.ZodString>;
 }, z.core.$strip>;
 export type BulkSubscribeBody = z.infer<typeof BulkSubscribeBodySchema>;
-export interface ProjectMemberAlertPreference {
+export interface ProjectMemberNotificationPreference {
     id: string;
     projectId: string;
     userId: string;
-    routeId: string;
-    isSubscribed: boolean;
-    minSeverity: string;
-    quietHoursStart: string | null;
-    quietHoursEnd: string | null;
+    channel: NotificationChannel;
+    category: AlertCategory;
+    enabled: boolean;
+    severityThreshold: string;
+    digestMode: string;
+    quietHours: Record<string, unknown> | null;
+    createdAt: Date;
+    updatedAt: Date;
+}
+export interface ProjectNotificationPreference {
+    id: string;
+    projectId: string;
+    organizationId: string;
+    category: AlertCategory;
+    enabled: boolean;
+    severityThreshold: string;
+    connectorIds: string[];
+    memberIds: string[];
+    quietHours: Record<string, unknown> | null;
+    digestMode: string;
     createdAt: Date;
     updatedAt: Date;
 }

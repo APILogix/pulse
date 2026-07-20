@@ -1,7 +1,7 @@
 import { authenticate } from '../../../shared/middleware/auth.js';
 import { requireOrgAccess } from '../../../shared/middleware/requireorg.js';
 import { AppError } from '../../../shared/errors/app-error.js';
-import { AcknowledgeEventSchema, CreateEscalationPolicySchema, CreateRoutingRuleSchema, CreateRuleSchema, CreateSilenceSchema, CreateTemplateSchema, IngestEventSchema, ListEventsQuerySchema, ListRulesQuerySchema, ListSilencesQuerySchema, MetricsQuerySchema, OrgEventParamsSchema, OrgIdParamsSchema, OrgPolicyParamsSchema, OrgRuleParamsSchema, PaginationSchema, PreviewTemplateSchema, ResolveEventSchema, SilenceFromEventSchema, TestRoutingSchema, TestRuleSchema, UpsertEscalationStepSchema, UpdateRuleSchema, } from '../types.js';
+import { AcknowledgeEventSchema, CreateEscalationPolicySchema, CreateRoutingRuleSchema, CreateRuleSchema, CreateSilenceSchema, CreateTemplateSchema, IngestEventSchema, ListDeadLettersQuerySchema, ListEventsQuerySchema, ListRulesQuerySchema, ListSilencesQuerySchema, MetricsQuerySchema, OrgEventParamsSchema, OrgIdParamsSchema, OrgPolicyParamsSchema, OrgRuleParamsSchema, PaginationSchema, PreviewTemplateSchema, ResolveEventSchema, SilenceFromEventSchema, TestRoutingSchema, TestRuleSchema, UpsertEscalationStepSchema, UpdateRuleSchema, } from '../types.js';
 function buildMeta(request) {
     const ua = request.headers['user-agent'];
     return {
@@ -74,6 +74,25 @@ export async function eventsRoutes(fastify) {
     fastify.get('/events/:id/deliveries', guard, withErrorHandling(async (request, reply) => {
         const { orgId, id } = OrgEventParamsSchema.parse(request.params);
         return reply.send({ success: true, data: await svc.getEventDeliveries(orgId, id) });
+    }));
+    // ═══════════════════ DEAD-LETTER QUEUE (ADMIN) ═══════════════════
+    // Failed batch jobs land here after pg-boss retries are exhausted. Operators
+    // can inspect them, manually re-drive a still-processing batch, or discard
+    // entries whose events were already recovered by the orphan sweeper.
+    fastify.get('/dead-letters', guard, withErrorHandling(async (request, reply) => {
+        const { orgId } = OrgIdParamsSchema.parse(request.params);
+        const query = ListDeadLettersQuerySchema.parse(request.query ?? {});
+        const result = await svc.listDeadLetters(orgId, query);
+        return reply.send({ success: true, data: result.data, meta: { total: result.total, limit: query.limit, offset: query.offset } });
+    }));
+    fastify.post('/dead-letters/:id/retry', guard, withErrorHandling(async (request, reply) => {
+        const { orgId, id } = OrgEventParamsSchema.parse(request.params);
+        return reply.send({ success: true, data: await svc.retryDeadLetter(orgId, buildMeta(request), id) });
+    }));
+    fastify.delete('/dead-letters/:id', guard, withErrorHandling(async (request, reply) => {
+        const { orgId, id } = OrgEventParamsSchema.parse(request.params);
+        await svc.discardDeadLetter(orgId, buildMeta(request), id);
+        return reply.send({ success: true });
     }));
     // ═══════════════════ SILENCES ═══════════════════
     // ═══════════════════ ESCALATION POLICIES ═══════════════════

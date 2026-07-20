@@ -40,5 +40,7 @@ export declare class PoliciesRepository {
         isActive: boolean;
     }): Promise<AlertEscalationStepRow>;
     listEscalationSteps(policyId: string): Promise<AlertEscalationStepRow[]>;
+    /** Bulk-load active steps for many policies in ONE query (batch/escalation workers). */
+    listEscalationStepsByPolicyIds(policyIds: string[]): Promise<AlertEscalationStepRow[]>;
 }
 //# sourceMappingURL=policies.repository.d.ts.map

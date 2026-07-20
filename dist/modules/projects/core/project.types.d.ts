@@ -1,7 +1,12 @@
 import { z } from "zod";
-import { type ProjectEnvironment } from "../environments/environment.types.js";
 import type { ProjectSettings } from "../settings/settings.types.js";
 import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../activity/activity.types.js";
+export declare const ProjectVisibilitySchema: z.ZodEnum<{
+    public: "public";
+    private: "private";
+    organization: "organization";
+}>;
+export type ProjectVisibility = z.infer<typeof ProjectVisibilitySchema>;
 export declare const ProjectStatusSchema: z.ZodEnum<{
     active: "active";
     archived: "archived";
@@ -23,11 +28,6 @@ export declare const ListProjectsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, 
         archived: "archived";
         paused: "paused";
     }>>;
-    environment: z.ZodOptional<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
-    }>>;
     search: z.ZodOptional<z.ZodString>;
     includeDeleted: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
@@ -35,8 +35,8 @@ export declare const ListProjectsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, 
     offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     sortBy: z.ZodDefault<z.ZodEnum<{
         name: "name";
-        updated_at: "updated_at";
         created_at: "created_at";
+        updated_at: "updated_at";
     }>>;
     sortOrder: z.ZodDefault<z.ZodEnum<{
         asc: "asc";
@@ -44,79 +44,27 @@ export declare const ListProjectsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, 
     }>>;
 }, z.core.$strip>>;
 export type ListProjectsQuery = z.infer<typeof ListProjectsQuerySchema>;
-export declare const projectConfigShape: {
-    readonly rateLimitPerSecond: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly rateLimitPerMinute: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly rateLimitPerHour: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly burstLimit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    readonly maxEventSizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly maxBatchSize: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    readonly requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    readonly ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    readonly ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    readonly geoRestrictionEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    readonly allowedCountries: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>>;
-    readonly alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly alertOnErrorRateThreshold: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly alertOnLatencyThresholdMs: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    readonly metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    readonly settings: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-};
 export declare const CreateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    rateLimitPerSecond: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    burstLimit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    maxEventSizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    maxBatchSize: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    geoRestrictionEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    allowedCountries: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>>;
-    alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertOnErrorRateThreshold: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    alertOnLatencyThresholdMs: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    settings: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     name: z.ZodString;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    environment: z.ZodDefault<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
+    visibility: z.ZodDefault<z.ZodEnum<{
+        public: "public";
+        private: "private";
+        organization: "organization";
     }>>;
-    productionApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    developmentApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    stagingApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    status: z.ZodDefault<z.ZodEnum<{
+        active: "active";
+        archived: "archived";
+        paused: "paused";
+    }>>;
+    timezone: z.ZodDefault<z.ZodString>;
+    tags: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
 }, z.core.$strip>>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    rateLimitPerSecond: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    burstLimit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    maxEventSizeBytes: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    maxBatchSize: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    geoRestrictionEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    allowedCountries: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodPipe<z.ZodString, z.ZodTransform<string, string>>>>>;
-    alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertOnErrorRateThreshold: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    alertOnLatencyThresholdMs: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    settings: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     name: z.ZodOptional<z.ZodString>;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     status: z.ZodOptional<z.ZodEnum<{
@@ -124,14 +72,16 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
         archived: "archived";
         paused: "paused";
     }>>;
-    environment: z.ZodOptional<z.ZodEnum<{
-        development: "development";
-        staging: "staging";
-        production: "production";
+    visibility: z.ZodOptional<z.ZodEnum<{
+        public: "public";
+        private: "private";
+        organization: "organization";
     }>>;
-    productionApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    developmentApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    stagingApiPrefix: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    timezone: z.ZodOptional<z.ZodString>;
+    tags: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
 }, z.core.$strip>>;
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 export interface Project {
@@ -141,34 +91,18 @@ export interface Project {
     slug: string;
     description: string | null;
     status: ProjectStatus;
-    environment: ProjectEnvironment;
-    productionApiPrefix: string | null;
-    developmentApiPrefix: string | null;
-    stagingApiPrefix: string | null;
-    rateLimitPerSecond: number;
-    rateLimitPerMinute: number;
-    rateLimitPerHour: number;
-    burstLimit: number;
-    allowedEventTypes: string[];
-    maxEventSizeBytes: number;
-    maxBatchSize: number;
-    allowedOrigins: string[];
-    requireHttps: boolean;
-    ipAllowlist: string[] | null;
-    ipBlocklist: string[] | null;
-    geoRestrictionEnabled: boolean;
-    allowedCountries: string[] | null;
-    alertEmail: string | null;
-    alertWebhookUrl: string | null;
-    alertOnErrorRateThreshold: number;
-    alertOnLatencyThresholdMs: number;
+    visibility: ProjectVisibility;
+    timezone: string;
+    tags: string[];
+    icon: string | null;
+    color: string | null;
     metadata: Record<string, unknown>;
-    settings: Record<string, unknown>;
     archivedAt: Date | null;
     deletedAt: Date | null;
     deletedBy: string | null;
     createdAt: Date;
     updatedAt: Date;
+    version: number;
 }
 export interface ProjectListItem extends Project {
     apiKeysCount: number;
@@ -183,27 +117,38 @@ export interface ProjectStats {
 export interface ProjectWithStats extends Project {
     stats: ProjectStats;
 }
-export declare enum ProjectMemberRole {
-    OWNER = "owner",
-    ADMIN = "admin",
-    DEVELOPER = "developer",
-    VIEWER = "viewer"
-}
+export declare const ProjectMemberRole: {
+    readonly OWNER: "owner";
+    readonly ADMIN: "admin";
+    readonly DEVELOPER: "developer";
+    readonly QA: "qa";
+    readonly VIEWER: "viewer";
+};
+export type ProjectMemberRole = typeof ProjectMemberRole[keyof typeof ProjectMemberRole];
+export declare const ProjectMemberRoleSchema: z.ZodEnum<{
+    admin: "admin";
+    owner: "owner";
+    developer: "developer";
+    viewer: "viewer";
+    qa: "qa";
+}>;
 export interface ProjectMember {
     id: string;
     projectId: string;
     userId: string;
     organizationId: string;
     role: ProjectMemberRole;
-    status: string;
-    invitedBy: string | null;
-    invitedAt: Date | null;
-    joinedAt: Date | null;
+    roleId: string | null;
+    status: 'pending' | 'active' | 'inactive' | 'removed';
+    addedByUserId: string | null;
+    addedAt: Date;
+    removedByUserId: string | null;
+    removedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
 }
 export interface ProjectOverviewDto {
-    project: any;
+    project: Project;
     settings: ProjectSettings;
     memberCount: number;
     apiKeyCount: number;
@@ -223,29 +168,198 @@ export interface ProjectUpdateInput {
     name?: string;
     description?: string | null;
     status?: ProjectStatus;
-    environment?: ProjectEnvironment;
-    productionApiPrefix?: string | null;
-    developmentApiPrefix?: string | null;
-    stagingApiPrefix?: string | null;
-    rateLimitPerSecond?: number;
-    rateLimitPerMinute?: number;
-    rateLimitPerHour?: number;
-    burstLimit?: number;
-    allowedEventTypes?: string[];
-    maxEventSizeBytes?: number;
-    maxBatchSize?: number;
-    allowedOrigins?: string[];
-    requireHttps?: boolean;
-    ipAllowlist?: string[] | null;
-    ipBlocklist?: string[] | null;
-    geoRestrictionEnabled?: boolean;
-    allowedCountries?: string[] | null;
-    alertEmail?: string | null;
-    alertWebhookUrl?: string | null;
-    alertOnErrorRateThreshold?: number;
-    alertOnLatencyThresholdMs?: number;
+    visibility?: ProjectVisibility;
+    timezone?: string;
+    tags?: string[];
+    icon?: string | null;
+    color?: string | null;
     metadata?: Record<string, unknown>;
-    settings?: Record<string, unknown>;
     archivedAt?: Date | null;
 }
+export declare const ProjectMemberStatusSchema: z.ZodEnum<{
+    active: "active";
+    inactive: "inactive";
+    removed: "removed";
+    pending: "pending";
+}>;
+export type ProjectMemberStatus = z.infer<typeof ProjectMemberStatusSchema>;
+export declare const InvitationStatusSchema: z.ZodEnum<{
+    expired: "expired";
+    pending: "pending";
+    cancelled: "cancelled";
+    accepted: "accepted";
+    declined: "declined";
+}>;
+export type InvitationStatus = z.infer<typeof InvitationStatusSchema>;
+export interface ProjectMember {
+    id: string;
+    projectId: string;
+    userId: string;
+    organizationId: string;
+    role: ProjectMemberRole;
+    roleId: string | null;
+    status: ProjectMemberStatus;
+    addedByUserId: string | null;
+    addedAt: Date;
+    removedByUserId: string | null;
+    removedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+    user: {
+        id: string;
+        email: string;
+        fullName: string;
+    } | undefined;
+}
+export interface ProjectMemberInvitation {
+    id: string;
+    projectId: string;
+    organizationId: string;
+    email: string;
+    invitedByUserId: string;
+    invitedUserId: string | null;
+    role: ProjectMemberRole;
+    status: InvitationStatus;
+    expiresAt: Date;
+    acceptedAt: Date | null;
+    declinedAt: Date | null;
+    cancelledAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+}
+export interface ProjectRole {
+    id: string;
+    projectId: string | null;
+    organizationId: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    isSystem: boolean;
+    isDefault: boolean;
+    permissions: string[];
+    createdAt: Date;
+    updatedAt: Date;
+}
+export declare const ProjectMemberParamsSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    projectId: z.ZodString;
+    memberId: z.ZodString;
+}, z.core.$strip>;
+export declare const ProjectRoleParamsSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    projectId: z.ZodString;
+    roleId: z.ZodString;
+}, z.core.$strip>;
+export declare const ProjectInvitationParamsSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    projectId: z.ZodString;
+    invitationId: z.ZodString;
+}, z.core.$strip>;
+export declare const ListProjectMembersQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    status: z.ZodOptional<z.ZodEnum<{
+        active: "active";
+        inactive: "inactive";
+        removed: "removed";
+        pending: "pending";
+    }>>;
+    role: z.ZodOptional<z.ZodEnum<{
+        admin: "admin";
+        owner: "owner";
+        developer: "developer";
+        viewer: "viewer";
+        qa: "qa";
+    }>>;
+    search: z.ZodOptional<z.ZodString>;
+    page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    sortBy: z.ZodDefault<z.ZodEnum<{
+        role: "role";
+        created_at: "created_at";
+        updated_at: "updated_at";
+    }>>;
+    sortOrder: z.ZodDefault<z.ZodEnum<{
+        asc: "asc";
+        desc: "desc";
+    }>>;
+}, z.core.$strip>>;
+export type ListProjectMembersQuery = z.infer<typeof ListProjectMembersQuerySchema>;
+export declare const ListProjectInvitationsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    status: z.ZodOptional<z.ZodEnum<{
+        expired: "expired";
+        pending: "pending";
+        cancelled: "cancelled";
+        accepted: "accepted";
+        declined: "declined";
+    }>>;
+    email: z.ZodOptional<z.ZodString>;
+    page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    sortBy: z.ZodDefault<z.ZodEnum<{
+        expires_at: "expires_at";
+        created_at: "created_at";
+        updated_at: "updated_at";
+    }>>;
+    sortOrder: z.ZodDefault<z.ZodEnum<{
+        asc: "asc";
+        desc: "desc";
+    }>>;
+}, z.core.$strip>>;
+export type ListProjectInvitationsQuery = z.infer<typeof ListProjectInvitationsQuerySchema>;
+export declare const AddProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    userId: z.ZodString;
+    role: z.ZodDefault<z.ZodEnum<{
+        admin: "admin";
+        owner: "owner";
+        developer: "developer";
+        viewer: "viewer";
+        qa: "qa";
+    }>>;
+}, z.core.$strip>>;
+export type AddProjectMemberBody = z.infer<typeof AddProjectMemberBodySchema>;
+export declare const UpdateProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    role: z.ZodEnum<{
+        admin: "admin";
+        owner: "owner";
+        developer: "developer";
+        viewer: "viewer";
+        qa: "qa";
+    }>;
+}, z.core.$strip>>;
+export type UpdateProjectMemberBody = z.infer<typeof UpdateProjectMemberBodySchema>;
+export declare const InviteProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    email: z.ZodString;
+    role: z.ZodDefault<z.ZodEnum<{
+        admin: "admin";
+        owner: "owner";
+        developer: "developer";
+        viewer: "viewer";
+        qa: "qa";
+    }>>;
+}, z.core.$strip>>;
+export type InviteProjectMemberBody = z.infer<typeof InviteProjectMemberBodySchema>;
+export declare const AcceptProjectInvitationBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    token: z.ZodString;
+}, z.core.$strip>>;
+export type AcceptProjectInvitationBody = z.infer<typeof AcceptProjectInvitationBodySchema>;
+export declare const CreateProjectRoleBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    name: z.ZodString;
+    slug: z.ZodString;
+    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    permissions: z.ZodDefault<z.ZodArray<z.ZodString>>;
+    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
+}, z.core.$strip>>;
+export type CreateProjectRoleBody = z.infer<typeof CreateProjectRoleBodySchema>;
+export declare const UpdateProjectRoleBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    name: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    permissions: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
+}, z.core.$strip>>;
+export type UpdateProjectRoleBody = z.infer<typeof UpdateProjectRoleBodySchema>;
+export declare const TransferOwnershipBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    newOwnerUserId: z.ZodString;
+}, z.core.$strip>>;
+export type TransferOwnershipBody = z.infer<typeof TransferOwnershipBodySchema>;
 //# sourceMappingURL=project.types.d.ts.map

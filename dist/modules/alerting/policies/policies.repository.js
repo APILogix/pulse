@@ -71,5 +71,14 @@ export class PoliciesRepository {
         const r = await this.db.query(`SELECT * FROM alert_escalation_steps WHERE policy_id=$1 ORDER BY step_number ASC`, [policyId]);
         return r.rows;
     }
+    /** Bulk-load active steps for many policies in ONE query (batch/escalation workers). */
+    async listEscalationStepsByPolicyIds(policyIds) {
+        if (policyIds.length === 0)
+            return [];
+        const r = await this.db.query(`SELECT * FROM alert_escalation_steps
+       WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE
+       ORDER BY policy_id, step_number ASC`, [policyIds]);
+        return r.rows;
+    }
 }
 //# sourceMappingURL=policies.repository.js.map

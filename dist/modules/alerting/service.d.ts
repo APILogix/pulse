@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from './repository.js';
 import type { RequestMeta } from './types.js';
-import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
+import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, ListDeadLettersQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
 export * from './rules/rules.service.js';
 export * from './events/events.service.js';
 export * from './silences/silences.service.js';
@@ -43,6 +43,12 @@ export declare class AlertingService {
     acknowledgeEvent(orgId: string, meta: RequestMeta, id: string, body: AcknowledgeEventBody): Promise<Promise<Record<string, unknown>>>;
     resolveEvent(orgId: string, meta: RequestMeta, id: string, body: ResolveEventBody): Promise<Promise<Record<string, unknown>>>;
     silenceFromEvent(orgId: string, meta: RequestMeta, id: string, durationMinutes: number, comment: string | null): Promise<Promise<Record<string, unknown>>>;
+    listDeadLetters(orgId: string, query: ListDeadLettersQuery): Promise<Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>>;
+    retryDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Promise<Record<string, unknown>>>;
+    discardDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Promise<void>>;
     createSilence(orgId: string, meta: RequestMeta, body: CreateSilenceBody): Promise<Promise<Record<string, unknown>>>;
     listSilences(orgId: string, active: boolean | undefined, limit: number, offset: number): Promise<Promise<{
         data: Record<string, unknown>[];

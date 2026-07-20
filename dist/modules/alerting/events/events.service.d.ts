@@ -14,7 +14,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from '../repository.js';
-import { type AcknowledgeEventBody, type IngestEventBody, type ListEventsQuery, type RequestMeta, type ResolveEventBody } from '../types.js';
+import { type AcknowledgeEventBody, type IngestEventBody, type ListDeadLettersQuery, type ListEventsQuery, type RequestMeta, type ResolveEventBody } from '../types.js';
 export interface AlertingServiceDeps {
     repository: AlertingRepository;
     logger: FastifyBaseLogger;
@@ -30,6 +30,17 @@ export declare class EventsService {
     }>;
     getEvent(orgId: string, id: string): Promise<Record<string, unknown>>;
     getEventDeliveries(orgId: string, id: string): Promise<Record<string, unknown>[]>;
+    listDeadLetters(orgId: string, query: ListDeadLettersQuery): Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>;
+    /**
+     * Manual re-drive of a dead-lettered batch job. Only allowed while the batch
+     * is still `processing` — once it has moved on, the orphan sweeper / normal
+     * recovery owns the events and re-sending would double-deliver.
+     */
+    retryDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<Record<string, unknown>>;
+    discardDeadLetter(orgId: string, meta: RequestMeta, id: string): Promise<void>;
     acknowledgeEvent(orgId: string, meta: RequestMeta, id: string, body: AcknowledgeEventBody): Promise<Record<string, unknown>>;
     resolveEvent(orgId: string, meta: RequestMeta, id: string, body: ResolveEventBody): Promise<Record<string, unknown>>;
     silenceFromEvent(orgId: string, meta: RequestMeta, id: string, durationMinutes: number, comment: string | null): Promise<Record<string, unknown>>;
@@ -38,6 +49,7 @@ export declare class EventsService {
     private requireEvent;
     private audit;
     private eventToDto;
+    private deadLetterToDto;
     private silenceToDto;
 }
 //# sourceMappingURL=events.service.d.ts.map

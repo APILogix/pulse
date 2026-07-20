@@ -53,7 +53,7 @@ export const SlackConfigSchema = z.object({
     message: 'Slack connector requires webhookUrl or botToken',
 });
 export const DiscordConfigSchema = z.object({
-    webhookUrl: z.string().url().refine((u) => {
+    webhookUrl: z.string().url().startsWith('https://').refine((u) => {
         try {
             const h = new URL(u).hostname.toLowerCase();
             return h === 'discord.com' || h.endsWith('.discord.com') ||
@@ -67,7 +67,7 @@ export const DiscordConfigSchema = z.object({
     avatarUrl: z.string().url().optional(),
 }).strict();
 export const TeamsConfigSchema = z.object({
-    webhookUrl: z.string().url().refine((u) => {
+    webhookUrl: z.string().url().startsWith('https://').refine((u) => {
         try {
             const h = new URL(u).hostname.toLowerCase();
             return h === 'office.com' || h.endsWith('.office.com') ||

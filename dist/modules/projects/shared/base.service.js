@@ -6,7 +6,7 @@ import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
+import { hasRequiredRole, ProjectError, slugifyProjectName, validateStatusTransition, isReservedProjectSlug, } from "../shared/utils.js";
 // Per-key defaults used when warming the cache. Aligned with the ingestion
 // service defaults so a key gets the same limit regardless of which path warmed
 // the cache. A per-key override (if set) takes precedence.
@@ -23,6 +23,7 @@ const ROLE_HIERARCHY = {
     [ProjectMemberRole.OWNER]: 4,
     [ProjectMemberRole.ADMIN]: 3,
     [ProjectMemberRole.DEVELOPER]: 2,
+    [ProjectMemberRole.QA]: 2,
     [ProjectMemberRole.VIEWER]: 1,
 };
 export function hasProjectRole(userRole, required) {
@@ -86,24 +87,20 @@ export class BaseProjectService {
         const project = await this.repository.findProjectById(orgId, projectId);
         if (!project)
             throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
-        if (requiredRole === "owner" || requiredRole === "admin" || requiredRole === "member" || requiredRole === "billing") {
+        // Org-only roles (member, billing, security) are governed by organization
+        // membership. Every project-level role requires an explicit project_members
+        // row; organization ownership/adminship is not sufficient by itself.
+        const orgOnlyRoles = ["member", "billing", "security"];
+        if (orgOnlyRoles.includes(requiredRole)) {
             await this.requireOrganizationAccess(orgId, userId, requiredRole);
             return project;
         }
-        try {
-            await this.requireOrganizationAccess(orgId, userId);
+        const userProjectRole = await this.repository.getProjectMemberRole(orgId, projectId, userId);
+        if (!userProjectRole) {
+            throw new ProjectError("INSUFFICIENT_PERMISSIONS", "You do not have access to this project", 403);
         }
-        catch (err) {
-            throw err;
-        }
-        if (this.repository.getProjectMemberRole) {
-            const userProjectRole = await this.repository.getProjectMemberRole(orgId, projectId, userId);
-            if (userProjectRole) {
-                if (!hasProjectRole(userProjectRole, requiredRole)) {
-                    throw new ProjectError("FORBIDDEN", "Insufficient project role", 403);
-                }
-                return project;
-            }
+        if (!hasProjectRole(userProjectRole, requiredRole)) {
+            throw new ProjectError("INSUFFICIENT_PERMISSIONS", "Insufficient project role", 403);
         }
         return project;
     }
@@ -149,51 +146,12 @@ export class BaseProjectService {
         return entitlements;
     }
     // ── Internal helpers ────────────────────────────────────────────────────────
-    assignProjectConfig(target, body) {
-        if (body.rateLimitPerSecond !== undefined)
-            target.rateLimitPerSecond = body.rateLimitPerSecond;
-        if (body.rateLimitPerMinute !== undefined)
-            target.rateLimitPerMinute = body.rateLimitPerMinute;
-        if (body.rateLimitPerHour !== undefined)
-            target.rateLimitPerHour = body.rateLimitPerHour;
-        if (body.burstLimit !== undefined)
-            target.burstLimit = body.burstLimit;
-        if (body.allowedEventTypes !== undefined)
-            target.allowedEventTypes = body.allowedEventTypes;
-        if (body.maxEventSizeBytes !== undefined)
-            target.maxEventSizeBytes = body.maxEventSizeBytes;
-        if (body.maxBatchSize !== undefined)
-            target.maxBatchSize = body.maxBatchSize;
-        if (body.allowedOrigins !== undefined)
-            target.allowedOrigins = body.allowedOrigins;
-        if (body.requireHttps !== undefined)
-            target.requireHttps = body.requireHttps;
-        if (body.ipAllowlist !== undefined)
-            target.ipAllowlist = body.ipAllowlist;
-        if (body.ipBlocklist !== undefined)
-            target.ipBlocklist = body.ipBlocklist;
-        if (body.geoRestrictionEnabled !== undefined)
-            target.geoRestrictionEnabled = body.geoRestrictionEnabled;
-        if (body.allowedCountries !== undefined)
-            target.allowedCountries = body.allowedCountries;
-        if (body.alertEmail !== undefined)
-            target.alertEmail = body.alertEmail;
-        if (body.alertWebhookUrl !== undefined)
-            target.alertWebhookUrl = body.alertWebhookUrl;
-        if (body.alertOnErrorRateThreshold !== undefined)
-            target.alertOnErrorRateThreshold = body.alertOnErrorRateThreshold;
-        if (body.alertOnLatencyThresholdMs !== undefined)
-            target.alertOnLatencyThresholdMs = body.alertOnLatencyThresholdMs;
-        if (body.metadata !== undefined)
-            target.metadata = body.metadata;
-        if (body.settings !== undefined)
-            target.settings = body.settings;
-    }
     async generateUniqueSlug(orgId, name) {
         const baseSlug = slugifyProjectName(name);
         let candidate = baseSlug;
         let suffix = 1;
-        while (await this.repository.findProjectBySlug(orgId, candidate)) {
+        while (isReservedProjectSlug(candidate) ||
+            (await this.repository.findProjectBySlug(orgId, candidate))) {
             candidate = `${baseSlug}-${suffix}`;
             suffix += 1;
         }

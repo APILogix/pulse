@@ -404,7 +404,18 @@ export class EventAnalyticsRepository {
         const r = await this.db.query(`SELECT DISTINCT organization_id FROM events_errors WHERE created_at > NOW() - ($1 || ' hours')::interval LIMIT 1000`, [String(sinceHours)]);
         return r.rows.map((row) => row.organization_id);
     }
-    /** Upsert error groups from recent error events (single statement). */
+    /**
+     * Reconcile error groups from recent error events (single statement).
+     *
+     * The ingestion worker's inline grouper owns occurrence counts in real time
+     * (analytics_error_groups.total_count etc. are incremented per inserted
+     * event). This periodic job must NOT add to counts — re-adding a trailing
+     * window's COUNT(*) double-counts on every overlapping run (it did even
+     * before inline grouping existed). It now only:
+     *   - INSERTs groups the inline path missed (e.g. grouping failed while the
+     *     event insert succeeded), with the window count as the initial total;
+     *   - refreshes descriptive fields and last_seen_at for existing groups.
+     */
     async refreshErrorGroups(orgId, sinceHours) {
         await this.db.query(`INSERT INTO analytics_error_groups
          (organization_id, project_id, fingerprint, error_name, message_template,
@@ -421,9 +432,12 @@ export class EventAnalyticsRepository {
        GROUP BY organization_id, project_id, fingerprint
        ON CONFLICT (organization_id, project_id, fingerprint) DO UPDATE SET
          last_seen_at = GREATEST(analytics_error_groups.last_seen_at, EXCLUDED.last_seen_at),
-         total_count = analytics_error_groups.total_count + EXCLUDED.total_count,
+         first_seen_at = LEAST(analytics_error_groups.first_seen_at, EXCLUDED.first_seen_at),
          error_name = EXCLUDED.error_name,
          message_template = EXCLUDED.message_template,
+         services = EXCLUDED.services,
+         environments = EXCLUDED.environments,
+         releases = EXCLUDED.releases,
          updated_at = NOW()`, [orgId, String(sinceHours)]);
     }
     async ping() {

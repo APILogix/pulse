@@ -1,3 +1,8 @@
+export declare const _testEncryptionCache: {
+    readonly size: number;
+    clear(): void;
+    setMax(max: number): void;
+};
 /**
  * Encrypt a UTF-8 string using AES-256-GCM with a per-record random scrypt
  * salt and IV.

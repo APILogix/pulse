@@ -1,21 +1,33 @@
 import { z } from "zod";
 import { normalizeObjectKeys, Ipv4OrV6 } from "../shared/schema-utils.js";
 
-export const ProjectEnvironmentSchema = z.enum([
+export const WellKnownEnvironmentSchema = z.enum([
   "development",
   "staging",
   "production",
+  "qa",
+  "testing",
+  "canary",
+  "sandbox",
 ]);
-export type ProjectEnvironment = z.infer<typeof ProjectEnvironmentSchema>;
+export type WellKnownEnvironment = z.infer<typeof WellKnownEnvironmentSchema>;
+
+export const EnvironmentNameSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/);
+export type EnvironmentName = z.infer<typeof EnvironmentNameSchema>;
 
 export const EnvironmentParamsSchema = z.object({
   orgId: z.string().uuid(),
   projectId: z.string().uuid(),
-  environment: ProjectEnvironmentSchema,
+  environmentId: z.string().uuid(),
 });
 
 export const environmentConfigShape = {
+  name: EnvironmentNameSchema,
+  description: z.string().max(2000).nullable().optional(),
+  color: z.string().max(20).nullable().optional(),
+  icon: z.string().max(255).nullable().optional(),
   isActive: z.coerce.boolean().optional(),
+  isDefault: z.coerce.boolean().optional(),
   rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
   rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
   rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
@@ -32,10 +44,7 @@ export const environmentConfigShape = {
 
 export const CreateEnvironmentBodySchema = z.preprocess(
   normalizeObjectKeys,
-  z.object({
-    environment: ProjectEnvironmentSchema,
-    ...environmentConfigShape,
-  }),
+  z.object(environmentConfigShape),
 );
 
 export const UpdateEnvironmentBodySchema = z.preprocess(
@@ -54,7 +63,12 @@ export interface ProjectEnvironmentConfig {
   id: string;
   projectId: string;
   orgId: string;
-  environment: ProjectEnvironment;
+  name: string;
+  slug: string;
+  description: string | null;
+  color: string | null;
+  icon: string | null;
+  isDefault: boolean;
   isActive: boolean;
   rateLimitPerSecond: number | null;
   rateLimitPerMinute: number | null;
@@ -68,7 +82,15 @@ export interface ProjectEnvironmentConfig {
   ipBlocklist: string[] | null;
   alertEmail: string | null;
   alertWebhookUrl: string | null;
-  createdBy: string | null;
+  createdByUserId: string | null;
+  createdByApiKeyId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt: Date | null;
+}
+
+export interface EnvironmentReference {
+  id: string;
+  name: string;
+  slug: string;
 }

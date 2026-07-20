@@ -10,8 +10,8 @@
  * - constantTimeEqualHex protects verification from timing leaks.
  *
  * Security: the raw API key exists only in the create/rotate response cycle.
- * We persist key_hash (sha256 hex) for verification and key_prefix for
- * candidate narrowing. Keys carry >= 24 bytes (48 hex chars) of entropy.
+ * We persist secret_hash (sha256 hex) for verification and public_key for
+ * candidate narrowing. Keys carry >= 20 bytes (40 hex chars) of entropy.
  */
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { FastifyReply } from "fastify";
@@ -19,7 +19,6 @@ import { ZodError } from "zod";
 import type {
   ApiKeyType,
   OrgRole,
-  ProjectEnvironment,
   ProjectStatus,
 } from "../types.js";
 
@@ -137,29 +136,19 @@ export function slugifyProjectName(name: string): string {
   return slug || `project-${randomBytes(3).toString("hex")}`;
 }
 
-/** Public prefix for keys minted in a given environment. */
-export function environmentKeyPrefix(environment: ProjectEnvironment): string {
-  switch (environment) {
-    case "production":
-      return "pk_live_";
-    case "staging":
-      return "pk_stg_";
-    case "development":
-    default:
-      return "pk_dev_";
-  }
+/** Public prefix for keys minted in a given environment slug. */
+export function environmentKeyPrefix(environment: string): string {
+  const slug = environment
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 20);
+  return `pk_${slug}_`;
 }
 
-export function buildApiPrefixes(): {
-  productionApiPrefix: string;
-  developmentApiPrefix: string;
-  stagingApiPrefix: string;
-} {
-  return {
-    productionApiPrefix: environmentKeyPrefix("production"),
-    developmentApiPrefix: environmentKeyPrefix("development"),
-    stagingApiPrefix: environmentKeyPrefix("staging"),
-  };
+export function buildApiPrefixes(): never {
+  throw new Error("buildApiPrefixes is obsolete; project rows no longer store API prefixes");
 }
 
 export function validateStatusTransition(
@@ -182,37 +171,42 @@ export function hashApiKey(rawKey: string): string {
 /**
  * Mint a new API key.
  *
- * Format: `pk_{env}_{40 hex}` (>= 20 bytes of entropy). Only the prefix (first
- * 16 chars, which includes the env discriminator) is stored in cleartext for
- * candidate narrowing; the rest is recoverable only via the returned fullKey.
+ * Format: `pk_{env_slug}_{8 hex}.{32 hex}` (>= 20 bytes of entropy). The
+ * segment before the dot is the public identifier; the full string is hashed
+ * for persistence.
  */
-export function createApiKey(environment: ProjectEnvironment): {
+export function createApiKey(environment: string): {
   fullKey: string;
-  keyPrefix: string;
-  keyHash: string;
+  publicKey: string;
+  secretHash: string;
 } {
-  const prefix = environmentKeyPrefix(environment);
-  const rawKey = `${prefix}${randomBytes(24).toString("hex")}`;
+  const envSlug = environment
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 20);
+  const publicKey = `pk_${envSlug}_${randomBytes(4).toString("hex")}`;
+  const secretSuffix = randomBytes(16).toString("hex");
+  const fullKey = `${publicKey}.${secretSuffix}`;
 
   return {
-    fullKey: rawKey,
-    keyPrefix: rawKey.slice(0, 16),
-    keyHash: hashApiKey(rawKey),
+    fullKey,
+    publicKey,
+    secretHash: hashApiKey(fullKey),
   };
 }
 
 export function extractApiKeyPrefix(rawKey: string): string | null {
   const value = rawKey.trim();
+  const dotIndex = value.indexOf(".");
+  const prefix = dotIndex >= 0 ? value.slice(0, dotIndex) : value;
 
-  if (
-    !value.startsWith("pk_live_") &&
-    !value.startsWith("pk_dev_") &&
-    !value.startsWith("pk_stg_")
-  ) {
+  if (!prefix.startsWith("pk_")) {
     return null;
   }
 
-  return value.length >= 16 ? value.slice(0, 16) : null;
+  return prefix.length >= 12 ? prefix : null;
 }
 
 export function constantTimeEqualHex(left: string, right: string): boolean {
@@ -231,12 +225,42 @@ export function defaultPermissionsForType(keyType: ApiKeyType): string[] {
   switch (keyType) {
     case "read_only":
       return ["ingest:read", "events:read", "metrics:read"];
-    case "ingestion_only":
+    case "write_only":
       return ["ingest:write"];
-    case "admin":
-      return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
-    case "standard":
-    default:
+    case "temporary":
       return ["ingest:write", "ingest:read"];
+    case "read_write":
+    default:
+      return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
   }
+}
+
+/**
+ * Reserved project slugs that are blocked at the application layer to prevent
+ * URL collisions, social-engineering subdomains, and confusion with platform
+ * routes. The database partial index enforces uniqueness; this set adds the
+ * reserved-name guard.
+ */
+const RESERVED_PROJECT_SLUGS = new Set([
+  "admin", "administrator", "api", "apis", "app", "apps", "application", "dashboard",
+  "login", "logout", "signin", "signout", "signup", "register", "auth", "authenticate",
+  "settings", "config", "configuration", "preferences", "profile", "account",
+  "projects", "project", "organizations", "organization", "org", "orgs", "billing",
+  "usage", "support", "help", "docs", "documentation", "status", "health", "ping",
+  "public", "static", "assets", "cdn", "webhook", "webhooks", "hook", "hooks",
+  "console", "portal", "home", "index", "main", "root", "service", "services",
+  "user", "users", "team", "teams", "invite", "invitation", "member", "members",
+  "role", "roles", "permission", "permissions", "policy", "policies",
+  "audit", "logs", "log", "analytics", "metrics", "events", "traces", "spans",
+  "alerts", "alert", "connector", "connectors", "integration", "integrations",
+  "sdk", "sdks", "release", "releases", "deployment", "deployments", "deploy",
+  "environment", "environments", "env", "envs", "api-key", "api-keys", "apikey",
+  "key", "keys", "secret", "secrets", "token", "tokens", "credential", "credentials",
+  "internal", "localhost", "test", "testing", "staging", "stage", "production",
+  "prod", "dev", "development", "demo", "sandbox", "beta", "alpha", "v1", "v2", "v3",
+  "www", "mail", "email", "ftp", "sftp", "ssh", "smtp", "imap", "pop", "ns1", "ns2",
+]);
+
+export function isReservedProjectSlug(slug: string): boolean {
+  return RESERVED_PROJECT_SLUGS.has(slug.toLowerCase().trim());
 }

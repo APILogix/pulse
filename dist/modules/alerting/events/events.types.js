@@ -11,9 +11,12 @@ export const BatchStatusSchema = z.enum(['pending', 'processing', 'completed', '
 export const HistoryActionSchema = z.enum([
     'triggered', 'acknowledged', 'resolved', 'escalated', 'suppressed', 'notified',
     'silenced', 'grouped', 'auto_resolved', 'rule_modified',
+    'escalation_step', 'throttled', 'dead_lettered', 'requeued',
 ]);
+export const DeadLetterStatusSchema = z.enum(['pending_retry', 'retried', 'exhausted', 'discarded']);
 export const IngestEventSchema = z.object({
     ruleId: UuidSchema.optional(),
+    projectId: UuidSchema.optional(),
     severity: AlertSeveritySchema,
     source: z.string().min(1).max(100),
     sourceId: z.string().max(255).optional(),
@@ -35,6 +38,9 @@ export const AcknowledgeEventSchema = z.object({
 export const ResolveEventSchema = z.object({
     reason: z.string().max(100).optional(),
     comment: z.string().max(2000).optional(),
+});
+export const ListDeadLettersQuerySchema = PaginationSchema.extend({
+    status: DeadLetterStatusSchema.optional(),
 });
 export const OrgEventParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema });
 //# sourceMappingURL=events.types.js.map

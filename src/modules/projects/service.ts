@@ -42,7 +42,6 @@ import type {
   ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
-  ProjectEnvironment,
   ProjectEnvironmentConfig,
   ProjectListItem,
   ProjectUsageCounter,
@@ -70,6 +69,12 @@ import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
+import { MemberRepository } from "./members/member.repository.js";
+import { ProjectMemberService } from "./members/member.service.js";
+import { ProjectConnectorSubscriptionService } from "./alerts/subscriptions/connector-subscription.service.js";
+import { ConnectorSubscriptionRepository } from "./alerts/subscriptions/connector-subscription.repository.js";
+import { UsageAnalyticsRepository } from "./usage/analytics.repository.js";
+import { UsageAnalyticsService } from "./usage/analytics.service.js";
 
 // Audit/request footprint passed from routes. Mirrors the organization
 // module's RequestMeta so audit rows are uniform across modules.
@@ -102,6 +107,7 @@ const ROLE_HIERARCHY: Record<ProjectMemberRole, number> = {
   [ProjectMemberRole.OWNER]: 4,
   [ProjectMemberRole.ADMIN]: 3,
   [ProjectMemberRole.DEVELOPER]: 2,
+  [ProjectMemberRole.QA]: 2,
   [ProjectMemberRole.VIEWER]: 1,
 };
 
@@ -116,6 +122,9 @@ export class ProjectsService {
     public readonly environments: EnvironmentService;
     public readonly apiKeys: ApiKeyService;
     public readonly base: BaseProjectService;
+    public readonly members: ProjectMemberService;
+    public readonly connectorSubscriptions: ProjectConnectorSubscriptionService;
+    public readonly analytics: UsageAnalyticsService;
 
   constructor(
     private readonly repository: ProjectsRepository,
@@ -135,7 +144,29 @@ export class ProjectsService {
           this.activity = new ProjectActivityService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
           this.environments = new EnvironmentService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
           this.apiKeys = new ApiKeyService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);}
+          this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          this.members = new ProjectMemberService({
+            repository,
+            membersRepository: new MemberRepository(),
+            logger,
+            orgRepo,
+            settingsRepository,
+            apiKeyRepository,
+            environmentRepository,
+            activityRepository,
+            usageRepository,
+          });
+          this.connectorSubscriptions = new ProjectConnectorSubscriptionService(
+            new ConnectorSubscriptionRepository(),
+            this.base,
+            orgRepo,
+            logger,
+          );
+          this.analytics = new UsageAnalyticsService(
+            new UsageAnalyticsRepository(),
+            this.base,
+            logger,
+          );}
 
   // ── Projects ────────────────────────────────────────────────────────────────
 
@@ -252,10 +283,10 @@ export class ProjectsService {
   async getEnvironment(
     orgId: string,
     projectId: string,
-    environment: ProjectEnvironment,
+    environmentId: string,
     userId: string,
   ): Promise<ProjectEnvironmentConfig> {
-      return this.environments.getEnvironment(orgId, projectId, environment, userId) as any;
+      return (this.environments as any).getEnvironment(orgId, projectId, environmentId, userId) as any;
   }
 
   async createEnvironment(
@@ -265,28 +296,28 @@ export class ProjectsService {
     body: CreateEnvironmentBody,
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
-      return this.environments.createEnvironment(orgId, projectId, userId, body, meta) as any;
+      return (this.environments as any).createEnvironment(orgId, projectId, userId, body, meta) as any;
   }
 
   async updateEnvironment(
     orgId: string,
     projectId: string,
-    environment: ProjectEnvironment,
+    environmentId: string,
     userId: string,
     body: UpdateEnvironmentBody,
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
-      return this.environments.updateEnvironment(orgId, projectId, environment, userId, body, meta) as any;
+      return (this.environments as any).updateEnvironment(orgId, projectId, environmentId, userId, body, meta) as any;
   }
 
   async deleteEnvironment(
     orgId: string,
     projectId: string,
-    environment: ProjectEnvironment,
+    environmentId: string,
     userId: string,
     meta: RequestMeta,
   ): Promise<void> {
-      return this.environments.deleteEnvironment(orgId, projectId, environment, userId, meta) as any;
+      return (this.environments as any).deleteEnvironment(orgId, projectId, environmentId, userId, meta) as any;
   }
 
   // ── API keys ─────────────────────────────────────────────────────────────
@@ -468,13 +499,6 @@ export class ProjectsService {
   }
 
   // ── Internal helpers ────────────────────────────────────────────────────────
-
-  private assignProjectConfig(
-    target: ProjectUpdateInput,
-    body: CreateProjectBody | UpdateProjectBody,
-  ): void {
-      this.base.assignProjectConfig(target, body);
-  }
 
   private async generateUniqueSlug(orgId: string, name: string): Promise<string> {
       return this.base.generateUniqueSlug(orgId, name) as any;

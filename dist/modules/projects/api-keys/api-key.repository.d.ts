@@ -1,48 +1,17 @@
 /**
- * Project repository.
+ * Project API key repository.
  *
  * Flow:
  * 1. Accept service-level identifiers and already-validated options.
- * 2. Execute parameterized SQL against projects, project_environments,
- *    project_api_keys, project_api_key_usage, and organization membership.
+ * 2. Execute parameterized SQL against project_api_keys and project_environments.
  * 3. Map snake_case rows into camelCase domain objects.
  * 4. Translate expected DB conflicts/misses into ProjectError with stable codes.
  *
- * Tenant isolation: every project/key query is scoped by org_id (and
- * project_id) so a caller can never read or mutate another org's data.
- * Soft delete: projects set deleted_at; all reads filter deleted_at IS NULL.
+ * Tenant isolation: every API key query is scoped by org_id (and project_id).
+ * Soft delete: API keys use deleted_at; reads filter deleted_at IS NULL.
  */
 import type { Pool, PoolClient } from "pg";
-import type { ApiKeyType, ListApiKeysQuery, Project, ProjectApiKey, ProjectApiKeyRecord, ProjectEnvironment, ProjectStatus } from "../types.js";
-export interface ProjectUpdateInput {
-    name?: string;
-    description?: string | null;
-    status?: ProjectStatus;
-    environment?: ProjectEnvironment;
-    productionApiPrefix?: string | null;
-    developmentApiPrefix?: string | null;
-    stagingApiPrefix?: string | null;
-    rateLimitPerSecond?: number;
-    rateLimitPerMinute?: number;
-    rateLimitPerHour?: number;
-    burstLimit?: number;
-    allowedEventTypes?: string[];
-    maxEventSizeBytes?: number;
-    maxBatchSize?: number;
-    allowedOrigins?: string[];
-    requireHttps?: boolean;
-    ipAllowlist?: string[] | null;
-    ipBlocklist?: string[] | null;
-    geoRestrictionEnabled?: boolean;
-    allowedCountries?: string[] | null;
-    alertEmail?: string | null;
-    alertWebhookUrl?: string | null;
-    alertOnErrorRateThreshold?: number;
-    alertOnLatencyThresholdMs?: number;
-    metadata?: Record<string, unknown>;
-    settings?: Record<string, unknown>;
-    archivedAt?: Date | null;
-}
+import type { ApiKeyType, ListApiKeysQuery, Project, ProjectApiKey, ProjectApiKeyRecord } from "../types.js";
 export interface ApiKeyUpdateInput {
     name?: string | null;
     description?: string | null;
@@ -52,14 +21,16 @@ export interface ApiKeyUpdateInput {
     permissions?: string[];
     allowedEndpoints?: string[];
     blockedEndpoints?: string[];
+    allowedEventTypes?: string[];
+    allowedOrigins?: string[];
+    allowedIps?: string[];
+    allowedDomains?: string[];
+    samplingRules?: Record<string, unknown>;
+    featureFlags?: Record<string, unknown>;
+    sdkConfig?: Record<string, unknown>;
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;
-}
-export interface ProjectModuleUsageCounts {
-    projects: number;
-    environments: number;
-    apiKeys: number;
 }
 export declare class ApiKeyRepository {
     private readonly db;
@@ -71,10 +42,10 @@ export declare class ApiKeyRepository {
     createApiKey(input: {
         projectId: string;
         orgId: string;
-        keyHash: string;
-        keyPrefix: string;
+        publicKey: string;
+        secretHash: string;
         keyType: ApiKeyType;
-        environment: ProjectEnvironment;
+        environmentId: string;
         name: string | null;
         description: string | null;
         createdBy: string;
@@ -84,15 +55,22 @@ export declare class ApiKeyRepository {
         permissions: string[];
         allowedEndpoints?: string[] | undefined;
         blockedEndpoints?: string[] | undefined;
+        allowedEventTypes?: string[] | undefined;
+        allowedOrigins?: string[] | undefined;
+        allowedIps?: string[] | undefined;
+        allowedDomains?: string[] | undefined;
+        samplingRules?: Record<string, unknown> | undefined;
+        featureFlags?: Record<string, unknown> | undefined;
+        sdkConfig?: Record<string, unknown> | undefined;
         rateLimitPerSecond?: number | null | undefined;
         rateLimitPerMinute?: number | null | undefined;
         rateLimitPerHour?: number | null | undefined;
         rotatedFromKeyId?: string | null | undefined;
     }, client?: PoolClient): Promise<ProjectApiKeyRecord>;
-    countActiveApiKeys(projectId: string, environment: ProjectEnvironment, client?: PoolClient): Promise<number>;
+    countActiveApiKeys(projectId: string, environmentId: string, client?: PoolClient): Promise<number>;
     findApiKeyById(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ProjectApiKey | null>;
     findApiKeyRecordById(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ProjectApiKeyRecord | null>;
-    listActiveApiKeyRecords(projectId: string, environment: ProjectEnvironment | undefined, client?: PoolClient): Promise<ProjectApiKeyRecord[]>;
+    listActiveApiKeyRecords(projectId: string, environmentId: string | undefined, client?: PoolClient): Promise<ProjectApiKeyRecord[]>;
     updateApiKey(projectId: string, apiKeyId: string, input: ApiKeyUpdateInput, client?: PoolClient): Promise<ProjectApiKey>;
     /** Enable/disable the fast ingestion gate and sync the lifecycle status. */
     setApiKeyActiveState(projectId: string, apiKeyId: string, isActive: boolean, client?: PoolClient): Promise<ProjectApiKey>;
@@ -107,13 +85,14 @@ export declare class ApiKeyRepository {
     /** All key hashes of a project, for cache eviction on pause/archive/delete. */
     listApiKeyHashesByProject(projectId: string, client?: PoolClient): Promise<string[]>;
     /**
-     * Candidate lookup for verification. Narrows by prefix to the small set of
+     * Candidate lookup for verification. Narrows by public_key to the small set of
      * keys that could match, then the service does the constant-time hash compare.
      * Includes keys that are active OR in a still-valid rotation grace window.
      */
-    findActiveApiKeyCandidatesByPrefix(keyPrefix: string, client?: PoolClient): Promise<Array<{
+    findActiveApiKeyCandidatesByPrefix(publicKey: string, client?: PoolClient): Promise<Array<{
         apiKey: ProjectApiKeyRecord;
         project: Project;
+        environmentName: string;
     }>>;
     getApiKeyUsageSummary(keyId: string, client?: PoolClient): Promise<{
         totalRequests: number;

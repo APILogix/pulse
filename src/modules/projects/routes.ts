@@ -47,6 +47,10 @@ import { projectActivityRoutes } from "./activity/activity.routes.js";
 import { projectEnvironmentRoutes } from "./environments/environment.routes.js";
 import { projectApiKeyRoutes } from "./api-keys/api-key.routes.js";
 
+import { projectMemberRoutes } from "./members/member.routes.js";
+import { projectConnectorSubscriptionRoutes } from "./alerts/subscriptions/connector-subscription.routes.js";
+import { projectAnalyticsRoutes } from "./usage/analytics.routes.js";
+
 export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   // ── Project CRUD ──────────────────────────────────────────────────────────
   // ── Project Settings & Overview ─────────────────────────────────────────────
@@ -55,9 +59,12 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   // Bulk operations are registered before the parameterized :apiKeyId routes so
   // "bulk-rotate"/"bulk-revoke" are never captured as an apiKeyId.
 
-        await fastify.register(projectCoreRoutes);
-        await fastify.register(projectSettingsRoutes);
-        await fastify.register(projectActivityRoutes);
-        await fastify.register(projectEnvironmentRoutes);
-        await fastify.register(projectApiKeyRoutes);
+  await fastify.register(projectAnalyticsRoutes);
+  await fastify.register(projectCoreRoutes);
+  await fastify.register(projectMemberRoutes);
+  await fastify.register(projectConnectorSubscriptionRoutes);
+  await fastify.register(projectSettingsRoutes);
+  await fastify.register(projectActivityRoutes);
+  await fastify.register(projectEnvironmentRoutes);
+  await fastify.register(projectApiKeyRoutes);
 }

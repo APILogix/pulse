@@ -13,9 +13,9 @@ export declare const ConnectorTypeSchema: z.ZodEnum<{
     sms: "sms";
     email: "email";
     webhook: "webhook";
+    teams: "teams";
     slack: "slack";
     discord: "discord";
-    teams: "teams";
     pagerduty: "pagerduty";
 }>;
 export type ConnectorType = z.infer<typeof ConnectorTypeSchema>;
@@ -264,9 +264,9 @@ export declare const CreateConnectorSchema: z.ZodObject<{
         sms: "sms";
         email: "email";
         webhook: "webhook";
+        teams: "teams";
         slack: "slack";
         discord: "discord";
-        teams: "teams";
         pagerduty: "pagerduty";
     }>;
     description: z.ZodOptional<z.ZodString>;
@@ -307,9 +307,9 @@ export declare const ListConnectorsQuerySchema: z.ZodObject<{
         sms: "sms";
         email: "email";
         webhook: "webhook";
+        teams: "teams";
         slack: "slack";
         discord: "discord";
-        teams: "teams";
         pagerduty: "pagerduty";
     }>>;
     status: z.ZodOptional<z.ZodEnum<{
@@ -355,9 +355,9 @@ export declare const ValidateConfigurationSchema: z.ZodObject<{
         sms: "sms";
         email: "email";
         webhook: "webhook";
+        teams: "teams";
         slack: "slack";
         discord: "discord";
-        teams: "teams";
         pagerduty: "pagerduty";
     }>;
     config: z.ZodRecord<z.ZodString, z.ZodUnknown>;
