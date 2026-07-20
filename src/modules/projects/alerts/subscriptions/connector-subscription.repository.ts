@@ -417,9 +417,9 @@ export class ConnectorSubscriptionRepository {
       digestMode: row.digest_mode,
       createdByUserId: row.created_by_user_id,
       updatedByUserId: row.updated_by_user_id,
-      deletedAt: row.deleted_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      deletedAt: row.deleted_at ?? null,
     };
   }
 }
