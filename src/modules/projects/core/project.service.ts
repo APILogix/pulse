@@ -13,9 +13,11 @@
  *    and API keys are org-owned resources, so they share the org audit trail).
  */
 import type { FastifyBaseLogger } from "fastify";
+import type { PoolClient } from "pg";
 import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "../types.js";
+import { AlertCategorySchema } from "../alerts/subscriptions/connector-subscription.types.js";
 import {
   ProjectsRepository,
   type ProjectModuleUsageCounts
@@ -143,6 +145,10 @@ export class ProjectService extends BaseProjectService {
         client,
       );
 
+      // Provision project defaults required by dashboards and alert routing.
+      await this.settingsRepository.createDefault(created.id, orgId, client);
+      await this.seedDefaultNotificationPreferences(created.id, orgId, client);
+
       return created;
     });
 
@@ -157,6 +163,31 @@ export class ProjectService extends BaseProjectService {
 
     this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
     return project;
+  }
+
+  private async seedDefaultNotificationPreferences(
+    projectId: string,
+    orgId: string,
+    client: PoolClient,
+  ): Promise<void> {
+    const categories = AlertCategorySchema.options;
+    if (categories.length === 0) return;
+
+    const placeholders: string[] = [];
+    const values: unknown[] = [];
+    let i = 1;
+    for (const category of categories) {
+      placeholders.push(`($${i++}, $${i++}, $${i++}, TRUE)`);
+      values.push(projectId, orgId, category);
+    }
+
+    await client.query(
+      `INSERT INTO project_notification_preferences (
+         project_id, organization_id, category, enabled
+       ) VALUES ${placeholders.join(", ")}
+       ON CONFLICT (project_id, category) DO NOTHING`,
+      values,
+    );
   }
 
   public async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {

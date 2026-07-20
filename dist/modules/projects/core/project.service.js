@@ -1,5 +1,6 @@
 import { apiKeyCache } from "../../../config/lrucashe.js";
 import { ProjectMemberRole } from "../types.js";
+import { AlertCategorySchema } from "../alerts/subscriptions/connector-subscription.types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
@@ -42,6 +43,9 @@ export class ProjectService extends BaseProjectService {
                 createdBy: userId,
             }, client);
             await this.repository.addProjectMember(created.id, orgId, userId, ProjectMemberRole.OWNER, userId, client);
+            // Provision project defaults required by dashboards and alert routing.
+            await this.settingsRepository.createDefault(created.id, orgId, client);
+            await this.seedDefaultNotificationPreferences(created.id, orgId, client);
             return created;
         });
         await this.audit(meta, {
@@ -54,6 +58,22 @@ export class ProjectService extends BaseProjectService {
         });
         this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
         return project;
+    }
+    async seedDefaultNotificationPreferences(projectId, orgId, client) {
+        const categories = AlertCategorySchema.options;
+        if (categories.length === 0)
+            return;
+        const placeholders = [];
+        const values = [];
+        let i = 1;
+        for (const category of categories) {
+            placeholders.push(`($${i++}, $${i++}, $${i++}, TRUE)`);
+            values.push(projectId, orgId, category);
+        }
+        await client.query(`INSERT INTO project_notification_preferences (
+         project_id, organization_id, category, enabled
+       ) VALUES ${placeholders.join(", ")}
+       ON CONFLICT (project_id, category) DO NOTHING`, values);
     }
     async getProject(orgId, projectId, userId) {
         return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);

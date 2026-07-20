@@ -157,6 +157,22 @@ DROP TABLE IF EXISTS user_mfa_devices CASCADE;
 DROP TABLE IF EXISTS statement CASCADE;
 DROP TABLE IF EXISTS user_sessions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS billing_plans CASCADE;
+DROP TABLE IF EXISTS connector_secrets CASCADE;
+DROP TABLE IF EXISTS error_events CASCADE;
+DROP TABLE IF EXISTS events CASCADE;
+DROP TABLE IF EXISTS notification_dead_letter CASCADE;
+DROP TABLE IF EXISTS notification_deliveries CASCADE;
+DROP TABLE IF EXISTS organization_api_keys CASCADE;
+DROP TABLE IF EXISTS organization_billing CASCADE;
+DROP TABLE IF EXISTS organization_environments CASCADE;
+DROP TABLE IF EXISTS organization_invoices CASCADE;
+DROP TABLE IF EXISTS organization_payment_methods CASCADE;
+DROP TABLE IF EXISTS organization_usage CASCADE;
+DROP TABLE IF EXISTS password_resets CASCADE;
+DROP TABLE IF EXISTS request_events CASCADE;
+DROP TABLE IF EXISTS schema_migrations CASCADE;
+DROP TABLE IF EXISTS usage_counter_staging CASCADE;
 
 -- ═══════════════════════════════════════════════
 -- DROP ENUM TYPES

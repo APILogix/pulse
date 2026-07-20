@@ -42,6 +42,7 @@ export declare class ProjectService extends BaseProjectService {
         offset: number;
     }>;
     createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<Project>;
+    private seedDefaultNotificationPreferences;
     getProject(orgId: string, projectId: string, userId: string): Promise<Project>;
     getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto>;
     updateProject(orgId: string, projectId: string, userId: string, body: UpdateProjectBody, meta: RequestMeta): Promise<Project>;

@@ -233,6 +233,8 @@ sequenceDiagram
     participant B as BaseProjectService
     participant PR as ProjectRepository
     participant MR as MemberRepository
+    participant SR as SettingsRepository
+    participant AR as AlertPreferencesRepository
     participant OR as OrganizationRepository
 
     U->>R: POST /orgs/:orgId/projects
@@ -250,11 +252,19 @@ sequenceDiagram
     PR->>PR: createProject
     PR->>MR: addProjectMember(owner)
     MR-->>PR: member
+    PR->>SR: createDefaultSettings
+    PR->>AR: seedDefaultNotificationPreferences
     PR-->>S: project
     S->>OR: createAuditLog(project.created)
     S-->>R: project
     R-->>U: 201 Created
 ```
+
+At creation time the transaction inserts:
+- one `projects` row (the lightweight identity),
+- one `project_members` row for the owner,
+- one `project_settings` row with default operational limits,
+- one `project_notification_preferences` row for each alert category.
 
 ### 4.2 API key creation
 
@@ -593,7 +603,7 @@ The refactor is delivered in migration `003_project_module_refactor.sql` plus re
 2. Backfill `project_api_keys.environment_id` from the new environments table.
 3. Mark revoked keys as `deleted_at = revoked_at`.
 4. Seed system project roles for every organization.
-5. Seed `project_notification_preferences` defaults for every project.
+5. Seed `project_settings` and `project_notification_preferences` defaults for every project (also provisioned at runtime for new projects).
 6. Migrate legacy `connector_configs.project_id` into `project_connector_subscriptions`.
 
 ### Rollback considerations
