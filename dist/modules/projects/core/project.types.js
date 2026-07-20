@@ -41,6 +41,7 @@ export const UpdateProjectBodySchema = z.preprocess(normalizeObjectKeys, z
     icon: z.string().max(255).nullable().optional(),
     color: z.string().max(20).nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    version: z.number().int().min(1).optional(),
 })
     .refine((value) => Object.keys(value).length > 0, {
     message: "At least one field is required",

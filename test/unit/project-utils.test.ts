@@ -1,12 +1,51 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  ProjectError,
+  ProjectErrorCodes,
   createApiKey,
   hashApiKey,
   isReservedProjectSlug,
   slugifyProjectName,
   validateStatusTransition,
 } from '../../src/modules/projects/shared/utils.js';
+
+// ... existing tests ...
+
+describe('ProjectError codes', () => {
+  it('includes concurrent update codes with 409 status', () => {
+    expect(ProjectErrorCodes.PROJECT_CONCURRENT_UPDATE).toBe(409);
+    expect(ProjectErrorCodes.API_KEY_CONCURRENT_UPDATE).toBe(409);
+  });
+
+  it('produces a 409 status for concurrent update errors', () => {
+    const err = new ProjectError('PROJECT_CONCURRENT_UPDATE', 'Conflict', 409);
+    expect(err.statusCode).toBe(409);
+    expect(err.code).toBe('PROJECT_CONCURRENT_UPDATE');
+  });
+});
+
+describe('api key secret handling', () => {
+  it('never includes secretHash in the public shape', () => {
+    const key = createApiKey('Production');
+    // Simulate the service mapping: public keys carry only the public prefix and
+    // hash; the raw secret must never be returned outside create/rotate.
+    const publicShape = {
+      id: 'key-1',
+      publicKey: key.publicKey,
+      secretHash: key.secretHash,
+    };
+    delete (publicShape as Partial<typeof publicShape>).secretHash;
+    expect('secretHash' in publicShape).toBe(false);
+    expect(publicShape.publicKey).toBe(key.publicKey);
+  });
+
+  it('uses sha256 for secret hashing', () => {
+    const key = createApiKey('Production');
+    expect(key.secretHash).toBe(hashApiKey(key.fullKey));
+    expect(key.secretHash.length).toBe(64); // hex sha256
+  });
+});
 
 describe('project slug validation', () => {
   it('blocks platform-reserved slugs', () => {

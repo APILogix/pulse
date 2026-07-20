@@ -3,7 +3,7 @@ import { ProjectError } from "../../shared/utils.js";
 const SUBSCRIPTION_COLUMNS = `
   id, project_id, organization_id, connector_id, enabled, alert_categories,
   severity_threshold, member_ids, channel_overrides, quiet_hours, digest_mode,
-  created_by_user_id, updated_by_user_id, created_at, updated_at
+  created_by_user_id, updated_by_user_id, created_at, updated_at, deleted_at
 `;
 export class ConnectorSubscriptionRepository {
     db;
@@ -29,7 +29,7 @@ export class ConnectorSubscriptionRepository {
     async listByProject(projectId, query, client) {
         const db = client ?? this.db;
         const params = [projectId];
-        const whereClauses = ["project_id = $1"];
+        const whereClauses = ["project_id = $1", "deleted_at IS NULL"];
         if (query.enabled !== undefined) {
             params.push(query.enabled);
             whereClauses.push(`enabled = $${params.length}`);
@@ -56,7 +56,7 @@ export class ConnectorSubscriptionRepository {
         const db = client ?? this.db;
         const result = await db.query(`SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         LIMIT 1`, [subscriptionId]);
         return result.rows[0] ? this.mapSubscription(result.rows[0]) : null;
     }
@@ -64,7 +64,7 @@ export class ConnectorSubscriptionRepository {
         const db = client ?? this.db;
         const result = await db.query(`SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE project_id = $1 AND connector_id = $2
+        WHERE project_id = $1 AND connector_id = $2 AND deleted_at IS NULL
         LIMIT 1`, [projectId, connectorId]);
         return result.rows[0] ? this.mapSubscription(result.rows[0]) : null;
     }
@@ -151,9 +151,11 @@ export class ConnectorSubscriptionRepository {
         }
         return this.mapSubscription(result.rows[0]);
     }
-    async delete(subscriptionId, client) {
+    async delete(subscriptionId, deletedByUserId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`DELETE FROM project_connector_subscriptions WHERE id = $1`, [subscriptionId]);
+        const result = await db.query(`UPDATE project_connector_subscriptions
+          SET deleted_at = NOW(), updated_at = NOW(), updated_by_user_id = $2
+        WHERE id = $1 AND deleted_at IS NULL`, [subscriptionId, deletedByUserId]);
         if (result.rowCount === 0) {
             throw new ProjectError("CONNECTOR_SUBSCRIPTION_NOT_FOUND", "Subscription not found", 404);
         }
@@ -187,7 +189,8 @@ export class ConnectorSubscriptionRepository {
         const subscriptionResult = await db.query(`SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
         WHERE project_id = $1
-          AND enabled = TRUE`, [keyRow.project_id]);
+          AND enabled = TRUE
+          AND deleted_at IS NULL`, [keyRow.project_id]);
         const memberResult = await db.query(`SELECT m.user_id, m.role, u.email
          FROM project_members m
          LEFT JOIN users u ON u.id = m.user_id
@@ -235,7 +238,8 @@ export class ConnectorSubscriptionRepository {
         const subscriptionResult = await db.query(`SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
         WHERE project_id = $1
-          AND enabled = TRUE`, [projectId]);
+          AND enabled = TRUE
+          AND deleted_at IS NULL`, [projectId]);
         const memberResult = await db.query(`SELECT m.user_id, m.role, u.email
          FROM project_members m
          LEFT JOIN users u ON u.id = m.user_id
@@ -277,6 +281,7 @@ export class ConnectorSubscriptionRepository {
             digestMode: row.digest_mode,
             createdByUserId: row.created_by_user_id,
             updatedByUserId: row.updated_by_user_id,
+            deletedAt: row.deleted_at,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         };

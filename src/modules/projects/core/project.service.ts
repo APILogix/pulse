@@ -227,6 +227,7 @@ export class ProjectService extends BaseProjectService {
     if (body.icon !== undefined) updates.icon = body.icon;
     if (body.color !== undefined) updates.color = body.color;
     if (body.metadata !== undefined) updates.metadata = body.metadata;
+    if (body.version !== undefined) updates.version = body.version;
 
     const updated = await this.repository.updateProject(orgId, projectId, updates);
 

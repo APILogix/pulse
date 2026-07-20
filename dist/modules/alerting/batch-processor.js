@@ -11,12 +11,14 @@ export class AlertBatchProcessor {
     logger;
     projectSubscriptionResolver;
     static EVENT_CONCURRENCY = 10;
-    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver) {
+    authorize;
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver, authorize) {
         this.alertRepo = alertRepo;
         this.connectorRepo = connectorRepo;
         this.enqueueConnectorJob = enqueueConnectorJob;
         this.logger = logger;
         this.projectSubscriptionResolver = projectSubscriptionResolver;
+        this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
     }
     async mapBounded(items, limit, fn) {
         const results = new Array(items.length);
@@ -56,7 +58,7 @@ export class AlertBatchProcessor {
         // (never cached): the organization and every event's project must still
         // exist and be eligible BEFORE any delivery side effect. Ineligible events
         // are suppressed and audited, never delivered.
-        const authz = await this.verifyBatchAuthorization(events, data.batchId, data.organizationId, log);
+        const authz = await this.authorize(events, data.batchId, data.organizationId, log);
         const authorizedEvents = authz.eligible;
         // 1b. Pre-load project connector subscriptions so delivery targets can be gated
         // by project membership. A project with no subscriptions falls back to the

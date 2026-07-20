@@ -183,7 +183,7 @@ export class ApiKeyService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "member");
     const apiKey = await this.apiKeyRepository.findApiKeyById(projectId, apiKeyId);
     if (!apiKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    return apiKey;
+    return this.publicApiKey(apiKey);
   }
 
   public async updateApiKey(
@@ -216,6 +216,7 @@ export class ApiKeyService extends BaseProjectService {
     if (body.rateLimitPerSecond !== undefined) updates.rateLimitPerSecond = body.rateLimitPerSecond;
     if (body.rateLimitPerMinute !== undefined) updates.rateLimitPerMinute = body.rateLimitPerMinute;
     if (body.rateLimitPerHour !== undefined) updates.rateLimitPerHour = body.rateLimitPerHour;
+    if (body.version !== undefined) updates.version = body.version;
 
     const updated = await this.apiKeyRepository.updateApiKey(projectId, apiKeyId, updates);
 

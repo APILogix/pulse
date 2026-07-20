@@ -25,7 +25,7 @@ type DbClient = Pool | PoolClient;
 const SUBSCRIPTION_COLUMNS = `
   id, project_id, organization_id, connector_id, enabled, alert_categories,
   severity_threshold, member_ids, channel_overrides, quiet_hours, digest_mode,
-  created_by_user_id, updated_by_user_id, created_at, updated_at
+  created_by_user_id, updated_by_user_id, created_at, updated_at, deleted_at
 `;
 
 export class ConnectorSubscriptionRepository {
@@ -53,7 +53,7 @@ export class ConnectorSubscriptionRepository {
   ): Promise<{ subscriptions: ProjectConnectorSubscription[]; total: number }> {
     const db = client ?? this.db;
     const params: unknown[] = [projectId];
-    const whereClauses = ["project_id = $1"];
+    const whereClauses = ["project_id = $1", "deleted_at IS NULL"];
 
     if (query.enabled !== undefined) {
       params.push(query.enabled);
@@ -96,7 +96,7 @@ export class ConnectorSubscriptionRepository {
     const result = await db.query(
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE id = $1
+        WHERE id = $1 AND deleted_at IS NULL
         LIMIT 1`,
       [subscriptionId],
     );
@@ -112,7 +112,7 @@ export class ConnectorSubscriptionRepository {
     const result = await db.query(
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE project_id = $1 AND connector_id = $2
+        WHERE project_id = $1 AND connector_id = $2 AND deleted_at IS NULL
         LIMIT 1`,
       [projectId, connectorId],
     );
@@ -227,11 +227,13 @@ export class ConnectorSubscriptionRepository {
     return this.mapSubscription(result.rows[0]!);
   }
 
-  async delete(subscriptionId: string, client?: DbClient): Promise<void> {
+  async delete(subscriptionId: string, deletedByUserId: string, client?: DbClient): Promise<void> {
     const db = client ?? this.db;
     const result = await db.query(
-      `DELETE FROM project_connector_subscriptions WHERE id = $1`,
-      [subscriptionId],
+      `UPDATE project_connector_subscriptions
+          SET deleted_at = NOW(), updated_at = NOW(), updated_by_user_id = $2
+        WHERE id = $1 AND deleted_at IS NULL`,
+      [subscriptionId, deletedByUserId],
     );
     if (result.rowCount === 0) {
       throw new ProjectError("CONNECTOR_SUBSCRIPTION_NOT_FOUND", "Subscription not found", 404);
@@ -287,7 +289,8 @@ export class ConnectorSubscriptionRepository {
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
         WHERE project_id = $1
-          AND enabled = TRUE`,
+          AND enabled = TRUE
+          AND deleted_at IS NULL`,
       [keyRow.project_id],
     );
 
@@ -359,7 +362,8 @@ export class ConnectorSubscriptionRepository {
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
         WHERE project_id = $1
-          AND enabled = TRUE`,
+          AND enabled = TRUE
+          AND deleted_at IS NULL`,
       [projectId],
     );
 
@@ -413,6 +417,7 @@ export class ConnectorSubscriptionRepository {
       digestMode: row.digest_mode,
       createdByUserId: row.created_by_user_id,
       updatedByUserId: row.updated_by_user_id,
+      deletedAt: row.deleted_at,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

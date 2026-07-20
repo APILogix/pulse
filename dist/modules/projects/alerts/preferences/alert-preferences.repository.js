@@ -128,14 +128,18 @@ export class AlertPreferencesRepository {
         if (userIds.length === 0)
             return;
         const db = client ?? pool;
-        const values = userIds
-            .map((userId) => `('${projectId}', '${userId}', '${channel}', '${category}')`)
-            .join(", ");
+        const placeholders = [];
+        const values = [];
+        let idx = 1;
+        for (const userId of userIds) {
+            placeholders.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}, TRUE)`);
+            values.push(projectId, userId, channel, category);
+        }
         await db.query(`INSERT INTO project_member_notification_preferences (
          project_id, user_id, channel, category, enabled
-       ) VALUES ${values}
+       ) VALUES ${placeholders.join(", ")}
        ON CONFLICT (project_id, user_id, channel, category)
-       DO UPDATE SET enabled = true, updated_at = NOW()`);
+       DO UPDATE SET enabled = true, updated_at = NOW()`, values);
     }
     async resolveRecipients(projectId, category, severity, client) {
         const db = client ?? pool;

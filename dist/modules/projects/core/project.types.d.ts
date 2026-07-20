@@ -82,6 +82,7 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
     icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    version: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>>;
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 export interface Project {
@@ -175,6 +176,7 @@ export interface ProjectUpdateInput {
     color?: string | null;
     metadata?: Record<string, unknown>;
     archivedAt?: Date | null;
+    version?: number;
 }
 export declare const ProjectMemberStatusSchema: z.ZodEnum<{
     active: "active";

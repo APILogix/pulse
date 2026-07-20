@@ -439,16 +439,19 @@ CREATE TABLE IF NOT EXISTS project_connector_subscriptions (
   updated_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ,
   UNIQUE (project_id, connector_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_connector_subs_project
-  ON project_connector_subscriptions(project_id);
+  ON project_connector_subscriptions(project_id)
+  WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_project_connector_subs_connector
-  ON project_connector_subscriptions(connector_id);
+  ON project_connector_subscriptions(connector_id)
+  WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_project_connector_subs_enabled
   ON project_connector_subscriptions(project_id, enabled)
-  WHERE enabled = TRUE;
+  WHERE enabled = TRUE AND deleted_at IS NULL;
 
 DROP TRIGGER IF EXISTS trg_project_connector_subs_updated_at ON project_connector_subscriptions;
 CREATE TRIGGER trg_project_connector_subs_updated_at

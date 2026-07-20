@@ -116,6 +116,7 @@ export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
     rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
+    version: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>>;
 export type UpdateApiKeyBody = z.infer<typeof UpdateApiKeyBodySchema>;
 export declare const RotateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
@@ -263,5 +264,6 @@ export interface ApiKeyUpdateInput {
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;
+    version?: number;
 }
 //# sourceMappingURL=api-key.types.d.ts.map

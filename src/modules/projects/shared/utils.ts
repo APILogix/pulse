@@ -51,6 +51,8 @@ export const ProjectErrorCodes = {
   API_KEY_INVALID_STATE: 400,
   VALIDATION_ERROR: 422,
   INTERNAL_ERROR: 500,
+  PROJECT_CONCURRENT_UPDATE: 409,
+  API_KEY_CONCURRENT_UPDATE: 409,
 } as const;
 
 export class ProjectError extends Error {

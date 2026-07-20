@@ -121,6 +121,7 @@ export class ProjectRepository {
     async updateProject(orgId, projectId, input, client) {
         const db = client ?? this.db;
         const { assignments, values } = this.buildProjectAssignments(input);
+        const expectedVersion = input.version;
         if (assignments.length === 0) {
             const project = await this.findProjectById(orgId, projectId, client);
             if (!project) {
@@ -129,13 +130,24 @@ export class ProjectRepository {
             return project;
         }
         values.push(orgId, projectId);
+        const versionCondition = expectedVersion !== undefined
+            ? ` AND version = $${values.length + 1}`
+            : "";
+        if (expectedVersion !== undefined)
+            values.push(expectedVersion);
         const result = await db.query(`UPDATE projects
           SET ${assignments.join(", ")}
-        WHERE org_id = $${values.length - 1}
-          AND id = $${values.length}
-          AND deleted_at IS NULL
+        WHERE org_id = $${values.length - 1 - (expectedVersion !== undefined ? 1 : 0)}
+          AND id = $${values.length - (expectedVersion !== undefined ? 1 : 0)}
+          AND deleted_at IS NULL${versionCondition}
         RETURNING ${PROJECT_COLUMNS}`, values);
         if (result.rowCount === 0) {
+            if (expectedVersion !== undefined) {
+                const current = await this.findProjectById(orgId, projectId, client);
+                if (current) {
+                    throw new ProjectError("PROJECT_CONCURRENT_UPDATE", "Project was modified by another request. Please refresh and try again.", 409);
+                }
+            }
             throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
         }
         return this.mapProject(result.rows[0]);

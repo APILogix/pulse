@@ -115,6 +115,8 @@ export class ProjectService extends BaseProjectService {
             updates.color = body.color;
         if (body.metadata !== undefined)
             updates.metadata = body.metadata;
+        if (body.version !== undefined)
+            updates.version = body.version;
         const updated = await this.repository.updateProject(orgId, projectId, updates);
         // If the project is no longer active, evict its cached keys now so ingestion
         // stops accepting data within this request rather than after the LRU TTL.

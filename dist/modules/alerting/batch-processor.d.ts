@@ -82,7 +82,8 @@ export declare class AlertBatchProcessor {
     private readonly logger;
     private readonly projectSubscriptionResolver?;
     private static readonly EVENT_CONCURRENCY;
-    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined);
+    private readonly authorize;
+    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined, authorize?: BatchAuthorizationVerifier);
     private mapBounded;
     processBatch(data: BatchJobData): Promise<BatchProcessSummary>;
     /** Deliver a single event to all routed connectors concurrently. */

@@ -106,6 +106,7 @@ export const UpdateApiKeyBodySchema = z.preprocess(
       rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
       rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
       rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
+      version: z.number().int().min(1).optional(),
     })
     .refine((value) => Object.keys(value).length > 0, {
       message: "At least one field is required",
@@ -277,4 +278,5 @@ export interface ApiKeyUpdateInput {
   rateLimitPerSecond?: number | null;
   rateLimitPerMinute?: number | null;
   rateLimitPerHour?: number | null;
+  version?: number;
 }

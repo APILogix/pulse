@@ -132,6 +132,7 @@ export type ProjectSubscriptionResolver = {
 
 export class AlertBatchProcessor {
   private static readonly EVENT_CONCURRENCY = 10;
+  private readonly authorize: BatchAuthorizationVerifier;
 
   constructor(
     private readonly alertRepo: AlertingRepository,
@@ -139,7 +140,10 @@ export class AlertBatchProcessor {
     private readonly enqueueConnectorJob: EnqueueConnectorJob,
     private readonly logger: FastifyBaseLogger,
     private readonly projectSubscriptionResolver?: ProjectSubscriptionResolver,
-  ) {}
+    authorize?: BatchAuthorizationVerifier,
+  ) {
+    this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
+  }
 
   private async mapBounded<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
     const results: PromiseSettledResult<R>[] = new Array(items.length);
@@ -179,7 +183,7 @@ export class AlertBatchProcessor {
     // (never cached): the organization and every event's project must still
     // exist and be eligible BEFORE any delivery side effect. Ineligible events
     // are suppressed and audited, never delivered.
-    const authz = await this.verifyBatchAuthorization(events, data.batchId, data.organizationId, log);
+    const authz = await this.authorize(events, data.batchId, data.organizationId, log);
     const authorizedEvents = authz.eligible;
 
     // 1b. Pre-load project connector subscriptions so delivery targets can be gated

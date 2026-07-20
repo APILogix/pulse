@@ -94,7 +94,7 @@ export class ApiKeyService extends BaseProjectService {
         const apiKey = await this.apiKeyRepository.findApiKeyById(projectId, apiKeyId);
         if (!apiKey)
             throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-        return apiKey;
+        return this.publicApiKey(apiKey);
     }
     async updateApiKey(orgId, projectId, apiKeyId, userId, body, meta) {
         await this.requireProjectAccess(orgId, projectId, userId, "admin");
@@ -136,6 +136,8 @@ export class ApiKeyService extends BaseProjectService {
             updates.rateLimitPerMinute = body.rateLimitPerMinute;
         if (body.rateLimitPerHour !== undefined)
             updates.rateLimitPerHour = body.rateLimitPerHour;
+        if (body.version !== undefined)
+            updates.version = body.version;
         const updated = await this.apiKeyRepository.updateApiKey(projectId, apiKeyId, updates);
         // Permission/rate-limit/scoping changes affect the cached config; evict so
         // the next ingestion request re-resolves the fresh row.

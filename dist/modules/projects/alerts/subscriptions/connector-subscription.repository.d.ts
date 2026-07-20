@@ -23,7 +23,7 @@ export declare class ConnectorSubscriptionRepository {
     findByProjectAndConnector(projectId: string, connectorId: string, client?: DbClient): Promise<ProjectConnectorSubscription | null>;
     create(projectId: string, organizationId: string, createdByUserId: string, body: CreateProjectConnectorSubscriptionBody, client?: DbClient): Promise<ProjectConnectorSubscription>;
     update(subscriptionId: string, updatedByUserId: string, body: UpdateProjectConnectorSubscriptionBody, client?: DbClient): Promise<ProjectConnectorSubscription>;
-    delete(subscriptionId: string, client?: DbClient): Promise<void>;
+    delete(subscriptionId: string, deletedByUserId: string, client?: DbClient): Promise<void>;
     /**
      * Deterministic alert routing lookup: API Key -> Environment -> Project ->
      * Project Connector Subscriptions -> Project Members.

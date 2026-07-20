@@ -31,6 +31,7 @@ export interface ApiKeyUpdateInput {
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;
+    version?: number;
 }
 export declare class ApiKeyRepository {
     private readonly db;

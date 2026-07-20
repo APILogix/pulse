@@ -198,11 +198,26 @@ export class ApiKeyRepository {
             return apiKey;
         }
         values.push(projectId, apiKeyId);
+        const expectedVersion = input.version;
+        if (expectedVersion !== undefined)
+            values.splice(values.length - 1, 0, expectedVersion);
+        const projectIdIdx = values.length - (expectedVersion !== undefined ? 3 : 2);
+        const apiKeyIdIdx = values.length - 1;
+        const versionIdx = expectedVersion !== undefined ? values.length - 2 : null;
+        const versionCondition = expectedVersion !== undefined ? ` AND version = $${versionIdx}` : "";
         const result = await db.query(`UPDATE project_api_keys
           SET ${assignments.join(", ")}
-        WHERE project_id = $${values.length - 1} AND id = $${values.length} AND deleted_at IS NULL
+        WHERE project_id = $${projectIdIdx}
+          AND id = $${apiKeyIdIdx}
+          AND deleted_at IS NULL${versionCondition}
         RETURNING ${API_KEY_COLUMNS}`, values);
         if (result.rowCount === 0) {
+            if (expectedVersion !== undefined) {
+                const current = await this.findApiKeyById(projectId, apiKeyId, client);
+                if (current) {
+                    throw new ProjectError("API_KEY_CONCURRENT_UPDATE", "API key was modified by another request. Please refresh and try again.", 409);
+                }
+            }
             throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
         }
         return this.mapApiKey(result.rows[0]);

@@ -22,7 +22,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     };
     const alertRepo = {
       getBatchWithEvents: vi.fn().mockResolvedValue({
-        batch: { id: 'batch-1' },
+        batch: { id: 'batch-1', status: 'processing' },
         events: [event],
       }),
       listRoutingRules: vi.fn().mockResolvedValue([{
@@ -44,6 +44,10 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
       bulkUpdateEventStatus: vi.fn().mockResolvedValue(undefined),
       bulkInsertDeliveryAttempts: vi.fn().mockResolvedValue(undefined),
       completeBatch: vi.fn().mockResolvedValue(undefined),
+      getRuleActionsByRuleIds: vi.fn().mockResolvedValue([]),
+      listEscalationStepsByPolicyIds: vi.fn().mockResolvedValue([]),
+      getThrottleStates: vi.fn().mockResolvedValue([]),
+      recordThrottleNotifications: vi.fn().mockResolvedValue(undefined),
     };
     const connectorRepo = {
       listRoutesByIds: vi.fn().mockResolvedValue([]),
@@ -55,6 +59,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
       info: vi.fn(),
       warn: vi.fn(),
       error: vi.fn(),
+      debug: vi.fn(),
     };
 
     const processor = new AlertBatchProcessor(
@@ -62,6 +67,12 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
       connectorRepo as never,
       enqueueConnectorJob,
       logger as never,
+      undefined,
+      async (events) => ({
+        eligible: events,
+        suppressedUpdates: [],
+        suppressedAttempts: [],
+      }),
     );
 
     const result = await processor.processBatch({
@@ -90,7 +101,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     );
     expect(alertRepo.bulkUpdateEventStatus).toHaveBeenCalledWith(
       event.organization_id,
-      [{ id: event.id, status: 'firing' }],
+      [expect.objectContaining({ id: event.id, status: 'firing' })],
     );
     expect(alertRepo.bulkInsertDeliveryAttempts).toHaveBeenCalledWith([
       expect.objectContaining({
@@ -121,7 +132,7 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     const routeId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const connectorId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
     const alertRepo = {
-      getBatchWithEvents: vi.fn().mockResolvedValue({ batch: { id: 'batch-2' }, events: [event] }),
+      getBatchWithEvents: vi.fn().mockResolvedValue({ batch: { id: 'batch-2', status: 'processing' }, events: [event] }),
       listRoutingRules: vi.fn().mockResolvedValue([{
         id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
         organization_id: event.organization_id,
@@ -141,6 +152,10 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
       bulkUpdateEventStatus: vi.fn().mockResolvedValue(undefined),
       bulkInsertDeliveryAttempts: vi.fn().mockResolvedValue(undefined),
       completeBatch: vi.fn().mockResolvedValue(undefined),
+      getRuleActionsByRuleIds: vi.fn().mockResolvedValue([]),
+      listEscalationStepsByPolicyIds: vi.fn().mockResolvedValue([]),
+      getThrottleStates: vi.fn().mockResolvedValue([]),
+      recordThrottleNotifications: vi.fn().mockResolvedValue(undefined),
     };
     const connectorRepo = {
       listRoutesByIds: vi.fn().mockResolvedValue([{
@@ -156,13 +171,19 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
       getByIds: vi.fn().mockResolvedValue([{ id: connectorId }]),
     };
     const enqueueConnectorJob = vi.fn().mockResolvedValue('connector-job-route');
-    const logger = { child: vi.fn().mockReturnThis(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const logger = { child: vi.fn().mockReturnThis(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
     const processor = new AlertBatchProcessor(
       alertRepo as never,
       connectorRepo as never,
       enqueueConnectorJob,
       logger as never,
+      undefined,
+      async (events) => ({
+        eligible: events,
+        suppressedUpdates: [],
+        suppressedAttempts: [],
+      }),
     );
 
     const result = await processor.processBatch({

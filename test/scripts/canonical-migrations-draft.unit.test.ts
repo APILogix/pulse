@@ -33,7 +33,9 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).toContain('15_analytics/002_create_project_usage_hourly_and_daily.up.sql');
     expect(files).toContain('15_analytics/006_create_analytics_config_tables.up.sql');
     expect(files).toContain('16_legacy_compat/003_create_legacy_failure_tables.up.sql');
-    expect(files[files.length - 1]).toBe('16_legacy_compat/003_create_legacy_failure_tables.up.sql');
+    expect(files).toContain('17_enterprise_ingestion/001_events_idempotency.up.sql');
+    expect(files).toContain('17_enterprise_ingestion/005_usage_counters_default_partition.up.sql');
+    expect(files[files.length - 1]).toBe('17_enterprise_ingestion/005_usage_counters_default_partition.up.sql');
   });
 
   it('declares the required enterprise connector tables and partitions high-volume history', async () => {

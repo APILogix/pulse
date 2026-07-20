@@ -17,6 +17,8 @@ export declare const ProjectErrorCodes: {
     readonly API_KEY_INVALID_STATE: 400;
     readonly VALIDATION_ERROR: 422;
     readonly INTERNAL_ERROR: 500;
+    readonly PROJECT_CONCURRENT_UPDATE: 409;
+    readonly API_KEY_CONCURRENT_UPDATE: 409;
 };
 export declare class ProjectError extends Error {
     readonly code: keyof typeof ProjectErrorCodes | string;

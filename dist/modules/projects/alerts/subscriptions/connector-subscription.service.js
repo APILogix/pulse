@@ -62,7 +62,7 @@ export class ProjectConnectorSubscriptionService {
         if (!existing || existing.projectId !== projectId) {
             throw new Error("Subscription not found");
         }
-        await this.repository.delete(subscriptionId);
+        await this.repository.delete(subscriptionId, userId);
         await this.audit(meta, orgId, projectId, "connector_unsubscribed", subscriptionId, {
             connectorId: existing.connectorId,
         });
