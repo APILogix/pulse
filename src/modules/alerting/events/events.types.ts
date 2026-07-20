@@ -35,6 +35,7 @@ export type DeadLetterStatus = z.infer<typeof DeadLetterStatusSchema>;
 
 export const IngestEventSchema = z.object({
   ruleId: UuidSchema.optional(),
+  projectId: UuidSchema.optional(),
   severity: AlertSeveritySchema,
   source: z.string().min(1).max(100),
   sourceId: z.string().max(255).optional(),
@@ -79,6 +80,8 @@ export interface AlertEventRow {
   id: string;
   organization_id: string;
   rule_id: string | null;
+  /** Optional project scope (NULL = org-level event). */
+  project_id: string | null;
   status: AlertEventStatus;
   severity: AlertSeverity;
   fingerprint: string;

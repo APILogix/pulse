@@ -190,7 +190,7 @@ export const IngestSchema: FastifySchema = {
       events: {
         type: 'array',
         minItems: 1,
-        maxItems: 10000,
+        maxItems: 1000,
         items: {
           type: 'object',
           required: ['type'],

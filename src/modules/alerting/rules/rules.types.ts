@@ -60,6 +60,7 @@ export const CreateRuleSchema = z.object({
   description: z.string().max(2000).optional(),
   severity: AlertSeveritySchema.default('warning'),
   enabled: z.boolean().default(true),
+  projectId: UuidSchema.optional(),
   evaluationIntervalSeconds: z.number().int().min(1).max(86_400).default(60),
   cooldownSeconds: z.number().int().min(0).max(86_400).default(300),
   autoResolveAfterMinutes: z.number().int().min(1).max(20_160).optional(),
@@ -123,6 +124,14 @@ export interface AlertRuleRow {
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
+  /** Optional project scope (NULL = org-level rule). */
+  project_id: string | null;
+  /** Platform preset identifier for seeded default rules. */
+  preset_key: string | null;
+  /** TRUE for platform-managed default (preset) rules. */
+  is_default: boolean;
+  /** Evaluator watermark — last time the scheduled evaluator ran this rule. */
+  last_evaluated_at: Date | null;
 }
 
 export interface AlertRuleConditionRow {

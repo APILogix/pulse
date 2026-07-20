@@ -44,7 +44,10 @@ import type {
   NotificationSeverity,
 } from '../connectors/types.js';
 import { CONNECTOR_JOBS, CONNECTOR_PRIORITY, type ConnectorJobName } from '../connectors/job.constants.js';
+import { pool } from '../../config/database.js';
 import { env } from '../../config/env.js';
+import { FEATURE_FLAGS, isEnabled } from '../feature-flags/service.js';
+import { getAlertAnalysisHook } from './ai/alert-analysis.js';
 
 export interface BatchJobData {
   batchId: string;
@@ -139,9 +142,16 @@ export class AlertBatchProcessor {
       return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, throttled: 0, durationMs: 0, status: 'completed' };
     }
 
+    // Authorization re-verification, straight from the database on every run
+    // (never cached): the organization and every event's project must still
+    // exist and be eligible BEFORE any delivery side effect. Ineligible events
+    // are suppressed and audited, never delivered.
+    const authz = await this.verifyBatchAuthorization(events, data.batchId, data.organizationId, log);
+    const authorizedEvents = authz.eligible;
+
     // 2. Load routing rules, rule actions, connectors, routes, escalation steps
     //    and throttle windows — each in ONE bulk query (no N+1).
-    const ruleIds = [...new Set(events.map((e) => e.rule_id).filter((id): id is string => id !== null))];
+    const ruleIds = [...new Set(authorizedEvents.map((e) => e.rule_id).filter((id): id is string => id !== null))];
     const ruleActions = await this.alertRepo.getRuleActionsByRuleIds(ruleIds);
     const actionsByRuleId = new Map<string, AlertRuleActionRow[]>();
     for (const action of ruleActions) {
@@ -155,7 +165,7 @@ export class AlertBatchProcessor {
       data.organizationId,
       this.uniqueRouteIds(routingRules, ruleActions),
     );
-    const connectorIds = this.uniqueConnectorIds(events, routingRules, actionsByRuleId, connectorRoutes);
+    const connectorIds = this.uniqueConnectorIds(authorizedEvents, routingRules, actionsByRuleId, connectorRoutes);
     const connectors = await this.connectorRepo.getByIds(connectorIds);
     const connectorMap = new Map<string, ConnectorConfigRow>(connectors.map((c) => [c.id, c]));
 
@@ -178,7 +188,7 @@ export class AlertBatchProcessor {
     // 3. Process ALL events concurrently but bounded. mapBounded guarantees one
     //    failing event never aborts the batch.
     const settled = await this.mapBounded(
-      events,
+      authorizedEvents,
       AlertBatchProcessor.EVENT_CONCURRENCY,
       (event) => this.processSingleEvent(
         event, routingRules, actionsByRuleId, connectorRoutes, connectorMap,
@@ -186,17 +196,18 @@ export class AlertBatchProcessor {
       ),
     );
 
-    // 4. Fold results into bulk-update + bulk-insert payloads.
+    // 4. Fold results into bulk-update + bulk-insert payloads. Events dropped
+    //    by the authorization re-check are pre-seeded here as suppressed.
     const statusUpdates: Array<{
       id: string; status: AlertEventStatus;
       escalationPolicyId?: string | null; escalationStepNumber?: number | null; nextEscalationAt?: Date | null;
-    }> = [];
-    const deliveryLogs: DeliveryAttemptInsert[] = [];
+    }> = [...authz.suppressedUpdates];
+    const deliveryLogs: DeliveryAttemptInsert[] = [...authz.suppressedAttempts];
     const deliveredActionIds = new Set<string>();
-    let success = 0, failure = 0, skipped = 0, throttled = 0;
+    let success = 0, failure = 0, skipped = authz.suppressedUpdates.length, throttled = 0;
 
     settled.forEach((res, i) => {
-      const event = events[i]!;
+      const event = authorizedEvents[i]!;
       if (res.status === 'fulfilled') {
         const outcome = res.value;
         statusUpdates.push({
@@ -283,6 +294,10 @@ export class AlertBatchProcessor {
     }
 
     const payload = this.toPayload(event, decision.templateId);
+
+    // Optional AI enrichment (post-generation, pre-delivery): flag-gated,
+    // non-blocking, never fatal — see enrichWithAiAnalysis.
+    await this.enrichWithAiAnalysis(event, payload);
 
     // Fan out to every target connector concurrently (Bulkhead per connector).
     const perConnector = await Promise.allSettled(
@@ -431,6 +446,112 @@ export class AlertBatchProcessor {
         },
         delivered: false,
       };
+    }
+  }
+
+  /**
+   * Re-verify, straight from the database on every run (never cached), that
+   * the organization still exists and that every event's project still exists,
+   * belongs to the organization and is active. Events failing the check are
+   * suppressed instead of delivered, with a cancelled delivery attempt
+   * (error_category 'authz') recorded for audit.
+   *
+   * NOTE: delivery targets in this pipeline are connectors, not individual
+   * users — there is no per-user recipient materialization, so organization +
+   * project eligibility is the maximal recipient-level filter available here.
+   */
+  private async verifyBatchAuthorization(
+    events: AlertEventRow[],
+    batchId: string,
+    organizationId: string,
+    log: FastifyBaseLogger,
+  ): Promise<{
+    eligible: AlertEventRow[];
+    suppressedUpdates: Array<{ id: string; status: AlertEventStatus }>;
+    suppressedAttempts: DeliveryAttemptInsert[];
+  }> {
+    const orgResult = await pool.query(
+      'SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL',
+      [organizationId],
+    );
+    const orgEligible = (orgResult.rowCount ?? 0) > 0;
+
+    const projectIds = [...new Set(events.map((e) => e.project_id).filter((id): id is string => id !== null))];
+    const activeProjects = new Set<string>();
+    if (orgEligible && projectIds.length > 0) {
+      const projectsResult = await pool.query<{ id: string }>(
+        `SELECT id FROM projects
+          WHERE id = ANY($2::uuid[]) AND org_id = $1 AND deleted_at IS NULL AND status = 'active'`,
+        [organizationId, projectIds],
+      );
+      for (const row of projectsResult.rows) activeProjects.add(row.id);
+    }
+
+    const eligible: AlertEventRow[] = [];
+    const suppressedUpdates: Array<{ id: string; status: AlertEventStatus }> = [];
+    const suppressedAttempts: DeliveryAttemptInsert[] = [];
+    for (const event of events) {
+      if (orgEligible && (event.project_id === null || activeProjects.has(event.project_id))) {
+        eligible.push(event);
+        continue;
+      }
+      suppressedUpdates.push({ id: event.id, status: 'suppressed' });
+      suppressedAttempts.push({
+        organizationId: event.organization_id,
+        eventId: event.id,
+        connectorId: null,
+        routeId: null,
+        batchId,
+        status: 'cancelled',
+        responseStatusCode: null,
+        errorMessage: 'delivery dropped: organization or project no longer eligible',
+        errorCategory: 'authz',
+        latencyMs: null,
+        externalMessageId: null,
+      });
+    }
+    if (suppressedUpdates.length > 0) {
+      log.info(
+        { dropped: suppressedUpdates.length, total: events.length },
+        'alert delivery: events suppressed by authorization re-check',
+      );
+    }
+    return { eligible, suppressedUpdates, suppressedAttempts };
+  }
+
+  /**
+   * FUTURE AI INTEGRATION POINT — post-generation, pre-delivery enrichment.
+   * Gated by the per-org/project feature flag `ai_alert_analysis`; runs the
+   * registered analysis hook with a hard 2s budget. Any failure, timeout, or
+   * empty result leaves the payload untouched and delivery proceeds.
+   */
+  private async enrichWithAiAnalysis(event: AlertEventRow, payload: NotificationPayload): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const enabled = await isEnabled(FEATURE_FLAGS.AI_ALERT_ANALYSIS, {
+        organizationId: event.organization_id,
+        projectId: event.project_id,
+      });
+      if (!enabled) return;
+
+      const result = await Promise.race([
+        getAlertAnalysisHook().analyze({
+          alertEventId: event.id,
+          organizationId: event.organization_id,
+          projectId: event.project_id,
+          payload: event.payload,
+        }),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), 2000);
+        }),
+      ]);
+      if (result !== null) {
+        payload.metadata = { ...payload.metadata, ai: result };
+      }
+    } catch (err) {
+      this.logger.debug({ err, alertEventId: event.id }, 'AI alert analysis skipped (non-fatal)');
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 

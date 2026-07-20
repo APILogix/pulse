@@ -211,6 +211,33 @@ const envSchema = z.object({
   INGESTION_LOG_DB_POOL_SIZE: z.coerce.number().int().min(1).max(50).default(5),
   INGESTION_ADMIN_LOG_BUFFER_SIZE: z.coerce.number().int().min(10).default(100),
   INGESTION_ADMIN_LOG_FLUSH_MS: z.coerce.number().int().min(1000).default(5000),
+
+  // ── Enterprise ingestion pipeline (pg-boss) ─────────────────────────────
+  // Events per pg-boss job. Chunks bound job payload size and worker unit of
+  // work; smaller = fairer scheduling, larger = fewer round trips.
+  INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(200),
+  INGESTION_JOB_EXPIRE_SECONDS: z.coerce.number().int().min(30).default(300),
+  INGESTION_JOB_RETRY_LIMIT: z.coerce.number().int().min(0).max(10).default(3),
+  INGESTION_JOB_RETRY_DELAY_SECONDS: z.coerce.number().int().min(1).default(5),
+  // Max decompressed body size for gzip ingestion payloads (zip-bomb guard).
+  INGESTION_GZIP_MAX_BYTES: z.coerce.number().int().min(1024).default(20 * 1024 * 1024),
+  // Organization-wide rate limits (noisy-neighbor protection at the gateway).
+  INGESTION_ORG_RATE_LIMIT_PER_SECOND: z.coerce.number().int().min(1).default(5000),
+  INGESTION_ORG_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(100_000),
+  // TTL for the cached organization_usage_current_period quota read.
+  INGESTION_QUOTA_CACHE_TTL_MS: z.coerce.number().int().min(1000).default(60_000),
+  // Tenant fairness: how often a job may be deferred for exceeding the per-org
+  // in-flight budget before aging forces it through (starvation guard).
+  INGESTION_FAIRNESS_MAX_DEFERS: z.coerce.number().int().min(0).max(20).default(5),
+  INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: z.coerce.number().int().min(1).max(60).default(2),
+  // Per-event-type worker concurrency (pg-boss localConcurrency / batchSize).
+  INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(8),
+  INGESTION_TYPE_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(4),
+  // Metrics HTTP endpoint exposed by worker processes.
+  INGESTION_WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65535).default(9465),
+  // Cron schedules (pg-boss) for the usage rollup and alert rule evaluator.
+  INGESTION_USAGE_ROLLUP_CRON: z.string().default('* * * * *'),
+  INGESTION_ALERT_EVAL_CRON: z.string().default('* * * * *'),
 });
 
 export const env = envSchema.parse(process.env);

@@ -9,6 +9,7 @@
  *   - alert.orphan-sweep        — requeue events/batches stuck in 'processing'
  *   - alert.cleanup             — retention purge (scheduled daily)
  *   - alert.dead-letter-retry   — re-drive retryable dead letters (scheduled)
+ *   - alert.evaluate-rules      — due-rule evaluation tick (scheduled, default every minute)
  *   - alert-dead-letter         — pg-boss dead-letter queue for process-batch
  *
  * Concurrency guarantees:
@@ -31,9 +32,11 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { pgboss } from '../../lib/pgboss.js';
+import { env } from '../../config/env.js';
 import { AlertingRepository } from './repository.js';
 import { AlertBatchProcessor, type BatchJobData } from './batch-processor.js';
 import { AlertEscalationSweep } from './escalation.js';
+import { AlertRuleEvaluator } from './evaluator/rule-evaluator.js';
 import { ConnectorRepository } from '../connectors/repository.js';
 
 export const ALERT_JOBS = {
@@ -45,6 +48,7 @@ export const ALERT_JOBS = {
   cleanup: 'alert.cleanup',
   deadLetter: 'alert-dead-letter',
   deadLetterRetry: 'alert.dead-letter-retry',
+  evaluateRules: 'alert.evaluate-rules',
 } as const;
 
 const BATCH_SIZE = 100;
@@ -113,6 +117,7 @@ export async function registerAlertingWorkers(
     pgboss.send(queue, data, options as never);
   const processor = new AlertBatchProcessor(alertRepo, connectorRepo, enqueueConnectorJob, logger);
   const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
+  const ruleEvaluator = new AlertRuleEvaluator(logger);
 
   // ── Queue creation with enterprise defaults ─────────────────────────────
   // process-batch: retries with backoff, then dead-letters to `alert-dead-letter`.
@@ -130,6 +135,7 @@ export async function registerAlertingWorkers(
   await safeCreateQueue(ALERT_JOBS.cleanup);
   await safeCreateQueue(ALERT_JOBS.deadLetter);
   await safeCreateQueue(ALERT_JOBS.deadLetterRetry);
+  await safeCreateQueue(ALERT_JOBS.evaluateRules);
 
   // ── process-batch: the high-throughput worker ──────────────────────────
   // pg-boss v12 concurrency options: `localConcurrency` = number of workers
@@ -291,6 +297,15 @@ export async function registerAlertingWorkers(
     }) as never,
   );
 
+  // ── evaluate-rules: due-rule scan + metric evaluation + preset seeding ──
+  await pgboss.work(
+    ALERT_JOBS.evaluateRules,
+    {} as never,
+    (async () => {
+      await ruleEvaluator.runTick();
+    }) as never,
+  );
+
   // ── Schedules (cron) ────────────────────────────────────────────────────
   // pg-boss cron is minute-granularity; sub-minute cadence is approximated by
   // the form worker re-claiming whatever is pending each run.
@@ -300,6 +315,12 @@ export async function registerAlertingWorkers(
   await pgboss.schedule(ALERT_JOBS.orphanSweep, '*/5 * * * *', {}, { singletonKey: 'alert-orphan-sweep' } as never);
   await pgboss.schedule(ALERT_JOBS.deadLetterRetry, '*/5 * * * *', {}, { singletonKey: 'alert-dead-letter-retry' } as never);
   await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' } as never);
+  await pgboss.schedule(
+    ALERT_JOBS.evaluateRules,
+    env.INGESTION_ALERT_EVAL_CRON,
+    { triggeredAt: new Date().toISOString() },
+    { singletonKey: 'alert-rule-evaluator' } as never,
+  );
 
   log.info({ ...cfg }, 'Alerting workers registered');
 
@@ -311,6 +332,7 @@ export async function registerAlertingWorkers(
       await pgboss.unschedule(ALERT_JOBS.orphanSweep).catch(() => undefined);
       await pgboss.unschedule(ALERT_JOBS.deadLetterRetry).catch(() => undefined);
       await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
+      await pgboss.unschedule(ALERT_JOBS.evaluateRules).catch(() => undefined);
     },
   };
 }

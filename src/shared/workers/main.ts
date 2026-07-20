@@ -3,10 +3,12 @@
  *
  * Flow:
  * 1. Open a dedicated Postgres pool for background work.
- * 2. Start N PgQueueWorkers (ingestion persistence) via initializeWorkers().
- * 3. Start the telemetry maintenance worker (partition automation + retention).
- * 4. Start auth housekeeping (expired sessions / stale tokens).
- * 5. Keep the process alive until SIGTERM/SIGINT, then drain + close cleanly.
+ * 2. Start pg-boss background workers (alerting, billing, connectors, auth,
+ *    analytics, org cleanup) plus the telemetry maintenance worker.
+ * 3. Keep the process alive until SIGTERM/SIGINT, then drain + close cleanly.
+ *
+ * NOTE: ingestion persistence runs in the DEDICATED ingestion worker process
+ * (src/shared/workers/ingestion-worker-main.ts), not here.
  *
  * Scale horizontally by running multiple copies of this process. SKIP LOCKED
  * makes that safe.
@@ -23,7 +25,6 @@ import { registerOrganizationCleanupWorkers } from '../../modules/organization/s
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
-import { initializeWorkers } from './index.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
 import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
 
@@ -55,24 +56,31 @@ async function bootstrapWorkers(): Promise<void> {
   let connectorMonitor: { stop: () => Promise<void> } | null = null;
   let orgCleanupWorkers: { stop: () => Promise<void> } | null = null;
 
-  initializeWorkers({
-    pool: pgPool,
-    concurrency: Number(process.env.INGESTION_WORKER_CONCURRENCY ?? 4),
-    shutdown: async () => {
-      maintenance.stop();
-      stopAuthCleanupWorker();
-      stopAuthEmailWorker();
-      stopOrgEmailWorker();
-      if (authAutomationWorkers) await authAutomationWorkers.stop();
-      if (billingJobWorkers) await billingJobWorkers.stop();
-      if (alertingWorkers) await alertingWorkers.stop();
-      if (analyticsWorkers) await analyticsWorkers.stop();
-      if (connectorMonitor) await connectorMonitor.stop();
-      if (orgCleanupWorkers) await orgCleanupWorkers.stop();
-      await stopPgBoss();
-      await pgPool.end();
-    },
-  });
+  // Ingestion persistence moved to the dedicated ingestion worker process
+  // (src/shared/workers/ingestion-worker-main.ts — pg-boss per-type queues).
+  // This process no longer polls the legacy ingestion_jobs table; the legacy
+  // PgQueue wiring in ./index.ts is retained on disk only for reference.
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    workerLogger.info({ signal }, 'Shutdown signal received — draining workers');
+    maintenance.stop();
+    stopAuthCleanupWorker();
+    stopAuthEmailWorker();
+    stopOrgEmailWorker();
+    if (authAutomationWorkers) await authAutomationWorkers.stop();
+    if (billingJobWorkers) await billingJobWorkers.stop();
+    if (alertingWorkers) await alertingWorkers.stop();
+    if (analyticsWorkers) await analyticsWorkers.stop();
+    if (connectorMonitor) await connectorMonitor.stop();
+    if (orgCleanupWorkers) await orgCleanupWorkers.stop();
+    await stopPgBoss();
+    await pgPool.end();
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
 
   await startPgBoss();
   await startAuthEmailWorker();
@@ -93,7 +101,7 @@ async function bootstrapWorkers(): Promise<void> {
   startAuthCleanupWorker();
 
   workerLogger.info('Worker process started');
-  workerLogger.info('Active workers: ingestion (pg-queue), telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
+  workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
 }
 
 bootstrapWorkers().catch((error) => {

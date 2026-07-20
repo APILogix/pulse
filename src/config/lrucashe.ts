@@ -13,6 +13,11 @@ export interface CachedProjectConfig {
   blockedEndpoints: string[];
   isActive: boolean;
   apiKeyId: string;
+  /** Billing plan tier resolved at key-lookup time; drives queue priority. */
+  planTier?: 'free' | 'starter' | 'growth' | 'business' | 'enterprise';
+  /** Optional org-wide rate limits overriding the platform defaults. */
+  orgRateLimitPerSecond?: number;
+  orgRateLimitPerMinute?: number;
 }
 
 export const apiKeyCache = new LRUCache<string, CachedProjectConfig>({

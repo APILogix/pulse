@@ -75,7 +75,7 @@ export class EventsService {
     }
 
     // Deduplication: fold into an existing active event within the window.
-    const existing = await this.repo.findActiveEventByFingerprint(orgId, fingerprint, dedupWindow);
+    const existing = await this.repo.findActiveEventByFingerprint(orgId, fingerprint, dedupWindow, body.projectId ?? null);
     if (existing) {
       const updated = await this.repo.incrementDuplicate(existing.id);
       return { event: this.eventToDto(updated), deduplicated: true };
@@ -90,6 +90,7 @@ export class EventsService {
     const event = await this.repo.insertEvent({
       organizationId: orgId,
       ruleId: body.ruleId ?? null,
+      projectId: body.projectId ?? null,
       status: silenced ? 'silenced' : 'pending',
       severity: body.severity,
       fingerprint,
@@ -252,7 +253,8 @@ export class EventsService {
 
   private eventToDto(e: AlertEventRow): Record<string, unknown> {
     return {
-      id: e.id, organizationId: e.organization_id, ruleId: e.rule_id, status: e.status, severity: e.severity,
+      id: e.id, organizationId: e.organization_id, ruleId: e.rule_id, projectId: e.project_id,
+      status: e.status, severity: e.severity,
       fingerprint: e.fingerprint, source: e.source, sourceId: e.source_id, payload: e.payload,
       duplicateCount: e.duplicate_count, startedAt: e.started_at, endedAt: e.ended_at,
       acknowledgedBy: e.acknowledged_by, acknowledgedAt: e.acknowledged_at,

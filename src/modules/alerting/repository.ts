@@ -69,8 +69,8 @@ export class AlertingRepository {
         return this.rules.setRuleEnabled(organizationId, id, enabled);
     }
 
-    async findActiveEventByFingerprint(organizationId: string, fingerprint: string, windowSeconds: number): Promise<AlertEventRow | null> {
-        return this.events.findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds);
+    async findActiveEventByFingerprint(organizationId: string, fingerprint: string, windowSeconds: number, projectId?: string | null): Promise<AlertEventRow | null> {
+        return this.events.findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds, projectId);
     }
 
     async incrementDuplicate(eventId: string): Promise<AlertEventRow> {

@@ -1,31 +1,34 @@
 /**
- * Ingestion worker process bootstrap (v2 tier).
+ * Ingestion worker process bootstrap (v3 tier).
  *
- * A dedicated OS process that drains the PostgreSQL ingestion queue and
- * persists telemetry. Kept SEPARATE from the API tier (PM2 cluster) so heavy
+ * A dedicated OS process that drains the pg-boss ingestion queues and persists
+ * telemetry. Kept SEPARATE from the API tier (PM2 cluster) so heavy
  * persistence work never steals CPU from request acceptance, and from the
- * general background-worker process (workers/main.ts) so the ingestion tier can
- * be scaled and tuned independently.
+ * general background-worker process (workers/main.ts) so the ingestion tier
+ * can be scaled and tuned independently.
  *
  * Run with:
  *   npm run start:ingestion           (node dist/shared/workers/ingestion-worker-main.js)
  *   npm run dev:ingestion             (tsx watch src/shared/workers/ingestion-worker-main.ts)
  *
- * Horizontal scaling: run multiple copies. FOR UPDATE SKIP LOCKED guarantees a
- * job is processed by exactly one worker across all processes/nodes.
+ * Horizontal scaling: run multiple copies. pg-boss hands each job to exactly
+ * one worker across all processes/nodes, and idempotent inserts plus
+ * retry-safe usage accounting make redelivery harmless.
  *
  * Process model:
  *   - One dedicated Postgres pool (max INGESTION_DB_POOL_SIZE,
- *     application_name='pulse_ingestion_workers').
- *   - One WorkerRegistry that owns the general/specialized/retry/maintenance
- *     worker classes plus the usage counter, admin logger and TimescaleDB
- *     logging database.
- *   - SIGTERM/SIGINT trigger a graceful drain (waits for in-flight jobs, final
- *     flushes, then closes pools) before exit.
+ *     application_name='pulse_ingestion_workers') for persistence/usage/metrics.
+ *   - The pg-boss singleton (its own pool) drives delivery.
+ *   - One WorkerRegistry that owns the per-type worker pools, the tenant
+ *     fairness gate, the DLQ intake worker, the usage-rollup cron and the
+ *     metrics HTTP endpoint.
+ *   - SIGTERM/SIGINT trigger a graceful drain (offWork waits for in-flight
+ *     jobs, final usage flush, then pools close) before exit.
  */
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
+import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { WorkerRegistry } from '../../modules/ingestion/workers/worker-registry.js';
 
 const log = logger.child({ component: 'ingestion-worker-main' });
@@ -50,6 +53,9 @@ class IngestionWorkerProcess {
 
     // Fail fast if the database is unreachable at boot.
     await this.pool.query('SELECT 1');
+
+    // pg-boss must be started before any work/schedule/send call.
+    await startPgBoss();
 
     this.registry = new WorkerRegistry(this.pool, log);
     await this.registry.start();
@@ -82,6 +88,7 @@ class IngestionWorkerProcess {
     log.info({ signal }, 'Ingestion worker shutting down — draining');
     try {
       if (this.registry) await this.registry.stop();
+      await stopPgBoss();
       if (this.pool) await this.pool.end();
     } catch (err) {
       log.error({ err }, 'Error during ingestion worker shutdown');

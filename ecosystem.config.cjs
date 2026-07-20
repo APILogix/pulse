@@ -78,12 +78,13 @@ module.exports = {
 
     {
       // ── Ingestion worker tier (dedicated process) ──────────────────────
-      // Drains the PostgreSQL ingestion queue and persists telemetry. Kept
+      // Runs the pg-boss per-type ingestion pipelines (ingest.<type> queues),
+      // DLQ intake, usage rollup cron, and the worker metrics endpoint. Kept
       // separate from the API cluster so heavy persistence never steals CPU
       // from request acceptance. Fork mode (NOT cluster): scale by raising
-      // `instances` — FOR UPDATE SKIP LOCKED keeps multiple copies safe.
+      // `instances` — pg-boss keeps multiple copies safe.
       name: 'ingestion-workers',
-      script: 'dist/workers/ingestion-worker-main.js',
+      script: 'dist/shared/workers/ingestion-worker-main.js',
       instances: 1,
       exec_mode: 'fork',
 
@@ -114,7 +115,7 @@ module.exports = {
         NODE_ENV: 'production',
       },
 
-      description: 'Ingestion queue worker tier (general/specialized/retry/maintenance)',
+      description: 'Ingestion worker tier (pg-boss per-type pipelines + DLQ intake + usage rollup)',
       version: '2.0.0',
     },
   ],

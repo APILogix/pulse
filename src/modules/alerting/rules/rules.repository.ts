@@ -44,7 +44,8 @@ const RULE_COLS = `
   deduplication_window_seconds, deduplication_key_template,
   grouping_enabled, grouping_key_template, grouping_wait_seconds,
   labels, annotations, metadata, created_by, updated_by,
-  enabled_at, disabled_at, created_at, updated_at, deleted_at
+  enabled_at, disabled_at, created_at, updated_at, deleted_at,
+  project_id, preset_key, is_default, last_evaluated_at
 `;
 
 export interface RuleConditionInsert {
@@ -79,6 +80,12 @@ export interface CreateRuleInput {
   description: string | null;
   severity: string;
   enabled: boolean;
+  /** Optional project scope (null = org-level rule). */
+  projectId?: string | null;
+  /** Platform preset identifier (seeded default rules only). */
+  presetKey?: string | null;
+  /** TRUE for platform-managed default (preset) rules. */
+  isDefault?: boolean;
   evaluationIntervalSeconds: number;
   cooldownSeconds: number;
   autoResolveAfterMinutes: number | null;
@@ -124,9 +131,10 @@ export class RulesRepository {
               evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
               deduplication_window_seconds, deduplication_key_template,
               grouping_enabled, grouping_key_template, grouping_wait_seconds,
-              labels, annotations, metadata, created_by, enabled_at)
+              labels, annotations, metadata, created_by, enabled_at,
+              project_id, preset_key, is_default)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-                   CASE WHEN $5 THEN NOW() ELSE NULL END)
+                   CASE WHEN $5 THEN NOW() ELSE NULL END, $18,$19,$20)
            RETURNING ${RULE_COLS}`,
           [
             input.organizationId, input.name, input.description, input.severity, input.enabled,
@@ -135,6 +143,7 @@ export class RulesRepository {
             input.groupingEnabled, input.groupingKeyTemplate, input.groupingWaitSeconds,
             JSON.stringify(input.labels), JSON.stringify(input.annotations), JSON.stringify(input.metadata),
             input.createdBy,
+            input.projectId ?? null, input.presetKey ?? null, input.isDefault ?? false,
           ],
         );
         rule = r.rows[0]!;
@@ -279,6 +288,7 @@ export class RulesRepository {
     return this.withTransaction(async (client) => {
       const map: Record<string, string> = {
         name: 'name', description: 'description', severity: 'severity', enabled: 'enabled',
+        projectId: 'project_id', presetKey: 'preset_key',
         evaluationIntervalSeconds: 'evaluation_interval_seconds', cooldownSeconds: 'cooldown_seconds',
         autoResolveAfterMinutes: 'auto_resolve_after_minutes',
         deduplicationWindowSeconds: 'deduplication_window_seconds',

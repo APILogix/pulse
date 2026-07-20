@@ -64,13 +64,21 @@ const ERROR_MAP: Record<string, { status: number; message: string }> = {
   INVALID_REQUEST: { status: 400, message: 'Invalid request body' },
   INVALID_API_KEY: { status: 401, message: 'Invalid API key' },
   PROJECT_INACTIVE: { status: 403, message: 'Project inactive' },
+  API_KEY_PERMISSION_DENIED: { status: 403, message: 'API key lacks ingest permission' },
+  API_KEY_ENDPOINT_DENIED: { status: 403, message: 'API key not allowed for this endpoint' },
   RATE_LIMIT_EXCEEDED: { status: 429, message: 'Rate limit exceeded' },
+  QUOTA_EXCEEDED: { status: 429, message: 'Event quota exceeded' },
   EMPTY_BATCH: { status: 400, message: 'No events provided' },
   BATCH_TOO_LARGE: { status: 413, message: 'Batch exceeds maximum size' },
   CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
   INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
   INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
   JOB_NOT_FOUND: { status: 404, message: 'Job not found' },
+};
+
+/** Error codes whose 429 response carries an explicit Retry-After hint. */
+const RETRY_AFTER_SECONDS: Record<string, number> = {
+  QUOTA_EXCEEDED: 60,
 };
 
 export class IngestionController {
@@ -387,6 +395,10 @@ export class IngestionController {
     const code = err instanceof Error ? err.message : 'INTERNAL_ERROR';
     const mapped = ERROR_MAP[code];
     if (mapped) {
+      const retryAfter = RETRY_AFTER_SECONDS[code];
+      if (retryAfter !== undefined) {
+        reply.header('Retry-After', String(retryAfter));
+      }
       return reply.status(mapped.status).send({
         error: mapped.message,
         code,

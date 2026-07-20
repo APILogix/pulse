@@ -16,7 +16,7 @@ export class BillingProvisioningRepository {
     const planResult = await client.query<{ id: string; trial_days: number }>(
       `SELECT id, trial_days
        FROM plans
-       WHERE key = 'business' AND is_active = TRUE AND deleted_at IS NULL
+       WHERE key = 'free' AND is_active = TRUE AND deleted_at IS NULL
        LIMIT 1
        FOR SHARE`,
     );

@@ -45,6 +45,8 @@ function pgCode(e: unknown): string | undefined {
 export interface InsertEventInput {
   organizationId: string;
   ruleId: string | null;
+  /** Optional project scope (null = org-level event). */
+  projectId: string | null;
   status: AlertEventStatus;
   severity: string;
   fingerprint: string;
@@ -96,14 +98,16 @@ export class EventsRepository {
     organizationId: string,
     fingerprint: string,
     windowSeconds: number,
+    projectId?: string | null,
   ): Promise<AlertEventRow | null> {
     const r = await this.db.query<AlertEventRow>(
       `SELECT * FROM alert_events
        WHERE organization_id=$1 AND fingerprint=$2
          AND status IN ('firing','acknowledged','pending','processing')
          AND started_at >= NOW() - ($3 || ' seconds')::interval
+         AND ($4::uuid IS NULL OR project_id = $4)
        ORDER BY started_at DESC LIMIT 1`,
-      [organizationId, fingerprint, String(windowSeconds)],
+      [organizationId, fingerprint, String(windowSeconds), projectId ?? null],
     );
     return r.rows[0] ?? null;
   }
@@ -121,12 +125,12 @@ export class EventsRepository {
     const payloadJson = JSON.stringify(input.payload);
     const r = await this.db.query<AlertEventRow>(
       `INSERT INTO alert_events
-         (organization_id, rule_id, status, severity, fingerprint, source, source_id,
+         (organization_id, rule_id, project_id, status, severity, fingerprint, source, source_id,
           payload, payload_size_bytes, normalized_payload, labels, annotations, auto_resolve_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING *`,
       [
-        input.organizationId, input.ruleId, input.status, input.severity, input.fingerprint,
+        input.organizationId, input.ruleId, input.projectId, input.status, input.severity, input.fingerprint,
         input.source, input.sourceId, payloadJson, Buffer.byteLength(payloadJson, 'utf8'),
         input.normalizedPayload ? JSON.stringify(input.normalizedPayload) : null,
         JSON.stringify(input.labels), JSON.stringify(input.annotations), input.autoResolveAt,
