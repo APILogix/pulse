@@ -6,7 +6,7 @@ import type { OrgMemberRow } from "./members.schema.js";
 export class MembersRepository extends BaseRepository {
   async findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null> {
     const r = await this.db.query<OrgMemberRow>(
-      `SELECT om.*, u.email, u.full_name
+      `SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='active'`,
       [orgId, userId],
@@ -16,7 +16,7 @@ export class MembersRepository extends BaseRepository {
 
   async findMember(orgId: string, userId: string): Promise<OrgMemberRow | null> {
     const r = await this.db.query<OrgMemberRow>(
-      `SELECT om.*, u.email, u.full_name
+      `SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2`,
       [orgId, userId],
@@ -32,22 +32,32 @@ export class MembersRepository extends BaseRepository {
   }
 
   async listMembers(orgId: string, q: CursorPaginationQuery, filters?: { status?: string; role?: string }): Promise<CursorPaginatedResponse<OrgMemberRow>> {
-    const params: unknown[] = [orgId];
-    let where = `om.org_id=$1`;
-    if (filters?.status) { params.push(filters.status); where += ` AND om.status=$${params.length}`; }
-    if (filters?.role) { params.push(filters.role); where += ` AND om.role=$${params.length}`; }
+    const countParams: unknown[] = [orgId];
+    let countWhere = `om.org_id=$1`;
+    if (filters?.status) { countParams.push(filters.status); countWhere += ` AND om.status=$${countParams.length}`; }
+    if (filters?.role) { countParams.push(filters.role); countWhere += ` AND om.role=$${countParams.length}`; }
+    if (q.search) { countParams.push(`%${q.search}%`); countWhere += ` AND (u.email ILIKE $${countParams.length} OR u.full_name ILIKE $${countParams.length})`; }
+
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM organization_members om JOIN users u ON u.id=om.user_id WHERE ${countWhere}`,
+      countParams
+    );
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params = [...countParams];
+    let where = countWhere;
     if (q.cursor) { params.push(q.cursor); where += ` AND om.created_at < $${params.length}`; }
     params.push(q.limit + 1);
 
     const r = await this.db.query<OrgMemberRow>(
-      `SELECT om.*, u.email, u.full_name
+      `SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE ${where}
        ORDER BY om.created_at DESC
        LIMIT $${params.length}`,
       params,
     );
-    return cursorPage(r.rows, q.limit);
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 
   async addMember(orgId: string, userId: string, role: string, invitedBy: string, method: string): Promise<OrgMemberRow> {

@@ -188,8 +188,8 @@ export default async function provisioningRoutes(fastify: FastifyInstance) {
           return reply.redirect(
             buildFrontendErrorRedirect(
               target,
-              query.error,
-              query.error_description || query.error,
+              'SSO_FAILED',
+              'Single sign-on failed. Please try again or contact an administrator.',
             ),
           );
         }

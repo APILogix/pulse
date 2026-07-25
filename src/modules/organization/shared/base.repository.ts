@@ -7,7 +7,7 @@ export function pgErr(e: unknown): { code?: string } {
 }
 
 export function cursorPage<T extends { created_at: Date }>(
-  rows: T[], limit: number
+  rows: T[], limit: number, totalCount: number
 ): CursorPaginatedResponse<T> {
   const hasMore = rows.length > limit;
   const data = hasMore ? rows.slice(0, limit) : rows;
@@ -19,6 +19,7 @@ export function cursorPage<T extends { created_at: Date }>(
         ? data[data.length - 1]!.created_at.toISOString()
         : null,
       limit,
+      totalCount,
     },
   };
 }

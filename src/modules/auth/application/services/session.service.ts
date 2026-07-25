@@ -352,13 +352,13 @@ export async function refreshAccessToken(
     decoded.jti,
     decoded.sub,
   );
-  // BUG-013 FIX: All three paths return the same error message and code so
-  // an attacker cannot distinguish "session not found" from
-  // "session revoked due to token reuse". The matchedPrevious flag is
-  // available in the evidence for SIEM without leaking to the client.
+// All three paths return the same error message so an attacker cannot
+    // distinguish "session not found" from "session revoked due to token reuse".
+    // The matchedPrevious flag is available in the evidence for SIEM without
+    // leaking to the client.
   if (!lookup) {
     throw new AuthError(
-      'Invalid session',
+      'Session expired. Please sign in again.',
       AuthErrorCodes.SESSION_INVALID,
       401,
     );
@@ -420,7 +420,7 @@ export async function refreshAccessToken(
   if (matchedPrevious || session.status !== 'active') {
     logger.warn(
       { userId: session.user_id, sessionId: session.id, ipAddress, userAgent },
-      'Refresh-token reuse detected',
+      'Refresh-token reuse or inactive session',
     );
     await repository.revokeAllUserSessions(
       session.user_id,
@@ -462,7 +462,7 @@ export async function refreshAccessToken(
     // BUG-013 FIX: Use SESSION_TOKEN_REUSE so the error code specifically
     // indicates token-reuse (not just generic SESSION_INVALID).
     throw new AuthError(
-      'Session revoked due to token reuse. Please sign in again.',
+      'Session expired. Please sign in again.',
       AuthErrorCodes.SESSION_TOKEN_REUSE,
       401,
     );
@@ -535,8 +535,8 @@ export async function refreshAccessToken(
     );
     markAllUserTokensRevoked(session.user_id);
     throw new AuthError(
-      'Refresh token already rotated. Please sign in again.',
-      AuthErrorCodes.SESSION_TOKEN_REUSE, // BUG-013: unified reuse code
+      'Session expired. Please sign in again.',
+      AuthErrorCodes.SESSION_TOKEN_REUSE,
       401,
     );
   }

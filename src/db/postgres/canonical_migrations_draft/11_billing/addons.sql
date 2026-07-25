@@ -7,7 +7,7 @@ CREATE TABLE addons (
         CHECK (category IN ('module','capacity','enterprise_feature')),
     
     -- What this add-on unlocks
-    target_module VARCHAR(50) NOT NULL,       -- 'sessionReplay', 'aiInsights'
+    target_module VARCHAR(50),                -- 'sessionReplay', 'aiInsights', or NULL for capacity add-ons
     target_feature_id UUID REFERENCES billing_features(id),
     
     -- Availability rules

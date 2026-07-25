@@ -105,6 +105,10 @@ export class ScimTokenService {
     return repository.listScimTokensForOrg(orgId);
   }
 
+  async listTokensPaginated(orgId: string, limit: number, cursor?: string) {
+    return repository.listScimTokensForOrgPaginated(orgId, limit, cursor);
+  }
+
   private async createTokenInTransaction(
     input: CreateScimTokenInput,
     client: PoolClient,

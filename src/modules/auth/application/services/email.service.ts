@@ -370,7 +370,7 @@ export async function verifyEmail(
         'email_verification',
         client,
       );
-      if (existing?.verified_at) {
+if (existing?.verified_at) {
         const user = await repository.findUserById(existing.user_id, client);
         if (user?.email_is_verified) {
           verifiedUserId = user.id;
@@ -379,7 +379,7 @@ export async function verifyEmail(
         }
       }
       throw new AuthError(
-        'Invalid or expired verification token',
+        'Invalid email verification link',
         AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
         400,
       );
@@ -392,7 +392,7 @@ export async function verifyEmail(
       normalizeEmail(user.email) !== normalizeEmail(consumed.email)
     ) {
       throw new AuthError(
-        'Invalid or expired verification token',
+        'Invalid email verification link',
         AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
         400,
       );
@@ -471,7 +471,7 @@ export async function resetPasswordWithToken(
     );
     if (!consumed) {
       throw new AuthError(
-        'Invalid or expired reset token',
+        'Invalid password reset link',
         AuthErrorCodes.PASSWORD_RESET_INVALID,
         400,
       );
@@ -488,7 +488,7 @@ export async function resetPasswordWithToken(
       normalizeEmail(user.email) !== normalizeEmail(consumed.email)
     ) {
       throw new AuthError(
-        'Invalid or expired reset token',
+        'Invalid password reset link',
         AuthErrorCodes.PASSWORD_RESET_INVALID,
         400,
       );
@@ -522,11 +522,11 @@ export async function resetPasswordWithToken(
   });
 
   if (!resetUserId) {
-    throw new AuthError(
-      'Password reset failed',
-      AuthErrorCodes.PASSWORD_RESET_INVALID,
-      400,
-    );
+throw new AuthError(
+        'Invalid password reset link',
+        AuthErrorCodes.PASSWORD_RESET_INVALID,
+        400,
+      );
   }
 
   await revokeAllSessionsAndTokens(resetUserId, 'Password reset');
@@ -602,7 +602,7 @@ export async function changePassword(
   );
   if (!currentValid) {
     throw new AuthError(
-      'Current password is incorrect',
+      'Invalid password',
       AuthErrorCodes.PASSWORD_INCORRECT,
       401,
     );
@@ -622,7 +622,7 @@ export async function changePassword(
   );
   if (!updated) {
     throw new AuthError(
-      'Password update failed',
+      'Unable to update password. Please try again or contact support.',
       AuthErrorCodes.USER_NOT_FOUND,
       500,
     );

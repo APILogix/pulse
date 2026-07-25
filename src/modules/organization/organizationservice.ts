@@ -43,7 +43,7 @@ import { DomainsService } from './domains/domains.service.js';
 
 
 function toMemberDto(r: OrgMemberRow): MemberDto {
-  return { id: r.id, userId: r.user_id, email: r.email, fullName: r.full_name, role: r.role, status: r.status, joinedAt: r.joined_at, lastActiveAt: r.last_active_at, createdAt: r.created_at };
+  return { id: r.id, userId: r.user_id, email: r.email, fullName: r.full_name, mfaEnabled: r.mfa_enabled, role: r.role, status: r.status, joinedAt: r.joined_at, lastActiveAt: r.last_active_at, createdAt: r.created_at };
 }
 function toInviteDto(r: OrgInvitationRow): InvitationDto {
   return { id: r.id, email: r.email, role: r.role, status: r.status, expiresAt: r.expires_at, invitedAt: r.created_at, invitedBy: { id: r.invited_by, email: r.invited_by_email ?? null, name: r.invited_by_name ?? null } };
@@ -443,15 +443,25 @@ export class OrganizationService {
   }
 
   // ── List SSO Providers ──────────────────────────
-  async listSsoProviders(orgId: string, userId: string) {
-    return this.sso.listSsoProviders(orgId, userId);
+  async listSsoProviders(orgId: string, userId: string, q: CursorPaginationQuery) {
+    return this.sso.listSsoProviders(orgId, userId, q);
   }
 
   // ── List SCIM Tokens ──────────────────────────
-  async listScimTokens(orgId: string, userId: string) {
+  async listScimTokens(orgId: string, userId: string, q: CursorPaginationQuery) {
     await this.requireMember(orgId, userId, "owner");
-    const rows = await this.scimTokenService.listTokens(orgId);
-    return rows.map((token) => this.toScimTokenDto(token));
+    const { data, totalCount } = await this.scimTokenService.listTokensPaginated(orgId, q.limit, q.cursor);
+    const hasMore = data.length > q.limit;
+    const items = hasMore ? data.slice(0, q.limit) : data;
+    return {
+      data: items.map((token) => this.toScimTokenDto(token as any)),
+      meta: {
+        hasMore,
+        nextCursor: hasMore && items.length > 0 ? items[items.length - 1]!.created_at.toISOString() : null,
+        limit: q.limit,
+        totalCount
+      }
+    };
   }
 
   private toScimTokenDto(token: {

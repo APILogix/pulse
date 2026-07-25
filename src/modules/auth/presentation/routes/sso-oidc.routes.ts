@@ -95,7 +95,7 @@ export default async function ssoOidcRoutes(fastify: FastifyInstance) {
           return reply.status(400).send({
             error: {
               code: 'OIDC_CALLBACK_INVALID',
-              message: query.error_description || query.error,
+              message: 'Single sign-on failed. Please try again or contact an administrator.',
             },
           });
         }

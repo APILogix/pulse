@@ -299,7 +299,7 @@ export async function confirmAccountDeletion(
     );
     if (!consumed) {
       throw new AuthError(
-        'Invalid or expired deletion confirmation token',
+        'Invalid account deletion link',
         AuthErrorCodes.EMAIL_VERIFICATION_INVALID,
         400,
       );

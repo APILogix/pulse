@@ -1,10 +1,11 @@
-﻿/**
+/**
  * SDK Remote Config types â€” DB rows, DTOs, and Zod validators.
  *
  * Mirrors migrations2/007_organizations_create_sdk_config_schema.up.sql. Snake_case Row types
  * match columns; camelCase DTOs are what the API returns.
  */
 import { z } from "zod";
+import { CursorPaginationSchema } from "../shared/types.js";
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ENUMS
@@ -37,7 +38,7 @@ export const SdkConfigVersionParamsSchema = z.object({
   version: z.coerce.number().int().min(1),
 });
 
-export const ListSdkConfigsQuerySchema = z.object({
+export const ListSdkConfigsQuerySchema = CursorPaginationSchema.extend({
   projectId: Uuid.optional(),
   environment: z.string().max(50).optional(),
   configKey: z.string().max(255).optional(),

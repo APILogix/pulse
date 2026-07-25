@@ -370,7 +370,7 @@ export async function verifyMFAChallenge(
   let stepUpVerified = false;
   if (device.device_type === 'hardware_key') {
     throw new AuthError(
-      'Use POST /auth/mfa/step-up/webauthn/options and /verify for passkey step-up',
+      'Passkey authentication is required to complete this step-up.',
       AuthErrorCodes.MFA_INVALID,
       400,
       { device_type: 'hardware_key' },
@@ -775,13 +775,13 @@ export async function requestMfaDisable(
     throw new AuthError('User not found', AuthErrorCodes.USER_NOT_FOUND, 404);
   }
   if (!user.mfa_enabled) {
-    throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    throw new AuthError('MFA is not enabled on this account.', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
   const devices = await repository.findMFADevicesByUserId(userId);
   const primary = devices.find((d) => d.is_primary && d.is_verified && (!d.deleted_at));
   if (!primary) {
-    throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    throw new AuthError('No verified MFA device found.', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
   // Accept TOTP or email OTP at this stage. Backup codes intentionally cannot
@@ -860,7 +860,7 @@ export async function confirmMfaDisable(
     );
     if (!consumed) {
       throw new AuthError(
-        'Invalid or expired MFA disable token',
+        'Invalid MFA disable link',
         AuthErrorCodes.MFA_DISABLE_INVALID,
         400,
       );
@@ -877,7 +877,7 @@ export async function confirmMfaDisable(
       normalizeEmail(user.email) !== normalizeEmail(consumed.email)
     ) {
       throw new AuthError(
-        'Invalid or expired MFA disable token',
+        'Invalid MFA disable link',
         AuthErrorCodes.MFA_DISABLE_INVALID,
         400,
       );
@@ -929,13 +929,13 @@ export async function disableMFA(
   assertUserUsable(user);
 
   if (!user.mfa_enabled) {
-    throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    throw new AuthError('MFA is not enabled on this account.', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
   const devices = await repository.findMFADevicesByUserId(userId);
   const verifiedActive = devices.filter((d) => d.is_verified && (!d.deleted_at));
   if (verifiedActive.length === 0) {
-    throw new AuthError('MFA not enabled', AuthErrorCodes.MFA_NOT_ENABLED, 400);
+    throw new AuthError('No verified MFA device found.', AuthErrorCodes.MFA_NOT_ENABLED, 400);
   }
 
   await repository.withTransaction(async (client) => {

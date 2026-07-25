@@ -22,6 +22,7 @@ import { registerBillingJobWorkers } from '../../modules/billing/queue.js';
 import { startConnectorMonitor } from '../../modules/connectors/workers.js';
 import { registerAnalyticsWorkers } from '../../modules/event-analytics/queue.js';
 import { registerOrganizationCleanupWorkers } from '../../modules/organization/shared/background/queue.js';
+import { registerUserDataExportWorker } from '../../modules/user-account/queue.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
 import type { ProjectSubscriptionResolver } from '../../modules/alerting/batch-processor.js';
@@ -57,6 +58,7 @@ async function bootstrapWorkers(): Promise<void> {
   let billingJobWorkers: { stop: () => Promise<void> } | null = null;
   let connectorMonitor: { stop: () => Promise<void> } | null = null;
   let orgCleanupWorkers: { stop: () => Promise<void> } | null = null;
+  let userDataExportWorker: { stop: () => Promise<void> } | null = null;
 
   // Ingestion persistence moved to the dedicated ingestion worker process
   // (src/shared/workers/ingestion-worker-main.ts — pg-boss per-type queues).
@@ -77,6 +79,7 @@ async function bootstrapWorkers(): Promise<void> {
     if (analyticsWorkers) await analyticsWorkers.stop();
     if (connectorMonitor) await connectorMonitor.stop();
     if (orgCleanupWorkers) await orgCleanupWorkers.stop();
+    if (userDataExportWorker) await userDataExportWorker.stop();
     await stopPgBoss();
     await pgPool.end();
     process.exit(0);
@@ -97,6 +100,7 @@ async function bootstrapWorkers(): Promise<void> {
   };
   alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver);
   analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
+  userDataExportWorker = await registerUserDataExportWorker(workerLogger);
 
   if (process.env.ORG_CRON_ENABLED !== 'false') {
     orgCleanupWorkers = await registerOrganizationCleanupWorkers(workerLogger);
@@ -107,7 +111,7 @@ async function bootstrapWorkers(): Promise<void> {
   startAuthCleanupWorker();
 
   workerLogger.info('Worker process started');
-  workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss)');
+  workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss), user-data-export (pg-boss)');
 }
 
 bootstrapWorkers().catch((error) => {

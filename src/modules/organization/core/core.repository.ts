@@ -198,6 +198,12 @@ export class CoreRepository extends BaseRepository {
   }
 
   async listUserOrganizations(userId: string, q: CursorPaginationQuery): Promise<CursorPaginatedResponse<any>> {
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM organizations o JOIN organization_members om ON o.id=om.org_id WHERE om.user_id=$1 AND om.status='active' AND o.deleted_at IS NULL`,
+      [userId]
+    );
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
     const params: unknown[] = [userId];
     let where = `om.user_id=$1 AND om.status='active' AND o.deleted_at IS NULL`;
     if (q.cursor) { params.push(q.cursor); where += ` AND o.created_at < $${params.length}`; }
@@ -207,6 +213,6 @@ export class CoreRepository extends BaseRepository {
        FROM organizations o JOIN organization_members om ON o.id=om.org_id
        WHERE ${where} ORDER BY o.created_at DESC LIMIT $${params.length}`, params
     );
-    return cursorPage(r.rows, q.limit);
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 }

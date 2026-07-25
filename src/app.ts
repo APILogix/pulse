@@ -23,6 +23,7 @@ import { registerMetricsPlugin } from './config/metrics.js';
 import { BackpressureGauge } from './lib/gauge.js';
 import { registerHealthChecks } from './lib/health.js';
 import { registerAuthModule } from './modules/auth/auth.module.js';
+import { registerUserAccountModule } from './modules/user-account/user-account.module.js';
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
@@ -173,6 +174,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // All other modules are independent.
 
   await app.register(registerAuthModule);
+  await app.register(registerUserAccountModule);
   await app.register(registerOrganizationModule);
   await app.register(registerBillingModule);
   await app.register(ingestionModule);          // Must be before projects

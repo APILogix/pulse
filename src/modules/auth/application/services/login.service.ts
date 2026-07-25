@@ -521,7 +521,7 @@ export async function verifyLoginMFAChallenge(
   let verified = false;
   if (device.device_type === 'hardware_key') {
     throw new AuthError(
-      'Use POST /auth/login/mfa/webauthn/options and /verify for passkey MFA',
+      'Passkey authentication is required for this account. Please use your passkey to sign in.',
       AuthErrorCodes.MFA_INVALID,
       400,
       { device_type: 'hardware_key' },

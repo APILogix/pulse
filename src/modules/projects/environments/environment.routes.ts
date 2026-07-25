@@ -69,12 +69,14 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
       if (query.environment !== undefined) filters.environment = query.environment;
       if (query.configKey !== undefined) filters.configKey = query.configKey;
       if (query.includeInactive !== undefined) filters.includeInactive = query.includeInactive;
+      const { cursor, limit, search, sortBy, sortOrder } = query;
       const result = await sdkConfigService.listConfigs(
         orgId,
         userId,
         filters,
+        { cursor, limit, search, sortBy, sortOrder }
       );
-      return reply.send({ success: true, data: result });
+      return reply.send({ success: true, ...result });
     }),
   );
 

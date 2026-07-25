@@ -20,6 +20,8 @@ import type {
   SdkConfigDeploymentRow,
   SdkConfigResolvedDto,
 } from "./sdk-config.types.js";
+import { cursorPage } from "../shared/base.repository.js";
+import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 
 const CONFIG_COLS = `id,org_id,project_id,config_key,config_type,version,version_hash,is_latest,
   config_value,schema_version,environment,target_sdk_versions,target_platforms,
@@ -140,18 +142,30 @@ export class SdkConfigRepository {
   async list(
     orgId: string,
     filters: { projectId?: string; environment?: string; configKey?: string; includeInactive?: boolean },
-  ): Promise<SdkConfigRow[]> {
-    const params: unknown[] = [orgId];
-    let where = `org_id=$1 AND is_latest=TRUE`;
-    if (!filters.includeInactive) where += ` AND is_active=TRUE`;
-    if (filters.projectId) { params.push(filters.projectId); where += ` AND project_id=$${params.length}`; }
-    if (filters.environment) { params.push(filters.environment); where += ` AND environment=$${params.length}`; }
-    if (filters.configKey) { params.push(filters.configKey); where += ` AND config_key=$${params.length}`; }
+    q: CursorPaginationQuery
+  ): Promise<CursorPaginatedResponse<SdkConfigRow>> {
+    const countParams: unknown[] = [orgId];
+    let countWhere = `org_id=$1 AND is_latest=TRUE`;
+    if (!filters.includeInactive) countWhere += ` AND is_active=TRUE`;
+    if (filters.projectId) { countParams.push(filters.projectId); countWhere += ` AND project_id=$${countParams.length}`; }
+    if (filters.environment) { countParams.push(filters.environment); countWhere += ` AND environment=$${countParams.length}`; }
+    if (filters.configKey) { countParams.push(filters.configKey); countWhere += ` AND config_key=$${countParams.length}`; }
+
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM sdk_configs WHERE ${countWhere}`, countParams
+    );
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params: unknown[] = [...countParams];
+    let where = countWhere;
+    if (q.cursor) { params.push(q.cursor); where += ` AND created_at < $${params.length}`; }
+    params.push(q.limit + 1);
+
     const r = await this.db.query<SdkConfigRow>(
-      `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where} ORDER BY config_key ASC, environment ASC`,
+      `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
       params,
     );
-    return r.rows;
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 
   // ── Update (in-place, version++) ──────────────

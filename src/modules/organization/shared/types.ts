@@ -110,6 +110,7 @@ export interface CursorPaginatedResponse<T> {
     hasMore: boolean;
     nextCursor: string | null;
     limit: number;
+    totalCount: number;
   };
 }
 

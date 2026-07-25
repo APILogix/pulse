@@ -1,7 +1,7 @@
-import { BaseRepository } from "../shared/base.repository.js";
+import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { ConflictError, NotFoundError } from "../shared/errors.js";
 import type { OrgSsoProviderRow } from "./sso.schema.js";
-
+import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 export class SsoRepository extends BaseRepository {
   async createSsoProvider(orgId: string, data: Record<string, unknown>): Promise<OrgSsoProviderRow> {
     const r = await this.db.query<OrgSsoProviderRow>(
@@ -12,12 +12,22 @@ export class SsoRepository extends BaseRepository {
     return r.rows[0]!;
   }
 
-  async listSsoProviders(orgId: string): Promise<OrgSsoProviderRow[]> {
+  async listSsoProviders(orgId: string, q: CursorPaginationQuery): Promise<CursorPaginatedResponse<OrgSsoProviderRow>> {
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM organization_sso_providers WHERE org_id=$1`, [orgId]
+    );
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params: unknown[] = [orgId];
+    let where = `org_id=$1`;
+    if (q.cursor) { params.push(q.cursor); where += ` AND created_at < $${params.length}`; }
+    params.push(q.limit + 1);
+
     const r = await this.db.query<OrgSsoProviderRow>(
       `SELECT id,org_id,provider_name,provider_type,entity_id,sso_url,domain,is_active,created_at
-       FROM organization_sso_providers WHERE org_id=$1 ORDER BY created_at DESC`, [orgId]
+       FROM organization_sso_providers WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
     );
-    return r.rows;
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 
   async updateSsoProvider(orgId: string, ssoId: string, data: Record<string, unknown>): Promise<OrgSsoProviderRow> {

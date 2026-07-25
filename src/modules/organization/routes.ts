@@ -319,8 +319,9 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
 
   fastify.get('/:orgId/sso', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const result = await svc.listSsoProviders(orgId, asAuth(request).user.id);
-    return reply.send({ success: true, data: result });
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listSsoProviders(orgId, asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
   }));
 
   fastify.post('/:orgId/sso', auth, withErrorHandling(async (request, reply) => {
@@ -349,8 +350,9 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
 
   fastify.get('/:orgId/scim-tokens', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
-    const result = await svc.listScimTokens(orgId, asAuth(request).user.id);
-    return reply.send({ success: true, data: result });
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listScimTokens(orgId, asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
   }));
 
   fastify.post('/:orgId/scim-tokens', auth, withErrorHandling(async (request, reply) => {

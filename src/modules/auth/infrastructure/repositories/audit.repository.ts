@@ -887,6 +887,78 @@ export async function listScimTokensForOrg(
   }));
 }
 
+export async function listScimTokensForOrgPaginated(
+  orgId: string,
+  limit: number,
+  cursor?: string,
+  client?: PoolClient,
+): Promise<{
+  data: Array<{
+    id: string;
+    created_at: Date;
+    last_used_at: Date | null;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+    scopes: string[];
+    allowed_ips: string[];
+  }>;
+  totalCount: number;
+}> {
+  const db = client || pool;
+
+  const countRes = await db.query<{ count: string }>(
+    `SELECT COUNT(*)::text as count FROM organization_scim_tokens WHERE org_id=$1`,
+    [orgId]
+  );
+  const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+  const params: unknown[] = [orgId];
+  let where = `t.org_id = $1`;
+  if (cursor) { params.push(cursor); where += ` AND t.created_at < $${params.length}`; }
+  params.push(limit + 1);
+
+  const result = await db.query<{
+    id: string;
+    created_at: Date;
+    last_used_at: Date | null;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+    scopes: string[] | null;
+    allowed_ips: string[] | null;
+  }>(
+    `SELECT t.id,
+            t.created_at,
+            t.last_used_at,
+            t.expires_at,
+            t.revoked_at,
+            COALESCE(
+              array_agg(DISTINCT s.scope) FILTER (WHERE s.scope IS NOT NULL),
+              ARRAY[]::varchar[]
+            ) AS scopes,
+            COALESCE(
+              array_agg(DISTINCT text(i.ip_cidr)) FILTER (WHERE i.ip_cidr IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS allowed_ips
+     FROM organization_scim_tokens t
+     LEFT JOIN organization_scim_token_scopes s ON s.token_id = t.id
+     LEFT JOIN organization_scim_token_ips i ON i.token_id = t.id
+     WHERE ${where}
+     GROUP BY t.id, t.created_at, t.last_used_at, t.expires_at, t.revoked_at
+     ORDER BY t.created_at DESC
+     LIMIT $${params.length}`,
+    params,
+  );
+  
+  return {
+    data: result.rows.map((row) => ({
+      ...row,
+      scopes: row.scopes ?? [],
+      allowed_ips: row.allowed_ips ?? [],
+    })),
+    totalCount
+  };
+};
+
 export async function findScimMappingByExternalId(
   orgId: string,
   externalId: string,

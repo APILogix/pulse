@@ -78,14 +78,19 @@ export class QuotasRepository extends BaseRepository {
   }
 
   async listQuotaRequests(orgId: string, q: CursorPaginationQuery): Promise<CursorPaginatedResponse<QuotaRequestRow>> {
-    const params: unknown[] = [orgId];
-    let where = `org_id=$1`;
+    const countParams: unknown[] = [orgId];
+    let countWhere = `org_id=$1`;
+    const countRes = await this.db.query<{ count: string }>(`SELECT COUNT(*)::text as count FROM quota_requests WHERE ${countWhere}`, countParams);
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params = [...countParams];
+    let where = countWhere;
     if (q.cursor) { params.push(q.cursor); where += ` AND created_at < $${params.length}`; }
     params.push(q.limit + 1);
     const r = await this.db.query<QuotaRequestRow>(
       `SELECT id,org_id,quota_type,current_limit,requested_limit,reason,status,reviewed_by,reviewed_at,notes,metadata,created_at,updated_at
        FROM quota_requests WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
     );
-    return cursorPage(r.rows, q.limit);
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 }

@@ -9,8 +9,11 @@ export async function registerDomainRoutes(app: FastifyInstance, service: Domain
   const run = (fn: (r: FastifyRequest) => Promise<unknown>) => async (r: FastifyRequest, reply: any) => {
     try { return reply.send({ success: true, data: await fn(r) }); } catch (e) { throw e; }
   };
+  const runList = (fn: (r: FastifyRequest) => Promise<any>) => async (r: FastifyRequest, reply: any) => {
+    try { const res = await fn(r); return reply.send({ success: true, ...res }); } catch (e) { throw e; }
+  };
   const c = new DomainsController(service);
-  app.get('/:organizationId/domains', auth, run(c.list));
+  app.get('/:organizationId/domains', auth, runList(c.list));
   app.get('/:organizationId/domains/:domainId', auth, run(c.get));
   app.post('/:organizationId/domains', auth, run(c.create));
   app.post('/:organizationId/domains/:domainId/verify', auth, run(c.verify));

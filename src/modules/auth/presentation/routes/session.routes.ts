@@ -307,8 +307,8 @@ export async function sessionRoutes(fastify: FastifyInstance) {
       // so another site cannot silently rotate a user's session with a form
       // submission; CORS enforces that only trusted SPAs can send it.
       if (request.headers['x-csrf-request'] !== '1') {
-        return reply.status(403).send({
-          error: { code: 'CSRF_VALIDATION_FAILED', message: 'Invalid refresh request' },
+return reply.status(403).send({
+          error: { code: 'CSRF_VALIDATION_FAILED', message: 'Request not permitted. Please refresh the page and try again.' },
         });
       }
       const ci = getClientInfo(request);
@@ -318,7 +318,7 @@ export async function sessionRoutes(fastify: FastifyInstance) {
         return reply.status(401).send({
           error: {
             code: 'MISSING_REFRESH_TOKEN',
-            message: 'Refresh token cookie not found',
+            message: 'Session expired. Please sign in again.',
           },
         });
       }
@@ -328,7 +328,7 @@ export async function sessionRoutes(fastify: FastifyInstance) {
         return reply.status(401).send({
           error: {
             code: 'INVALID_REFRESH_TOKEN',
-            message: 'Refresh token signature invalid',
+            message: 'Session expired. Please sign in again.',
           },
         });
       }

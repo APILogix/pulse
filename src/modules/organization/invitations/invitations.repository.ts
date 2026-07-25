@@ -88,9 +88,18 @@ export class InvitationsRepository extends BaseRepository {
   }
 
   async listInvitations(orgId: string, q: CursorPaginationQuery, status?: string): Promise<CursorPaginatedResponse<OrgInvitationRow>> {
-    const params: unknown[] = [orgId];
-    let where = `oi.org_id=$1`;
-    if (status) { params.push(status); where += ` AND oi.status=$${params.length}`; }
+    const countParams: unknown[] = [orgId];
+    let countWhere = `oi.org_id=$1`;
+    if (status) { countParams.push(status); countWhere += ` AND oi.status=$${countParams.length}`; }
+    if (q.search) { countParams.push(`%${q.search}%`); countWhere += ` AND oi.email ILIKE $${countParams.length}`; }
+
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count FROM organization_invitations oi WHERE ${countWhere}`, countParams
+    );
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params = [...countParams];
+    let where = countWhere;
     if (q.cursor) { params.push(q.cursor); where += ` AND oi.created_at < $${params.length}`; }
     params.push(q.limit + 1);
 
@@ -99,7 +108,7 @@ export class InvitationsRepository extends BaseRepository {
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE ${where} ORDER BY oi.created_at DESC LIMIT $${params.length}`,
       params
     );
-    return cursorPage(r.rows, q.limit);
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 
   async acceptInvitation(tokenHash: string, userId: string): Promise<void> {

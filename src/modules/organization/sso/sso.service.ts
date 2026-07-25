@@ -1,5 +1,5 @@
 import type { SsoRepository } from "./sso.repository.js";
-import type { RequestMeta, OrgMemberRow, OrganizationRow, OrgRole } from "../types.js";
+import type { RequestMeta, OrgMemberRow, OrganizationRow, OrgRole, CursorPaginationQuery } from "../types.js";
 import type { BillingEntitlementsRow, OrganizationUsageCounts } from "../repository.js";
 
 export interface SsoProviderDto {
@@ -24,10 +24,13 @@ export interface SsoServiceDependencies {
 export class SsoService {
   constructor(private readonly deps: SsoServiceDependencies) {}
 
-  async listSsoProviders(orgId: string, userId: string) {
+  async listSsoProviders(orgId: string, userId: string, q: CursorPaginationQuery) {
     await this.deps.requireMember(orgId, userId, "admin");
-    const rows = await this.deps.repository.listSsoProviders(orgId);
-    return rows.map(sso => ({ id: sso.id, providerName: sso.provider_name, providerType: sso.provider_type, entityId: sso.entity_id, ssoUrl: sso.sso_url, domain: sso.domain, isActive: sso.is_active, createdAt: sso.created_at }) as SsoProviderDto);
+    const result = await this.deps.repository.listSsoProviders(orgId, q);
+    return {
+      data: result.data.map(sso => ({ id: sso.id, providerName: sso.provider_name, providerType: sso.provider_type, entityId: sso.entity_id, ssoUrl: sso.sso_url, domain: sso.domain, isActive: sso.is_active, createdAt: sso.created_at }) as SsoProviderDto),
+      meta: result.meta
+    };
   }
 
   async createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>) {

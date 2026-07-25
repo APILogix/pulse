@@ -14,7 +14,7 @@ import type { OrganizationRepository } from "../repository.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
 import {
   ForbiddenError, NotFoundError, ValidationError, hasMinRole,
-  type RequestMeta,
+  type RequestMeta, type CursorPaginationQuery,
 } from "../types.js";
 import type {
   SdkConfigRow, SdkConfigVersionRow, SdkConfigDeploymentRow,
@@ -172,10 +172,11 @@ export class SdkConfigService {
   async listConfigs(
     orgId: string, userId: string,
     filters: { projectId?: string; environment?: string; configKey?: string; includeInactive?: boolean },
-  ): Promise<SdkConfigDto[]> {
+    q: CursorPaginationQuery
+  ) {
     await this.requireMember(orgId, userId);
-    const rows = await this.repo.list(orgId, filters);
-    return rows.map(toConfigDto);
+    const result = await this.repo.list(orgId, filters, q);
+    return { data: result.data.map(toConfigDto), meta: result.meta };
   }
 
   async getConfig(orgId: string, userId: string, configId: string): Promise<SdkConfigDto> {

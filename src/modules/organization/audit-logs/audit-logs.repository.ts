@@ -16,18 +16,24 @@ export class AuditLogsRepository extends BaseRepository {
   }
 
   async listAuditLogs(orgId: string, q: CursorPaginationQuery, filters?: { action?: string; entityType?: string; actorUserId?: string }): Promise<CursorPaginatedResponse<AuditLogRow>> {
-    const params: unknown[] = [orgId];
-    let where = `org_id=$1`;
-    if (filters?.action) { params.push(filters.action); where += ` AND action=$${params.length}`; }
-    if (filters?.entityType) { params.push(filters.entityType); where += ` AND entity_type=$${params.length}`; }
-    if (filters?.actorUserId) { params.push(filters.actorUserId); where += ` AND actor_user_id=$${params.length}`; }
+    const countParams: unknown[] = [orgId];
+    let countWhere = `org_id=$1`;
+    if (filters?.action) { countParams.push(filters.action); countWhere += ` AND action=$${countParams.length}`; }
+    if (filters?.entityType) { countParams.push(filters.entityType); countWhere += ` AND entity_type=$${countParams.length}`; }
+    if (filters?.actorUserId) { countParams.push(filters.actorUserId); countWhere += ` AND actor_user_id=$${countParams.length}`; }
+
+    const countRes = await this.db.query<{ count: string }>(`SELECT COUNT(*)::text as count FROM organization_audit_logs WHERE ${countWhere}`, countParams);
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+
+    const params = [...countParams];
+    let where = countWhere;
     if (q.cursor) { params.push(q.cursor); where += ` AND created_at < $${params.length}`; }
     params.push(q.limit + 1);
     const r = await this.db.query<AuditLogRow>(
       `SELECT id,org_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
        FROM organization_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params
     );
-    return cursorPage(r.rows, q.limit);
+    return cursorPage(r.rows, q.limit, totalCount);
   }
 
   async exportAuditLogs(orgId: string, filters?: { action?: string; entityType?: string; actorUserId?: string; startDate?: string; endDate?: string }): Promise<AuditLogRow[]> {
