@@ -10,7 +10,7 @@ export class AiBillingController {
   consumeAiCredits = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = req.user?.currentOrgId || req.user?.orgId;
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const body = ConsumeAiCreditsSchema.parse(req.body) as ConsumeAiCreditsBody;
@@ -18,6 +18,7 @@ export class AiBillingController {
       const result = await this.service.consumeAiCredits(
         orgId,
         req.user!.id,
+        body.requestId,
         body.featureKey,
         body.provider,
         body.model,

@@ -83,7 +83,17 @@ export declare class EventAnalyticsRepository {
     getRequestById(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     getSpansByTrace(orgId: string, traceId: string): Promise<Array<Record<string, unknown>>>;
     getTraceById(orgId: string, traceId: string): Promise<Record<string, unknown> | null>;
-    listTraces(orgId: string, range: TimeRange, projectId: string | undefined, limit: number, offset: number): Promise<{
+    listTraces(orgId: string, range: TimeRange, filters: {
+        projectId?: string;
+        traceId?: string;
+        requestId?: string;
+        service?: string;
+        rootSpanName?: string;
+        minDurationMs?: number;
+        errorOnly?: boolean;
+        limit: number;
+        offset: number;
+    }): Promise<{
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
@@ -93,13 +103,25 @@ export declare class EventAnalyticsRepository {
     listLogs(orgId: string, range: TimeRange, filters: {
         projectId?: string;
         level?: string;
+        service?: string;
         search?: string;
+        securityOnly?: boolean;
         limit: number;
         offset: number;
     }): Promise<{
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
+    getLog(orgId: string, id: string): Promise<Record<string, unknown> | null>;
+    summarizeLogs(orgId: string, range: TimeRange, filters: {
+        projectId?: string;
+        level?: string;
+        service?: string;
+        search?: string;
+        limit: number;
+    }): Promise<Array<Record<string, unknown>>>;
+    listObservedServices(orgId: string, range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    listServiceEndpoints(orgId: string, service: string, range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     /** Logs newer than a cursor timestamp — used by the SSE poll loop. */
     listLogsSince(orgId: string, since: Date, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     listErrorsSince(orgId: string, since: Date, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;

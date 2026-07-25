@@ -89,6 +89,16 @@ export class AlertingRepository {
         return this.events.listEvents(organizationId, query);
     }
 
+    async listActiveEvents(organizationId: string, limit: number): Promise<{ data: AlertEventRow[]; total: number }> {
+        return this.events.listActiveEvents(organizationId, limit);
+    }
+
+    async listIncidentProxyEvents(
+        organizationId: string, from: Date, to: Date, severity: string | undefined, limit: number, rankByImpact: boolean,
+    ): Promise<{ data: AlertEventRow[]; total: number }> {
+        return this.events.listIncidentProxyEvents(organizationId, from, to, severity, limit, rankByImpact);
+    }
+
     async acknowledgeEvent(organizationId: string, eventId: string, userId: string, expiresAt: Date | null, comment: string | null): Promise<AlertEventRow> {
         return this.events.acknowledgeEvent(organizationId, eventId, userId, expiresAt, comment);
     }

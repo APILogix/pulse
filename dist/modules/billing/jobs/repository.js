@@ -19,6 +19,66 @@ function dateLiteral(date) {
 function quoteIdent(identifier) {
     return `"${identifier.replace(/"/g, '""')}"`;
 }
+function asObject(value) {
+    return value && typeof value === 'object' ? value : {};
+}
+function stripeObject(payload) {
+    return asObject(payload?.data?.object);
+}
+function razorpayEntity(payload, key) {
+    return asObject(payload?.payload?.[key]?.entity);
+}
+function metadataOrgId(payload, object) {
+    return (payload?.organization_id ??
+        payload?.organizationId ??
+        object?.metadata?.organization_id ??
+        object?.metadata?.organizationId ??
+        object?.notes?.organization_id ??
+        object?.notes?.organizationId ??
+        null);
+}
+function normalizeCurrency(value) {
+    return typeof value === 'string' && value.length > 0 ? value.toUpperCase().slice(0, 3) : 'USD';
+}
+function unixSecondsToDate(value) {
+    const seconds = Number(value);
+    return Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : null;
+}
+function mapStripeSubscriptionStatus(status) {
+    switch (status) {
+        case 'trialing':
+        case 'active':
+        case 'past_due':
+        case 'incomplete':
+            return status;
+        case 'canceled':
+        case 'cancelled':
+            return 'cancelled';
+        case 'unpaid':
+            return 'past_due';
+        case 'paused':
+            return 'paused';
+        default:
+            return 'past_due';
+    }
+}
+function mapRazorpaySubscriptionStatus(status) {
+    switch (status) {
+        case 'active':
+        case 'authenticated':
+            return 'active';
+        case 'pending':
+            return 'incomplete';
+        case 'halted':
+            return 'past_due';
+        case 'completed':
+        case 'cancelled':
+        case 'canceled':
+            return 'cancelled';
+        default:
+            return 'past_due';
+    }
+}
 export class BillingJobsRepository {
     db;
     constructor(db = pool) {
@@ -42,6 +102,43 @@ export class BillingJobsRepository {
     }
     async renewSubscriptions(batchSize) {
         return this.withTransaction(async (client) => {
+            const cancelResult = await client.query(`
+        WITH due AS (
+          SELECT id, organization_id, plan_id
+          FROM organization_subscriptions
+          WHERE status IN ('trialing','active','past_due')
+            AND cancel_at_period_end = TRUE
+            AND current_period_end <= NOW()
+            AND deleted_at IS NULL
+          ORDER BY current_period_end, id
+          LIMIT $1
+          FOR UPDATE SKIP LOCKED
+        ),
+        cancelled AS (
+          UPDATE organization_subscriptions os
+          SET status = 'cancelled',
+              cancelled_at = COALESCE(cancelled_at, current_period_end, NOW()),
+              updated_at = NOW()
+          FROM due d
+          WHERE os.id = d.id
+          RETURNING os.id, os.organization_id, os.plan_id
+        ),
+        events AS (
+          INSERT INTO subscription_events (organization_id, subscription_id, event_type, actor, old_plan_id, new_plan_id, metadata)
+          SELECT organization_id, id, 'cancelled', 'system', plan_id, plan_id,
+                 jsonb_build_object('source','subscription-renewal', 'reason', 'cancel_at_period_end_elapsed')
+          FROM cancelled
+          RETURNING id
+        ),
+        audits AS (
+          INSERT INTO billing_audit_logs (organization_id, subscription_id, actor_type, action, metadata)
+          SELECT organization_id, id, 'system', 'subscription.cancelled',
+                 jsonb_build_object('source','subscription-renewal', 'reason', 'cancel_at_period_end_elapsed')
+          FROM cancelled
+          RETURNING id
+        )
+        SELECT COUNT(*)::text AS count FROM cancelled
+        `, [batchSize]);
             const invoiceResult = await client.query(`
         WITH due AS (
           SELECT os.id, os.organization_id, os.provider, os.billing_interval,
@@ -49,6 +146,7 @@ export class BillingJobsRepository {
           FROM organization_subscriptions os
           WHERE os.status = 'active'
             AND os.current_period_end <= NOW()
+            AND os.cancel_at_period_end = FALSE
             AND os.deleted_at IS NULL
           ORDER BY os.current_period_end, os.id
           LIMIT $1
@@ -94,6 +192,7 @@ export class BillingJobsRepository {
           FROM organization_subscriptions
           WHERE status = 'active'
             AND current_period_end <= NOW()
+            AND cancel_at_period_end = FALSE
             AND deleted_at IS NULL
           ORDER BY current_period_end, id
           LIMIT $1
@@ -139,7 +238,7 @@ export class BillingJobsRepository {
         )
         SELECT COUNT(*)::text AS count FROM renewed
         `, [batchSize]);
-            return { processed: firstCount(renewResult), failed: 0, retried: 0 };
+            return { processed: firstCount(cancelResult) + firstCount(renewResult), failed: 0, retried: 0 };
         });
     }
     async expireTrials(batchSize) {
@@ -196,6 +295,7 @@ export class BillingJobsRepository {
                  os.current_period_start, os.current_period_end
           FROM organization_subscriptions os
           WHERE os.status IN ('active','past_due')
+            AND os.cancel_at_period_end = FALSE
             AND os.deleted_at IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM invoices i
@@ -365,31 +465,76 @@ export class BillingJobsRepository {
     }
     async retryWebhooks(batchSize, maxRetries) {
         return this.withTransaction(async (client) => {
-            const result = await client.query(`
-        WITH due AS (
-          SELECT id
-          FROM billing_webhook_events
-          WHERE processing_status IN ('received','failed')
-            AND retry_count < $2
-            AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-          ORDER BY COALESCE(next_retry_at, received_at), id
-          LIMIT $1
-          FOR UPDATE SKIP LOCKED
-        ),
-        marked AS (
-          UPDATE billing_webhook_events bwe
-          SET processing_status = 'received',
-              retry_count = retry_count + 1,
-              next_retry_at = NOW() + (POWER(2, LEAST(retry_count + 1, 10))::int * INTERVAL '1 minute'),
-              processing_started_at = NULL,
-              metadata = metadata || jsonb_build_object('last_retry_scheduled_at', NOW())
-          FROM due
-          WHERE bwe.id = due.id
-          RETURNING bwe.id
-        )
-        SELECT COUNT(*)::text AS count FROM marked
+            const dueResult = await client.query(`
+        SELECT id, provider, provider_event_id, event_type, organization_id, payload, received_at, retry_count
+        FROM billing_webhook_events
+        WHERE processing_status IN ('received','failed')
+          AND signature_verified = TRUE
+          AND retry_count < $2
+          AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+        ORDER BY COALESCE(next_retry_at, received_at), id
+        LIMIT $1
+        FOR UPDATE SKIP LOCKED
         `, [batchSize, maxRetries]);
-            return { processed: 0, failed: 0, retried: firstCount(result) };
+            let processed = 0;
+            let failed = 0;
+            let retried = 0;
+            for (const event of dueResult.rows) {
+                const startedAt = Date.now();
+                await client.query(`UPDATE billing_webhook_events
+              SET processing_status = 'processing',
+                  processing_started_at = NOW(),
+                  retry_count = retry_count + 1,
+                  next_retry_at = NULL,
+                  last_error = NULL
+            WHERE id = $1`, [event.id]);
+                try {
+                    const result = await this.applyWebhookEvent(client, event);
+                    await client.query(`UPDATE billing_webhook_events
+                SET processing_status = $2,
+                    processed_at = NOW(),
+                    processing_duration_ms = $3,
+                    organization_id = COALESCE(organization_id, $4),
+                    metadata = metadata || jsonb_build_object(
+                      'processor_action', $5,
+                      'subscription_id', $6,
+                      'invoice_id', $7,
+                      'payment_id', $8
+                    )
+              WHERE id = $1`, [
+                        event.id,
+                        result.status,
+                        Date.now() - startedAt,
+                        result.organizationId ?? null,
+                        result.action,
+                        result.subscriptionId ?? null,
+                        result.invoiceId ?? null,
+                        result.paymentId ?? null,
+                    ]);
+                    processed += result.status === 'processed' ? 1 : 0;
+                }
+                catch (error) {
+                    const nextRetry = event.retry_count + 1 >= maxRetries
+                        ? null
+                        : new Date(Date.now() + (2 ** Math.min(event.retry_count + 1, 10)) * 60_000);
+                    await client.query(`UPDATE billing_webhook_events
+                SET processing_status = 'failed',
+                    next_retry_at = $2,
+                    processing_duration_ms = $3,
+                    last_error = $4,
+                    metadata = metadata || jsonb_build_object('last_processor_error_at', NOW())
+              WHERE id = $1`, [
+                        event.id,
+                        nextRetry,
+                        Date.now() - startedAt,
+                        error instanceof Error ? error.message : String(error),
+                    ]);
+                    failed += 1;
+                    if (nextRetry)
+                        retried += 1;
+                }
+            }
+            return { processed, failed, retried };
         });
     }
     async deadLetterWebhooks(batchSize, maxRetries) {
@@ -426,6 +571,311 @@ export class BillingJobsRepository {
             return { processed: firstCount(result), failed: 0, retried: 0 };
         });
     }
+    async applyWebhookEvent(client, event) {
+        if (event.provider === 'stripe') {
+            return this.applyStripeWebhookEvent(client, event);
+        }
+        if (event.provider === 'razorpay') {
+            return this.applyRazorpayWebhookEvent(client, event);
+        }
+        return { status: 'ignored', organizationId: event.organization_id, action: 'unsupported_provider' };
+    }
+    async applyStripeWebhookEvent(client, event) {
+        const object = stripeObject(event.payload);
+        if (event.event_type.startsWith('invoice.')) {
+            return this.applyInvoiceWebhook(client, event, {
+                providerInvoiceId: object.id,
+                providerSubscriptionId: typeof object.subscription === 'string' ? object.subscription : null,
+                providerPaymentId: typeof object.payment_intent === 'string' ? object.payment_intent :
+                    typeof object.charge === 'string' ? object.charge :
+                        event.provider_event_id,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, object),
+                status: event.event_type === 'invoice.paid' || event.event_type === 'invoice.payment_succeeded' ? 'paid' : event.event_type === 'invoice.payment_failed' ? 'failed' : 'ignored',
+                currency: normalizeCurrency(object.currency),
+                amountPaid: Number(object.amount_paid ?? object.amount_due ?? object.total ?? 0),
+                totalAmount: Number(object.total ?? object.amount_due ?? object.amount_paid ?? 0),
+                failureReason: object.last_finalization_error?.message ?? object.status_transitions?.voided_at ? 'invoice voided' : null,
+            });
+        }
+        if (event.event_type.startsWith('payment_intent.') || event.event_type.startsWith('charge.')) {
+            return this.applyPaymentWebhook(client, event, {
+                providerPaymentId: object.id ?? event.provider_event_id,
+                providerInvoiceId: typeof object.invoice === 'string' ? object.invoice : null,
+                providerSubscriptionId: typeof object.subscription === 'string' ? object.subscription : null,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, object),
+                status: event.event_type.endsWith('.succeeded') ? 'succeeded' : event.event_type.endsWith('.failed') ? 'failed' : event.event_type.endsWith('.refunded') ? 'refunded' : 'ignored',
+                currency: normalizeCurrency(object.currency),
+                amount: Number(object.amount_received ?? object.amount_captured ?? object.amount ?? 0),
+                failureCode: object.last_payment_error?.code ?? object.failure_code ?? null,
+                failureReason: object.last_payment_error?.message ?? object.failure_message ?? null,
+            });
+        }
+        if (event.event_type.startsWith('customer.subscription.')) {
+            return this.applySubscriptionWebhook(client, event, {
+                providerSubscriptionId: object.id,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, object),
+                status: event.event_type.endsWith('.deleted') ? 'cancelled' : mapStripeSubscriptionStatus(object.status),
+                cancelAtPeriodEnd: Boolean(object.cancel_at_period_end),
+                cancelledAt: unixSecondsToDate(object.canceled_at ?? object.cancelled_at),
+                currentPeriodStart: unixSecondsToDate(object.current_period_start),
+                currentPeriodEnd: unixSecondsToDate(object.current_period_end),
+            });
+        }
+        return { status: 'ignored', organizationId: event.organization_id, action: 'unsupported_stripe_event' };
+    }
+    async applyRazorpayWebhookEvent(client, event) {
+        const payment = razorpayEntity(event.payload, 'payment');
+        const invoice = razorpayEntity(event.payload, 'invoice');
+        const subscription = razorpayEntity(event.payload, 'subscription');
+        if (event.event_type.includes('payment.')) {
+            return this.applyPaymentWebhook(client, event, {
+                providerPaymentId: payment.id ?? event.provider_event_id,
+                providerInvoiceId: payment.invoice_id ?? invoice.id ?? null,
+                providerSubscriptionId: payment.subscription_id ?? subscription.id ?? null,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, payment),
+                status: event.event_type.endsWith('.captured') || event.event_type.endsWith('.authorized') ? 'succeeded' : event.event_type.endsWith('.failed') ? 'failed' : event.event_type.endsWith('.refunded') ? 'refunded' : 'ignored',
+                currency: normalizeCurrency(payment.currency),
+                amount: Number(payment.amount ?? 0),
+                failureCode: payment.error_code ?? null,
+                failureReason: payment.error_description ?? null,
+            });
+        }
+        if (event.event_type.includes('invoice.')) {
+            return this.applyInvoiceWebhook(client, event, {
+                providerInvoiceId: invoice.id ?? event.provider_event_id,
+                providerSubscriptionId: invoice.subscription_id ?? subscription.id ?? null,
+                providerPaymentId: invoice.payment_id ?? event.provider_event_id,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, invoice),
+                status: event.event_type.endsWith('.paid') ? 'paid' : event.event_type.endsWith('.expired') ? 'failed' : 'ignored',
+                currency: normalizeCurrency(invoice.currency),
+                amountPaid: Number(invoice.amount_paid ?? invoice.amount ?? 0),
+                totalAmount: Number(invoice.amount ?? invoice.gross_amount ?? 0),
+                failureReason: invoice.status ?? null,
+            });
+        }
+        if (event.event_type.includes('subscription.')) {
+            return this.applySubscriptionWebhook(client, event, {
+                providerSubscriptionId: subscription.id ?? event.provider_event_id,
+                organizationId: event.organization_id ?? metadataOrgId(event.payload, subscription),
+                status: mapRazorpaySubscriptionStatus(subscription.status),
+                cancelAtPeriodEnd: ['cancelled', 'completed'].includes(String(subscription.status)),
+                cancelledAt: unixSecondsToDate(subscription.ended_at),
+                currentPeriodStart: unixSecondsToDate(subscription.current_start),
+                currentPeriodEnd: unixSecondsToDate(subscription.current_end),
+            });
+        }
+        return { status: 'ignored', organizationId: event.organization_id, action: 'unsupported_razorpay_event' };
+    }
+    async applyInvoiceWebhook(client, event, input) {
+        if (input.status === 'ignored' || !input.providerInvoiceId) {
+            return { status: 'ignored', organizationId: input.organizationId, action: 'invoice_event_ignored' };
+        }
+        const invoiceResult = await client.query(`UPDATE invoices
+          SET status = CASE WHEN $3 = 'paid' THEN 'paid'::billing_invoice_status ELSE 'uncollectible'::billing_invoice_status END,
+              amount_paid = CASE WHEN $3 = 'paid' THEN GREATEST(amount_paid, $4) ELSE amount_paid END,
+              paid_at = CASE WHEN $3 = 'paid' THEN COALESCE(paid_at, NOW()) ELSE paid_at END,
+              metadata = metadata || jsonb_build_object('last_webhook_event_id', $5, 'provider_invoice_id', $2),
+              updated_at = NOW()
+        WHERE provider = $1
+          AND provider_invoice_id = $2
+          AND deleted_at IS NULL
+        RETURNING id, organization_id, subscription_id, total_amount, amount_paid`, [event.provider, input.providerInvoiceId, input.status, input.amountPaid, event.id]);
+        const invoice = invoiceResult.rows[0];
+        const organizationId = invoice?.organization_id ?? input.organizationId;
+        const subscriptionId = invoice?.subscription_id ?? null;
+        let paymentId = null;
+        if (organizationId && input.providerPaymentId) {
+            const paymentResult = await client.query(`INSERT INTO payments (
+           organization_id, invoice_id, subscription_id, provider, provider_payment_id,
+           status, currency, amount, initiated_at, captured_at, failure_reason,
+           idempotency_key, metadata
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11,$12)
+         ON CONFLICT (provider, provider_payment_id)
+         DO UPDATE SET
+           status = EXCLUDED.status,
+           invoice_id = COALESCE(payments.invoice_id, EXCLUDED.invoice_id),
+           subscription_id = COALESCE(payments.subscription_id, EXCLUDED.subscription_id),
+           amount = GREATEST(payments.amount, EXCLUDED.amount),
+           captured_at = COALESCE(payments.captured_at, EXCLUDED.captured_at),
+           failure_reason = COALESCE(EXCLUDED.failure_reason, payments.failure_reason),
+           metadata = payments.metadata || EXCLUDED.metadata,
+           updated_at = NOW()
+         RETURNING id`, [
+                organizationId,
+                invoice?.id ?? null,
+                subscriptionId,
+                event.provider,
+                input.providerPaymentId,
+                input.status === 'paid' ? 'succeeded' : 'failed',
+                input.currency,
+                input.status === 'paid' ? input.amountPaid : 0,
+                input.status === 'paid' ? new Date() : null,
+                input.failureReason,
+                `${event.provider}:${event.provider_event_id}`,
+                JSON.stringify({ source: 'webhook', webhookEventId: event.id }),
+            ]);
+            paymentId = paymentResult.rows[0]?.id ?? null;
+        }
+        if (subscriptionId) {
+            await client.query(`UPDATE organization_subscriptions
+            SET status = CASE WHEN $2 = 'paid' THEN 'active'::billing_subscription_status ELSE 'past_due'::billing_subscription_status END,
+                updated_at = NOW()
+          WHERE id = $1
+            AND deleted_at IS NULL`, [subscriptionId, input.status]);
+            await client.query(`INSERT INTO subscription_events (organization_id, subscription_id, event_type, actor, metadata)
+         VALUES ($1, $2, $3, 'billing_provider', $4)`, [
+                organizationId,
+                subscriptionId,
+                input.status === 'paid' ? 'payment_succeeded' : 'payment_failed',
+                JSON.stringify({ source: 'webhook', webhookEventId: event.id, providerEventId: event.provider_event_id }),
+            ]);
+        }
+        if (organizationId) {
+            await client.query(`INSERT INTO billing_audit_logs (organization_id, subscription_id, invoice_id, payment_id, actor_type, action, metadata)
+         VALUES ($1,$2,$3,$4,'billing_provider',$5,$6)`, [
+                organizationId,
+                subscriptionId,
+                invoice?.id ?? null,
+                paymentId,
+                input.status === 'paid' ? 'invoice.paid' : 'invoice.payment_failed',
+                JSON.stringify({ source: 'webhook', webhookEventId: event.id, providerEventId: event.provider_event_id }),
+            ]);
+        }
+        return {
+            status: 'processed',
+            organizationId,
+            subscriptionId,
+            invoiceId: invoice?.id ?? null,
+            paymentId,
+            action: input.status === 'paid' ? 'invoice_paid' : 'invoice_failed',
+        };
+    }
+    async applyPaymentWebhook(client, event, input) {
+        if (input.status === 'ignored' || !input.providerPaymentId) {
+            return { status: 'ignored', organizationId: input.organizationId, action: 'payment_event_ignored' };
+        }
+        const invoiceResult = input.providerInvoiceId
+            ? await client.query(`SELECT id, organization_id, subscription_id, total_amount
+             FROM invoices
+            WHERE provider = $1 AND provider_invoice_id = $2 AND deleted_at IS NULL
+            LIMIT 1`, [event.provider, input.providerInvoiceId])
+            : { rows: [] };
+        const subscriptionResult = input.providerSubscriptionId
+            ? await client.query(`SELECT id, organization_id
+             FROM organization_subscriptions
+            WHERE provider = $1 AND provider_subscription_id = $2 AND deleted_at IS NULL
+            LIMIT 1`, [event.provider, input.providerSubscriptionId])
+            : { rows: [] };
+        const invoice = invoiceResult.rows[0];
+        const subscription = subscriptionResult.rows[0];
+        const organizationId = invoice?.organization_id ?? subscription?.organization_id ?? input.organizationId;
+        if (!organizationId) {
+            return { status: 'ignored', organizationId: null, action: 'payment_event_missing_org' };
+        }
+        const paymentResult = await client.query(`INSERT INTO payments (
+         organization_id, invoice_id, subscription_id, provider, provider_payment_id,
+         status, currency, amount, initiated_at, captured_at, failed_at, refunded_at,
+         failure_code, failure_reason, idempotency_key, metadata
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (provider, provider_payment_id)
+       DO UPDATE SET
+         status = EXCLUDED.status,
+         invoice_id = COALESCE(payments.invoice_id, EXCLUDED.invoice_id),
+         subscription_id = COALESCE(payments.subscription_id, EXCLUDED.subscription_id),
+         amount = GREATEST(payments.amount, EXCLUDED.amount),
+         captured_at = COALESCE(EXCLUDED.captured_at, payments.captured_at),
+         failed_at = COALESCE(EXCLUDED.failed_at, payments.failed_at),
+         refunded_at = COALESCE(EXCLUDED.refunded_at, payments.refunded_at),
+         failure_code = COALESCE(EXCLUDED.failure_code, payments.failure_code),
+         failure_reason = COALESCE(EXCLUDED.failure_reason, payments.failure_reason),
+         metadata = payments.metadata || EXCLUDED.metadata,
+         updated_at = NOW()
+       RETURNING id`, [
+            organizationId,
+            invoice?.id ?? null,
+            invoice?.subscription_id ?? subscription?.id ?? null,
+            event.provider,
+            input.providerPaymentId,
+            input.status,
+            input.currency,
+            input.amount,
+            input.status === 'succeeded' ? new Date() : null,
+            input.status === 'failed' ? new Date() : null,
+            input.status === 'refunded' ? new Date() : null,
+            input.failureCode,
+            input.failureReason,
+            `${event.provider}:${event.provider_event_id}`,
+            JSON.stringify({ source: 'webhook', webhookEventId: event.id }),
+        ]);
+        const paymentId = paymentResult.rows[0]?.id ?? null;
+        if (invoice?.id && input.status === 'succeeded') {
+            await client.query(`UPDATE invoices
+            SET amount_paid = GREATEST(amount_paid, $2),
+                status = CASE WHEN GREATEST(amount_paid, $2) >= total_amount THEN 'paid'::billing_invoice_status ELSE status END,
+                paid_at = CASE WHEN GREATEST(amount_paid, $2) >= total_amount THEN COALESCE(paid_at, NOW()) ELSE paid_at END,
+                updated_at = NOW()
+          WHERE id = $1`, [invoice.id, input.amount]);
+        }
+        return {
+            status: 'processed',
+            organizationId,
+            subscriptionId: invoice?.subscription_id ?? subscription?.id ?? null,
+            invoiceId: invoice?.id ?? null,
+            paymentId,
+            action: `payment_${input.status}`,
+        };
+    }
+    async applySubscriptionWebhook(client, event, input) {
+        if (!input.providerSubscriptionId) {
+            return { status: 'ignored', organizationId: input.organizationId, action: 'subscription_event_missing_provider_id' };
+        }
+        const result = await client.query(`UPDATE organization_subscriptions
+          SET status = $3::billing_subscription_status,
+              cancel_at_period_end = $4,
+              cancelled_at = CASE WHEN $3::text = 'cancelled' THEN COALESCE(cancelled_at, $5, NOW()) ELSE cancelled_at END,
+              current_period_start = COALESCE($6, current_period_start),
+              current_period_end = COALESCE($7, current_period_end),
+              metadata = metadata || jsonb_build_object('last_webhook_event_id', $8),
+              updated_at = NOW()
+        WHERE provider = $1
+          AND provider_subscription_id = $2
+          AND deleted_at IS NULL
+        RETURNING id, organization_id, plan_id`, [
+            event.provider,
+            input.providerSubscriptionId,
+            input.status,
+            input.cancelAtPeriodEnd,
+            input.cancelledAt,
+            input.currentPeriodStart,
+            input.currentPeriodEnd,
+            event.id,
+        ]);
+        const subscription = result.rows[0];
+        if (!subscription) {
+            return { status: 'ignored', organizationId: input.organizationId, action: 'subscription_event_no_local_match' };
+        }
+        await client.query(`INSERT INTO subscription_events (organization_id, subscription_id, event_type, actor, old_plan_id, new_plan_id, metadata)
+       VALUES ($1,$2,$3,'billing_provider',$4,$4,$5)`, [
+            subscription.organization_id,
+            subscription.id,
+            input.status === 'cancelled' ? 'cancelled' : input.status === 'active' ? 'resumed' : 'payment_failed',
+            subscription.plan_id,
+            JSON.stringify({ source: 'webhook', webhookEventId: event.id, providerEventId: event.provider_event_id, status: input.status }),
+        ]);
+        await client.query(`INSERT INTO billing_audit_logs (organization_id, subscription_id, actor_type, action, metadata)
+       VALUES ($1,$2,'billing_provider',$3,$4)`, [
+            subscription.organization_id,
+            subscription.id,
+            `subscription.${input.status}`,
+            JSON.stringify({ source: 'webhook', webhookEventId: event.id, providerEventId: event.provider_event_id }),
+        ]);
+        return {
+            status: 'processed',
+            organizationId: subscription.organization_id,
+            subscriptionId: subscription.id,
+            action: 'subscription_updated',
+        };
+    }
     async rollOverUsage(batchSize) {
         return this.withTransaction(async (client) => {
             const result = await client.query(`
@@ -437,16 +887,30 @@ export class BillingJobsRepository {
           LIMIT $1
           FOR UPDATE SKIP LOCKED
         ),
-        archive AS (
+        archived_existing AS (
+          UPDATE usage_daily_counters udc
+          SET events_count = udc.events_count + d.events_used,
+              ai_credits_used = udc.ai_credits_used + d.ai_credits_used,
+              updated_at = NOW()
+          FROM due d
+          WHERE udc.organization_id = d.organization_id
+            AND udc.project_id IS NULL
+            AND udc.usage_date = (d.period_end - INTERVAL '1 day')::date
+          RETURNING udc.organization_id
+        ),
+        archived_new AS (
           INSERT INTO usage_daily_counters (
             organization_id, project_id, usage_date, events_count, ai_credits_used
           )
-          SELECT organization_id, NULL, (period_end - INTERVAL '1 day')::date, events_used, ai_credits_used
-          FROM due
-          ON CONFLICT (organization_id, project_id, usage_date) DO UPDATE
-          SET events_count = usage_daily_counters.events_count + EXCLUDED.events_count,
-              ai_credits_used = usage_daily_counters.ai_credits_used + EXCLUDED.ai_credits_used,
-              updated_at = NOW()
+          SELECT d.organization_id, NULL, (d.period_end - INTERVAL '1 day')::date, d.events_used, d.ai_credits_used
+          FROM due d
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM usage_daily_counters udc
+            WHERE udc.organization_id = d.organization_id
+              AND udc.project_id IS NULL
+              AND udc.usage_date = (d.period_end - INTERVAL '1 day')::date
+          )
           RETURNING organization_id
         ),
         reset AS (
@@ -479,17 +943,33 @@ export class BillingJobsRepository {
           LIMIT $1
           FOR UPDATE SKIP LOCKED
         ),
-        upserted AS (
-          INSERT INTO usage_daily_counters (organization_id, project_id, usage_date, events_count, ai_credits_used)
-          SELECT organization_id, NULL, CURRENT_DATE, events_used, ai_credits_used
-          FROM due
-          ON CONFLICT (organization_id, project_id, usage_date) DO UPDATE
-          SET events_count = EXCLUDED.events_count,
-              ai_credits_used = EXCLUDED.ai_credits_used,
+        updated_existing AS (
+          UPDATE usage_daily_counters udc
+          SET events_count = d.events_used,
+              ai_credits_used = d.ai_credits_used,
               updated_at = NOW()
+          FROM due d
+          WHERE udc.organization_id = d.organization_id
+            AND udc.project_id IS NULL
+            AND udc.usage_date = CURRENT_DATE
+          RETURNING udc.organization_id
+        ),
+        inserted_new AS (
+          INSERT INTO usage_daily_counters (organization_id, project_id, usage_date, events_count, ai_credits_used)
+          SELECT d.organization_id, NULL, CURRENT_DATE, d.events_used, d.ai_credits_used
+          FROM due d
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM usage_daily_counters udc
+            WHERE udc.organization_id = d.organization_id
+              AND udc.project_id IS NULL
+              AND udc.usage_date = CURRENT_DATE
+          )
           RETURNING organization_id
         )
-        SELECT COUNT(*)::text AS count FROM upserted
+        SELECT (
+          (SELECT COUNT(*) FROM updated_existing) + (SELECT COUNT(*) FROM inserted_new)
+        )::text AS count
         `, [batchSize]);
             return { processed: firstCount(result), failed: 0, retried: 0 };
         });

@@ -18,6 +18,7 @@ export async function subscriptionsRoutes(
   fastify.addHook('preHandler', authenticate);
 
   fastify.get('/', controller.getSubscription);
+  fastify.get('/summary', controller.getSummary);
   fastify.get('/history', controller.getHistory);
   fastify.post('/', controller.createSubscription);
   fastify.post('/change-plan', controller.changePlan);

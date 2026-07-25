@@ -83,6 +83,32 @@ export class EventsRepository {
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
+    async listActiveEvents(organizationId, limit) {
+        const statuses = ['pending', 'processing', 'firing', 'acknowledged'];
+        const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_events
+       WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])`, [organizationId, statuses]);
+        const result = await this.db.query(`SELECT * FROM alert_events
+       WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])
+       ORDER BY started_at DESC LIMIT $3`, [organizationId, statuses, Math.max(1, Math.min(limit, 20))]);
+        return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+    }
+    async listIncidentProxyEvents(organizationId, from, to, severity, limit, rankByImpact) {
+        const conditions = ['organization_id=$1', 'started_at >= $2', 'started_at < $3'];
+        const params = [organizationId, from, to];
+        if (severity) {
+            params.push(severity);
+            conditions.push(`severity=$${params.length}`);
+        }
+        const where = conditions.join(' AND ');
+        const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_events WHERE ${where}`, params);
+        params.push(Math.max(1, Math.min(limit, 20)));
+        const ordering = rankByImpact
+            ? `CASE severity WHEN 'critical' THEN 4 WHEN 'error' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END DESC,
+         COALESCE(ended_at, NOW()) - started_at DESC`
+            : 'started_at DESC';
+        const result = await this.db.query(`SELECT * FROM alert_events WHERE ${where} ORDER BY ${ordering} LIMIT $${params.length}`, params);
+        return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+    }
     async acknowledgeEvent(organizationId, eventId, userId, expiresAt, comment) {
         return this.withTransaction(async (client) => {
             const r = await client.query(`UPDATE alert_events

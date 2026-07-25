@@ -6,8 +6,11 @@ export interface WebhookEventRecord {
     provider_event_id: string;
     event_type: string;
     payload: any;
+    payload_sha256: string;
     signature_verified: boolean;
     api_version?: string;
+    organization_id?: string | null;
+    request_id?: string | null;
 }
 export declare class WebhooksRepository {
     private readonly db;

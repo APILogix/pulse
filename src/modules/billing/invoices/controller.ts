@@ -14,10 +14,14 @@ import type { RequestWithUser } from '../shared/types.js';
 export class InvoicesController {
   constructor(private readonly service: InvoicesService) {}
 
+  private getOrgId(req: RequestWithUser): string | undefined {
+    return req.user?.currentOrgId || req.user?.orgId;
+  }
+
   listInvoices = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const query = ListInvoicesQuerySchema.parse(req.query) as ListInvoicesQuery;
@@ -31,7 +35,7 @@ export class InvoicesController {
   getUpcomingInvoice = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const result = await this.service.getUpcomingInvoice(orgId);
@@ -44,7 +48,7 @@ export class InvoicesController {
   getInvoice = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const { invoiceId } = InvoiceParamsSchema.parse(req.params) as InvoiceParams;
@@ -58,7 +62,7 @@ export class InvoicesController {
   payInvoice = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const { invoiceId } = InvoiceParamsSchema.parse(req.params) as InvoiceParams;

@@ -28,6 +28,14 @@ export declare class EventsService {
         data: Record<string, unknown>[];
         total: number;
     }>;
+    listActiveEvents(orgId: string, limit?: number): Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>;
+    listIncidentProxyEvents(orgId: string, from: Date, to: Date, severity: string | undefined, limit?: number, rankByImpact?: boolean): Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>;
     getEvent(orgId: string, id: string): Promise<Record<string, unknown>>;
     getEventDeliveries(orgId: string, id: string): Promise<Record<string, unknown>[]>;
     listDeadLetters(orgId: string, query: ListDeadLettersQuery): Promise<{

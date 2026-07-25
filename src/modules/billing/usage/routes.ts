@@ -16,6 +16,8 @@ export async function usageRoutes(
 
   fastify.get('/current', controller.getCurrentUsage);
   fastify.get('/daily', controller.getDailyUsage);
+  fastify.get('/project-attribution', controller.getProjectAttribution);
+  fastify.get('/api-key-attribution', controller.getApiKeyAttribution);
   
   // This is a protected internal route that should ideally be called by an API gateway or internal service,
   // but for the sake of completeness it's exposed here behind auth.

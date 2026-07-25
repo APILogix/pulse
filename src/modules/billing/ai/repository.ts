@@ -5,6 +5,7 @@ type Db = Pool | PoolClient;
 
 export interface AiUsageLogRecord {
   organization_id: string;
+  request_id?: string;
   project_id?: string;
   user_id?: string;
   feature_key: string;
@@ -37,11 +38,12 @@ export class AiBillingRepository {
   async logAiUsage(record: AiUsageLogRecord, db: Db = this.db): Promise<void> {
     await db.query(
       `INSERT INTO ai_usage_logs (
-         organization_id, project_id, user_id, feature_key, provider, model, 
+         organization_id, request_id, project_id, user_id, feature_key, provider, model, 
          credits_used, prompt_tokens, completion_tokens, estimated_cost_usd
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         record.organization_id,
+        record.request_id ?? null,
         record.project_id ?? null,
         record.user_id ?? null,
         record.feature_key,
@@ -53,6 +55,25 @@ export class AiBillingRepository {
         record.estimated_cost_usd
       ]
     );
+  }
+
+  async lockAiRequest(orgId: string, requestId: string, db: Db = this.db): Promise<void> {
+    await db.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+      [`ai-credit:${orgId}:${requestId}`]
+    );
+  }
+
+  async getAiUsageByRequestId(orgId: string, requestId: string, db: Db = this.db) {
+    const result = await db.query(
+      `SELECT id, credits_used, estimated_cost_usd, request_id
+       FROM ai_usage_logs
+       WHERE organization_id = $1 AND request_id = $2
+       ORDER BY occurred_at DESC
+       LIMIT 1`,
+      [orgId, requestId]
+    );
+    return result.rows[0] ?? null;
   }
 
   async consumeAiCredits(orgId: string, credits: number, db: Db = this.db): Promise<void> {

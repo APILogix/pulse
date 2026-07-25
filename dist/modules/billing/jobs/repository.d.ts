@@ -12,6 +12,12 @@ export declare class BillingJobsRepository {
     reconcilePayments(batchSize: number): Promise<BillingBatchResult>;
     retryWebhooks(batchSize: number, maxRetries: number): Promise<BillingBatchResult>;
     deadLetterWebhooks(batchSize: number, maxRetries: number): Promise<BillingBatchResult>;
+    private applyWebhookEvent;
+    private applyStripeWebhookEvent;
+    private applyRazorpayWebhookEvent;
+    private applyInvoiceWebhook;
+    private applyPaymentWebhook;
+    private applySubscriptionWebhook;
     rollOverUsage(batchSize: number): Promise<BillingBatchResult>;
     aggregateUsage(batchSize: number): Promise<BillingBatchResult>;
     resetAiCredits(batchSize: number): Promise<BillingBatchResult>;

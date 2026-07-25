@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const ConsumeAiCreditsSchema = z.object({
+  requestId: z.string().uuid().optional(),
   featureKey: z.string().trim().min(1).max(100),
   provider: z.string().trim().min(1).max(50),
   model: z.string().trim().min(1).max(100),

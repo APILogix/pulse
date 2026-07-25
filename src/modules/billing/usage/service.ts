@@ -24,10 +24,10 @@ export class UsageService {
       data: {
         eventsUsed: usage.events_used,
         eventLimit: usage.event_limit,
-        remainingEvents: usage.remaining_events,
+        remainingEvents: Math.max(0, Number(usage.remaining_events)),
         aiCreditsUsed: usage.ai_credits_used,
         aiCreditLimit: usage.ai_credit_limit,
-        remainingAiCredits: usage.remaining_ai_credits,
+        remainingAiCredits: Math.max(0, Number(usage.remaining_ai_credits)),
         projectsUsed: usage.projects_used,
         membersUsed: usage.members_used,
       }
@@ -53,5 +53,21 @@ export class UsageService {
         requestsCount: r.requests_count
       }))
     };
+  }
+
+  async getProjectAttribution(
+    orgId: string,
+    options: { bucket: 'minute' | 'hour' | 'day'; startDate?: Date; endDate?: Date; projectId?: string; limit: number; offset: number }
+  ) {
+    const records = await this.repository.getProjectAttribution(orgId, options);
+    return { success: true, data: records };
+  }
+
+  async getApiKeyAttribution(
+    orgId: string,
+    options: { startDate?: Date; endDate?: Date; projectId?: string; limit: number; offset: number }
+  ) {
+    const records = await this.repository.getApiKeyAttribution(orgId, options);
+    return { success: true, data: records };
   }
 }

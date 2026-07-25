@@ -90,6 +90,21 @@ export class AlertingService {
     return this.events.listEvents(orgId, query);
   }
 
+  async listActiveEvents(orgId: string, limit = 20): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    return this.events.listActiveEvents(orgId, limit);
+  }
+
+  async listIncidentProxyEvents(
+    orgId: string,
+    from: Date,
+    to: Date,
+    severity: string | undefined,
+    limit = 20,
+    rankByImpact = false,
+  ): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    return this.events.listIncidentProxyEvents(orgId, from, to, severity, limit, rankByImpact);
+  }
+
   async getEvent(orgId: string, id: string): Promise<Promise<Record<string, unknown>>> {
     return this.events.getEvent(orgId, id);
   }

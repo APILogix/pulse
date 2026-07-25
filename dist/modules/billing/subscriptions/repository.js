@@ -1,5 +1,21 @@
 import { pool } from '../../../config/database.js';
 import { SubscriptionStatus, BillingProvider, BillingInterval, SubscriptionEventType, SubscriptionEventActor } from '../shared/types.js';
+const SUBSCRIPTION_UPDATE_COLUMNS = new Set([
+    'plan_id',
+    'status',
+    'provider',
+    'billing_interval',
+    'provider_customer_id',
+    'provider_subscription_id',
+    'current_period_start',
+    'current_period_end',
+    'trial_start',
+    'trial_end',
+    'cancel_at_period_end',
+    'cancelled_at',
+    'metadata',
+    'deleted_at',
+]);
 export class SubscriptionsRepository {
     db;
     constructor(db = pool) {
@@ -23,8 +39,9 @@ export class SubscriptionsRepository {
     }
     async getActiveSubscription(orgId, db = this.db) {
         const result = await db.query(`SELECT * FROM organization_subscriptions 
-       WHERE organization_id = $1 AND status IN ('trialing','active','past_due') 
+       WHERE organization_id = $1 AND status IN ('trialing','active')
        AND deleted_at IS NULL
+       AND current_period_end > NOW()
        ORDER BY created_at DESC LIMIT 1`, [orgId]);
         return result.rows[0] || null;
     }
@@ -32,6 +49,7 @@ export class SubscriptionsRepository {
         const result = await db.query(`SELECT * FROM organization_subscriptions 
        WHERE organization_id = $1 AND status IN ('trialing','active','past_due') 
        AND deleted_at IS NULL
+       AND current_period_end > NOW()
        ORDER BY created_at DESC LIMIT 1
        FOR UPDATE`, [orgId]);
         return result.rows[0] || null;
@@ -56,6 +74,9 @@ export class SubscriptionsRepository {
         let i = 1;
         for (const [key, value] of Object.entries(updates)) {
             if (value !== undefined) {
+                if (!SUBSCRIPTION_UPDATE_COLUMNS.has(key)) {
+                    throw new Error(`Unsupported subscription update column: ${key}`);
+                }
                 fields.push(`${key} = $${i++}`);
                 values.push(value);
             }

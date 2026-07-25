@@ -12,6 +12,7 @@ export const OrgParamsSchema = z.object({
 });
 
 export const EventUsageBodySchema = z.object({
+  requestId: UuidSchema.optional(),
   organizationId: UuidSchema,
   projectId: UuidSchema.optional().nullable(),
   eventType: z.string().min(1).max(64),
@@ -21,6 +22,7 @@ export const EventUsageBodySchema = z.object({
 
 export const BulkEventUsageBodySchema = z.object({
   items: z.array(z.object({
+    requestId: UuidSchema.optional(),
     orgId: UuidSchema,
     projectId: UuidSchema.optional().nullable(),
     eventType: z.string().min(1).max(64),
@@ -29,6 +31,7 @@ export const BulkEventUsageBodySchema = z.object({
 });
 
 export const AiCreditUsageBodySchema = z.object({
+  requestId: UuidSchema.optional(),
   organizationId: UuidSchema,
   projectId: UuidSchema.optional().nullable(),
   userId: UuidSchema.optional().nullable(),

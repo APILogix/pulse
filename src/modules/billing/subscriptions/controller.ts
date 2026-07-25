@@ -14,10 +14,14 @@ import type { RequestWithUser } from '../shared/types.js';
 export class SubscriptionsController {
   constructor(private readonly service: SubscriptionsService) {}
 
+  private getOrgId(req: RequestWithUser): string | undefined {
+    return req.user?.currentOrgId || req.user?.orgId;
+  }
+
   getSubscription = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const result = await this.service.getSubscription(orgId);
@@ -30,7 +34,7 @@ export class SubscriptionsController {
   getHistory = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const result = await this.service.getHistory(orgId);
@@ -43,7 +47,7 @@ export class SubscriptionsController {
   createSubscription = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const body = CreateSubscriptionSchema.parse(req.body) as CreateSubscriptionBody;
@@ -61,7 +65,7 @@ export class SubscriptionsController {
   changePlan = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const body = ChangePlanSchema.parse(req.body) as ChangePlanBody;
@@ -75,11 +79,24 @@ export class SubscriptionsController {
   cancelSubscription = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user!.orgId;
+      const orgId = this.getOrgId(req);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const _body = CancelSubscriptionSchema.parse(req.body) as CancelSubscriptionBody;
       const result = await this.service.cancelSubscription(orgId, req.user!.id);
+      return reply.send(result);
+    } catch (error) {
+      return handleBillingError(error, reply);
+    }
+  };
+
+  getSummary = async (request: FastifyRequest, reply: FastifyReply) => {
+    const req = request as RequestWithUser;
+    try {
+      const orgId = this.getOrgId(req);
+      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+
+      const result = await this.service.getSummary(orgId);
       return reply.send(result);
     } catch (error) {
       return handleBillingError(error, reply);

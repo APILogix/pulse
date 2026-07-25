@@ -38,6 +38,14 @@ export declare class AlertingRepository {
         data: AlertEventRow[];
         total: number;
     }>;
+    listActiveEvents(organizationId: string, limit: number): Promise<{
+        data: AlertEventRow[];
+        total: number;
+    }>;
+    listIncidentProxyEvents(organizationId: string, from: Date, to: Date, severity: string | undefined, limit: number, rankByImpact: boolean): Promise<{
+        data: AlertEventRow[];
+        total: number;
+    }>;
     acknowledgeEvent(organizationId: string, eventId: string, userId: string, expiresAt: Date | null, comment: string | null): Promise<AlertEventRow>;
     resolveEvent(organizationId: string, eventId: string, userId: string | null, reason: string, autoResolved: boolean): Promise<AlertEventRow>;
     insertHistory(input: {

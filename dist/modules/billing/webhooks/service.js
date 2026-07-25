@@ -1,15 +1,55 @@
 import { WebhooksRepository } from './repository.js';
 import { BillingProvider } from '../shared/types.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
+import { createHmac, createHash, timingSafeEqual } from 'crypto';
+const WEBHOOK_TOLERANCE_SECONDS = 300;
+function safeEqualHex(expected, actual) {
+    if (!expected || !actual)
+        return false;
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    const actualBuffer = Buffer.from(actual, 'hex');
+    return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
+}
+function verifyStripeSignature(rawBody, signatureHeader, secret) {
+    if (!signatureHeader || !secret)
+        return false;
+    const parts = Object.fromEntries(signatureHeader.split(',').map((part) => {
+        const [key, value] = part.split('=');
+        return [key, value];
+    }));
+    const timestamp = Number(parts.t);
+    const signature = parts.v1;
+    if (!Number.isFinite(timestamp) || !signature)
+        return false;
+    if (Math.abs(Date.now() / 1000 - timestamp) > WEBHOOK_TOLERANCE_SECONDS)
+        return false;
+    const expected = createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
+    return safeEqualHex(expected, signature);
+}
+function verifyRazorpaySignature(rawBody, signatureHeader, secret) {
+    if (!signatureHeader || !secret)
+        return false;
+    const expected = createHmac('sha256', secret).update(rawBody).digest('hex');
+    return safeEqualHex(expected, signatureHeader);
+}
+function extractOrganizationId(payload) {
+    return (payload?.organization_id ??
+        payload?.organizationId ??
+        payload?.data?.object?.metadata?.organization_id ??
+        payload?.data?.object?.metadata?.organizationId ??
+        payload?.payload?.subscription?.entity?.notes?.organization_id ??
+        payload?.payload?.payment?.entity?.notes?.organization_id ??
+        null);
+}
 export class WebhooksService {
     repository;
     constructor(repository) {
         this.repository = repository;
     }
-    async processWebhook(provider, payload, signature, secret) {
-        // In a real implementation, you would verify the signature here using the provider SDK.
-        // e.g. stripe.webhooks.constructEvent(payload, signature, secret)
-        const isSignatureValid = true; // stub
+    async processWebhook(provider, payload, signature, secret, rawBody, requestId) {
+        const isSignatureValid = provider === BillingProvider.STRIPE
+            ? verifyStripeSignature(rawBody, signature, secret ?? '')
+            : verifyRazorpaySignature(rawBody, signature, secret ?? '');
         if (!isSignatureValid) {
             throw new BillingError('Invalid webhook signature', BillingErrorCodes.UNAUTHORIZED, 401);
         }
@@ -21,20 +61,23 @@ export class WebhooksService {
             eventType = payload.type;
         }
         else {
-            eventId = payload.id || Date.now().toString();
+            eventId = payload.id || payload.event_id || payload.payload?.payment?.entity?.id || payload.payload?.subscription?.entity?.id;
             eventType = payload.event || 'unknown';
         }
-        // Save to inbox (Idempotent because of ON CONFLICT DO NOTHING)
+        if (!eventId || !eventType) {
+            throw new BillingError('Webhook payload is missing a stable event id or type', BillingErrorCodes.PROVIDER_ERROR, 400);
+        }
         await this.repository.insertWebhookEvent({
             provider,
             provider_event_id: eventId,
             event_type: eventType,
+            organization_id: extractOrganizationId(payload),
             payload,
+            payload_sha256: createHash('sha256').update(rawBody).digest('hex'),
             signature_verified: true,
-            api_version: payload.api_version
+            api_version: payload.api_version,
+            request_id: requestId ?? null,
         });
-        // The actual processing (upgrade, invoice paid, etc) will be picked up
-        // asynchronously by a worker polling `billing_webhook_events`.
         return { success: true };
     }
 }

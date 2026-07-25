@@ -168,6 +168,12 @@ export declare const ListTracesQuerySchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    traceId: z.ZodOptional<z.ZodString>;
+    requestId: z.ZodOptional<z.ZodString>;
+    service: z.ZodOptional<z.ZodString>;
+    rootSpanName: z.ZodOptional<z.ZodString>;
+    minDurationMs: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    errorOnly: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
 }, z.core.$strip>;
 export type ListTracesQuery = z.infer<typeof ListTracesQuerySchema>;
 export declare const MetricSeriesQuerySchema: z.ZodObject<{
@@ -214,7 +220,9 @@ export declare const ListLogsQuerySchema: z.ZodObject<{
         debug: "debug";
         warn: "warn";
     }>>;
+    service: z.ZodOptional<z.ZodString>;
     search: z.ZodOptional<z.ZodString>;
+    securityOnly: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
 }, z.core.$strip>;
 export type ListLogsQuery = z.infer<typeof ListLogsQuerySchema>;
 export declare const ListSessionsQuerySchema: z.ZodObject<{

@@ -16,8 +16,10 @@ export interface SubscriptionRow {
     trial_end: Date | null;
     cancel_at_period_end: boolean;
     cancelled_at: Date | null;
+    metadata: Record<string, unknown>;
     created_at: Date;
     updated_at: Date;
+    deleted_at: Date | null;
 }
 export interface SubscriptionEventRow {
     id: string;

@@ -116,6 +116,25 @@ export class EventsService {
     return { data: data.map((e) => this.eventToDto(e)), total };
   }
 
+  async listActiveEvents(orgId: string, limit = 20): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    const { data, total } = await this.repo.listActiveEvents(orgId, limit);
+    return { data: data.map((event) => this.eventToDto(event)), total };
+  }
+
+  async listIncidentProxyEvents(
+    orgId: string,
+    from: Date,
+    to: Date,
+    severity: string | undefined,
+    limit = 20,
+    rankByImpact = false,
+  ): Promise<{ data: Record<string, unknown>[]; total: number }> {
+    const { data, total } = await this.repo.listIncidentProxyEvents(
+      orgId, from, to, severity, limit, rankByImpact,
+    );
+    return { data: data.map((event) => this.eventToDto(event)), total };
+  }
+
   async getEvent(orgId: string, id: string): Promise<Record<string, unknown>> {
     const event = await this.requireEvent(orgId, id);
     const [history, deliveries] = await Promise.all([

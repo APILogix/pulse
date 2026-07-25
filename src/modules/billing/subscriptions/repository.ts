@@ -41,8 +41,10 @@ export interface SubscriptionRow {
   trial_end: Date | null;
   cancel_at_period_end: boolean;
   cancelled_at: Date | null;
+  metadata: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
 }
 
 export interface SubscriptionEventRow {
@@ -171,5 +173,86 @@ export class SubscriptionsRepository {
       [orgId]
     );
     return result.rows;
+  }
+
+  async getSubscriptionSummary(orgId: string, db: Db = this.db): Promise<Record<string, unknown>> {
+    const result = await db.query(
+      `WITH subscription_summary AS (
+         SELECT
+           os.id,
+           os.organization_id,
+           os.plan_id,
+           p.name AS plan_name,
+           p.key AS plan_key,
+           p.tier,
+           os.status,
+           os.billing_interval,
+           os.current_period_start,
+           os.current_period_end,
+           os.cancel_at_period_end,
+           os.cancelled_at,
+           os.modules,
+           os.addons
+         FROM organization_subscriptions os
+         JOIN plans p ON p.id = os.plan_id
+         WHERE os.organization_id = $1
+           AND os.deleted_at IS NULL
+         ORDER BY
+           CASE os.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 ELSE 3 END,
+           os.created_at DESC
+         LIMIT 1
+       ),
+       usage_summary AS (
+         SELECT
+           organization_id,
+           period_start,
+           period_end,
+           events_used,
+           event_limit,
+           GREATEST(event_limit - events_used, 0) AS remaining_events,
+           ai_credits_used,
+           ai_credit_limit,
+           GREATEST(ai_credit_limit - ai_credits_used, 0) AS remaining_ai_credits,
+           projects_used,
+           members_used,
+           api_keys_used,
+           connectors_used,
+           alert_rules_used,
+           dashboards_used
+         FROM organization_usage_current_period
+         WHERE organization_id = $1
+       ),
+       invoice_summary AS (
+         SELECT
+           COUNT(*)::int AS invoice_count,
+           COUNT(*) FILTER (WHERE status = 'open')::int AS open_invoice_count,
+           COALESCE(SUM(total_amount - amount_paid) FILTER (WHERE status = 'open'), 0)::bigint AS open_balance,
+           MAX(created_at) AS last_invoice_at
+         FROM invoices
+         WHERE organization_id = $1
+           AND deleted_at IS NULL
+       ),
+       payment_summary AS (
+         SELECT
+           COUNT(*)::int AS payment_count,
+           COALESCE(SUM(amount) FILTER (WHERE status = 'succeeded'), 0)::bigint AS total_paid,
+           MAX(captured_at) FILTER (WHERE status = 'succeeded') AS last_paid_at
+         FROM payments
+         WHERE organization_id = $1
+           AND deleted_at IS NULL
+       )
+       SELECT jsonb_build_object(
+         'subscription', COALESCE(to_jsonb(subscription_summary), 'null'::jsonb),
+         'usage', COALESCE(to_jsonb(usage_summary), 'null'::jsonb),
+         'invoices', to_jsonb(invoice_summary),
+         'payments', to_jsonb(payment_summary)
+       ) AS summary
+       FROM invoice_summary
+       CROSS JOIN payment_summary
+       LEFT JOIN subscription_summary ON TRUE
+       LEFT JOIN usage_summary ON TRUE`,
+      [orgId]
+    );
+    return result.rows[0]?.summary ?? {};
   }
 }

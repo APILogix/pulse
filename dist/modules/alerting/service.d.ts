@@ -41,6 +41,14 @@ export declare class AlertingService {
         data: Record<string, unknown>[];
         total: number;
     }>>;
+    listActiveEvents(orgId: string, limit?: number): Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>;
+    listIncidentProxyEvents(orgId: string, from: Date, to: Date, severity: string | undefined, limit?: number, rankByImpact?: boolean): Promise<{
+        data: Record<string, unknown>[];
+        total: number;
+    }>;
     getEvent(orgId: string, id: string): Promise<Promise<Record<string, unknown>>>;
     getEventDeliveries(orgId: string, id: string): Promise<Promise<Record<string, unknown>[]>>;
     acknowledgeEvent(orgId: string, meta: RequestMeta, id: string, body: AcknowledgeEventBody): Promise<Promise<Record<string, unknown>>>;

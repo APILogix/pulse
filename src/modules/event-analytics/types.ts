@@ -104,7 +104,14 @@ export const ListRequestsQuerySchema = TimeRangeQuerySchema.merge(PaginationSche
 export type ListRequestsQuery = z.infer<typeof ListRequestsQuerySchema>;
 
 // â”€â”€ Traces â”€â”€
-export const ListTracesQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema);
+export const ListTracesQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
+  traceId: z.string().trim().min(1).max(64).optional(),
+  requestId: z.string().trim().min(1).max(64).optional(),
+  service: z.string().trim().min(1).max(100).optional(),
+  rootSpanName: z.string().trim().min(1).max(500).optional(),
+  minDurationMs: z.coerce.number().int().min(0).max(86_400_000).optional(),
+  errorOnly: z.coerce.boolean().optional(),
+});
 export type ListTracesQuery = z.infer<typeof ListTracesQuerySchema>;
 
 // â”€â”€ Metrics â”€â”€
@@ -116,7 +123,9 @@ export type MetricSeriesQuery = z.infer<typeof MetricSeriesQuerySchema>;
 // â”€â”€ Logs â”€â”€
 export const ListLogsQuerySchema = TimeRangeQuerySchema.merge(PaginationSchema).extend({
   level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
+  service: z.string().trim().min(1).max(100).optional(),
   search: z.string().max(500).optional(),
+  securityOnly: z.coerce.boolean().optional(),
 });
 export type ListLogsQuery = z.infer<typeof ListLogsQuerySchema>;
 

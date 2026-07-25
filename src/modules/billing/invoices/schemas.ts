@@ -10,7 +10,7 @@ export const ListInvoicesQuerySchema = z.object({
 }).merge(PaginationSchema);
 
 export const PayInvoiceSchema = z.object({
-  paymentMethodId: z.string().trim().min(1).max(200).optional(),
+  paymentMethodId: BillingUuidSchema.optional(),
 });
 
 export type InvoiceParams = z.infer<typeof InvoiceParamsSchema>;

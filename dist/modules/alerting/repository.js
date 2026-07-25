@@ -65,6 +65,12 @@ export class AlertingRepository {
     async listEvents(organizationId, query) {
         return this.events.listEvents(organizationId, query);
     }
+    async listActiveEvents(organizationId, limit) {
+        return this.events.listActiveEvents(organizationId, limit);
+    }
+    async listIncidentProxyEvents(organizationId, from, to, severity, limit, rankByImpact) {
+        return this.events.listIncidentProxyEvents(organizationId, from, to, severity, limit, rankByImpact);
+    }
     async acknowledgeEvent(organizationId, eventId, userId, expiresAt, comment) {
         return this.events.acknowledgeEvent(organizationId, eventId, userId, expiresAt, comment);
     }

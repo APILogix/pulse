@@ -200,14 +200,48 @@ export class EventAnalyticsRepository {
         const r = await this.db.query(`SELECT * FROM events_traces WHERE organization_id=$1 AND trace_id=$2 ORDER BY timestamp DESC LIMIT 1`, [orgId, traceId]);
         return r.rows[0] ?? null;
     }
-    async listTraces(orgId, range, projectId, limit, offset) {
-        const qb = new AnalyticsQueryBuilder('traces', orgId).whereProject(projectId).whereTimeRange(range.from, range.to);
-        const countQ = qb.count();
-        const countRes = await this.db.query(countQ.sql, countQ.params);
-        qb.orderBy('timestamp', 'desc').paginate(limit, offset);
-        const listQ = qb.select('id, trace_id, root_span_name, root_span_id, span_count, total_duration_ms, service, timestamp');
-        const listRes = await this.db.query(listQ.sql, listQ.params);
-        return { rows: listRes.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+    async listTraces(orgId, range, filters) {
+        const conditions = ['t.organization_id=$1', 't.timestamp >= $2', 't.timestamp < $3'];
+        const params = [orgId, range.from, range.to];
+        if (filters.projectId) {
+            params.push(filters.projectId);
+            conditions.push(`t.project_id=$${params.length}`);
+        }
+        if (filters.traceId) {
+            params.push(filters.traceId);
+            conditions.push(`t.trace_id=$${params.length}`);
+        }
+        if (filters.requestId) {
+            params.push(filters.requestId);
+            conditions.push(`t.request_id=$${params.length}`);
+        }
+        if (filters.service) {
+            params.push(filters.service);
+            conditions.push(`t.service=$${params.length}`);
+        }
+        if (filters.rootSpanName) {
+            params.push(`%${filters.rootSpanName}%`);
+            conditions.push(`t.root_span_name ILIKE $${params.length}`);
+        }
+        if (filters.minDurationMs !== undefined) {
+            params.push(filters.minDurationMs);
+            conditions.push(`t.total_duration_ms >= $${params.length}`);
+        }
+        const errorPredicate = `EXISTS (
+      SELECT 1 FROM events_spans s
+      WHERE s.organization_id=t.organization_id AND s.trace_id=t.trace_id AND s.status='error'
+    )`;
+        if (filters.errorOnly)
+            conditions.push(errorPredicate);
+        const where = conditions.join(' AND ');
+        const countRes = await this.db.query(`SELECT COUNT(*)::bigint AS count FROM events_traces t WHERE ${where}`, params);
+        params.push(filters.limit, filters.offset);
+        const rows = await this.db.query(`SELECT t.id, t.trace_id, t.root_span_name, t.root_span_id, t.span_count,
+              t.total_duration_ms, t.request_id, t.service, t.environment, t.release,
+              t.timestamp, ${errorPredicate} AS has_error
+       FROM events_traces t WHERE ${where}
+       ORDER BY t.timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+        return { rows: rows.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     // ── Metrics ─────────────────────────────────────────────────────────────
     async listMetricNames(orgId, projectId, range) {
@@ -244,13 +278,90 @@ export class EventAnalyticsRepository {
             .whereProject(filters.projectId)
             .whereTimeRange(range.from, range.to)
             .whereEq('level', filters.level)
+            .whereEq('service', filters.service)
             .whereFullText('message', filters.search);
+        if (filters.securityOnly) {
+            qb.whereRaw(`message ~* ?`, '(authentication|login).*fail|unauthorized|forbidden|access denied|privilege|credential|token.*invalid');
+        }
         const countQ = qb.count();
         const countRes = await this.db.query(countQ.sql, countQ.params);
         qb.orderBy('timestamp', 'desc').paginate(filters.limit, filters.offset);
-        const listQ = qb.select('id, event_id, level, message, service, trace_id, request_id, timestamp');
+        const listQ = qb.select('id, event_id, level, message, logger, service, trace_id, span_id, request_id, environment, release, context, timestamp');
         const listRes = await this.db.query(listQ.sql, listQ.params);
         return { rows: listRes.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+    }
+    async getLog(orgId, id) {
+        const result = await this.db.query(`SELECT id, event_id, level, message, logger, service, trace_id, span_id, request_id,
+              environment, release, context, tags, timestamp
+       FROM events_logs WHERE organization_id=$1 AND id=$2 LIMIT 1`, [orgId, id]);
+        return result.rows[0] ?? null;
+    }
+    async summarizeLogs(orgId, range, filters) {
+        const conditions = ['organization_id=$1', 'timestamp >= $2', 'timestamp < $3'];
+        const params = [orgId, range.from, range.to];
+        if (filters.projectId) {
+            params.push(filters.projectId);
+            conditions.push(`project_id=$${params.length}`);
+        }
+        if (filters.level) {
+            params.push(filters.level);
+            conditions.push(`level=$${params.length}`);
+        }
+        if (filters.service) {
+            params.push(filters.service);
+            conditions.push(`service=$${params.length}`);
+        }
+        if (filters.search) {
+            params.push(filters.search);
+            conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${params.length})`);
+        }
+        params.push(Math.max(1, Math.min(filters.limit, 100)));
+        const result = await this.db.query(`SELECT level, service, message, COUNT(*)::bigint AS occurrences, MAX(timestamp) AS last_seen
+       FROM events_logs
+       WHERE ${conditions.join(' AND ')}
+       GROUP BY level, service, message
+       ORDER BY occurrences DESC, last_seen DESC
+       LIMIT $${params.length}`, params);
+        return result.rows;
+    }
+    async listObservedServices(orgId, range, projectId, limit) {
+        const result = await this.db.query(`WITH observations AS (
+         SELECT project_id, service, timestamp, 'trace'::text AS source FROM events_traces
+          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+         UNION ALL
+         SELECT project_id, service, timestamp, 'request'::text AS source FROM events_requests
+          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+         UNION ALL
+         SELECT project_id, service, timestamp, 'log'::text AS source FROM events_logs
+          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+       )
+       SELECT o.service, o.project_id, p.name AS project_name, p.slug AS project_slug,
+              COUNT(*)::bigint AS observed_event_count,
+              COUNT(*) FILTER (WHERE o.source='trace')::bigint AS trace_count,
+              COUNT(*) FILTER (WHERE o.source='request')::bigint AS request_count,
+              COUNT(*) FILTER (WHERE o.source='log')::bigint AS log_count,
+              MAX(o.timestamp) AS last_seen
+       FROM observations o
+       LEFT JOIN projects p ON p.id=o.project_id AND p.org_id=$1
+       WHERE o.service IS NOT NULL AND BTRIM(o.service) <> ''
+       GROUP BY o.service, o.project_id, p.name, p.slug
+       ORDER BY last_seen DESC
+       LIMIT $5`, [orgId, range.from, range.to, projectId ?? null, Math.max(1, Math.min(limit, 100))]);
+        return result.rows;
+    }
+    async listServiceEndpoints(orgId, service, range, projectId, limit) {
+        const result = await this.db.query(`SELECT route, method, COUNT(*)::bigint AS request_count,
+              COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS error_count,
+              AVG(latency_ms)::int AS avg_latency_ms,
+              PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95_latency_ms,
+              MAX(timestamp) AS last_seen
+       FROM events_requests
+       WHERE organization_id=$1 AND service=$2 AND timestamp >= $3 AND timestamp < $4
+         AND ($5::uuid IS NULL OR project_id=$5) AND route IS NOT NULL
+       GROUP BY route, method
+       ORDER BY request_count DESC
+       LIMIT $6`, [orgId, service, range.from, range.to, projectId ?? null, Math.max(1, Math.min(limit, 100))]);
+        return result.rows;
     }
     /** Logs newer than a cursor timestamp — used by the SSE poll loop. */
     async listLogsSince(orgId, since, projectId, limit) {

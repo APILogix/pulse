@@ -34,6 +34,15 @@ export declare class EventAnalyticsService {
     getMetricSeries(orgId: string, name: string, q: MetricSeriesQuery): Promise<Array<Record<string, unknown>>>;
     getMetricStats(orgId: string, name: string, q: TimeRangeQuery): Promise<Record<string, unknown>>;
     listLogs(orgId: string, q: ListLogsQuery): Promise<Record<string, unknown>>;
+    getLog(orgId: string, id: string): Promise<Record<string, unknown>>;
+    listObservedServices(orgId: string, q: TimeRangeQuery, limit?: number): Promise<Array<Record<string, unknown>>>;
+    summarizeLogs(orgId: string, q: TimeRangeQuery, filters: {
+        level?: string;
+        service?: string;
+        search?: string;
+        limit?: number;
+    }): Promise<Array<Record<string, unknown>>>;
+    listServiceEndpoints(orgId: string, service: string, q: TimeRangeQuery, limit?: number): Promise<Array<Record<string, unknown>>>;
     pollLogsSince(orgId: string, since: Date, projectId: string | undefined): Promise<Array<Record<string, unknown>>>;
     pollErrorsSince(orgId: string, since: Date, projectId: string | undefined): Promise<Array<Record<string, unknown>>>;
     listSessions(orgId: string, q: ListSessionsQuery): Promise<Record<string, unknown>>;

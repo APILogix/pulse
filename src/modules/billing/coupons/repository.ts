@@ -23,6 +23,18 @@ export interface CouponRow {
   is_public: boolean;
 }
 
+export interface CouponSubscriptionRow {
+  id: string;
+  plan_id: string;
+  billing_interval: string;
+  status: string;
+}
+
+export interface PlanPriceRow {
+  amount_minor: number;
+  currency: string;
+}
+
 export class CouponsRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -80,6 +92,50 @@ export class CouponsRepository {
     return result.rows.length > 0;
   }
 
+  async getActiveSubscriptionForCoupon(orgId: string, db: Db = this.db): Promise<CouponSubscriptionRow | null> {
+    const result = await db.query(
+      `SELECT id, plan_id, billing_interval, status
+       FROM organization_subscriptions
+       WHERE organization_id = $1
+         AND status IN ('trialing', 'active')
+         AND deleted_at IS NULL
+         AND current_period_end > NOW()
+       ORDER BY
+         CASE status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 ELSE 2 END,
+         created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [orgId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async getCurrentPlanPrice(
+    planId: string,
+    billingInterval: string,
+    currency?: string | null,
+    db: Db = this.db
+  ): Promise<PlanPriceRow | null> {
+    const values: Array<string> = [planId, billingInterval];
+    const currencyClause = currency ? `AND currency = $3` : '';
+    if (currency) values.push(currency);
+
+    const result = await db.query(
+      `SELECT amount_minor, currency
+       FROM plan_prices
+       WHERE plan_id = $1
+         AND billing_interval = $2
+         AND deleted_at IS NULL
+         AND (starts_at IS NULL OR starts_at <= NOW())
+         AND (ends_at IS NULL OR ends_at > NOW())
+         ${currencyClause}
+       ORDER BY is_default DESC, starts_at DESC NULLS LAST, created_at DESC
+       LIMIT 1`,
+      values
+    );
+    return result.rows[0] || null;
+  }
+
   async getOrgRedemptionCount(couponId: string, orgId: string, db: Db = this.db): Promise<number> {
     const result = await db.query(
       `SELECT COUNT(*)::int as count FROM coupon_redemptions 
@@ -93,15 +149,16 @@ export class CouponsRepository {
     couponId: string, 
     orgId: string, 
     userId: string, 
+    subscriptionId: string,
     discountAmount: number, 
     currency: string, 
     db: Db = this.db
   ): Promise<void> {
     await db.query(
       `INSERT INTO coupon_redemptions (
-         coupon_id, organization_id, redeemed_by, discount_amount, currency
-       ) VALUES ($1, $2, $3, $4, $5)`,
-      [couponId, orgId, userId, discountAmount, currency]
+         coupon_id, organization_id, subscription_id, redeemed_by, discount_amount, currency, redemption_source
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'api')`,
+      [couponId, orgId, subscriptionId, userId, discountAmount, currency]
     );
 
     await db.query(

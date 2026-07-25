@@ -15,8 +15,12 @@ import { entitlementsRoutes } from './entitlements/routes.js';
 import { usageRoutes } from './usage/routes.js';
 import { invoicesRoutes } from './invoices/routes.js';
 import { paymentsRoutes } from './payments/routes.js';
+import { paymentMethodsRoutes } from './payment-methods/routes.js';
+import { addonsRoutes } from './addons/routes.js';
 import { webhooksRoutes } from './webhooks/routes.js';
 import { couponsRoutes } from './coupons/routes.js';
+import { billingAuditLogsRoutes } from './audit-logs/routes.js';
+import { aiBillingRoutes } from './ai/routes.js';
 import { internalBillingRoutes } from './internal/routes.js';
 
 import { createBillingLogger } from './shared/utils.js';
@@ -33,7 +37,11 @@ async function billingModule(
   await fastify.register(usageRoutes, { prefix: '/billing/usage' });
   await fastify.register(invoicesRoutes, { prefix: '/billing/invoices' });
   await fastify.register(paymentsRoutes, { prefix: '/billing/payments' });
+  await fastify.register(paymentMethodsRoutes, { prefix: '/billing/payment-methods' });
+  await fastify.register(addonsRoutes, { prefix: '/billing/addons' });
   await fastify.register(couponsRoutes, { prefix: '/billing/coupons' });
+  await fastify.register(billingAuditLogsRoutes, { prefix: '/billing/audit-logs' });
+  await fastify.register(aiBillingRoutes, { prefix: '/billing/ai' });
   await fastify.register(webhooksRoutes, { prefix: '/billing/webhooks' });
   await fastify.register(internalBillingRoutes, { prefix: '/internal/v1' });
 

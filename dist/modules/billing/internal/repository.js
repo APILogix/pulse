@@ -32,18 +32,34 @@ export class InternalBillingRepository {
     async getResolvedEntitlements(orgId, db = this.db) {
         const result = await db.query(`SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
               bf.module, bf.is_module_root, bf.value_type
-         FROM v_effective_entitlements ee
+        FROM v_effective_entitlements ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
         WHERE ee.organization_id = $1
+          AND EXISTS (
+            SELECT 1
+            FROM organization_subscriptions os
+            WHERE os.organization_id = ee.organization_id
+              AND os.status IN ('trialing','active')
+              AND os.deleted_at IS NULL
+              AND os.current_period_end > NOW()
+          )
         ORDER BY bf.sort_order NULLS LAST, ee.feature_key`, [orgId]);
         return result.rows;
     }
     async getFeatureValue(orgId, featureKey, db = this.db) {
         const result = await db.query(`SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
               bf.module, bf.is_module_root, bf.value_type
-         FROM v_effective_entitlements ee
+        FROM v_effective_entitlements ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
         WHERE ee.organization_id = $1 AND ee.feature_key = $2
+          AND EXISTS (
+            SELECT 1
+            FROM organization_subscriptions os
+            WHERE os.organization_id = ee.organization_id
+              AND os.status IN ('trialing','active')
+              AND os.deleted_at IS NULL
+              AND os.current_period_end > NOW()
+          )
         LIMIT 1`, [orgId, featureKey]);
         return result.rows[0] ?? null;
     }
@@ -68,26 +84,7 @@ export class InternalBillingRepository {
               overage_events = overage_events + $3,
               last_event_at = NOW()
         WHERE organization_id = $1`, [body.organizationId, acceptedCount, overageCount]);
-        await db.query(`INSERT INTO usage_daily_counters (
-         id, organization_id, project_id, usage_date, events_count, requests_count,
-         errors_count, traces_count, spans_count, metrics_count, logs_count,
-         profiles_count, replays_count, created_at, updated_at
-       ) VALUES ($1, $2, $3, CURRENT_DATE, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
-       ON CONFLICT (organization_id, project_id, usage_date)
-       DO UPDATE SET
-         events_count = usage_daily_counters.events_count + EXCLUDED.events_count,
-         requests_count = usage_daily_counters.requests_count + EXCLUDED.requests_count,
-         errors_count = usage_daily_counters.errors_count + EXCLUDED.errors_count,
-         traces_count = usage_daily_counters.traces_count + EXCLUDED.traces_count,
-         spans_count = usage_daily_counters.spans_count + EXCLUDED.spans_count,
-         metrics_count = usage_daily_counters.metrics_count + EXCLUDED.metrics_count,
-         logs_count = usage_daily_counters.logs_count + EXCLUDED.logs_count,
-         profiles_count = usage_daily_counters.profiles_count + EXCLUDED.profiles_count,
-         replays_count = usage_daily_counters.replays_count + EXCLUDED.replays_count,
-         updated_at = NOW()`, [
-            generateUUID(),
-            body.organizationId,
-            body.projectId ?? null,
+        const counters = [
             body.count,
             body.eventType === 'request' ? body.count : 0,
             body.eventType === 'error' ? body.count : 0,
@@ -97,12 +94,52 @@ export class InternalBillingRepository {
             body.eventType === 'log' ? body.count : 0,
             body.eventType === 'profile' ? body.count : 0,
             body.eventType === 'replay' ? body.count : 0,
-        ]);
+        ];
+        if (body.projectId) {
+            await db.query(`INSERT INTO usage_daily_counters (
+           id, organization_id, project_id, usage_date, events_count, requests_count,
+           errors_count, traces_count, spans_count, metrics_count, logs_count,
+           profiles_count, replays_count, created_at, updated_at
+         ) VALUES ($1, $2, $3, CURRENT_DATE, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+         ON CONFLICT (organization_id, project_id, usage_date)
+         DO UPDATE SET
+           events_count = usage_daily_counters.events_count + EXCLUDED.events_count,
+           requests_count = usage_daily_counters.requests_count + EXCLUDED.requests_count,
+           errors_count = usage_daily_counters.errors_count + EXCLUDED.errors_count,
+           traces_count = usage_daily_counters.traces_count + EXCLUDED.traces_count,
+           spans_count = usage_daily_counters.spans_count + EXCLUDED.spans_count,
+           metrics_count = usage_daily_counters.metrics_count + EXCLUDED.metrics_count,
+           logs_count = usage_daily_counters.logs_count + EXCLUDED.logs_count,
+           profiles_count = usage_daily_counters.profiles_count + EXCLUDED.profiles_count,
+           replays_count = usage_daily_counters.replays_count + EXCLUDED.replays_count,
+           updated_at = NOW()`, [generateUUID(), body.organizationId, body.projectId, ...counters]);
+            return;
+        }
+        const updateResult = await db.query(`UPDATE usage_daily_counters
+          SET events_count = events_count + $2,
+              requests_count = requests_count + $3,
+              errors_count = errors_count + $4,
+              traces_count = traces_count + $5,
+              spans_count = spans_count + $6,
+              metrics_count = metrics_count + $7,
+              logs_count = logs_count + $8,
+              profiles_count = profiles_count + $9,
+              replays_count = replays_count + $10,
+              updated_at = NOW()
+        WHERE organization_id = $1
+          AND project_id IS NULL
+          AND usage_date = CURRENT_DATE`, [body.organizationId, ...counters]);
+        if ((updateResult.rowCount ?? 0) === 0) {
+            await db.query(`INSERT INTO usage_daily_counters (
+           id, organization_id, project_id, usage_date, events_count, requests_count,
+           errors_count, traces_count, spans_count, metrics_count, logs_count,
+           profiles_count, replays_count, created_at, updated_at
+         ) VALUES ($1, $2, NULL, CURRENT_DATE, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())`, [generateUUID(), body.organizationId, ...counters]);
+        }
     }
     async incrementAiCredits(body, db) {
         const promptTokens = body.tokens?.prompt ?? 0;
         const completionTokens = body.tokens?.completion ?? 0;
-        const totalTokens = body.tokens?.total ?? promptTokens + completionTokens;
         await db.query(`UPDATE organization_usage_current_period
           SET ai_credits_used = ai_credits_used + $2,
               overage_ai_credits = GREATEST((ai_credits_used + $2) - ai_credit_limit, 0),
@@ -111,19 +148,18 @@ export class InternalBillingRepository {
         await db.query(`INSERT INTO ai_usage_logs (
          id, organization_id, project_id, user_id, occurred_at, feature_key,
          provider, model, credits_used, prompt_tokens, completion_tokens,
-         total_tokens, status, created_at
-       ) VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, 'accepted', NOW())`, [
+         status, created_at
+       ) VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, 'success', NOW())`, [
             generateUUID(),
             body.organizationId,
             body.projectId ?? null,
             body.userId ?? null,
             body.featureKey,
-            body.provider ?? null,
-            body.model ?? null,
+            body.provider ?? 'internal',
+            body.model ?? 'unknown',
             body.credits,
             promptTokens,
             completionTokens,
-            totalTokens,
         ]);
     }
     async adjustResourceUsage(body, direction, db) {

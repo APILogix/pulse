@@ -3,6 +3,12 @@ import type { RequestWithUser } from '../shared/types.js';
 import { WebhooksService } from './service.js';
 import { handleBillingError } from '../shared/errors.js';
 import { BillingProvider } from '../shared/types.js';
+import {
+  ListWebhookEventsQuerySchema,
+  WebhookEventParamsSchema,
+  type ListWebhookEventsQuery,
+  type WebhookEventParams,
+} from './schemas.js';
 
 function rawBodyOf(request: FastifyRequest): string {
   const rawBody = (request as any).rawBody;
@@ -51,6 +57,31 @@ export class WebhooksController {
       );
       
       return reply.send({ received: true });
+    } catch (error) {
+      return handleBillingError(error, reply);
+    }
+  };
+
+  listEvents = async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const query = ListWebhookEventsQuerySchema.parse(request.query) as ListWebhookEventsQuery;
+      const result = await this.service.listWebhookEvents({
+        ...(query.provider ? { provider: query.provider } : {}),
+        ...(query.status ? { status: query.status } : {}),
+        page: query.page,
+        limit: query.limit,
+      });
+      return reply.send(result);
+    } catch (error) {
+      return handleBillingError(error, reply);
+    }
+  };
+
+  retryEvent = async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { eventId } = WebhookEventParamsSchema.parse(request.params) as WebhookEventParams;
+      const result = await this.service.retryWebhookEvent(eventId);
+      return reply.send(result);
     } catch (error) {
       return handleBillingError(error, reply);
     }

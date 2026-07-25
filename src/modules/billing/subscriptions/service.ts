@@ -45,6 +45,11 @@ export class SubscriptionsService {
     return { success: true, data: history };
   }
 
+  async getSummary(orgId: string) {
+    const summary = await this.repository.getSubscriptionSummary(orgId);
+    return { success: true, data: summary };
+  }
+
   async createSubscription(orgId: string, planId: string, interval: BillingInterval, userId: string) {
     const plan = await this.plansRepository.getPlanById(planId);
     if (!plan) {

@@ -167,6 +167,50 @@ export class EventsRepository {
     return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
   }
 
+  async listActiveEvents(organizationId: string, limit: number): Promise<{ data: AlertEventRow[]; total: number }> {
+    const statuses: AlertEventStatus[] = ['pending', 'processing', 'firing', 'acknowledged'];
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alert_events
+       WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])`,
+      [organizationId, statuses],
+    );
+    const result = await this.db.query<AlertEventRow>(
+      `SELECT * FROM alert_events
+       WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])
+       ORDER BY started_at DESC LIMIT $3`,
+      [organizationId, statuses, Math.max(1, Math.min(limit, 20))],
+    );
+    return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+  }
+
+  async listIncidentProxyEvents(
+    organizationId: string,
+    from: Date,
+    to: Date,
+    severity: string | undefined,
+    limit: number,
+    rankByImpact: boolean,
+  ): Promise<{ data: AlertEventRow[]; total: number }> {
+    const conditions = ['organization_id=$1', 'started_at >= $2', 'started_at < $3'];
+    const params: unknown[] = [organizationId, from, to];
+    if (severity) { params.push(severity); conditions.push(`severity=$${params.length}`); }
+    const where = conditions.join(' AND ');
+    const countRes = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alert_events WHERE ${where}`,
+      params,
+    );
+    params.push(Math.max(1, Math.min(limit, 20)));
+    const ordering = rankByImpact
+      ? `CASE severity WHEN 'critical' THEN 4 WHEN 'error' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END DESC,
+         COALESCE(ended_at, NOW()) - started_at DESC`
+      : 'started_at DESC';
+    const result = await this.db.query<AlertEventRow>(
+      `SELECT * FROM alert_events WHERE ${where} ORDER BY ${ordering} LIMIT $${params.length}`,
+      params,
+    );
+    return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+  }
+
   async acknowledgeEvent(
     organizationId: string, eventId: string, userId: string, expiresAt: Date | null, comment: string | null,
   ): Promise<AlertEventRow> {

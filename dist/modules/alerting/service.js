@@ -66,6 +66,12 @@ export class AlertingService {
     async listEvents(orgId, query) {
         return this.events.listEvents(orgId, query);
     }
+    async listActiveEvents(orgId, limit = 20) {
+        return this.events.listActiveEvents(orgId, limit);
+    }
+    async listIncidentProxyEvents(orgId, from, to, severity, limit = 20, rankByImpact = false) {
+        return this.events.listIncidentProxyEvents(orgId, from, to, severity, limit, rankByImpact);
+    }
     async getEvent(orgId, id) {
         return this.events.getEvent(orgId, id);
     }

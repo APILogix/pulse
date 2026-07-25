@@ -143,7 +143,17 @@ export class EventAnalyticsService {
     }
     async listTraces(orgId, q) {
         const range = resolveTimeRange(q);
-        const { rows, total } = await this.repo.listTraces(orgId, range, q.projectId, q.limit, q.offset);
+        const { rows, total } = await this.repo.listTraces(orgId, range, {
+            ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.traceId !== undefined ? { traceId: q.traceId } : {}),
+            ...(q.requestId !== undefined ? { requestId: q.requestId } : {}),
+            ...(q.service !== undefined ? { service: q.service } : {}),
+            ...(q.rootSpanName !== undefined ? { rootSpanName: q.rootSpanName } : {}),
+            ...(q.minDurationMs !== undefined ? { minDurationMs: q.minDurationMs } : {}),
+            ...(q.errorOnly !== undefined ? { errorOnly: q.errorOnly } : {}),
+            limit: q.limit,
+            offset: q.offset,
+        });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
     }
     async getTrace(orgId, traceId) {
@@ -168,10 +178,33 @@ export class EventAnalyticsService {
         const { rows, total } = await this.repo.listLogs(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
             ...(q.level !== undefined ? { level: q.level } : {}),
+            ...(q.service !== undefined ? { service: q.service } : {}),
             ...(q.search !== undefined ? { search: q.search } : {}),
+            ...(q.securityOnly !== undefined ? { securityOnly: q.securityOnly } : {}),
             limit: q.limit, offset: q.offset,
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
+    }
+    async getLog(orgId, id) {
+        const log = await this.repo.getLog(orgId, id);
+        if (!log)
+            throw new AnalyticsNotFoundError('Log');
+        return log;
+    }
+    async listObservedServices(orgId, q, limit = 50) {
+        return this.repo.listObservedServices(orgId, resolveTimeRange(q), q.projectId, limit);
+    }
+    async summarizeLogs(orgId, q, filters) {
+        return this.repo.summarizeLogs(orgId, resolveTimeRange(q), {
+            ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(filters.level !== undefined ? { level: filters.level } : {}),
+            ...(filters.service !== undefined ? { service: filters.service } : {}),
+            ...(filters.search !== undefined ? { search: filters.search } : {}),
+            limit: filters.limit ?? 20,
+        });
+    }
+    async listServiceEndpoints(orgId, service, q, limit = 50) {
+        return this.repo.listServiceEndpoints(orgId, service, resolveTimeRange(q), q.projectId, limit);
     }
     async pollLogsSince(orgId, since, projectId) {
         return this.repo.listLogsSince(orgId, since, projectId, 100);
