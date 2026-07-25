@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS subscription_addons
         CHECK (expires_at IS NULL OR expires_at > starts_at)
 );
 
+ALTER TABLE subscription_addons 
+ADD COLUMN addon_id UUID REFERENCES addons(id) ON DELETE SET NULL;
 COMMENT ON TABLE subscription_addons IS
 'Purchased add-ons that increase effective feature limits without changing the base plan.';
 

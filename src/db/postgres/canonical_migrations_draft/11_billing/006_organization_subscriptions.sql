@@ -95,3 +95,19 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 COMMIT;
+
+-- 1. Add module grouping to feature catalog(newly added )
+ALTER TABLE billing_features 
+ADD COLUMN module VARCHAR(50),
+ADD COLUMN is_module_root BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- 2. Add module state to subscriptions
+ALTER TABLE organization_subscriptions
+ADD COLUMN modules JSONB NOT NULL DEFAULT '{}',
+ADD COLUMN performance_class VARCHAR(20),
+ADD COLUMN addons JSONB NOT NULL DEFAULT '[]';
+
+-- 3. Add module target to addons catalog (new table)
+ALTER TABLE subscription_addons
+ADD COLUMN addon_key VARCHAR(50),
+ADD COLUMN module VARCHAR(50);

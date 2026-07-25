@@ -680,7 +680,7 @@ DECLARE
 BEGIN
   -- Generate N random backup codes and their hashes
   FOR i IN 1..p_count LOOP
-    v_code := upper(substring(md5(random()::text || clock_timestamp()::text) from 1 for 8));
+    v_code := upper(encode(gen_random_bytes(10), 'hex'));
     v_hash := crypt(v_code, gen_salt('bf', 12));
     
     INSERT INTO user_backup_codes (user_id, code_hash)

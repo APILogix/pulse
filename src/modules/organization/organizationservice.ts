@@ -17,10 +17,12 @@ import { SecurityEventsService } from "./security-events/security-events.service
 import { SecurityEventsRepository } from "./security-events/security-events.repository.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
 import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
+import { pool } from "../../config/database.js";
 import { env } from "../../config/env.js";
 import { emailService } from "../../shared/email/email.service.js";
 import { orgInvitationTemplate } from "../../shared/email/templates.js";
 import { enqueueOrgEmail } from "./shared/background/email-outbox.js";
+import { seedDefaultPresetsForOrg } from "../alerting/evaluator/presets.js";
 import {
   hasMinRole, canManageRole, isMutableOrg,
   OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError,
@@ -110,7 +112,8 @@ export class OrganizationService {
       requireMember: this.requireMember.bind(this),
       audit: this.audit.bind(this),
       billingProvisioning: new BillingProvisioningService(),
-      deleteApiKeyCache: (hash: string) => { try { apiKeyCache.delete(hash); } catch {} }
+      deleteApiKeyCache: (hash: string) => { try { apiKeyCache.delete(hash); } catch {} },
+      seedDefaultAlertPresets: (orgId: string) => seedDefaultPresetsForOrg(pool, orgId),
     });
 
     this.members = new MembersService({

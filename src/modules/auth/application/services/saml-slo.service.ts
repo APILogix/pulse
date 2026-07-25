@@ -9,7 +9,10 @@ import { logAudit } from '../../../../shared/middleware/audit-logger.js';
 import { blacklistAccessToken } from '../../infrastructure/cache/auth.cache.js';
 import * as repository from '../../infrastructure/repositories/index.js';
 import { buildSamlClient } from './saml.service.js';
-import { parseSamlLogoutPayload } from '../../infrastructure/protocols/saml-xml.util.js';
+import {
+  parseSamlIssuer,
+  parseSamlLogoutPayload,
+} from '../../infrastructure/protocols/saml-xml.util.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
 
 export async function startSamlSingleLogout(
@@ -119,20 +122,11 @@ async function handleIdpInitiatedLogout(
   ipAddress: string,
   requestId: string,
 ): Promise<{ redirect_url: string | null; logged_out: boolean }> {
-  const parsed = parseSamlLogoutPayload(body.SAMLRequest!);
-  const provider = parsed.issuer
-    ? await repository.findSamlProviderByEntityId(parsed.issuer)
+  const issuer = parseSamlIssuer(body.SAMLRequest!);
+  const provider = issuer
+    ? await repository.findSamlProviderByEntityId(issuer)
     : null;
-  const session = parsed.nameId && provider
-    ? await repository.findLatestSamlSessionByProviderAndNameId(provider.id, parsed.nameId)
-    : null;
-
-  const resolvedProvider = await resolveSamlProviderForLogout({
-    session,
-    issuer: parsed.issuer,
-  });
-
-  if (!resolvedProvider) {
+  if (!provider) {
     throw new AuthError(
       'Cannot process SAML logout for unknown provider',
       AuthErrorCodes.SAML_RESPONSE_INVALID,
@@ -140,20 +134,50 @@ async function handleIdpInitiatedLogout(
     );
   }
 
-  const saml = buildSamlClient(resolvedProvider);
-  const result = await saml.validatePostRequestAsync({
-    SAMLRequest: body.SAMLRequest!,
-  });
+  const saml = buildSamlClient(provider);
+  let result: Awaited<ReturnType<typeof saml.validatePostRequestAsync>>;
+  try {
+    result = await saml.validatePostRequestAsync({
+      SAMLRequest: body.SAMLRequest!,
+    });
+  } catch {
+    logAudit({
+      user_id: null,
+      org_id: provider.org_id,
+      actor_type: 'saml',
+      actor_id: provider.id,
+      action: 'sso.saml_logout_rejected',
+      resource_type: 'sso_provider',
+      resource_id: provider.id,
+      ip_address: ipAddress,
+      request_id: requestId,
+      metadata: { reason: 'invalid_signature' },
+    });
+    throw new AuthError(
+      'Invalid SAML logout request',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      400,
+    );
+  }
 
   const nameId =
-    result.profile?.nameID ?? parsed.nameId ?? session?.saml_name_id ?? null;
+    result.profile?.nameID ??
+    (typeof result.profile?.nameId === 'string' ? result.profile.nameId : null);
+  const session = nameId
+    ? await repository.findLatestSamlSessionByProviderAndNameId(provider.id, nameId)
+    : null;
+  const resolvedProvider = await resolveSamlProviderForLogout({
+    session,
+    issuer,
+  }) ?? provider;
+
   if (nameId) {
     await revokeSessionsBySamlContext(
       resolvedProvider.id,
       nameId,
       typeof result.profile?.sessionIndex === 'string'
         ? result.profile.sessionIndex
-        : parsed.sessionIndex,
+        : null,
       ipAddress,
       requestId,
     );
@@ -174,18 +198,52 @@ async function handleSpLogoutResponse(
   ipAddress: string,
   requestId: string,
 ): Promise<{ redirect_url: string | null; logged_out: boolean }> {
+  const issuer = parseSamlIssuer(body.SAMLResponse!);
+  const provider = issuer
+    ? await repository.findSamlProviderByEntityId(issuer)
+    : null;
+  if (!provider) {
+    throw new AuthError(
+      'Cannot process SAML logout response for unknown provider',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      400,
+    );
+  }
+
+  const saml = buildSamlClient(provider);
+  try {
+    await saml.validatePostResponseAsync({
+      SAMLResponse: body.SAMLResponse!,
+    });
+  } catch {
+    logAudit({
+      user_id: null,
+      org_id: provider.org_id,
+      actor_type: 'saml',
+      actor_id: provider.id,
+      action: 'sso.saml_logout_response_rejected',
+      resource_type: 'sso_provider',
+      resource_id: provider.id,
+      ip_address: ipAddress,
+      request_id: requestId,
+      metadata: { reason: 'invalid_signature' },
+    });
+    throw new AuthError(
+      'Invalid SAML logout response',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      400,
+    );
+  }
+
   const parsed = parseSamlLogoutPayload(body.SAMLResponse!);
-  if (parsed.nameId && parsed.issuer) {
-    const provider = await repository.findSamlProviderByEntityId(parsed.issuer);
-    if (provider) {
-      await revokeSessionsBySamlContext(
-        provider.id,
-        parsed.nameId,
-        parsed.sessionIndex,
-        ipAddress,
-        requestId,
-      );
-    }
+  if (parsed.nameId) {
+    await revokeSessionsBySamlContext(
+      provider.id,
+      parsed.nameId,
+      parsed.sessionIndex,
+      ipAddress,
+      requestId,
+    );
   }
   return { redirect_url: getSamlLogoutRedirectUrl(), logged_out: true };
 }

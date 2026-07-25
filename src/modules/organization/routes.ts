@@ -16,6 +16,7 @@ import {
   AuditLogQuerySchema,
   CreateInvitationSchema,
   CreateOrganizationSchema,
+  CreateQuotaRequestSchema,
   CreateScimTokenSchema,
   CreateSsoProviderSchema,
   CursorPaginationSchema,
@@ -28,7 +29,9 @@ import {
   MembersListQuerySchema,
   OrgIdParamsSchema,
   OrganizationError,
+  QuotaRequestParamsSchema,
   RemoveMemberSchema,
+  ReviewQuotaRequestSchema,
   ScimTokenParamsSchema,
   SecurityEventsQuerySchema,
   SlugParamsSchema,
@@ -408,6 +411,34 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   // ═══════════════════════════════════════════════
   // UTILITY
   // ═══════════════════════════════════════════════
+
+  fastify.get('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const query = CursorPaginationSchema.parse(request.query ?? {});
+    const result = await svc.listQuotaRequests(orgId, asAuth(request).user.id, query);
+    return reply.send({ success: true, ...result });
+  }));
+
+  fastify.post('/:orgId/quota-requests', auth, withErrorHandling(async (request, reply) => {
+    const { orgId } = OrgIdParamsSchema.parse(request.params);
+    const body = CreateQuotaRequestSchema.parse(request.body);
+    const result = await svc.createQuotaRequest(buildMeta(request), orgId, body);
+    return reply.code(201).send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/quota-requests/:requestId/approve', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
+    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
+    const result = await svc.approveQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
+    return reply.send({ success: true, data: result });
+  }));
+
+  fastify.post('/:orgId/quota-requests/:requestId/reject', auth, withErrorHandling(async (request, reply) => {
+    const { orgId, requestId } = QuotaRequestParamsSchema.parse(request.params);
+    const body = ReviewQuotaRequestSchema.parse(request.body ?? {});
+    const result = await svc.rejectQuotaRequest(buildMeta(request), orgId, requestId, body.notes);
+    return reply.send({ success: true, data: result });
+  }));
 
   fastify.get('/:orgId/billing-summary', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);

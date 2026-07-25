@@ -43,10 +43,13 @@ export function buildSamlClient(provider: repository.SamlProviderRow): SAML {
     logoutUrl: samlSpConfig.sloUrl,
     idpCert: provider.x509_certificate,
     idpIssuer: provider.entity_id,
-    wantAssertionsSigned: true,
-    wantAuthnResponseSigned: false,
+    audience: samlSpConfig.entityId,
+    acceptedClockSkewMs: env.SAML_ACCEPTED_CLOCK_SKEW_MS,
+    maxAssertionAgeMs: env.SAML_MAX_ASSERTION_AGE_MS,
+    wantAssertionsSigned: env.SAML_REQUIRE_SIGNED_ASSERTIONS,
+    wantAuthnResponseSigned: env.SAML_REQUIRE_SIGNED_RESPONSES,
     validateInResponseTo: ValidateInResponseTo.always,
-    requestIdExpirationPeriodMs: 10 * 60 * 1000,
+    requestIdExpirationPeriodMs: env.SAML_REQUEST_ID_TTL_MS,
     cacheProvider: samlRequestIdCache,
     ...(samlSpConfig.privateKey
       ? {

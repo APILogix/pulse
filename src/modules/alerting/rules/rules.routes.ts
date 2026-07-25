@@ -28,6 +28,7 @@ import {
   OrgIdParamsSchema,
   OrgPolicyParamsSchema,
   OrgRuleParamsSchema,
+  RuleTemplateParamsSchema,
   PaginationSchema,
   PreviewTemplateSchema,
   ResolveEventSchema,
@@ -81,6 +82,18 @@ export async function rulesRoutes(fastify: FastifyInstance): Promise<void> {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
     const body = CreateRuleSchema.parse(request.body);
     const data = await svc.createRule(orgId, buildMeta(request), body);
+    return reply.code(201).send({ success: true, data });
+  }));
+
+  fastify.get('/rules/templates', guard, withErrorHandling(async (request, reply) => {
+    OrgIdParamsSchema.parse(request.params);
+    return reply.send({ success: true, data: svc.listRuleTemplates() });
+  }));
+
+  fastify.post('/rules/templates/:templateKey', guard, withErrorHandling(async (request, reply) => {
+    const { orgId, templateKey } = RuleTemplateParamsSchema.parse(request.params);
+    const overrides = CreateRuleSchema.partial().parse(request.body ?? {});
+    const data = await svc.createRuleFromTemplate(orgId, buildMeta(request), templateKey, overrides);
     return reply.code(201).send({ success: true, data });
   }));
 

@@ -360,6 +360,20 @@ export async function completeSsoCallback(
 
   const claims = tokens.claims();
 
+  if (claims?.nonce !== flow.nonce) {
+
+    throw new AuthError(
+
+      'Identity provider returned an invalid nonce',
+
+      AuthErrorCodes.OIDC_CALLBACK_INVALID,
+
+      400,
+
+    );
+
+  }
+
   const email =
 
     typeof claims?.email === 'string' ? normalizeEmail(claims.email) : null;
@@ -373,6 +387,20 @@ export async function completeSsoCallback(
       AuthErrorCodes.OIDC_CALLBACK_INVALID,
 
       400,
+
+    );
+
+  }
+
+  if (claims.email_verified === false) {
+
+    throw new AuthError(
+
+      'Identity provider did not verify this email address',
+
+      AuthErrorCodes.EMAIL_NOT_VERIFIED,
+
+      403,
 
     );
 

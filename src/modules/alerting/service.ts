@@ -1,6 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from './repository.js';
-import { RulesService } from './rules/rules.service.js';
+import { RulesService, type CreateRuleTemplateOverrides } from './rules/rules.service.js';
 import { EventsService } from './events/events.service.js';
 import { SilencesService } from './silences/silences.service.js';
 import { PoliciesService } from './policies/policies.service.js';
@@ -68,6 +68,14 @@ export class AlertingService {
 
   async cloneRule(orgId: string, meta: RequestMeta, id: string): Promise<Promise<Record<string, unknown>>> {
     return this.rules.cloneRule(orgId, meta, id);
+  }
+
+  listRuleTemplates(): Record<string, unknown>[] {
+    return this.rules.listRuleTemplates();
+  }
+
+  async createRuleFromTemplate(orgId: string, meta: RequestMeta, templateKey: string, overrides: CreateRuleTemplateOverrides = {}): Promise<Promise<Record<string, unknown>>> {
+    return this.rules.createRuleFromTemplate(orgId, meta, templateKey, overrides);
   }
 
   async testRule(orgId: string, id: string, body: TestRuleBody): Promise<Promise<Record<string, unknown>>> {

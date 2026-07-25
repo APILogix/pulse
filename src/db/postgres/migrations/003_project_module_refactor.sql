@@ -413,10 +413,10 @@ ALTER TABLE project_members
 
 UPDATE project_members m
 SET role_id = r.id
-FROM project_roles r
-JOIN organizations o ON r.organization_id = o.id
-JOIN projects p ON p.org_id = o.id AND p.id = m.project_id
+FROM projects p
+JOIN project_roles r ON r.organization_id = p.org_id
 WHERE m.role_id IS NULL
+  AND p.id = m.project_id
   AND r.slug = m.role::text;
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -429,7 +429,7 @@ CREATE TABLE IF NOT EXISTS project_connector_subscriptions (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   connector_id UUID NOT NULL REFERENCES connector_configs(id) ON DELETE CASCADE,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  alert_categories alert_category[] NOT NULL DEFAULT ARRAY['error','performance','security'],
+  alert_categories alert_category[] NOT NULL DEFAULT ARRAY['error','performance','security']::alert_category[],
   severity_threshold severity_threshold NOT NULL DEFAULT 'error',
   member_ids UUID[] NOT NULL DEFAULT '{}',
   channel_overrides JSONB NOT NULL DEFAULT '{}',
@@ -463,7 +463,7 @@ CREATE TRIGGER trg_project_connector_subs_updated_at
 INSERT INTO project_connector_subscriptions (
   project_id, organization_id, connector_id, enabled, alert_categories, created_by_user_id, updated_by_user_id
 )
-SELECT c.project_id, c.organization_id, c.id, TRUE, ARRAY['error','performance','security'], c.created_by, c.updated_by
+SELECT c.project_id, c.organization_id, c.id, TRUE, ARRAY['error','performance','security']::alert_category[], c.created_by, c.updated_by
 FROM connector_configs c
 WHERE c.project_id IS NOT NULL
   AND c.deleted_at IS NULL
@@ -482,7 +482,7 @@ ALTER TABLE connector_configs
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS project_audit_logs (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   action project_audit_action NOT NULL,
@@ -501,7 +501,8 @@ CREATE TABLE IF NOT EXISTS project_audit_logs (
   user_agent TEXT,
   severity INTEGER NOT NULL DEFAULT 0,
   is_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id, created_at)
 ) PARTITION BY RANGE (created_at);
 
 -- Default partition for current month; operational runbooks create future partitions.
@@ -583,7 +584,17 @@ CREATE TRIGGER trg_project_notif_prefs_updated_at
 INSERT INTO project_notification_preferences (project_id, organization_id, category, enabled)
 SELECT p.id, p.org_id, cat, TRUE
 FROM projects p
-CROSS JOIN (VALUES ('error'), ('performance'), ('deployment'), ('cron'), ('release'), ('usage'), ('billing'), ('security'), ('ai')) AS v(cat)
+CROSS JOIN (VALUES
+  ('error'::alert_category),
+  ('performance'::alert_category),
+  ('deployment'::alert_category),
+  ('cron'::alert_category),
+  ('release'::alert_category),
+  ('usage'::alert_category),
+  ('billing'::alert_category),
+  ('security'::alert_category),
+  ('ai'::alert_category)
+) AS v(cat)
 WHERE p.deleted_at IS NULL
 ON CONFLICT (project_id, category) DO NOTHING;
 
@@ -615,6 +626,32 @@ CREATE TRIGGER trg_project_member_notif_prefs_updated_at
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 12. PROJECT USAGE ANALYTICS — time-series aggregates
 -- ═══════════════════════════════════════════════════════════════════════════
+
+-- The baseline canonical schema already has narrower analytics tables named
+-- project_usage_hourly/project_usage_daily. Preserve them as legacy rollups so
+-- the enterprise refactor can create the richer dashboard tables below.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'project_usage_hourly'
+      AND column_name = 'bucket_hour'
+  ) AND to_regclass('public.project_usage_hourly_legacy') IS NULL THEN
+    ALTER TABLE project_usage_hourly RENAME TO project_usage_hourly_legacy;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'project_usage_daily'
+      AND column_name = 'bucket_date'
+  ) AND to_regclass('public.project_usage_daily_legacy') IS NULL THEN
+    ALTER TABLE project_usage_daily RENAME TO project_usage_daily_legacy;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS project_usage_minute (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

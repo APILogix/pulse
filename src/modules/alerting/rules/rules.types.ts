@@ -99,6 +99,11 @@ export const TestRuleSchema = z.object({
 
 export type TestRuleBody = z.infer<typeof TestRuleSchema>;
 
+export const RuleTemplateParamsSchema = z.object({
+  orgId: UuidSchema,
+  templateKey: z.string().min(1).max(100),
+});
+
 export interface AlertRuleRow {
   id: string;
   organization_id: string;

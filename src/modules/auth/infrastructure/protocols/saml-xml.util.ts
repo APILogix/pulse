@@ -3,13 +3,81 @@
  */
 import { inflateRawSync } from 'zlib';
 
+import { AuthError, AuthErrorCodes } from '../../domain/types.js';
+
+const MAX_SAML_BASE64_BYTES = 256 * 1024;
+const MAX_SAML_XML_BYTES = 1024 * 1024;
+
 function decodeSamlPayload(base64Payload: string): string {
+  if (base64Payload.length > MAX_SAML_BASE64_BYTES) {
+    throw new AuthError(
+      'SAML payload too large',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      413,
+    );
+  }
+
   const raw = Buffer.from(base64Payload, 'base64');
+  if (raw.length > MAX_SAML_BASE64_BYTES) {
+    throw new AuthError(
+      'SAML payload too large',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      413,
+    );
+  }
+
   try {
-    return inflateRawSync(raw).toString('utf8');
-  } catch {
+    return inflateRawSync(raw, {
+      maxOutputLength: MAX_SAML_XML_BYTES,
+    }).toString('utf8');
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === 'ERR_BUFFER_TOO_LARGE'
+    ) {
+      throw new AuthError(
+        'SAML payload too large',
+        AuthErrorCodes.SAML_RESPONSE_INVALID,
+        413,
+      );
+    }
+    if (raw.length > MAX_SAML_XML_BYTES) {
+      throw new AuthError(
+        'SAML payload too large',
+        AuthErrorCodes.SAML_RESPONSE_INVALID,
+        413,
+      );
+    }
     return raw.toString('utf8');
   }
+}
+
+export function decodeSamlPostPayload(base64Payload: string): string {
+  if (base64Payload.length > MAX_SAML_BASE64_BYTES) {
+    throw new AuthError(
+      'SAML payload too large',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      413,
+    );
+  }
+
+  const raw = Buffer.from(base64Payload, 'base64');
+  if (raw.length > MAX_SAML_XML_BYTES) {
+    throw new AuthError(
+      'SAML payload too large',
+      AuthErrorCodes.SAML_RESPONSE_INVALID,
+      413,
+    );
+  }
+  return raw.toString('utf8');
+}
+
+export function parseSamlIssuer(base64Payload: string): string | null {
+  const xml = decodeSamlPostPayload(base64Payload);
+  return firstMatch(xml, [
+    /<(?:saml:|saml2:)?Issuer[^>]*>([^<]+)<\/(?:saml:|saml2:)?Issuer>/i,
+    /<Issuer[^>]*>([^<]+)<\/Issuer>/i,
+  ]);
 }
 
 function firstMatch(xml: string, patterns: RegExp[]): string | null {

@@ -28,11 +28,17 @@ async function runMigrations() {
     await client.query(dropSql);
     console.log('✅ Successfully dropped all tables and types.');
 
-    console.log('Running 002_create_all.sql...');
-    const createSql = fs.readFileSync(path.resolve(__dirname, '../src/db/postgres/migrations/002_create_all.sql'), 'utf-8');
-    await client.query(createSql);
-    console.log('✅ Successfully recreated schema from canonical migrations.');
+    const migrationFiles = [
+      '002_create_all_ordered.sql',
+      '003_project_module_refactor.sql',
+    ];
 
+    for (const file of migrationFiles) {
+      console.log(`Running ${file}...`);
+      const sql = fs.readFileSync(path.resolve(__dirname, '../src/db/postgres/migrations', file), 'utf-8');
+      await client.query(sql);
+    }
+    console.log('Successfully recreated schema and applied project module refactor.');
   } catch (err) {
     console.error('❌ Migration failed:', err);
   } finally {

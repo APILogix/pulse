@@ -31,6 +31,7 @@ import { registerAnalyticsModule } from './modules/analytics/analytics.module.js
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
+import { errorHandler } from './shared/middleware/error-handler.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -200,52 +201,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // ── Global Error Handler ───────────────────────────────────────────
-  app.setErrorHandler((error: any, request, reply) => {
-    const isDev = env.NODE_ENV === 'development';
-
-    if (error.validation) {
-      if (isDev) {
-        appLogger.warn(
-          { requestId: request.id, validation: error.validation },
-          'Validation error',
-        );
-      }
-      return reply.status(400).send({
-        statusCode: 400,
-        message: isDev ? error.message : 'Validation failed',
-        errors: error.validation,
-      });
-    }
-
-    if (error.code === 'FST_ERR_VALIDATION') {
-      return reply.status(400).send({
-        statusCode: 400,
-        message: isDev ? error.message : 'Invalid request',
-      });
-    }
-
-    if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
-      return reply.status(413).send({
-        statusCode: 413,
-        message: 'Request body too large',
-      });
-    }
-
-    const statusCode = error.statusCode || 500;
-    if (statusCode >= 500) {
-      appLogger.error(
-        { err: error, requestId: request.id, url: request.url, method: request.method },
-        'Internal server error',
-      );
-    }
-
-    reply.status(statusCode).send({
-      statusCode,
-      message: isDev ? error.message : 'Internal Server Error',
-      requestId: request.id,
-      ...(isDev && { stack: error.stack }),
-    });
-  });
+  app.setErrorHandler(errorHandler);
 
   return app;
 }

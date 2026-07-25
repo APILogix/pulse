@@ -51,6 +51,7 @@ export interface CoreServiceDeps {
   listOrgApiKeyHashes?: (orgId: string) => Promise<string[]>; // for cascading delete caching
   deleteApiKeyCache?: (hash: string) => void;
   billingProvisioning: BillingProvisioningService;
+  seedDefaultAlertPresets?: (orgId: string) => Promise<number>;
 }
 
 export class CoreService {
@@ -102,6 +103,14 @@ export class CoreService {
       );
       return created.organization;
     });
+    if (this.deps.seedDefaultAlertPresets) {
+      try {
+        const seededCount = await this.deps.seedDefaultAlertPresets(provisioned.id);
+        this.deps.log.info({ orgId: provisioned.id, seededCount }, "Default alert presets seeded for organization");
+      } catch (error) {
+        this.deps.log.warn({ err: error, orgId: provisioned.id }, "Failed to seed default alert presets for organization");
+      }
+    }
     return toOrgDto(provisioned);
   }
 
