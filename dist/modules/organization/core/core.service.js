@@ -78,6 +78,15 @@ export class CoreService {
             ]);
             return created.organization;
         });
+        if (this.deps.seedDefaultAlertPresets) {
+            try {
+                const seededCount = await this.deps.seedDefaultAlertPresets(provisioned.id);
+                this.deps.log.info({ orgId: provisioned.id, seededCount }, "Default alert presets seeded for organization");
+            }
+            catch (error) {
+                this.deps.log.warn({ err: error, orgId: provisioned.id }, "Failed to seed default alert presets for organization");
+            }
+        }
         return toOrgDto(provisioned);
     }
     async switchOrganization(meta, orgId) {

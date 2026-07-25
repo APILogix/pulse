@@ -326,7 +326,7 @@ export async function verifyLoginMFAChallenge(input, ipAddress, userAgent, clien
     // Verify the code based on device type.
     let verified = false;
     if (device.device_type === 'hardware_key') {
-        throw new AuthError('Use POST /auth/login/mfa/webauthn/options and /verify for passkey MFA', AuthErrorCodes.MFA_INVALID, 400, { device_type: 'hardware_key' });
+        throw new AuthError('Passkey authentication is required for this account. Please use your passkey to sign in.', AuthErrorCodes.MFA_INVALID, 400, { device_type: 'hardware_key' });
     }
     if (device.device_type === 'email') {
         // Email MFA: check the OTP stored in email_mfa_otps.

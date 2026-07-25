@@ -14,8 +14,8 @@ export type AlertEventStatus = z.infer<typeof AlertEventStatusSchema>;
 export declare const DeliveryAttemptStatusSchema: z.ZodEnum<{
     pending: "pending";
     cancelled: "cancelled";
-    failed: "failed";
     queued: "queued";
+    failed: "failed";
     sent: "sent";
     delivered: "delivered";
     retrying: "retrying";

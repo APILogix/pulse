@@ -55,6 +55,7 @@ export interface OrgMemberRow {
     status: MemberStatus;
     email: string;
     full_name: string;
+    mfa_enabled: boolean;
     invited_by: string | null;
     invited_at: Date | null;
     joined_at: Date | null;

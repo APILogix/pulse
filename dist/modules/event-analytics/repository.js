@@ -36,6 +36,7 @@ export class EventAnalyticsRepository {
         const r = await this.db.query(`SELECT COUNT(*)::bigint AS total,
               COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS errors,
               AVG(latency_ms)::int AS avg,
+              PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latency_ms)::int AS p50,
               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95,
               PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms)::int AS p99
        FROM events_requests
@@ -48,6 +49,7 @@ export class EventAnalyticsRepository {
             total, errors,
             errorRate: total > 0 ? errors / total : 0,
             avgLatencyMs: row.avg !== null ? Number(row.avg) : null,
+            p50: row.p50 !== null ? Number(row.p50) : null,
             p95: row.p95 !== null ? Number(row.p95) : null,
             p99: row.p99 !== null ? Number(row.p99) : null,
         };

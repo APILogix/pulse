@@ -32,6 +32,7 @@ import { registerAnalyticsModule } from './modules/analytics/analytics.module.js
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
+import { registerAIModule } from './modules/ai/ai.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 
 declare module 'fastify' {
@@ -112,7 +113,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     origin: buildCorsOrigin(),
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
     exposedHeaders: ['X-Request-ID'],
   });
 
@@ -183,6 +184,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerConnectorsModule);
   await app.register(registerAlertingModule);
   await app.register(registerEventAnalyticsModule);
+  await app.register(registerAIModule);
 
   appLogger.info('All modules registered');
 

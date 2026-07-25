@@ -16,6 +16,7 @@ export declare class SecurityEventsService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
 }

@@ -14,6 +14,7 @@ export interface CoreServiceDeps {
     listOrgApiKeyHashes?: (orgId: string) => Promise<string[]>;
     deleteApiKeyCache?: (hash: string) => void;
     billingProvisioning: BillingProvisioningService;
+    seedDefaultAlertPresets?: (orgId: string) => Promise<number>;
 }
 export declare class CoreService {
     private deps;
@@ -48,6 +49,7 @@ export declare class CoreService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
 }

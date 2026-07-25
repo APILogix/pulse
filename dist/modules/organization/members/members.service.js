@@ -92,7 +92,7 @@ export class MembersService {
         await this.requireMember(orgId, userId);
         const result = await this.deps.repository.listMembers(orgId, q, filters);
         return {
-            data: result.data.map(m => ({ id: m.id, userId: m.user_id, email: m.email, fullName: m.full_name, role: m.role, status: m.status, joinedAt: m.joined_at, lastActiveAt: m.last_active_at, createdAt: m.created_at })),
+            data: result.data.map(m => ({ id: m.id, userId: m.user_id, email: m.email, fullName: m.full_name, mfaEnabled: m.mfa_enabled, role: m.role, status: m.status, joinedAt: m.joined_at, lastActiveAt: m.last_active_at, createdAt: m.created_at })),
             meta: result.meta
         };
     }
@@ -101,7 +101,7 @@ export class MembersService {
         const m = await this.deps.repository.findMember(orgId, targetUserId);
         if (!m)
             throw new NotFoundError("Member");
-        return { id: m.id, userId: m.user_id, email: m.email, fullName: m.full_name, role: m.role, status: m.status, joinedAt: m.joined_at, lastActiveAt: m.last_active_at, createdAt: m.created_at };
+        return { id: m.id, userId: m.user_id, email: m.email, fullName: m.full_name, mfaEnabled: m.mfa_enabled, role: m.role, status: m.status, joinedAt: m.joined_at, lastActiveAt: m.last_active_at, createdAt: m.created_at };
     }
     async countOwners(orgId) {
         return this.deps.repository.countActiveOwners(orgId);

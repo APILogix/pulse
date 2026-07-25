@@ -1,9 +1,19 @@
-export {};
-/**
- * AI cost tracker placeholder.
- *
- * No AI usage accounting is currently implemented here. Future tracking should
- * record prompt/completion tokens, provider cost, organization/project context,
- * and budget enforcement decisions.
- */
+import type { AIMode, AIResponseStatus } from './types.js';
+export declare class AICostTracker {
+    recordCredits(mode: AIMode, amount: number): void;
+    recordRetrieval(mode: AIMode, durationMs: number, scores: number[], succeeded: boolean): void;
+    recordFeedback(rating?: number, helpful?: boolean, correctionProvided?: boolean): void;
+    record(input: {
+        mode: AIMode;
+        status: AIResponseStatus;
+        durationMs: number;
+        credits: number;
+        promptTokens?: number;
+        completionTokens?: number;
+        cached?: boolean;
+        fallback?: boolean;
+        safetyBlocked?: boolean;
+        belowThreshold?: boolean;
+    }): void;
+}
 //# sourceMappingURL=cost-tracker.d.ts.map

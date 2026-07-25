@@ -123,10 +123,10 @@ export class SdkConfigService {
         });
         return toConfigDto(row);
     }
-    async listConfigs(orgId, userId, filters) {
+    async listConfigs(orgId, userId, filters, q) {
         await this.requireMember(orgId, userId);
-        const rows = await this.repo.list(orgId, filters);
-        return rows.map(toConfigDto);
+        const result = await this.repo.list(orgId, filters, q);
+        return { data: result.data.map(toConfigDto), meta: result.meta };
     }
     async getConfig(orgId, userId, configId) {
         await this.requireMember(orgId, userId);

@@ -49,6 +49,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     getMember(orgId: string, actorUserId: string, targetUserId: string): Promise<MemberDto>;
@@ -86,6 +87,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<import("./sso/sso.service.js").SsoProviderDto>;
@@ -125,6 +127,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: {
@@ -137,6 +140,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     createQuotaRequest(meta: RequestMeta, orgId: string, data: {
@@ -153,6 +157,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     getBillingSummary(orgId: string, userId: string): Promise<{
@@ -210,6 +215,7 @@ export declare class OrganizationService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     validateInvitationToken(token: string): Promise<{
@@ -238,8 +244,24 @@ export declare class OrganizationService {
         changedFields: unknown;
     })[]>;
     leaveOrganization(meta: RequestMeta, orgId: string): Promise<void>;
-    listSsoProviders(orgId: string, userId: string): Promise<import("./sso/sso.service.js").SsoProviderDto[]>;
-    listScimTokens(orgId: string, userId: string): Promise<ScimTokenDto[]>;
+    listSsoProviders(orgId: string, userId: string, q: CursorPaginationQuery): Promise<{
+        data: import("./sso/sso.service.js").SsoProviderDto[];
+        meta: {
+            hasMore: boolean;
+            nextCursor: string | null;
+            limit: number;
+            totalCount: number;
+        };
+    }>;
+    listScimTokens(orgId: string, userId: string, q: CursorPaginationQuery): Promise<{
+        data: ScimTokenDto[];
+        meta: {
+            hasMore: boolean;
+            nextCursor: string | null;
+            limit: number;
+            totalCount: number;
+        };
+    }>;
     private toScimTokenDto;
 }
 //# sourceMappingURL=organizationservice.d.ts.map

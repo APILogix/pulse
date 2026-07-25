@@ -210,6 +210,11 @@ export class AlertRuleEvaluator {
     //   log_error_count    events_logs count(level = 'error')
     //   log_matches        events_logs count(message ILIKE/~ pattern) w/ LIMIT guard
     //   inactivity_minutes minutes since last events_requests row (1e9 when none)
+    //   ai_failed_requests ai_usage_logs count(status != success)
+    //   ai_duration_p95    percentile_cont(0.95) over ai_usage_logs.duration_ms
+    //   ai_credits_used    sum(ai_usage_logs.credits_used)
+    //   ai_cost_usd        sum(ai_usage_logs.estimated_cost_usd)
+    //   ai_tokens_used     sum(ai_usage_logs.total_tokens)
     //   metric:<name>      aggregateFunction over events_metrics.value
     async evaluateCondition(rule, condition) {
         const base = {
@@ -289,6 +294,43 @@ export class AlertRuleEvaluator {
             case 'inactivity_minutes':
                 sql = `SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(timestamp))) / 60.0, 1e9)::float8 AS value
                FROM events_requests WHERE ${scope}`;
+                break;
+            case 'ai_failed_requests':
+                sql = `SELECT count(*)::float8 AS value
+               FROM ai_usage_logs
+               WHERE organization_id = $2
+                 AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+                 AND ($3::uuid IS NULL OR project_id = $3)
+                 AND status IN ('failed', 'timeout', 'cancelled')`;
+                break;
+            case 'ai_duration_p95':
+                sql = `SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)::float8 AS value
+               FROM ai_usage_logs
+               WHERE organization_id = $2
+                 AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+                 AND ($3::uuid IS NULL OR project_id = $3)
+                 AND duration_ms IS NOT NULL`;
+                break;
+            case 'ai_credits_used':
+                sql = `SELECT COALESCE(sum(credits_used), 0)::float8 AS value
+               FROM ai_usage_logs
+               WHERE organization_id = $2
+                 AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+                 AND ($3::uuid IS NULL OR project_id = $3)`;
+                break;
+            case 'ai_cost_usd':
+                sql = `SELECT COALESCE(sum(estimated_cost_usd), 0)::float8 AS value
+               FROM ai_usage_logs
+               WHERE organization_id = $2
+                 AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+                 AND ($3::uuid IS NULL OR project_id = $3)`;
+                break;
+            case 'ai_tokens_used':
+                sql = `SELECT COALESCE(sum(total_tokens), 0)::float8 AS value
+               FROM ai_usage_logs
+               WHERE organization_id = $2
+                 AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+                 AND ($3::uuid IS NULL OR project_id = $3)`;
                 break;
             case 'metric': {
                 const metricName = kind.metricName;
@@ -381,6 +423,13 @@ const FIELD_PATH_KINDS = {
     'log.matches': 'log_matches',
     'requests.inactivity_minutes': 'inactivity_minutes',
     'service.inactivity_minutes': 'inactivity_minutes',
+    'ai.requests.failed': 'ai_failed_requests',
+    'ai.failures': 'ai_failed_requests',
+    'ai.duration.p95': 'ai_duration_p95',
+    'ai.latency.p95': 'ai_duration_p95',
+    'ai.credits.used': 'ai_credits_used',
+    'ai.cost.usd': 'ai_cost_usd',
+    'ai.tokens.used': 'ai_tokens_used',
 };
 function mapFieldPathToKind(fieldPath, aggregateFunction) {
     const normalized = fieldPath.trim().toLowerCase();

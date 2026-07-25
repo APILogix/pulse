@@ -75,6 +75,9 @@ export class ScimTokenService {
     async listTokens(orgId) {
         return repository.listScimTokensForOrg(orgId);
     }
+    async listTokensPaginated(orgId, limit, cursor) {
+        return repository.listScimTokensForOrgPaginated(orgId, limit, cursor);
+    }
     async createTokenInTransaction(input, client) {
         const rawToken = `scim_${randomBytes(32).toString('hex')}`;
         const tokenHash = hashScimToken(rawToken);

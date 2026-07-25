@@ -22,6 +22,7 @@ export declare class DomainsController {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     get: (r: FastifyRequest) => Promise<{

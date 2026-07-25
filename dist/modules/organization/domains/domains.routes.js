@@ -11,8 +11,17 @@ export async function registerDomainRoutes(app, service) {
             throw e;
         }
     };
+    const runList = (fn) => async (r, reply) => {
+        try {
+            const res = await fn(r);
+            return reply.send({ success: true, ...res });
+        }
+        catch (e) {
+            throw e;
+        }
+    };
     const c = new DomainsController(service);
-    app.get('/:organizationId/domains', auth, run(c.list));
+    app.get('/:organizationId/domains', auth, runList(c.list));
     app.get('/:organizationId/domains/:domainId', auth, run(c.get));
     app.post('/:organizationId/domains', auth, run(c.create));
     app.post('/:organizationId/domains/:domainId/verify', auth, run(c.verify));

@@ -243,13 +243,13 @@ export async function verifyEmail(input, ipAddress, requestId) {
                     return;
                 }
             }
-            throw new AuthError('Invalid or expired verification token', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
+            throw new AuthError('Invalid email verification link', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
         }
         const user = await repository.findUserById(consumed.user_id, client);
         if (!user ||
             user.deleted_at ||
             normalizeEmail(user.email) !== normalizeEmail(consumed.email)) {
-            throw new AuthError('Invalid or expired verification token', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
+            throw new AuthError('Invalid email verification link', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
         }
         if (!user.email_is_verified) {
             await repository.markEmailAsVerified(user.id, client);
@@ -302,14 +302,14 @@ export async function resetPasswordWithToken(input, ipAddress, requestId) {
     await repository.withTransaction(async (client) => {
         const consumed = await repository.consumeEmailVerificationToken(tokenHash, 'password_reset', client);
         if (!consumed) {
-            throw new AuthError('Invalid or expired reset token', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
+            throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
         const userRes = await client.query(`SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [consumed.user_id]);
         const user = userRes.rows[0];
         if (!user ||
             user.status !== 'active' ||
             normalizeEmail(user.email) !== normalizeEmail(consumed.email)) {
-            throw new AuthError('Invalid or expired reset token', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
+            throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
         await ensurePasswordNotReused(user, input.new_password);
         const passwordHash = await hashPassword(input.new_password);
@@ -323,7 +323,7 @@ export async function resetPasswordWithToken(input, ipAddress, requestId) {
         resetUserId = user.id;
     });
     if (!resetUserId) {
-        throw new AuthError('Password reset failed', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
+        throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
     }
     await revokeAllSessionsAndTokens(resetUserId, 'Password reset');
     logAudit({
@@ -368,14 +368,14 @@ export async function changePassword(userId, currentSessionId, input, mfaVerifie
     }
     const currentValid = await verifyPassword(input.current_password, user.password_hash);
     if (!currentValid) {
-        throw new AuthError('Current password is incorrect', AuthErrorCodes.PASSWORD_INCORRECT, 401);
+        throw new AuthError('Invalid password', AuthErrorCodes.PASSWORD_INCORRECT, 401);
     }
     await ensurePasswordNotReused(user, input.new_password);
     const passwordHash = await hashPassword(input.new_password);
     const passwordHistory = buildPasswordHistory(user.password_history, user.password_hash);
     const updated = await repository.updateUserPassword(user.id, passwordHash, passwordHistory);
     if (!updated) {
-        throw new AuthError('Password update failed', AuthErrorCodes.USER_NOT_FOUND, 500);
+        throw new AuthError('Unable to update password. Please try again or contact support.', AuthErrorCodes.USER_NOT_FOUND, 500);
     }
     await repository.revokeAllOtherSessions(userId, currentSessionId, 'Password changed');
     await blacklistOtherUserSessionTokens(userId, currentSessionId);

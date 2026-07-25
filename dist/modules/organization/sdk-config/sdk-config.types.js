@@ -5,6 +5,7 @@
  * match columns; camelCase DTOs are what the API returns.
  */
 import { z } from "zod";
+import { CursorPaginationSchema } from "../shared/types.js";
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ENUMS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -26,7 +27,7 @@ export const SdkConfigVersionParamsSchema = z.object({
     configId: Uuid,
     version: z.coerce.number().int().min(1),
 });
-export const ListSdkConfigsQuerySchema = z.object({
+export const ListSdkConfigsQuerySchema = CursorPaginationSchema.extend({
     projectId: Uuid.optional(),
     environment: z.string().max(50).optional(),
     configKey: z.string().max(255).optional(),

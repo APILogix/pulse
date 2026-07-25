@@ -2,13 +2,13 @@ import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { NotFoundError } from "../shared/errors.js";
 export class MembersRepository extends BaseRepository {
     async findActiveMember(orgId, userId) {
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name
+        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2 AND om.status='active'`, [orgId, userId]);
         return r.rows[0] ?? null;
     }
     async findMember(orgId, userId) {
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name
+        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE om.org_id=$1 AND om.user_id=$2`, [orgId, userId]);
         return r.rows[0] ?? null;
@@ -18,27 +18,35 @@ export class MembersRepository extends BaseRepository {
         return r.rows[0]?.role ?? null;
     }
     async listMembers(orgId, q, filters) {
-        const params = [orgId];
-        let where = `om.org_id=$1`;
+        const countParams = [orgId];
+        let countWhere = `om.org_id=$1`;
         if (filters?.status) {
-            params.push(filters.status);
-            where += ` AND om.status=$${params.length}`;
+            countParams.push(filters.status);
+            countWhere += ` AND om.status=$${countParams.length}`;
         }
         if (filters?.role) {
-            params.push(filters.role);
-            where += ` AND om.role=$${params.length}`;
+            countParams.push(filters.role);
+            countWhere += ` AND om.role=$${countParams.length}`;
         }
+        if (q.search) {
+            countParams.push(`%${q.search}%`);
+            countWhere += ` AND (u.email ILIKE $${countParams.length} OR u.full_name ILIKE $${countParams.length})`;
+        }
+        const countRes = await this.db.query(`SELECT COUNT(*)::text as count FROM organization_members om JOIN users u ON u.id=om.user_id WHERE ${countWhere}`, countParams);
+        const totalCount = Number(countRes.rows[0]?.count ?? 0);
+        const params = [...countParams];
+        let where = countWhere;
         if (q.cursor) {
             params.push(q.cursor);
             where += ` AND om.created_at < $${params.length}`;
         }
         params.push(q.limit + 1);
-        const r = await this.db.query(`SELECT om.*, u.email, u.full_name
+        const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
        FROM organization_members om JOIN users u ON u.id=om.user_id
        WHERE ${where}
        ORDER BY om.created_at DESC
        LIMIT $${params.length}`, params);
-        return cursorPage(r.rows, q.limit);
+        return cursorPage(r.rows, q.limit, totalCount);
     }
     async addMember(orgId, userId, role, invitedBy, method) {
         return this.withTransaction(async (client) => {

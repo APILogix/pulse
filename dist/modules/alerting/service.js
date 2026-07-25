@@ -51,6 +51,12 @@ export class AlertingService {
     async cloneRule(orgId, meta, id) {
         return this.rules.cloneRule(orgId, meta, id);
     }
+    listRuleTemplates() {
+        return this.rules.listRuleTemplates();
+    }
+    async createRuleFromTemplate(orgId, meta, templateKey, overrides = {}) {
+        return this.rules.createRuleFromTemplate(orgId, meta, templateKey, overrides);
+    }
     async testRule(orgId, id, body) {
         return this.rules.testRule(orgId, id, body);
     }

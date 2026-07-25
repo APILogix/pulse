@@ -50,6 +50,7 @@ export declare class QuotasService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
 }

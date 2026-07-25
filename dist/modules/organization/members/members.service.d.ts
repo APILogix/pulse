@@ -7,6 +7,7 @@ export interface MemberDto {
     userId: string;
     email: string;
     fullName: string;
+    mfaEnabled: boolean;
     role: OrgRole;
     status: import("../shared/types.js").MemberStatus;
     joinedAt: Date | null;
@@ -42,6 +43,7 @@ export declare class MembersService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     getMember(orgId: string, actorUserId: string, targetUserId: string): Promise<MemberDto>;

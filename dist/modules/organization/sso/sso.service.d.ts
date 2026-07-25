@@ -1,5 +1,5 @@
 import type { SsoRepository } from "./sso.repository.js";
-import type { RequestMeta, OrgMemberRow, OrganizationRow, OrgRole } from "../types.js";
+import type { RequestMeta, OrgMemberRow, OrganizationRow, OrgRole, CursorPaginationQuery } from "../types.js";
 import type { BillingEntitlementsRow, OrganizationUsageCounts } from "../repository.js";
 export interface SsoProviderDto {
     id: string;
@@ -25,7 +25,15 @@ export interface SsoServiceDependencies {
 export declare class SsoService {
     private readonly deps;
     constructor(deps: SsoServiceDependencies);
-    listSsoProviders(orgId: string, userId: string): Promise<SsoProviderDto[]>;
+    listSsoProviders(orgId: string, userId: string, q: CursorPaginationQuery): Promise<{
+        data: SsoProviderDto[];
+        meta: {
+            hasMore: boolean;
+            nextCursor: string | null;
+            limit: number;
+            totalCount: number;
+        };
+    }>;
     createSsoProvider(meta: RequestMeta, orgId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
     updateSsoProvider(meta: RequestMeta, orgId: string, ssoId: string, data: Record<string, unknown>): Promise<SsoProviderDto>;
     deleteSsoProvider(meta: RequestMeta, orgId: string, ssoId: string): Promise<void>;

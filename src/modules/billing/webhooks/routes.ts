@@ -12,6 +12,6 @@ export async function webhooksRoutes(
   const controller = new WebhooksController(service);
 
   // Note: These routes are public. Auth happens inside the controller via signature verification.
-  fastify.post('/stripe', controller.stripeWebhook);
-  fastify.post('/razorpay', controller.razorpayWebhook);
+  fastify.post('/stripe', { config: { rawBody: true } }, controller.stripeWebhook);
+  fastify.post('/razorpay', { config: { rawBody: true } }, controller.razorpayWebhook);
 }

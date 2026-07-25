@@ -1,7 +1,7 @@
 import { authenticate } from '../../../shared/middleware/auth.js';
 import { requireOrgAccess } from '../../../shared/middleware/requireorg.js';
 import { AppError } from '../../../shared/errors/app-error.js';
-import { AcknowledgeEventSchema, CreateEscalationPolicySchema, CreateRoutingRuleSchema, CreateRuleSchema, CreateSilenceSchema, CreateTemplateSchema, IngestEventSchema, ListEventsQuerySchema, ListRulesQuerySchema, ListSilencesQuerySchema, MetricsQuerySchema, OrgEventParamsSchema, OrgIdParamsSchema, OrgPolicyParamsSchema, OrgRuleParamsSchema, PaginationSchema, PreviewTemplateSchema, ResolveEventSchema, SilenceFromEventSchema, TestRoutingSchema, TestRuleSchema, UpsertEscalationStepSchema, UpdateRuleSchema, } from '../types.js';
+import { AcknowledgeEventSchema, CreateEscalationPolicySchema, CreateRoutingRuleSchema, CreateRuleSchema, CreateSilenceSchema, CreateTemplateSchema, IngestEventSchema, ListEventsQuerySchema, ListRulesQuerySchema, ListSilencesQuerySchema, MetricsQuerySchema, OrgEventParamsSchema, OrgIdParamsSchema, OrgPolicyParamsSchema, OrgRuleParamsSchema, RuleTemplateParamsSchema, PaginationSchema, PreviewTemplateSchema, ResolveEventSchema, SilenceFromEventSchema, TestRoutingSchema, TestRuleSchema, UpsertEscalationStepSchema, UpdateRuleSchema, } from '../types.js';
 function buildMeta(request) {
     const ua = request.headers['user-agent'];
     return {
@@ -39,6 +39,16 @@ export async function rulesRoutes(fastify) {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const body = CreateRuleSchema.parse(request.body);
         const data = await svc.createRule(orgId, buildMeta(request), body);
+        return reply.code(201).send({ success: true, data });
+    }));
+    fastify.get('/rules/templates', guard, withErrorHandling(async (request, reply) => {
+        OrgIdParamsSchema.parse(request.params);
+        return reply.send({ success: true, data: svc.listRuleTemplates() });
+    }));
+    fastify.post('/rules/templates/:templateKey', guard, withErrorHandling(async (request, reply) => {
+        const { orgId, templateKey } = RuleTemplateParamsSchema.parse(request.params);
+        const overrides = CreateRuleSchema.partial().parse(request.body ?? {});
+        const data = await svc.createRuleFromTemplate(orgId, buildMeta(request), templateKey, overrides);
         return reply.code(201).send({ success: true, data });
     }));
     fastify.get('/rules', guard, withErrorHandling(async (request, reply) => {

@@ -35,7 +35,9 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).toContain('16_legacy_compat/003_create_legacy_failure_tables.up.sql');
     expect(files).toContain('17_enterprise_ingestion/001_events_idempotency.up.sql');
     expect(files).toContain('17_enterprise_ingestion/005_usage_counters_default_partition.up.sql');
-    expect(files[files.length - 1]).toBe('17_enterprise_ingestion/005_usage_counters_default_partition.up.sql');
+    expect(files).toContain('18_ai/001_extensions.up.sql');
+    expect(files).toContain('18_ai/012_enterprise_ai_runtime.up.sql');
+    expect(files[files.length - 1]).toBe('18_ai/012_enterprise_ai_runtime.up.sql');
   });
 
   it('declares the required enterprise connector tables and partitions high-volume history', async () => {
@@ -223,5 +225,28 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).not.toContain('07_notifications/005_create_notification_dead_letter.up.sql');
     expect(allSql).not.toContain('CREATE TABLE IF NOT EXISTS notification_deliveries');
     expect(allSql).not.toContain('CREATE TABLE IF NOT EXISTS notification_dead_letter');
+  });
+});
+
+
+describe('enterprise AI runtime migration', () => {
+  it('hardens async idempotency, refund bounds, RAG access metadata, and function privileges', async () => {
+    const sql = await readMigrationSql(
+      '18_ai/012_enterprise_ai_runtime.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('uq_ai_jobs_tenant_idempotency');
+    expect(sql).toContain('original_amount-refunded_amount');
+    expect(sql).toContain("direction='debit' AND status='completed'");
+    expect(sql).toContain('REVOKE ALL ON FUNCTION ai_refund_credit');
+    expect(sql).toContain('access_control JSONB');
+    expect(sql).toContain('service_tags TEXT[]');
+    expect(sql).toContain('environment_tags TEXT[]');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS ai_usage_receipts');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS ai_conversations');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS ai_chat_requests');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS ai_tool_calls');
+    expect(sql).toContain('UNIQUE (tenant_id,idempotency_key)');
   });
 });

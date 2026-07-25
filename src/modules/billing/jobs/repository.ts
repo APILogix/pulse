@@ -54,6 +54,47 @@ export class BillingJobsRepository {
 
   async renewSubscriptions(batchSize: number): Promise<BillingBatchResult> {
     return this.withTransaction(async (client) => {
+      const cancelResult = await client.query(
+        `
+        WITH due AS (
+          SELECT id, organization_id, plan_id
+          FROM organization_subscriptions
+          WHERE status IN ('trialing','active','past_due')
+            AND cancel_at_period_end = TRUE
+            AND current_period_end <= NOW()
+            AND deleted_at IS NULL
+          ORDER BY current_period_end, id
+          LIMIT $1
+          FOR UPDATE SKIP LOCKED
+        ),
+        cancelled AS (
+          UPDATE organization_subscriptions os
+          SET status = 'cancelled',
+              cancelled_at = COALESCE(cancelled_at, current_period_end, NOW()),
+              updated_at = NOW()
+          FROM due d
+          WHERE os.id = d.id
+          RETURNING os.id, os.organization_id, os.plan_id
+        ),
+        events AS (
+          INSERT INTO subscription_events (organization_id, subscription_id, event_type, actor, old_plan_id, new_plan_id, metadata)
+          SELECT organization_id, id, 'cancelled', 'system', plan_id, plan_id,
+                 jsonb_build_object('source','subscription-renewal', 'reason', 'cancel_at_period_end_elapsed')
+          FROM cancelled
+          RETURNING id
+        ),
+        audits AS (
+          INSERT INTO billing_audit_logs (organization_id, subscription_id, actor_type, action, metadata)
+          SELECT organization_id, id, 'system', 'subscription.cancelled',
+                 jsonb_build_object('source','subscription-renewal', 'reason', 'cancel_at_period_end_elapsed')
+          FROM cancelled
+          RETURNING id
+        )
+        SELECT COUNT(*)::text AS count FROM cancelled
+        `,
+        [batchSize],
+      );
+
       const invoiceResult = await client.query(
         `
         WITH due AS (
@@ -62,6 +103,7 @@ export class BillingJobsRepository {
           FROM organization_subscriptions os
           WHERE os.status = 'active'
             AND os.current_period_end <= NOW()
+            AND os.cancel_at_period_end = FALSE
             AND os.deleted_at IS NULL
           ORDER BY os.current_period_end, os.id
           LIMIT $1
@@ -111,6 +153,7 @@ export class BillingJobsRepository {
           FROM organization_subscriptions
           WHERE status = 'active'
             AND current_period_end <= NOW()
+            AND cancel_at_period_end = FALSE
             AND deleted_at IS NULL
           ORDER BY current_period_end, id
           LIMIT $1
@@ -159,7 +202,7 @@ export class BillingJobsRepository {
         [batchSize],
       );
 
-      return { processed: firstCount(renewResult), failed: 0, retried: 0 };
+      return { processed: firstCount(cancelResult) + firstCount(renewResult), failed: 0, retried: 0 };
     });
   }
 
@@ -222,6 +265,7 @@ export class BillingJobsRepository {
                  os.current_period_start, os.current_period_end
           FROM organization_subscriptions os
           WHERE os.status IN ('active','past_due')
+            AND os.cancel_at_period_end = FALSE
             AND os.deleted_at IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM invoices i

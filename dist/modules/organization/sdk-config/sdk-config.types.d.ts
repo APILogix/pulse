@@ -31,6 +31,14 @@ export declare const SdkConfigVersionParamsSchema: z.ZodObject<{
     version: z.ZodCoercedNumber<unknown>;
 }, z.core.$strip>;
 export declare const ListSdkConfigsQuerySchema: z.ZodObject<{
+    cursor: z.ZodOptional<z.ZodString>;
+    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    search: z.ZodOptional<z.ZodString>;
+    sortBy: z.ZodOptional<z.ZodString>;
+    sortOrder: z.ZodDefault<z.ZodEnum<{
+        asc: "asc";
+        desc: "desc";
+    }>>;
     projectId: z.ZodOptional<z.ZodString>;
     environment: z.ZodOptional<z.ZodString>;
     configKey: z.ZodOptional<z.ZodString>;

@@ -167,12 +167,12 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     const presentedHash = hashAuthToken(refreshToken);
     // Scoped lookup: only the session the JWT claims to belong to is allowed.
     const lookup = await repository.findSessionByAnyRefreshTokenHash(presentedHash, decoded.jti, decoded.sub);
-    // BUG-013 FIX: All three paths return the same error message and code so
-    // an attacker cannot distinguish "session not found" from
-    // "session revoked due to token reuse". The matchedPrevious flag is
-    // available in the evidence for SIEM without leaking to the client.
+    // All three paths return the same error message so an attacker cannot
+    // distinguish "session not found" from "session revoked due to token reuse".
+    // The matchedPrevious flag is available in the evidence for SIEM without
+    // leaking to the client.
     if (!lookup) {
-        throw new AuthError('Invalid session', AuthErrorCodes.SESSION_INVALID, 401);
+        throw new AuthError('Session expired. Please sign in again.', AuthErrorCodes.SESSION_INVALID, 401);
     }
     const { session, matchedPrevious } = lookup;
     // Grace window: legitimate retry of a JUST-rotated refresh.
@@ -221,7 +221,7 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
     }
     // True reuse / inactive session: revoke entire family.
     if (matchedPrevious || session.status !== 'active') {
-        logger.warn({ userId: session.user_id, sessionId: session.id, ipAddress, userAgent }, 'Refresh-token reuse detected');
+        logger.warn({ userId: session.user_id, sessionId: session.id, ipAddress, userAgent }, 'Refresh-token reuse or inactive session');
         await repository.revokeAllUserSessions(session.user_id, 'refresh_token_reuse_detected');
         markAllUserTokensRevoked(session.user_id);
         await repository
@@ -258,7 +258,7 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
         });
         // BUG-013 FIX: Use SESSION_TOKEN_REUSE so the error code specifically
         // indicates token-reuse (not just generic SESSION_INVALID).
-        throw new AuthError('Session revoked due to token reuse. Please sign in again.', AuthErrorCodes.SESSION_TOKEN_REUSE, 401);
+        throw new AuthError('Session expired. Please sign in again.', AuthErrorCodes.SESSION_TOKEN_REUSE, 401);
     }
     const now = new Date();
     if (now > new Date(session.absolute_expires_at)) {
@@ -304,8 +304,7 @@ export async function refreshAccessToken(refreshToken, ipAddress, userAgent, req
         // window we treat this as reuse for safety.
         await repository.revokeAllUserSessions(session.user_id, 'refresh_token_concurrent_rotation');
         markAllUserTokensRevoked(session.user_id);
-        throw new AuthError('Refresh token already rotated. Please sign in again.', AuthErrorCodes.SESSION_TOKEN_REUSE, // BUG-013: unified reuse code
-        401);
+        throw new AuthError('Session expired. Please sign in again.', AuthErrorCodes.SESSION_TOKEN_REUSE, 401);
     }
     const mfaVerified = Boolean(session.mfa_verified_at) || !user.mfa_enabled;
     const accessToken = generateAccessToken(session.user_id, session.id, mfaVerified);

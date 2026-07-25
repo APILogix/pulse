@@ -3,10 +3,13 @@ export class SsoService {
     constructor(deps) {
         this.deps = deps;
     }
-    async listSsoProviders(orgId, userId) {
+    async listSsoProviders(orgId, userId, q) {
         await this.deps.requireMember(orgId, userId, "admin");
-        const rows = await this.deps.repository.listSsoProviders(orgId);
-        return rows.map(sso => ({ id: sso.id, providerName: sso.provider_name, providerType: sso.provider_type, entityId: sso.entity_id, ssoUrl: sso.sso_url, domain: sso.domain, isActive: sso.is_active, createdAt: sso.created_at }));
+        const result = await this.deps.repository.listSsoProviders(orgId, q);
+        return {
+            data: result.data.map(sso => ({ id: sso.id, providerName: sso.provider_name, providerType: sso.provider_type, entityId: sso.entity_id, ssoUrl: sso.sso_url, domain: sso.domain, isActive: sso.is_active, createdAt: sso.created_at })),
+            meta: result.meta
+        };
     }
     async createSsoProvider(meta, orgId, data) {
         await this.deps.requireMutableOrg(orgId);

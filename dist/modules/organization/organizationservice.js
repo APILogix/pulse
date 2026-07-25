@@ -15,10 +15,12 @@ import { SecurityEventsService } from "./security-events/security-events.service
 import { SecurityEventsRepository } from "./security-events/security-events.repository.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
 import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
+import { pool } from "../../config/database.js";
 import { env } from "../../config/env.js";
 import { emailService } from "../../shared/email/email.service.js";
 import { orgInvitationTemplate } from "../../shared/email/templates.js";
 import { enqueueOrgEmail } from "./shared/background/email-outbox.js";
+import { seedDefaultPresetsForOrg } from "../alerting/evaluator/presets.js";
 import { hasMinRole, canManageRole, isMutableOrg, OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError, } from "./types.js";
 import { CoreService } from "./core/core.service.js";
 import { CoreRepository } from "./core/core.repository.js";
@@ -26,7 +28,7 @@ import { BillingProvisioningService } from "../billing/provisioning/service.js";
 import { DomainsRepository } from './domains/domains.repository.js';
 import { DomainsService } from './domains/domains.service.js';
 function toMemberDto(r) {
-    return { id: r.id, userId: r.user_id, email: r.email, fullName: r.full_name, role: r.role, status: r.status, joinedAt: r.joined_at, lastActiveAt: r.last_active_at, createdAt: r.created_at };
+    return { id: r.id, userId: r.user_id, email: r.email, fullName: r.full_name, mfaEnabled: r.mfa_enabled, role: r.role, status: r.status, joinedAt: r.joined_at, lastActiveAt: r.last_active_at, createdAt: r.created_at };
 }
 function toInviteDto(r) {
     return { id: r.id, email: r.email, role: r.role, status: r.status, expiresAt: r.expires_at, invitedAt: r.created_at, invitedBy: { id: r.invited_by, email: r.invited_by_email ?? null, name: r.invited_by_name ?? null } };
@@ -90,7 +92,8 @@ export class OrganizationService {
             deleteApiKeyCache: (hash) => { try {
                 apiKeyCache.delete(hash);
             }
-            catch { } }
+            catch { } },
+            seedDefaultAlertPresets: (orgId) => seedDefaultPresetsForOrg(pool, orgId),
         });
         this.members = new MembersService({
             repository: new MembersRepository(),
@@ -357,14 +360,24 @@ export class OrganizationService {
         return this.members.leaveOrganization(meta, orgId);
     }
     // ── List SSO Providers ──────────────────────────
-    async listSsoProviders(orgId, userId) {
-        return this.sso.listSsoProviders(orgId, userId);
+    async listSsoProviders(orgId, userId, q) {
+        return this.sso.listSsoProviders(orgId, userId, q);
     }
     // ── List SCIM Tokens ──────────────────────────
-    async listScimTokens(orgId, userId) {
+    async listScimTokens(orgId, userId, q) {
         await this.requireMember(orgId, userId, "owner");
-        const rows = await this.scimTokenService.listTokens(orgId);
-        return rows.map((token) => this.toScimTokenDto(token));
+        const { data, totalCount } = await this.scimTokenService.listTokensPaginated(orgId, q.limit, q.cursor);
+        const hasMore = data.length > q.limit;
+        const items = hasMore ? data.slice(0, q.limit) : data;
+        return {
+            data: items.map((token) => this.toScimTokenDto(token)),
+            meta: {
+                hasMore,
+                nextCursor: hasMore && items.length > 0 ? items[items.length - 1].created_at.toISOString() : null,
+                limit: q.limit,
+                totalCount
+            }
+        };
     }
     toScimTokenDto(token) {
         return {

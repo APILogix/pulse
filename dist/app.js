@@ -17,6 +17,7 @@ import { registerMetricsPlugin } from './config/metrics.js';
 import { BackpressureGauge } from './lib/gauge.js';
 import { registerHealthChecks } from './lib/health.js';
 import { registerAuthModule } from './modules/auth/auth.module.js';
+import { registerUserAccountModule } from './modules/user-account/user-account.module.js';
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
@@ -25,6 +26,8 @@ import { registerAnalyticsModule } from './modules/analytics/analytics.module.js
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
+import { registerAIModule } from './modules/ai/ai.module.js';
+import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
     // Prod and non-prod use the same explicit allowlist. Reflecting any origin
@@ -91,7 +94,7 @@ export async function buildApp() {
         origin: buildCorsOrigin(),
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
         exposedHeaders: ['X-Request-ID'],
     });
     await app.register(compress, {
@@ -146,6 +149,7 @@ export async function buildApp() {
     //
     // All other modules are independent.
     await app.register(registerAuthModule);
+    await app.register(registerUserAccountModule);
     await app.register(registerOrganizationModule);
     await app.register(registerBillingModule);
     await app.register(ingestionModule); // Must be before projects
@@ -154,6 +158,7 @@ export async function buildApp() {
     await app.register(registerConnectorsModule);
     await app.register(registerAlertingModule);
     await app.register(registerEventAnalyticsModule);
+    await app.register(registerAIModule);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {
@@ -167,41 +172,7 @@ export async function buildApp() {
         });
     });
     // ── Global Error Handler ───────────────────────────────────────────
-    app.setErrorHandler((error, request, reply) => {
-        const isDev = env.NODE_ENV === 'development';
-        if (error.validation) {
-            if (isDev) {
-                appLogger.warn({ requestId: request.id, validation: error.validation }, 'Validation error');
-            }
-            return reply.status(400).send({
-                statusCode: 400,
-                message: isDev ? error.message : 'Validation failed',
-                errors: error.validation,
-            });
-        }
-        if (error.code === 'FST_ERR_VALIDATION') {
-            return reply.status(400).send({
-                statusCode: 400,
-                message: isDev ? error.message : 'Invalid request',
-            });
-        }
-        if (error.code === 'FST_ERR_CTP_BODY_TOO_LARGE') {
-            return reply.status(413).send({
-                statusCode: 413,
-                message: 'Request body too large',
-            });
-        }
-        const statusCode = error.statusCode || 500;
-        if (statusCode >= 500) {
-            appLogger.error({ err: error, requestId: request.id, url: request.url, method: request.method }, 'Internal server error');
-        }
-        reply.status(statusCode).send({
-            statusCode,
-            message: isDev ? error.message : 'Internal Server Error',
-            requestId: request.id,
-            ...(isDev && { stack: error.stack }),
-        });
-    });
+    app.setErrorHandler(errorHandler);
     return app;
 }
 //# sourceMappingURL=app.js.map

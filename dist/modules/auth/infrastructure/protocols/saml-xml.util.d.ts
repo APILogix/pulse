@@ -1,3 +1,5 @@
+export declare function decodeSamlPostPayload(base64Payload: string): string;
+export declare function parseSamlIssuer(base64Payload: string): string | null;
 export interface ParsedSamlLogoutPayload {
     nameId: string | null;
     issuer: string | null;

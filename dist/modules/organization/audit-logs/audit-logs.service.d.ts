@@ -34,6 +34,7 @@ export declare class AuditLogsService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     exportAuditLogs(orgId: string, userId: string, filters?: {

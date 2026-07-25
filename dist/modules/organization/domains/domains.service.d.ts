@@ -27,6 +27,7 @@ export declare class DomainsService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     get(meta: RequestMeta, org: string, id: string): Promise<{

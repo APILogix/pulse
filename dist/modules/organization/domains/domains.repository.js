@@ -3,16 +3,29 @@ const columns = 'id,organization_id,domain,is_primary,is_verified,auto_join_enab
 export class DomainsRepository extends BaseRepository {
     async create(orgId, domain, token, metadata) { const r = await this.db.query(`INSERT INTO organization_verified_domains (organization_id,domain,verification_method,verification_token,verification_started_at,metadata) VALUES ($1,$2,'dns_txt',$3,NOW(),$4::jsonb) RETURNING ${columns}`, [orgId, domain, token, JSON.stringify(metadata)]); return r.rows[0]; }
     async find(orgId, id, db = this.db) { const r = await db.query(`SELECT ${columns} FROM organization_verified_domains WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL`, [orgId, id]); return r.rows[0] ?? null; }
-    async list(orgId, q, search, verified) { const p = [orgId]; let w = 'organization_id=$1 AND deleted_at IS NULL'; if (search) {
-        p.push(`%${search.toLowerCase()}%`);
-        w += ` AND domain ILIKE $${p.length}`;
-    } if (verified !== undefined) {
-        p.push(verified);
-        w += ` AND is_verified=$${p.length}`;
-    } if (q.cursor) {
-        p.push(q.cursor);
-        w += ` AND created_at < $${p.length}`;
-    } p.push(q.limit + 1); const r = await this.db.query(`SELECT ${columns} FROM organization_verified_domains WHERE ${w} ORDER BY created_at DESC LIMIT $${p.length}`, p); return cursorPage(r.rows, q.limit); }
+    async list(orgId, q, search, verified) {
+        const countParams = [orgId];
+        let countWhere = 'organization_id=$1 AND deleted_at IS NULL';
+        if (search) {
+            countParams.push(`%${search.toLowerCase()}%`);
+            countWhere += ` AND domain ILIKE $${countParams.length}`;
+        }
+        if (verified !== undefined) {
+            countParams.push(verified);
+            countWhere += ` AND is_verified=$${countParams.length}`;
+        }
+        const countRes = await this.db.query(`SELECT COUNT(*)::text as count FROM organization_verified_domains WHERE ${countWhere}`, countParams);
+        const totalCount = Number(countRes.rows[0]?.count ?? 0);
+        const p = [...countParams];
+        let w = countWhere;
+        if (q.cursor) {
+            p.push(q.cursor);
+            w += ` AND created_at < $${p.length}`;
+        }
+        p.push(q.limit + 1);
+        const r = await this.db.query(`SELECT ${columns} FROM organization_verified_domains WHERE ${w} ORDER BY created_at DESC LIMIT $${p.length}`, p);
+        return cursorPage(r.rows, q.limit, totalCount);
+    }
     async verificationResult(orgId, id, verified, actorId, db) { const r = await db.query(`UPDATE organization_verified_domains SET last_verification_check_at=NOW(),is_verified=CASE WHEN $3 THEN TRUE ELSE is_verified END,verified_at=CASE WHEN $3 THEN NOW() ELSE verified_at END,verified_by=CASE WHEN $3 THEN $4::uuid ELSE verified_by END WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING ${columns}`, [orgId, id, verified, actorId]); return r.rows[0]; }
     async setAutoJoin(orgId, id, enabled, db) { const r = await db.query(`UPDATE organization_verified_domains SET auto_join_enabled=$3 WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING ${columns}`, [orgId, id, enabled]); return r.rows[0]; }
     async updateMetadata(orgId, id, metadata) { const r = await this.db.query(`UPDATE organization_verified_domains SET metadata=$3::jsonb WHERE organization_id=$1 AND id=$2 AND deleted_at IS NULL RETURNING ${columns}`, [orgId, id, JSON.stringify(metadata)]); return r.rows[0]; }

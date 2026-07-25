@@ -460,6 +460,47 @@ export async function listScimTokensForOrg(orgId, client) {
         allowed_ips: row.allowed_ips ?? [],
     }));
 }
+export async function listScimTokensForOrgPaginated(orgId, limit, cursor, client) {
+    const db = client || pool;
+    const countRes = await db.query(`SELECT COUNT(*)::text as count FROM organization_scim_tokens WHERE org_id=$1`, [orgId]);
+    const totalCount = Number(countRes.rows[0]?.count ?? 0);
+    const params = [orgId];
+    let where = `t.org_id = $1`;
+    if (cursor) {
+        params.push(cursor);
+        where += ` AND t.created_at < $${params.length}`;
+    }
+    params.push(limit + 1);
+    const result = await db.query(`SELECT t.id,
+            t.created_at,
+            t.last_used_at,
+            t.expires_at,
+            t.revoked_at,
+            COALESCE(
+              array_agg(DISTINCT s.scope) FILTER (WHERE s.scope IS NOT NULL),
+              ARRAY[]::varchar[]
+            ) AS scopes,
+            COALESCE(
+              array_agg(DISTINCT text(i.ip_cidr)) FILTER (WHERE i.ip_cidr IS NOT NULL),
+              ARRAY[]::text[]
+            ) AS allowed_ips
+     FROM organization_scim_tokens t
+     LEFT JOIN organization_scim_token_scopes s ON s.token_id = t.id
+     LEFT JOIN organization_scim_token_ips i ON i.token_id = t.id
+     WHERE ${where}
+     GROUP BY t.id, t.created_at, t.last_used_at, t.expires_at, t.revoked_at
+     ORDER BY t.created_at DESC
+     LIMIT $${params.length}`, params);
+    return {
+        data: result.rows.map((row) => ({
+            ...row,
+            scopes: row.scopes ?? [],
+            allowed_ips: row.allowed_ips ?? [],
+        })),
+        totalCount
+    };
+}
+;
 export async function findScimMappingByExternalId(orgId, externalId, client) {
     const db = client || pool;
     const result = await db.query(`SELECT user_id FROM scim_user_mappings WHERE org_id = $1 AND external_id = $2`, [orgId, externalId]);

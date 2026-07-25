@@ -1,4 +1,5 @@
 import type { ChangeType, SdkConfigRow, SdkConfigVersionRow, SdkConfigDeploymentRow, SdkConfigResolvedDto } from "./sdk-config.types.js";
+import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 export interface CreateSdkConfigData {
     orgId: string;
     projectId: string | null;
@@ -40,7 +41,7 @@ export declare class SdkConfigRepository {
         environment?: string;
         configKey?: string;
         includeInactive?: boolean;
-    }): Promise<SdkConfigRow[]>;
+    }, q: CursorPaginationQuery): Promise<CursorPaginatedResponse<SdkConfigRow>>;
     update(orgId: string, configId: string, data: UpdateSdkConfigData): Promise<SdkConfigRow>;
     listVersions(configId: string): Promise<SdkConfigVersionRow[]>;
     getVersion(configId: string, version: number): Promise<SdkConfigVersionRow | null>;

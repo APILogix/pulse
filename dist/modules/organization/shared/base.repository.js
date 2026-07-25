@@ -2,7 +2,7 @@ import { pool } from "../../../config/database.js";
 export function pgErr(e) {
     return typeof e === "object" && e !== null ? e : {};
 }
-export function cursorPage(rows, limit) {
+export function cursorPage(rows, limit, totalCount) {
     const hasMore = rows.length > limit;
     const data = hasMore ? rows.slice(0, limit) : rows;
     return {
@@ -13,6 +13,7 @@ export function cursorPage(rows, limit) {
                 ? data[data.length - 1].created_at.toISOString()
                 : null,
             limit,
+            totalCount,
         },
     };
 }

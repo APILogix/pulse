@@ -198,7 +198,7 @@ export async function confirmAccountDeletion(input, ipAddress, requestId) {
     await repository.withTransaction(async (client) => {
         const consumed = await repository.consumeEmailVerificationToken(tokenHash, 'account_deletion', client);
         if (!consumed) {
-            throw new AuthError('Invalid or expired deletion confirmation token', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
+            throw new AuthError('Invalid account deletion link', AuthErrorCodes.EMAIL_VERIFICATION_INVALID, 400);
         }
         const scheduled = await repository.scheduleAccountDeletion(consumed.user_id, scheduledAt, client);
         if (!scheduled) {

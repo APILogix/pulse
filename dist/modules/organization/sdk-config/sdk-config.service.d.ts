@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../repository.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
-import { type RequestMeta } from "../types.js";
+import { type RequestMeta, type CursorPaginationQuery } from "../types.js";
 import type { SdkConfigDto, SdkConfigVersionDto, SdkConfigDeploymentDto, SdkConfigResolvedDto, ConfigType } from "./sdk-config.types.js";
 export interface CreateConfigInput {
     configKey: string;
@@ -39,7 +39,15 @@ export declare class SdkConfigService {
         environment?: string;
         configKey?: string;
         includeInactive?: boolean;
-    }): Promise<SdkConfigDto[]>;
+    }, q: CursorPaginationQuery): Promise<{
+        data: SdkConfigDto[];
+        meta: {
+            hasMore: boolean;
+            nextCursor: string | null;
+            limit: number;
+            totalCount: number;
+        };
+    }>;
     getConfig(orgId: string, userId: string, configId: string): Promise<SdkConfigDto>;
     updateConfig(meta: RequestMeta, orgId: string, configId: string, input: UpdateConfigInput): Promise<SdkConfigDto>;
     updateProjectConfig(meta: RequestMeta, orgId: string, projectId: string, configId: string, input: UpdateConfigInput): Promise<SdkConfigDto>;

@@ -147,8 +147,24 @@ const envSchema = z.object({
   SLACK_CLIENT_SECRET: z.string().optional(),
   SLACK_REDIRECT_URI: z.string().url().optional(),
 
-  // AI
+  // AI Reliability Assistant. Disabled by default so deployments fail closed
+  // until both an explicit feature switch and provider credentials exist.
+  AI_ENABLED: z.string().optional().transform((value) => value === 'true'),
   OPENAI_API_KEY: z.string().optional(),
+  AI_PRIMARY_MODEL: z.string().min(1).default('gpt-4o-mini'),
+  AI_FALLBACK_MODEL: z.string().min(1).default('gpt-4o'),
+  AI_EMBEDDING_MODEL: z.string().min(1).default('text-embedding-3-small'),
+  AI_PROVIDER_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+  AI_PROVIDER_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  AI_CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().int().min(1).max(20).default(5),
+  AI_CIRCUIT_RESET_MS: z.coerce.number().int().min(1_000).max(300_000).default(30_000),
+  AI_MAX_INPUT_CHARS: z.coerce.number().int().min(1_000).max(1_000_000).default(250_000),
+  AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(16_384).default(4_096),
+  AI_MAX_RETRIEVAL_CHUNKS: z.coerce.number().int().min(0).max(20).default(8),
+  AI_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).max(86_400).default(3_600),
+  AI_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(20),
+  AI_MAX_CONCURRENT_JOBS_PER_TENANT: z.coerce.number().int().min(1).max(100).default(5),
+  AI_MAX_CONCURRENT_CHAT_PER_TENANT: z.coerce.number().int().min(1).max(100).default(10),
 
   // ── Ingestion pipeline tunables ────────────────────────────────────────
   // These are intentionally env-driven: production tuning of batch caps,

@@ -1,5 +1,6 @@
 import { pool } from "../../../config/database.js";
 import { ConflictError, NotFoundError } from "../types.js";
+import { cursorPage } from "../shared/base.repository.js";
 const CONFIG_COLS = `id,org_id,project_id,config_key,config_type,version,version_hash,is_latest,
   config_value,schema_version,environment,target_sdk_versions,target_platforms,
   rollout_percentage,is_active,is_encrypted,created_by,updated_by,created_at,updated_at`;
@@ -64,25 +65,34 @@ export class SdkConfigRepository {
         const r = await this.db.query(`SELECT ${CONFIG_COLS} FROM sdk_configs WHERE org_id=$1 AND id=$2`, [orgId, configId]);
         return r.rows[0] ?? null;
     }
-    async list(orgId, filters) {
-        const params = [orgId];
-        let where = `org_id=$1 AND is_latest=TRUE`;
+    async list(orgId, filters, q) {
+        const countParams = [orgId];
+        let countWhere = `org_id=$1 AND is_latest=TRUE`;
         if (!filters.includeInactive)
-            where += ` AND is_active=TRUE`;
+            countWhere += ` AND is_active=TRUE`;
         if (filters.projectId) {
-            params.push(filters.projectId);
-            where += ` AND project_id=$${params.length}`;
+            countParams.push(filters.projectId);
+            countWhere += ` AND project_id=$${countParams.length}`;
         }
         if (filters.environment) {
-            params.push(filters.environment);
-            where += ` AND environment=$${params.length}`;
+            countParams.push(filters.environment);
+            countWhere += ` AND environment=$${countParams.length}`;
         }
         if (filters.configKey) {
-            params.push(filters.configKey);
-            where += ` AND config_key=$${params.length}`;
+            countParams.push(filters.configKey);
+            countWhere += ` AND config_key=$${countParams.length}`;
         }
-        const r = await this.db.query(`SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where} ORDER BY config_key ASC, environment ASC`, params);
-        return r.rows;
+        const countRes = await this.db.query(`SELECT COUNT(*)::text as count FROM sdk_configs WHERE ${countWhere}`, countParams);
+        const totalCount = Number(countRes.rows[0]?.count ?? 0);
+        const params = [...countParams];
+        let where = countWhere;
+        if (q.cursor) {
+            params.push(q.cursor);
+            where += ` AND created_at < $${params.length}`;
+        }
+        params.push(q.limit + 1);
+        const r = await this.db.query(`SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params);
+        return cursorPage(r.rows, q.limit, totalCount);
     }
     // ── Update (in-place, version++) ──────────────
     async update(orgId, configId, data) {

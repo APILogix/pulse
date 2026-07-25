@@ -64,6 +64,7 @@ export declare class InvitationsService {
             hasMore: boolean;
             nextCursor: string | null;
             limit: number;
+            totalCount: number;
         };
     }>;
     validateInvitationToken(token: string): Promise<{

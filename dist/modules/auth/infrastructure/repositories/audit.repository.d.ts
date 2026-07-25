@@ -167,6 +167,18 @@ export declare function listScimTokensForOrg(orgId: string, client?: PoolClient)
     scopes: string[];
     allowed_ips: string[];
 }>>;
+export declare function listScimTokensForOrgPaginated(orgId: string, limit: number, cursor?: string, client?: PoolClient): Promise<{
+    data: Array<{
+        id: string;
+        created_at: Date;
+        last_used_at: Date | null;
+        expires_at: Date | null;
+        revoked_at: Date | null;
+        scopes: string[];
+        allowed_ips: string[];
+    }>;
+    totalCount: number;
+}>;
 export declare function findScimMappingByExternalId(orgId: string, externalId: string, client?: PoolClient): Promise<{
     user_id: string;
 } | null>;

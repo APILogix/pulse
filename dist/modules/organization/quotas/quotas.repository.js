@@ -55,8 +55,12 @@ export class QuotasRepository extends BaseRepository {
         return r.rows[0];
     }
     async listQuotaRequests(orgId, q) {
-        const params = [orgId];
-        let where = `org_id=$1`;
+        const countParams = [orgId];
+        let countWhere = `org_id=$1`;
+        const countRes = await this.db.query(`SELECT COUNT(*)::text as count FROM quota_requests WHERE ${countWhere}`, countParams);
+        const totalCount = Number(countRes.rows[0]?.count ?? 0);
+        const params = [...countParams];
+        let where = countWhere;
         if (q.cursor) {
             params.push(q.cursor);
             where += ` AND created_at < $${params.length}`;
@@ -64,7 +68,7 @@ export class QuotasRepository extends BaseRepository {
         params.push(q.limit + 1);
         const r = await this.db.query(`SELECT id,org_id,quota_type,current_limit,requested_limit,reason,status,reviewed_by,reviewed_at,notes,metadata,created_at,updated_at
        FROM quota_requests WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params);
-        return cursorPage(r.rows, q.limit);
+        return cursorPage(r.rows, q.limit, totalCount);
     }
 }
 //# sourceMappingURL=quotas.repository.js.map

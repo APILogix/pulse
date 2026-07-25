@@ -24,6 +24,7 @@ export declare class EventAnalyticsRepository {
         errors: number;
         errorRate: number;
         avgLatencyMs: number | null;
+        p50: number | null;
         p95: number | null;
         p99: number | null;
     }>;

@@ -19,6 +19,9 @@ export interface AlertingServiceDeps {
     repository: AlertingRepository;
     logger: FastifyBaseLogger;
 }
+export type CreateRuleTemplateOverrides = {
+    [K in keyof CreateRuleBody]?: CreateRuleBody[K] | undefined;
+};
 export declare class RulesService {
     private readonly repo;
     private readonly logger;
@@ -33,6 +36,8 @@ export declare class RulesService {
     deleteRule(orgId: string, meta: RequestMeta, id: string): Promise<void>;
     setRuleEnabled(orgId: string, meta: RequestMeta, id: string, enabled: boolean): Promise<Record<string, unknown>>;
     cloneRule(orgId: string, meta: RequestMeta, id: string): Promise<Record<string, unknown>>;
+    listRuleTemplates(): Record<string, unknown>[];
+    createRuleFromTemplate(orgId: string, meta: RequestMeta, templateKey: string, overrides?: CreateRuleTemplateOverrides): Promise<Record<string, unknown>>;
     testRule(orgId: string, id: string, body: TestRuleBody): Promise<Record<string, unknown>>;
     private audit;
     private ruleToDto;

@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from './repository.js';
+import { type CreateRuleTemplateOverrides } from './rules/rules.service.js';
 import type { RequestMeta } from './types.js';
 import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, ListDeadLettersQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
 export * from './rules/rules.service.js';
@@ -32,6 +33,8 @@ export declare class AlertingService {
     deleteRule(orgId: string, meta: RequestMeta, id: string): Promise<Promise<void>>;
     setRuleEnabled(orgId: string, meta: RequestMeta, id: string, enabled: boolean): Promise<Promise<Record<string, unknown>>>;
     cloneRule(orgId: string, meta: RequestMeta, id: string): Promise<Promise<Record<string, unknown>>>;
+    listRuleTemplates(): Record<string, unknown>[];
+    createRuleFromTemplate(orgId: string, meta: RequestMeta, templateKey: string, overrides?: CreateRuleTemplateOverrides): Promise<Promise<Record<string, unknown>>>;
     testRule(orgId: string, id: string, body: TestRuleBody): Promise<Promise<Record<string, unknown>>>;
     ingestEvent(orgId: string, body: IngestEventBody): Promise<Promise<Record<string, unknown>>>;
     listEvents(orgId: string, query: ListEventsQuery): Promise<Promise<{

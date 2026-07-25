@@ -134,9 +134,15 @@ export async function completeSsoCallback(callbackUrl, ipAddress, userAgent, req
         pkceCodeVerifier: flow.codeVerifier,
     });
     const claims = tokens.claims();
+    if (claims?.nonce !== flow.nonce) {
+        throw new AuthError('Identity provider returned an invalid nonce', AuthErrorCodes.OIDC_CALLBACK_INVALID, 400);
+    }
     const email = typeof claims?.email === 'string' ? normalizeEmail(claims.email) : null;
     if (!email) {
         throw new AuthError('Identity provider did not return an email', AuthErrorCodes.OIDC_CALLBACK_INVALID, 400);
+    }
+    if (claims.email_verified === false) {
+        throw new AuthError('Identity provider did not verify this email address', AuthErrorCodes.EMAIL_NOT_VERIFIED, 403);
     }
     const displayName = typeof claims?.name === 'string'
         ? claims.name

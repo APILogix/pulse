@@ -96,9 +96,9 @@ export interface ProjectConnectorSubscription {
     digestMode: Record<string, unknown> | null;
     createdByUserId: string | null;
     updatedByUserId: string | null;
-    deletedAt: Date | null;
     createdAt: Date;
     updatedAt: Date;
+    deletedAt: Date | null;
 }
 export interface AlertRoutingTarget {
     projectId: string;

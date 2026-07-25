@@ -21,8 +21,9 @@ export async function projectEnvironmentRoutes(fastify) {
             filters.configKey = query.configKey;
         if (query.includeInactive !== undefined)
             filters.includeInactive = query.includeInactive;
-        const result = await sdkConfigService.listConfigs(orgId, userId, filters);
-        return reply.send({ success: true, data: result });
+        const { cursor, limit, search, sortBy, sortOrder } = query;
+        const result = await sdkConfigService.listConfigs(orgId, userId, filters, { cursor, limit, search, sortBy, sortOrder });
+        return reply.send({ success: true, ...result });
     }));
     fastify.get("/:projectId/sdk-configs/resolve", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);

@@ -51,8 +51,9 @@ export function registerSdkConfigRoutes(fastify, svc) {
     fastify.get("/:orgId/sdk-configs", auth, wrap(async (request, reply) => {
         const { orgId } = request.params;
         const q = ListSdkConfigsQuerySchema.parse(request.query ?? {});
-        const result = await svc.listConfigs(orgId, asAuth(request).user.id, strip(q));
-        return reply.send({ success: true, data: result });
+        const { cursor, limit, search, sortBy, sortOrder, ...filters } = q;
+        const result = await svc.listConfigs(orgId, asAuth(request).user.id, strip(filters), { cursor, limit, search, sortBy, sortOrder });
+        return reply.send({ success: true, ...result });
     }));
     // Create a config (version 1).
     fastify.post("/:orgId/sdk-configs", auth, wrap(async (request, reply) => {

@@ -64,5 +64,9 @@ export const ListRulesQuerySchema = PaginationSchema.extend({
 export const TestRuleSchema = z.object({
     payload: z.record(z.string(), z.unknown()),
 });
+export const RuleTemplateParamsSchema = z.object({
+    orgId: UuidSchema,
+    templateKey: z.string().min(1).max(100),
+});
 export const OrgRuleParamsSchema = z.object({ orgId: UuidSchema, id: UuidSchema });
 //# sourceMappingURL=rules.types.js.map

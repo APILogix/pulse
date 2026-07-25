@@ -4,6 +4,7 @@ import { computeFingerprint } from '../fingerprint.js';
 import { evaluateRule } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting } from '../routing.js';
+import { getAlertRuleTemplate, listAlertRuleTemplates } from '../evaluator/rule-templates.js';
 import { AlertNotFoundError, AlertValidationError, } from '../types.js';
 export class RulesService {
     repo;
@@ -117,6 +118,39 @@ export class RulesService {
         this.audit(orgId, meta, 'alert_rule.cloned', 'alert_rule', clone.id, { sourceRuleId: id });
         return this.ruleToDto(clone);
     }
+    listRuleTemplates() {
+        return listAlertRuleTemplates().map((template) => ({
+            key: template.key,
+            name: template.name,
+            description: template.description,
+            category: template.category,
+            rule: template.rule,
+        }));
+    }
+    async createRuleFromTemplate(orgId, meta, templateKey, overrides = {}) {
+        const template = getAlertRuleTemplate(templateKey);
+        if (!template)
+            throw new AlertNotFoundError('Alert rule template');
+        const cleanOverrides = omitUndefined(overrides);
+        const body = {
+            ...template.rule,
+            ...cleanOverrides,
+            name: cleanOverrides.name ?? template.rule.name,
+            severity: cleanOverrides.severity ?? template.rule.severity,
+            enabled: cleanOverrides.enabled ?? false,
+            evaluationIntervalSeconds: cleanOverrides.evaluationIntervalSeconds ?? template.rule.evaluationIntervalSeconds,
+            cooldownSeconds: cleanOverrides.cooldownSeconds ?? template.rule.cooldownSeconds,
+            deduplicationWindowSeconds: cleanOverrides.deduplicationWindowSeconds ?? template.rule.deduplicationWindowSeconds,
+            groupingEnabled: cleanOverrides.groupingEnabled ?? template.rule.groupingEnabled,
+            groupingWaitSeconds: cleanOverrides.groupingWaitSeconds ?? template.rule.groupingWaitSeconds,
+            labels: { ...template.rule.labels, ...(cleanOverrides.labels ?? {}), templateKey },
+            annotations: { ...template.rule.annotations, ...(cleanOverrides.annotations ?? {}), template_key: templateKey },
+            metadata: { ...template.rule.metadata, ...(cleanOverrides.metadata ?? {}), templateKey },
+            conditions: cleanOverrides.conditions ?? template.rule.conditions,
+            actions: cleanOverrides.actions ?? template.rule.actions,
+        };
+        return this.createRule(orgId, meta, body);
+    }
     async testRule(orgId, id, body) {
         await this.requireRule(orgId, id);
         const conditions = await this.repo.getRuleConditions(id);
@@ -195,6 +229,9 @@ function toActionInsert(a) {
         actionConditions: a.actionConditions,
         isActive: a.isActive,
     };
+}
+function omitUndefined(value) {
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 /** Whether an event's labels satisfy a silence's matchers (all must match). */
 function matchesSilence(labels, matchers) {

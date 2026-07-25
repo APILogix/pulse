@@ -102,7 +102,7 @@ export default async function provisioningRoutes(fastify) {
                 const target = flow.kind === 'login'
                     ? frontendAuthCallbackUrl()
                     : frontendIdentityProvidersUrl();
-                return reply.redirect(buildFrontendErrorRedirect(target, query.error, query.error_description || query.error));
+                return reply.redirect(buildFrontendErrorRedirect(target, 'SSO_FAILED', 'Single sign-on failed. Please try again or contact an administrator.'));
             }
             const ci = getClientInfo(request);
             await runPassportAuthenticate(fastify, flow.provider, request, reply, { session: false }, async (_req, callbackReply, err, profile) => {

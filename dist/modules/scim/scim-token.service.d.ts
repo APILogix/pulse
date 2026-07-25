@@ -24,6 +24,18 @@ export declare class ScimTokenService {
         scopes: string[];
         allowed_ips: string[];
     }[]>;
+    listTokensPaginated(orgId: string, limit: number, cursor?: string): Promise<{
+        data: Array<{
+            id: string;
+            created_at: Date;
+            last_used_at: Date | null;
+            expires_at: Date | null;
+            revoked_at: Date | null;
+            scopes: string[];
+            allowed_ips: string[];
+        }>;
+        totalCount: number;
+    }>;
     private createTokenInTransaction;
 }
 //# sourceMappingURL=scim-token.service.d.ts.map

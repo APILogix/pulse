@@ -1,9 +1,3 @@
-export {};
-/**
- * AI routes placeholder.
- *
- * No AI route handlers are currently implemented here. Future handlers should
- * authenticate the caller, validate analysis input, call analyzer services, and
- * enforce cost/usage limits before invoking model providers.
- */
+import type { FastifyInstance } from 'fastify';
+export declare function aiRoutes(fastify: FastifyInstance): Promise<void>;
 //# sourceMappingURL=routes.d.ts.map

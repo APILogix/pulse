@@ -25,9 +25,9 @@ export declare const ApiKeyPermissionSchema: z.ZodEnum<{
 export type ApiKeyPermission = z.infer<typeof ApiKeyPermissionSchema>;
 export declare const ApiKeyRotationStateSchema: z.ZodEnum<{
     none: "none";
+    completed: "completed";
     rotating: "rotating";
     grace_period: "grace_period";
-    completed: "completed";
 }>;
 export type ApiKeyRotationState = z.infer<typeof ApiKeyRotationStateSchema>;
 export declare const ApiKeyParamsSchema: z.ZodObject<{
