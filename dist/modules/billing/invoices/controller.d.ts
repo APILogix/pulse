@@ -3,6 +3,7 @@ import { InvoicesService } from './service.js';
 export declare class InvoicesController {
     private readonly service;
     constructor(service: InvoicesService);
+    private getOrgId;
     listInvoices: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     getUpcomingInvoice: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     getInvoice: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;

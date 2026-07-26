@@ -8,6 +8,7 @@ export declare const OrgParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
 }, z.core.$strip>;
 export declare const EventUsageBodySchema: z.ZodObject<{
+    requestId: z.ZodOptional<z.ZodString>;
     organizationId: z.ZodString;
     projectId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     eventType: z.ZodString;
@@ -16,6 +17,7 @@ export declare const EventUsageBodySchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const BulkEventUsageBodySchema: z.ZodObject<{
     items: z.ZodArray<z.ZodObject<{
+        requestId: z.ZodOptional<z.ZodString>;
         orgId: z.ZodString;
         projectId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
         eventType: z.ZodString;
@@ -23,6 +25,7 @@ export declare const BulkEventUsageBodySchema: z.ZodObject<{
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const AiCreditUsageBodySchema: z.ZodObject<{
+    requestId: z.ZodOptional<z.ZodString>;
     organizationId: z.ZodString;
     projectId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
     userId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
@@ -38,6 +41,7 @@ export declare const AiCreditUsageBodySchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const BulkAiCreditUsageBodySchema: z.ZodObject<{
     items: z.ZodArray<z.ZodObject<{
+        requestId: z.ZodOptional<z.ZodString>;
         organizationId: z.ZodString;
         projectId: z.ZodNullable<z.ZodOptional<z.ZodString>>;
         userId: z.ZodNullable<z.ZodOptional<z.ZodString>>;

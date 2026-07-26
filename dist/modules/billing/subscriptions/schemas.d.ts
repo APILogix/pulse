@@ -20,6 +20,15 @@ export declare const ChangeIntervalSchema: z.ZodObject<{
 export declare const PreviewChangeSchema: z.ZodObject<{
     newPlanId: z.ZodString;
 }, z.core.$strip>;
+export declare const ScheduledChangeSchema: z.ZodObject<{
+    planId: z.ZodString;
+    effectiveAt: z.ZodOptional<z.ZodCoercedDate<unknown>>;
+    prorationBehavior: z.ZodOptional<z.ZodEnum<{
+        none: "none";
+        create_prorations: "create_prorations";
+        always_invoice: "always_invoice";
+    }>>;
+}, z.core.$strip>;
 export declare const CancelSubscriptionSchema: z.ZodObject<{
     reason: z.ZodOptional<z.ZodString>;
     immediate: z.ZodOptional<z.ZodBoolean>;
@@ -34,4 +43,6 @@ export type CreateSubscriptionBody = z.infer<typeof CreateSubscriptionSchema>;
 export type ChangePlanBody = z.infer<typeof ChangePlanSchema>;
 export type CancelSubscriptionBody = z.infer<typeof CancelSubscriptionSchema>;
 export type ApplyCouponBody = z.infer<typeof ApplyCouponSchema>;
+export type PreviewChangeBody = z.infer<typeof PreviewChangeSchema>;
+export type ScheduledChangeBody = z.infer<typeof ScheduledChangeSchema>;
 //# sourceMappingURL=schemas.d.ts.map

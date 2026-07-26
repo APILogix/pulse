@@ -1,22 +1,96 @@
 import { NotFoundError } from '../../organization/shared/errors.js';
+import { AI_CREDIT_LIMIT_FEATURE_KEY, EVENT_LIMIT_FEATURE_KEY, buildEntitlementsSnapshot, buildModulesSnapshot, integerEntitlement, usageLimitParameter, } from '../shared/entitlement-snapshot.js';
+const REQUIRED_FREE_PLAN_FEATURES = [EVENT_LIMIT_FEATURE_KEY, AI_CREDIT_LIMIT_FEATURE_KEY];
 /** SQL boundary for the Billing-owned part of organization provisioning. */
 export class BillingProvisioningRepository {
     async provisionFreeSubscription(client, organizationId) {
-        const planResult = await client.query(`SELECT id, trial_days
+        const planResult = await client.query(`SELECT id, key, version, tier, trial_days
        FROM plans
        WHERE key = 'free' AND is_active = TRUE AND deleted_at IS NULL
+       ORDER BY version DESC, sort_order ASC, created_at DESC
        LIMIT 1
        FOR SHARE`);
         const plan = planResult.rows[0];
         if (!plan)
             throw new NotFoundError('Free billing plan');
-        const periodResult = await client.query(`SELECT NOW() AS period_start, NOW() + INTERVAL '1 month' AS period_end`);
+        const entitlementsResult = await client.query(`SELECT
+         bf.feature_key,
+         bf.module,
+         bf.is_module_root,
+         bf.value_type,
+         pfe.boolean_value,
+         pfe.integer_value,
+         pfe.decimal_value,
+         pfe.string_value
+       FROM plan_feature_entitlements pfe
+       JOIN billing_features bf ON bf.id = pfe.feature_id
+       WHERE pfe.plan_id = $1
+         AND pfe.deleted_at IS NULL
+         AND bf.deleted_at IS NULL
+         AND bf.is_deprecated = FALSE
+       ORDER BY bf.sort_order ASC, bf.feature_key ASC
+       FOR SHARE`, [plan.id]);
+        const entitlements = entitlementsResult.rows;
+        if (entitlements.length === 0) {
+            throw new NotFoundError('Free billing plan entitlements');
+        }
+        const missingRequiredFeature = REQUIRED_FREE_PLAN_FEATURES.find((featureKey) => !entitlements.some((entitlement) => entitlement.feature_key === featureKey));
+        if (missingRequiredFeature) {
+            throw new NotFoundError(`Free billing plan entitlement ${missingRequiredFeature}`);
+        }
+        const priceResult = await client.query(`SELECT id, provider, billing_interval, currency, amount_minor, provider_price_id
+       FROM plan_prices
+       WHERE plan_id = $1
+         AND deleted_at IS NULL
+         AND billing_interval = 'monthly'
+         AND (starts_at IS NULL OR starts_at <= NOW())
+         AND (ends_at IS NULL OR ends_at > NOW())
+       ORDER BY is_default DESC, amount_minor ASC, created_at DESC
+       LIMIT 1
+       FOR SHARE`, [plan.id]);
+        const price = priceResult.rows[0] ?? null;
+        const modules = buildModulesSnapshot(entitlements);
+        const entitlementSnapshot = buildEntitlementsSnapshot(entitlements);
+        const eventLimit = integerEntitlement(entitlements, EVENT_LIMIT_FEATURE_KEY);
+        const aiCreditLimit = integerEntitlement(entitlements, AI_CREDIT_LIMIT_FEATURE_KEY);
+        const periodResult = await client.query(`SELECT
+         NOW() AS period_start,
+         CASE
+           WHEN $1::integer > 0 THEN NOW() + ($1::integer * INTERVAL '1 day')
+           ELSE NOW() + INTERVAL '1 month'
+         END AS period_end`, [plan.trial_days]);
         const period = periodResult.rows[0];
         const status = plan.trial_days > 0 ? 'trialing' : 'active';
+        const provisioningMetadata = {
+            reason: 'organization_created',
+            provisionedBy: 'billing_provisioning',
+            plan: {
+                id: plan.id,
+                key: plan.key,
+                tier: plan.tier,
+                version: plan.version,
+                trialDays: plan.trial_days,
+            },
+            price: price
+                ? {
+                    id: price.id,
+                    provider: price.provider,
+                    billingInterval: price.billing_interval,
+                    currency: price.currency,
+                    amountMinor: Number(price.amount_minor),
+                    providerPriceId: price.provider_price_id,
+                }
+                : null,
+            limits: {
+                monthlyEvents: eventLimit,
+                aiCredits: aiCreditLimit,
+            },
+            featureCount: entitlements.length,
+        };
         const subscriptionResult = await client.query(`INSERT INTO organization_subscriptions (
          organization_id, plan_id, status, provider, billing_interval,
          current_period_start, current_period_end, trial_start, trial_end,
-         cancel_at_period_end
+         cancel_at_period_end, modules, metadata
        ) VALUES (
          $1,
          $2,
@@ -27,27 +101,66 @@ export class BillingProvisioningRepository {
          $5::timestamptz,
          CASE WHEN $3::billing_subscription_status = 'trialing' THEN $4::timestamptz ELSE NULL END,
          CASE WHEN $3::billing_subscription_status = 'trialing' THEN $4::timestamptz + ($6::integer * INTERVAL '1 day') ELSE NULL END,
-         FALSE
-       ) RETURNING id`, [organizationId, plan.id, status, period.period_start, period.period_end, plan.trial_days]);
+         FALSE,
+         $7::jsonb,
+         $8::jsonb
+       ) RETURNING id`, [
+            organizationId,
+            plan.id,
+            status,
+            period.period_start,
+            period.period_end,
+            plan.trial_days,
+            JSON.stringify(modules),
+            JSON.stringify(provisioningMetadata),
+        ]);
         const subscriptionId = subscriptionResult.rows[0].id;
         await client.query(`INSERT INTO subscription_events (
          organization_id, subscription_id, event_type, actor, new_plan_id, metadata
-       ) VALUES ($1, $2, 'created', 'system', $3, $4::jsonb)`, [organizationId, subscriptionId, plan.id, JSON.stringify({ reason: 'organization_created' })]);
+       ) VALUES ($1, $2, 'created', 'system', $3, $4::jsonb)`, [organizationId, subscriptionId, plan.id, JSON.stringify(provisioningMetadata)]);
         await client.query(`INSERT INTO organization_usage_current_period (
          organization_id, subscription_id, period_start, period_end,
-         event_limit, ai_credit_limit, members_used
-       )
-       SELECT
+         events_used, ai_credits_used, projects_used, members_used,
+         api_keys_used, connectors_used, alert_rules_used, dashboards_used,
+         event_limit, ai_credit_limit, overage_events, overage_ai_credits,
+         metadata
+       ) VALUES (
          $1, $2, $3, $4,
-         COALESCE(MAX(pfe.integer_value) FILTER (WHERE bf.feature_key = 'monthly_events'), 0),
-         COALESCE(MAX(pfe.integer_value) FILTER (WHERE bf.feature_key = 'ai_credits'), 0),
-         1
-       FROM plan_feature_entitlements pfe
-       JOIN billing_features bf ON bf.id = pfe.feature_id
-       WHERE pfe.plan_id = $5
-         AND pfe.deleted_at IS NULL
-         AND bf.deleted_at IS NULL`, [organizationId, subscriptionId, period.period_start, period.period_end, plan.id]);
-        return { subscriptionId, planId: plan.id, status };
+         0, 0, 0, 1,
+         0, 0, 0, 0,
+         $5, $6, 0, 0,
+         $7::jsonb
+       )`, [
+            organizationId,
+            subscriptionId,
+            period.period_start,
+            period.period_end,
+            usageLimitParameter(eventLimit),
+            usageLimitParameter(aiCreditLimit),
+            JSON.stringify({
+                source: 'billing_provisioning',
+                entitlements: entitlementSnapshot,
+                modules,
+            }),
+        ]);
+        await client.query(`INSERT INTO billing_audit_logs (
+         organization_id, subscription_id, actor_type, action, new_state, metadata
+       ) VALUES (
+         $1, $2, 'system', 'subscription.provisioned', $3::jsonb, $4::jsonb
+       )`, [
+            organizationId,
+            subscriptionId,
+            JSON.stringify({
+                status,
+                planId: plan.id,
+                periodStart: period.period_start,
+                periodEnd: period.period_end,
+                eventLimit,
+                aiCreditLimit,
+            }),
+            JSON.stringify(provisioningMetadata),
+        ]);
+        return { subscriptionId, planId: plan.id, status, featureCount: entitlements.length, eventLimit, aiCreditLimit };
     }
 }
 //# sourceMappingURL=repository.js.map

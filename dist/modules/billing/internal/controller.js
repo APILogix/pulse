@@ -63,6 +63,7 @@ export class InternalBillingController {
         try {
             const body = BulkEventUsageBodySchema.parse(request.body);
             const results = await Promise.all(body.items.map((item) => this.service.consumeEvents({
+                ...(item.requestId ? { requestId: item.requestId } : {}),
                 organizationId: item.orgId,
                 projectId: item.projectId,
                 eventType: item.eventType,

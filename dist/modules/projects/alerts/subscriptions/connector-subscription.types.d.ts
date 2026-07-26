@@ -4,8 +4,8 @@ export declare const AlertCategorySchema: z.ZodEnum<{
     release: "release";
     security: "security";
     billing: "billing";
-    ai: "ai";
     usage: "usage";
+    ai: "ai";
     deployment: "deployment";
     performance: "performance";
     cron: "cron";
@@ -24,8 +24,8 @@ export declare const CreateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         release: "release";
         security: "security";
         billing: "billing";
-        ai: "ai";
         usage: "usage";
+        ai: "ai";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";
@@ -49,8 +49,8 @@ export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         release: "release";
         security: "security";
         billing: "billing";
-        ai: "ai";
         usage: "usage";
+        ai: "ai";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";

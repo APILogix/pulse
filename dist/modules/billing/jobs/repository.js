@@ -1223,27 +1223,75 @@ export class BillingJobsRepository {
           JOIN organization_subscriptions os ON os.organization_id = u.organization_id
           WHERE os.status IN ('trialing','active','past_due')
             AND os.deleted_at IS NULL
+            AND os.current_period_end > NOW()
           ORDER BY u.updated_at, u.organization_id
           LIMIT $1
           FOR UPDATE OF u SKIP LOCKED
         ),
+        active_subscriptions AS (
+          SELECT DISTINCT ON (os.organization_id) os.*
+          FROM organization_subscriptions os
+          JOIN due d ON d.organization_id = os.organization_id
+          WHERE os.status IN ('trialing','active','past_due')
+            AND os.deleted_at IS NULL
+            AND os.current_period_end > NOW()
+          ORDER BY os.organization_id,
+            CASE os.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 ELSE 3 END,
+            os.created_at DESC
+        ),
+        plan_entitlements AS (
+          SELECT os.organization_id, bf.feature_key,
+                 COALESCE(ofo.integer_value, pfe.integer_value) AS integer_value
+          FROM active_subscriptions os
+          JOIN plan_feature_entitlements pfe
+            ON pfe.plan_id = os.plan_id
+           AND pfe.deleted_at IS NULL
+          JOIN billing_features bf
+            ON bf.id = pfe.feature_id
+           AND bf.deleted_at IS NULL
+           AND bf.is_deprecated = FALSE
+          LEFT JOIN organization_feature_overrides ofo
+            ON ofo.organization_id = os.organization_id
+           AND ofo.feature_id = bf.id
+           AND ofo.deleted_at IS NULL
+           AND (ofo.expires_at IS NULL OR ofo.expires_at > NOW())
+        ),
+        addon_entitlements AS (
+          SELECT os.organization_id, bf.feature_key, SUM(sa.quantity)::bigint AS integer_value
+          FROM active_subscriptions os
+          JOIN subscription_addons sa
+            ON sa.subscription_id = os.id
+           AND sa.organization_id = os.organization_id
+           AND sa.status = 'active'
+           AND sa.starts_at <= NOW()
+           AND (sa.expires_at IS NULL OR sa.expires_at > NOW())
+          JOIN billing_features bf
+            ON bf.id = sa.feature_id
+           AND bf.value_type = 'integer'
+           AND bf.deleted_at IS NULL
+           AND bf.is_deprecated = FALSE
+          GROUP BY os.organization_id, bf.feature_key
+        ),
         ent AS (
           SELECT organization_id,
-                 MAX(integer_value) FILTER (WHERE feature_key = 'monthly_events') AS event_limit,
-                 MAX(integer_value) FILTER (WHERE feature_key = 'ai_credits') AS ai_credit_limit
-          FROM v_effective_entitlements
-          WHERE organization_id IN (SELECT organization_id FROM due)
+                 SUM(integer_value) FILTER (WHERE feature_key = 'monthly_events') AS event_limit,
+                 SUM(integer_value) FILTER (WHERE feature_key = 'module_ai_insights_monthly_credits') AS ai_credit_limit
+          FROM (
+            SELECT * FROM plan_entitlements
+            UNION ALL
+            SELECT * FROM addon_entitlements
+          ) all_entitlements
           GROUP BY organization_id
         ),
         refreshed AS (
           UPDATE organization_usage_current_period u
-          SET event_limit = COALESCE(ent.event_limit, u.event_limit),
-              ai_credit_limit = COALESCE(ent.ai_credit_limit, u.ai_credit_limit),
+          SET event_limit = CASE WHEN COALESCE(ent.event_limit, u.event_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.event_limit, u.event_limit) END,
+              ai_credit_limit = CASE WHEN COALESCE(ent.ai_credit_limit, u.ai_credit_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.ai_credit_limit, u.ai_credit_limit) END,
               updated_at = NOW()
           FROM ent
           WHERE u.organization_id = ent.organization_id
-            AND (u.event_limit IS DISTINCT FROM COALESCE(ent.event_limit, u.event_limit)
-              OR u.ai_credit_limit IS DISTINCT FROM COALESCE(ent.ai_credit_limit, u.ai_credit_limit))
+            AND (u.event_limit IS DISTINCT FROM CASE WHEN COALESCE(ent.event_limit, u.event_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.event_limit, u.event_limit) END
+              OR u.ai_credit_limit IS DISTINCT FROM CASE WHEN COALESCE(ent.ai_credit_limit, u.ai_credit_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.ai_credit_limit, u.ai_credit_limit) END)
           RETURNING u.organization_id
         )
         SELECT COUNT(*)::text AS count FROM refreshed

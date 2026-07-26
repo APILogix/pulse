@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { InvoiceStatus } from '../shared/types.js';
+import { BillingProvider, InvoiceStatus, PaymentStatus } from '../shared/types.js';
 type Db = Pool | PoolClient;
 export interface InvoiceRow {
     id: string;
@@ -22,9 +22,29 @@ export interface InvoiceRow {
     pdf_url: string | null;
     created_at: Date;
 }
+export interface PaymentMethodRow {
+    id: string;
+    provider: BillingProvider;
+    type: string;
+    last4: string | null;
+    brand: string | null;
+    is_default: boolean;
+}
+export interface InvoicePaymentResult {
+    invoice: InvoiceRow;
+    payment: {
+        id: string;
+        status: PaymentStatus;
+        amount: number;
+        currency: string;
+        payment_method: string | null;
+        payment_method_last4: string | null;
+    };
+}
 export declare class InvoicesRepository {
     private readonly db;
     constructor(db?: Pool);
+    withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     listInvoices(orgId: string, options: {
         status?: InvoiceStatus;
         limit: number;
@@ -34,6 +54,10 @@ export declare class InvoicesRepository {
         total: number;
     }>;
     getInvoiceById(orgId: string, invoiceId: string, db?: Db): Promise<InvoiceRow | null>;
+    getUpcomingInvoicePreview(orgId: string, db?: Db): Promise<Record<string, unknown> | null>;
+    getInvoiceByIdForUpdate(orgId: string, invoiceId: string, db: PoolClient): Promise<InvoiceRow | null>;
+    getPaymentMethod(orgId: string, paymentMethodId: string | undefined, db?: Db): Promise<PaymentMethodRow | null>;
+    collectInvoicePayment(invoice: InvoiceRow, paymentMethod: PaymentMethodRow, amountDue: number, db: PoolClient): Promise<InvoicePaymentResult>;
 }
 export {};
 //# sourceMappingURL=repository.d.ts.map

@@ -3,6 +3,7 @@ import { CouponsService } from './service.js';
 export declare class CouponsController {
     private readonly service;
     constructor(service: CouponsService);
+    private getOrgId;
     validateCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     applyCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
 }

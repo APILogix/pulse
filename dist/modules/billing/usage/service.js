@@ -1,37 +1,67 @@
-import { UsageRepository } from './repository.js';
+import { CurrentUsageResponseSchema } from './schemas.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
+const POSTGRES_BIGINT_MAX = '9223372036854775807';
+function toUsageNumber(value) {
+    if (value === null || value === undefined)
+        return 0;
+    if (String(value) === POSTGRES_BIGINT_MAX)
+        return -1;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
 export class UsageService {
     repository;
     constructor(repository) {
         this.repository = repository;
     }
+    async resolveAuthorizedOrgId(user, requestedOrgId) {
+        if (!user?.id) {
+            throw new BillingError('Authentication required', BillingErrorCodes.UNAUTHORIZED, 401);
+        }
+        const orgId = requestedOrgId ?? user.currentOrgId ?? user.orgId ?? null;
+        if (!orgId) {
+            throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+        }
+        if (requestedOrgId && !(await this.repository.isActiveOrganizationMember(requestedOrgId, user.id))) {
+            throw new BillingError('User is not a member of the requested organization', BillingErrorCodes.UNAUTHORIZED, 403);
+        }
+        return orgId;
+    }
     async getCurrentUsage(orgId) {
         const usage = await this.repository.getCurrentUsage(orgId);
         if (!usage) {
             // Return zeros if no usage row exists yet (might happen right after org creation before sub is set)
-            return {
+            return CurrentUsageResponseSchema.parse({
                 success: true,
                 data: {
                     eventsUsed: 0,
                     eventLimit: 0,
+                    remainingEvents: 0,
                     aiCreditsUsed: 0,
                     aiCreditLimit: 0,
+                    remainingAiCredits: 0,
+                    projectsUsed: 0,
+                    membersUsed: 0,
                 }
-            };
+            });
         }
-        return {
+        const eventsUsed = toUsageNumber(usage.events_used);
+        const eventLimit = toUsageNumber(usage.event_limit);
+        const aiCreditsUsed = toUsageNumber(usage.ai_credits_used);
+        const aiCreditLimit = toUsageNumber(usage.ai_credit_limit);
+        return CurrentUsageResponseSchema.parse({
             success: true,
             data: {
-                eventsUsed: usage.events_used,
-                eventLimit: usage.event_limit,
-                remainingEvents: usage.remaining_events,
-                aiCreditsUsed: usage.ai_credits_used,
-                aiCreditLimit: usage.ai_credit_limit,
-                remainingAiCredits: usage.remaining_ai_credits,
-                projectsUsed: usage.projects_used,
-                membersUsed: usage.members_used,
+                eventsUsed,
+                eventLimit,
+                remainingEvents: eventLimit < 0 ? -1 : Math.max(0, toUsageNumber(usage.remaining_events)),
+                aiCreditsUsed,
+                aiCreditLimit,
+                remainingAiCredits: aiCreditLimit < 0 ? -1 : Math.max(0, toUsageNumber(usage.remaining_ai_credits)),
+                projectsUsed: toUsageNumber(usage.projects_used),
+                membersUsed: toUsageNumber(usage.members_used),
             }
-        };
+        });
     }
     async incrementEventUsage(orgId, count = 1) {
         // In a real high-throughput system, this would be buffered via Redis or Kafka.
@@ -51,6 +81,14 @@ export class UsageService {
                 requestsCount: r.requests_count
             }))
         };
+    }
+    async getProjectAttribution(orgId, options) {
+        const records = await this.repository.getProjectAttribution(orgId, options);
+        return { success: true, data: records };
+    }
+    async getApiKeyAttribution(orgId, options) {
+        const records = await this.repository.getApiKeyAttribution(orgId, options);
+        return { success: true, data: records };
     }
 }
 //# sourceMappingURL=service.js.map

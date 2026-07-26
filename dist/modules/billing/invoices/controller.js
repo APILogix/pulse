@@ -6,10 +6,13 @@ export class InvoicesController {
     constructor(service) {
         this.service = service;
     }
+    getOrgId(req) {
+        return req.user?.currentOrgId || req.user?.orgId;
+    }
     listInvoices = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const query = ListInvoicesQuerySchema.parse(req.query);
@@ -23,7 +26,7 @@ export class InvoicesController {
     getUpcomingInvoice = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const result = await this.service.getUpcomingInvoice(orgId);
@@ -36,7 +39,7 @@ export class InvoicesController {
     getInvoice = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const { invoiceId } = InvoiceParamsSchema.parse(req.params);
@@ -50,7 +53,7 @@ export class InvoicesController {
     payInvoice = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const { invoiceId } = InvoiceParamsSchema.parse(req.params);

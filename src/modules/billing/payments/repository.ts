@@ -33,6 +33,21 @@ export interface PaymentRow {
 export class PaymentsRepository {
   constructor(private readonly db: Pool = pool) {}
 
+  async withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await callback(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listPayments(
     orgId: string, 
     options: { status?: PaymentStatus; limit: number; offset: number },
@@ -61,5 +76,62 @@ export class PaymentsRepository {
     );
 
     return { data: result.rows, total };
+  }
+
+  async getPaymentForUpdate(orgId: string, paymentId: string, db: PoolClient): Promise<PaymentRow | null> {
+    const result = await db.query(
+      `SELECT * FROM payments
+       WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+       FOR UPDATE`,
+      [paymentId, orgId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async refundPayment(
+    payment: PaymentRow,
+    amount: number,
+    reason: string | undefined,
+    db: PoolClient
+  ): Promise<PaymentRow> {
+    const newRefundedAmount = Number(payment.refunded_amount) + amount;
+    const fullyRefunded = newRefundedAmount >= Number(payment.amount);
+    const result = await db.query(
+      `UPDATE payments
+       SET refunded_amount = refunded_amount + $3,
+           status = CASE WHEN refunded_amount + $3 >= amount THEN 'refunded' ELSE status END,
+           refunded_at = CASE WHEN refunded_amount + $3 >= amount THEN COALESCE(refunded_at, NOW()) ELSE refunded_at END,
+           metadata = metadata || jsonb_build_object('last_refund_reason', $4::text),
+           updated_at = NOW()
+       WHERE id = $1 AND organization_id = $2
+       RETURNING *`,
+      [payment.id, payment.organization_id, amount, reason ?? null]
+    );
+
+    if (payment.invoice_id && fullyRefunded) {
+      await db.query(
+        `UPDATE invoices
+         SET status = 'refunded',
+             updated_at = NOW()
+         WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+        [payment.invoice_id, payment.organization_id]
+      );
+    }
+
+    await db.query(
+      `INSERT INTO billing_audit_logs (
+         organization_id, subscription_id, invoice_id, payment_id, actor_type, action, metadata
+       )
+       VALUES ($1,$2,$3,$4,'user','payment.refunded',$5::jsonb)`,
+      [
+        payment.organization_id,
+        payment.subscription_id,
+        payment.invoice_id,
+        payment.id,
+        JSON.stringify({ source: 'payments-api', amount, currency: payment.currency, reason: reason ?? null }),
+      ]
+    );
+
+    return result.rows[0];
   }
 }

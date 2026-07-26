@@ -10,25 +10,36 @@ export class AiBillingService {
     constructor(repository) {
         this.repository = repository;
     }
-    async consumeAiCredits(orgId, userId, featureKey, provider, model, promptTokens, completionTokens, projectId) {
+    async consumeAiCredits(orgId, userId, requestId, featureKey, provider, model, promptTokens, completionTokens, projectId) {
         // 1. Calculate cost / credits
         const pricing = PRICING[model] || PRICING['gpt-3.5-turbo'];
         const estimatedCostUsd = ((promptTokens / 1000) * pricing.per1kPrompt) +
             ((completionTokens / 1000) * pricing.per1kCompletion);
         // E.g., 1 credit = $0.001 (1000 credits = $1)
         const creditsUsed = Math.max(1, Math.ceil(estimatedCostUsd * 1000));
-        // 2. Check if enough credits
-        const hasCredits = await this.repository.hasSufficientAiCredits(orgId, creditsUsed);
-        if (!hasCredits) {
-            throw new BillingError('Insufficient AI credits', BillingErrorCodes.INSUFFICIENT_CREDITS, 402, { required: creditsUsed });
-        }
-        // 3. Deduct credits & Log usage
-        await this.repository.withTransaction(async (client) => {
+        const result = await this.repository.withTransaction(async (client) => {
+            if (requestId) {
+                await this.repository.lockAiRequest(orgId, requestId, client);
+                const existing = await this.repository.getAiUsageByRequestId(orgId, requestId, client);
+                if (existing) {
+                    return {
+                        creditsUsed: Number(existing.credits_used),
+                        estimatedCostUsd: Number(existing.estimated_cost_usd),
+                        idempotent: true,
+                    };
+                }
+            }
+            // 2. Check if enough credits
+            const hasCredits = await this.repository.hasSufficientAiCredits(orgId, creditsUsed, client);
+            if (!hasCredits) {
+                throw new BillingError('Insufficient AI credits', BillingErrorCodes.INSUFFICIENT_CREDITS, 402, { required: creditsUsed });
+            }
             // Deduct
             await this.repository.consumeAiCredits(orgId, creditsUsed, client);
             // Log
             await this.repository.logAiUsage({
                 organization_id: orgId,
+                ...(requestId ? { request_id: requestId } : {}),
                 ...(projectId ? { project_id: projectId } : {}),
                 ...(userId ? { user_id: userId } : {}),
                 feature_key: featureKey,
@@ -39,13 +50,11 @@ export class AiBillingService {
                 completion_tokens: completionTokens,
                 estimated_cost_usd: estimatedCostUsd
             }, client);
+            return { creditsUsed, estimatedCostUsd, idempotent: false };
         });
         return {
             success: true,
-            data: {
-                creditsUsed,
-                estimatedCostUsd
-            }
+            data: result
         };
     }
 }

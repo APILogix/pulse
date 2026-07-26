@@ -8,15 +8,30 @@ export class QuotasRepository extends BaseRepository {
          p.id AS plan_id,
          p.key AS plan_key,
          p.tier AS plan_tier,
-         p.feature_config,
-         p.event_limit_monthly,
-         p.hard_cap
+         COALESCE(
+           jsonb_object_agg(
+             e.feature_key,
+             COALESCE(
+               to_jsonb(e.boolean_value),
+               to_jsonb(e.integer_value),
+               to_jsonb(e.decimal_value),
+               to_jsonb(e.string_value)
+             )
+           ) FILTER (WHERE e.feature_key IS NOT NULL),
+           '{}'::jsonb
+         ) AS feature_config,
+         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key = 'monthly_events'), 0) AS event_limit_monthly,
+         FALSE AS hard_cap
        FROM organization_subscriptions s
        JOIN plans p ON p.id = s.plan_id
-       WHERE s.org_id = $1
+       LEFT JOIN v_effective_entitlements e ON e.organization_id = s.organization_id
+       WHERE s.organization_id = $1
          AND s.status IN ('trialing','active','past_due')
+         AND s.deleted_at IS NULL
          AND p.is_active = TRUE
-       ORDER BY s.created_at DESC
+         AND p.deleted_at IS NULL
+       GROUP BY s.id, s.status, p.id, p.key, p.tier
+       ORDER BY MAX(s.created_at) DESC
        LIMIT 1`, [orgId]);
         return r.rows[0] ?? null;
     }
@@ -33,13 +48,43 @@ export class QuotasRepository extends BaseRepository {
           WHERE org_id = $1 AND is_active = TRUE) AS sso_providers,
          (SELECT COUNT(*)::text
           FROM organization_scim_tokens
-          WHERE org_id = $1 AND revoked_at IS NULL) AS scim_tokens`, [orgId]);
+          WHERE org_id = $1 AND revoked_at IS NULL) AS scim_tokens,
+         COALESCE(u.events_used, 0)::text AS events_used,
+         COALESCE(u.event_limit, 0)::text AS event_limit,
+         GREATEST(COALESCE(u.event_limit, 0) - COALESCE(u.events_used, 0), 0)::text AS remaining_events,
+         COALESCE(u.ai_credits_used, 0)::text AS ai_credits_used,
+         COALESCE(u.ai_credit_limit, 0)::text AS ai_credit_limit,
+         GREATEST(COALESCE(u.ai_credit_limit, 0) - COALESCE(u.ai_credits_used, 0), 0)::text AS remaining_ai_credits,
+         COALESCE(u.projects_used, 0)::text AS projects_used,
+         COALESCE(u.api_keys_used, 0)::text AS api_keys_used,
+         COALESCE(u.connectors_used, 0)::text AS connectors_used,
+         COALESCE(u.alert_rules_used, 0)::text AS alert_rules_used,
+         COALESCE(u.dashboards_used, 0)::text AS dashboards_used
+       FROM (SELECT $1::uuid AS organization_id) org
+       LEFT JOIN LATERAL (
+         SELECT *
+         FROM organization_usage_current_period
+         WHERE organization_id = org.organization_id
+         ORDER BY period_end DESC
+         LIMIT 1
+       ) u ON TRUE`, [orgId]);
         const row = r.rows[0];
         return {
             activeMembers: Number(row.active_members ?? 0),
             pendingInvitations: Number(row.pending_invitations ?? 0),
             ssoProviders: Number(row.sso_providers ?? 0),
             scimTokens: Number(row.scim_tokens ?? 0),
+            eventsUsed: Number(row.events_used ?? 0),
+            eventLimit: Number(row.event_limit ?? 0),
+            remainingEvents: Number(row.remaining_events ?? 0),
+            aiCreditsUsed: Number(row.ai_credits_used ?? 0),
+            aiCreditLimit: Number(row.ai_credit_limit ?? 0),
+            remainingAiCredits: Number(row.remaining_ai_credits ?? 0),
+            projectsUsed: Number(row.projects_used ?? 0),
+            apiKeysUsed: Number(row.api_keys_used ?? 0),
+            connectorsUsed: Number(row.connectors_used ?? 0),
+            alertRulesUsed: Number(row.alert_rules_used ?? 0),
+            dashboardsUsed: Number(row.dashboards_used ?? 0),
         };
     }
     async createQuotaRequest(orgId, quotaType, currentLimit, requestedLimit, reason) {

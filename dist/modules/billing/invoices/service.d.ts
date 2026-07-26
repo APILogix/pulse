@@ -19,18 +19,28 @@ export declare class InvoicesService {
     }>;
     getUpcomingInvoice(orgId: string): Promise<{
         success: boolean;
-        data: {
-            organization_id: string;
-            status: InvoiceStatus;
-            subtotal_amount: number;
-            total_amount: number;
-            currency: string;
-        };
+        data: Record<string, unknown>;
     }>;
     payInvoice(orgId: string, invoiceId: string, paymentMethodId?: string): Promise<{
         success: boolean;
         data: {
+            invoice: import("./repository.js").InvoiceRow;
+            payment: null;
             status: string;
+        };
+    } | {
+        success: boolean;
+        data: {
+            status: string;
+            invoice: import("./repository.js").InvoiceRow;
+            payment: {
+                id: string;
+                status: import("../shared/types.js").PaymentStatus;
+                amount: number;
+                currency: string;
+                payment_method: string | null;
+                payment_method_last4: string | null;
+            };
         };
     }>;
 }

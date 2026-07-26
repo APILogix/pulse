@@ -29,11 +29,33 @@ export declare class SubscriptionsService {
         success: boolean;
         data: import("./repository.js").SubscriptionEventRow[];
     }>;
+    getSummary(orgId: string): Promise<{
+        success: boolean;
+        data: Record<string, unknown>;
+    }>;
     createSubscription(orgId: string, planId: string, interval: BillingInterval, userId: string): Promise<{
         success: boolean;
         data: import("./repository.js").SubscriptionRow;
     }>;
     changePlan(orgId: string, newPlanId: string, userId: string): Promise<{
+        success: boolean;
+        data: import("./repository.js").SubscriptionRow;
+    }>;
+    previewChange(orgId: string, newPlanId: string): Promise<{
+        success: boolean;
+        data: {
+            subscriptionId: string;
+            currentPlanId: string;
+            newPlanId: string;
+            billingInterval: BillingInterval;
+            currency: string;
+            currentAmount: number;
+            newAmount: number;
+            proratedAmount: number;
+            effectiveAt: Date;
+        };
+    }>;
+    scheduleChange(orgId: string, newPlanId: string, userId: string, effectiveAt?: Date, prorationBehavior?: string): Promise<{
         success: boolean;
         data: import("./repository.js").SubscriptionRow;
     }>;

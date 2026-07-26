@@ -59,6 +59,13 @@ export class InternalBillingService {
     }
     async consumeEvents(body) {
         return this.repository.withTransaction(async (db) => {
+            if (body.requestId) {
+                await this.repository.lockIdempotencyKey('event-usage', body.organizationId, body.requestId, db);
+                const existing = await this.repository.getProcessedEventUsage(body.organizationId, body.requestId, db);
+                if (existing?.new_state) {
+                    return { ...existing.new_state, idempotent: true };
+                }
+            }
             const usage = await this.repository.getCurrentUsageForUpdate(body.organizationId, db);
             if (!usage)
                 throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
@@ -70,25 +77,45 @@ export class InternalBillingService {
             const overageRequested = Math.max(requested - remainingBefore, 0);
             const canOverage = overageRequested > 0 && allowsOverage(entitlements);
             if (overageRequested > 0 && !canOverage) {
-                return {
+                const result = {
                     accepted: false,
                     remaining: remainingBefore,
                     overage: false,
                     code: ERROR_CODES.QUOTA_HARD_LIMIT,
                 };
+                if (body.requestId) {
+                    await this.repository.recordProcessedEventUsage(body.organizationId, body.requestId, result, db);
+                }
+                return result;
             }
             await this.repository.incrementEventUsage(body, requested, overageRequested, db);
-            return {
+            const result = {
                 accepted: true,
                 remaining: Math.max(remainingBefore - requested, 0),
                 overage: overageRequested > 0,
                 overageEvents: overageRequested,
                 code: overageRequested > 0 ? ERROR_CODES.QUOTA_OVERAGE_ALLOWED : undefined,
             };
+            if (body.requestId) {
+                await this.repository.recordProcessedEventUsage(body.organizationId, body.requestId, result, db);
+            }
+            return result;
         });
     }
     async consumeAiCredits(body) {
         return this.repository.withTransaction(async (db) => {
+            if (body.requestId) {
+                await this.repository.lockIdempotencyKey('ai-credits', body.organizationId, body.requestId, db);
+                const existing = await this.repository.getAiUsageByRequestId(body.organizationId, body.requestId, db);
+                if (existing) {
+                    return {
+                        accepted: true,
+                        remaining: null,
+                        creditsUsed: Number(existing.credits_used),
+                        idempotent: true,
+                    };
+                }
+            }
             const usage = await this.repository.getCurrentUsageForUpdate(body.organizationId, db);
             if (!usage)
                 throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
@@ -104,6 +131,8 @@ export class InternalBillingService {
             return {
                 accepted: true,
                 remaining: Math.max(remainingBefore - body.credits, 0),
+                creditsUsed: body.credits,
+                idempotent: false,
             };
         });
     }

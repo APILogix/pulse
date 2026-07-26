@@ -11,7 +11,7 @@ export const JoinMethodSchema = z.enum([
     "sso_auto_provision",
     "scim",
 ]);
-export { QuotaRequestStatusSchema, QuotaTypeSchema } from "./quotas/quotas.schema.js";
+export { BillingSummaryResponseSchema, QuotaRequestStatusSchema, QuotaTypeSchema, UsageLimitsResponseSchema } from "./quotas/quotas.schema.js";
 export const SecurityEventSeveritySchema = z.enum([
     "low",
     "medium",

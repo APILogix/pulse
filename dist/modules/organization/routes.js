@@ -1,7 +1,7 @@
 import { authenticate } from '../../shared/middleware/auth.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
-import { AcceptInvitationSchema, AuditLogQuerySchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateScimTokenSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, } from './types.js';
+import { AcceptInvitationSchema, AuditLogQuerySchema, BillingSummaryResponseSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateScimTokenSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, UsageLimitsResponseSchema, } from './types.js';
 import { registerDomainRoutes } from './domains/domains.routes.js';
 import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
@@ -345,12 +345,12 @@ export async function organizationRoutes(fastify, _options) {
     fastify.get('/:orgId/billing-summary', auth, withErrorHandling(async (request, reply) => {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const result = await svc.getBillingSummary(orgId, asAuth(request).user.id);
-        return reply.send({ success: true, data: result });
+        return reply.send({ success: true, data: BillingSummaryResponseSchema.parse(result) });
     }));
     fastify.get('/:orgId/usage-limits', auth, withErrorHandling(async (request, reply) => {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const result = await svc.getUsageLimits(orgId, asAuth(request).user.id);
-        return reply.send({ success: true, data: result });
+        return reply.send({ success: true, data: UsageLimitsResponseSchema.parse(result) });
     }));
     fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {
         const { slug } = SlugParamsSchema.parse(request.params);

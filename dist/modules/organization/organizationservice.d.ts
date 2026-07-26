@@ -169,16 +169,26 @@ export declare class OrganizationService {
         usage: {
             activeMembers: {
                 used: number;
+                limit: number | null;
+            };
+            eventsMonthly: {
+                used: number;
                 limit: number;
+                remaining: number;
+            };
+            aiCredits: {
+                used: number;
+                limit: number;
+                remaining: number;
             };
             ssoProviders: {
                 used: number;
-                limit: number;
+                limit: number | null;
                 enabled: boolean;
             };
             scimTokens: {
                 used: number;
-                limit: number;
+                limit: number | null;
                 enabled: boolean;
             };
         };
@@ -192,6 +202,26 @@ export declare class OrganizationService {
                 pending: number;
                 limit: number | null;
             };
+            projects: {
+                used: number;
+                limit: number | null;
+            };
+            apiKeys: {
+                used: number;
+                limit: number | null;
+            };
+            connectors: {
+                used: number;
+                limit: number | null;
+            };
+            alertRules: {
+                used: number;
+                limit: number | null;
+            };
+            dashboards: {
+                used: number;
+                limit: number | null;
+            };
             ssoProviders: {
                 used: number;
                 limit: number | null;
@@ -203,9 +233,15 @@ export declare class OrganizationService {
                 enabled: boolean;
             };
             eventsMonthly: {
-                used: null;
+                used: number;
                 limit: number;
+                remaining: number;
                 hardCap: boolean;
+            };
+            aiCredits: {
+                used: number;
+                limit: number;
+                remaining: number;
             };
         };
     }>;

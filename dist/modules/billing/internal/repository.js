@@ -1,5 +1,6 @@
 import { pool } from '../../../config/database.js';
 import { generateUUID } from '../../../shared/utils/id.js';
+import { EFFECTIVE_ENTITLEMENTS_SQL } from '../entitlements/repository.js';
 const resourceColumns = {
     projects: { used: 'projects_used', limit: 'projects_limit' },
     members: { used: 'members_used', limit: 'members_limit' },
@@ -32,34 +33,17 @@ export class InternalBillingRepository {
     async getResolvedEntitlements(orgId, db = this.db) {
         const result = await db.query(`SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
               bf.module, bf.is_module_root, bf.value_type
-        FROM v_effective_entitlements ee
+        FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
-        WHERE ee.organization_id = $1
-          AND EXISTS (
-            SELECT 1
-            FROM organization_subscriptions os
-            WHERE os.organization_id = ee.organization_id
-              AND os.status IN ('trialing','active')
-              AND os.deleted_at IS NULL
-              AND os.current_period_end > NOW()
-          )
         ORDER BY bf.sort_order NULLS LAST, ee.feature_key`, [orgId]);
         return result.rows;
     }
     async getFeatureValue(orgId, featureKey, db = this.db) {
         const result = await db.query(`SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
               bf.module, bf.is_module_root, bf.value_type
-        FROM v_effective_entitlements ee
+        FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
-        WHERE ee.organization_id = $1 AND ee.feature_key = $2
-          AND EXISTS (
-            SELECT 1
-            FROM organization_subscriptions os
-            WHERE os.organization_id = ee.organization_id
-              AND os.status IN ('trialing','active')
-              AND os.deleted_at IS NULL
-              AND os.current_period_end > NOW()
-          )
+        WHERE ee.feature_key = $2
         LIMIT 1`, [orgId, featureKey]);
         return result.rows[0] ?? null;
     }
@@ -76,6 +60,37 @@ export class InternalBillingRepository {
         WHERE organization_id = $1
         ORDER BY period_end DESC
         LIMIT 1`, [orgId]);
+        return result.rows[0] ?? null;
+    }
+    async lockIdempotencyKey(scope, orgId, requestId, db = this.db) {
+        await db.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`${scope}:${orgId}:${requestId}`]);
+    }
+    async getProcessedEventUsage(orgId, requestId, db = this.db) {
+        const result = await db.query(`SELECT new_state, metadata
+       FROM billing_audit_logs
+       WHERE organization_id = $1
+         AND request_id = $2
+         AND action = 'usage.events_consumed'
+       ORDER BY occurred_at DESC
+       LIMIT 1`, [orgId, requestId]);
+        return result.rows[0] ?? null;
+    }
+    async recordProcessedEventUsage(orgId, requestId, resultState, db = this.db) {
+        await db.query(`INSERT INTO billing_audit_logs (
+         organization_id, actor_type, action, request_id, new_state, metadata
+       ) VALUES ($1,'system','usage.events_consumed',$2,$3::jsonb,$4::jsonb)`, [
+            orgId,
+            requestId,
+            JSON.stringify(resultState),
+            JSON.stringify({ source: 'internal-usage-api', idempotent: false }),
+        ]);
+    }
+    async getAiUsageByRequestId(orgId, requestId, db = this.db) {
+        const result = await db.query(`SELECT id, credits_used, estimated_cost_usd, request_id
+       FROM ai_usage_logs
+       WHERE organization_id = $1 AND request_id = $2
+       ORDER BY occurred_at DESC
+       LIMIT 1`, [orgId, requestId]);
         return result.rows[0] ?? null;
     }
     async incrementEventUsage(body, acceptedCount, overageCount, db) {
@@ -148,8 +163,8 @@ export class InternalBillingRepository {
         await db.query(`INSERT INTO ai_usage_logs (
          id, organization_id, project_id, user_id, occurred_at, feature_key,
          provider, model, credits_used, prompt_tokens, completion_tokens,
-         status, created_at
-       ) VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, 'success', NOW())`, [
+         status, request_id, created_at
+       ) VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, 'success', $11, NOW())`, [
             generateUUID(),
             body.organizationId,
             body.projectId ?? null,
@@ -160,6 +175,7 @@ export class InternalBillingRepository {
             body.credits,
             promptTokens,
             completionTokens,
+            body.requestId ?? null,
         ]);
     }
     async adjustResourceUsage(body, direction, db) {

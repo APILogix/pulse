@@ -41,6 +41,11 @@ function extractOrganizationId(payload) {
         payload?.payload?.payment?.entity?.notes?.organization_id ??
         null);
 }
+function maybeUuid(value) {
+    return value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+        ? value
+        : null;
+}
 export class WebhooksService {
     repository;
     constructor(repository) {
@@ -76,9 +81,35 @@ export class WebhooksService {
             payload_sha256: createHash('sha256').update(rawBody).digest('hex'),
             signature_verified: true,
             api_version: payload.api_version,
-            request_id: requestId ?? null,
+            request_id: maybeUuid(requestId),
         });
         return { success: true };
+    }
+    async listWebhookEvents(options) {
+        const offset = (options.page - 1) * options.limit;
+        const { data, total } = await this.repository.listWebhookEvents({
+            ...(options.provider ? { provider: options.provider } : {}),
+            ...(options.status ? { status: options.status } : {}),
+            limit: options.limit,
+            offset,
+        });
+        return {
+            success: true,
+            data,
+            meta: {
+                page: options.page,
+                limit: options.limit,
+                total,
+                hasMore: offset + data.length < total,
+            },
+        };
+    }
+    async retryWebhookEvent(eventId) {
+        const event = await this.repository.markWebhookEventForRetry(eventId);
+        if (!event) {
+            throw new BillingError('Webhook event is not retryable', BillingErrorCodes.PROVIDER_ERROR, 400);
+        }
+        return { success: true, data: event };
     }
 }
 //# sourceMappingURL=service.js.map

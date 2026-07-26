@@ -70,18 +70,18 @@ export class QuotasService {
   ): Promise<{ entitlements: BillingEntitlementsRow; counts: OrganizationUsageCounts; maxMembers?: number }> {
     const { entitlements, counts } = await this.requireBillingEntitlements(orgId);
     if (capability === "member") {
-      const maxMembers = this.limitFrom(entitlements, ["max_team_members", "max_members"]);
+      const maxMembers = this.limitFrom(entitlements, ["limit_members_max", "max_team_members", "max_members"]);
       this.assertWithinLimit("Member", counts.activeMembers + counts.pendingInvitations, maxMembers);
       return { entitlements, counts, maxMembers };
     }
     if (capability === "sso") {
-      if (!this.featureAllowed(entitlements, ["sso_saml", "sso_enabled", "saml_sso"], false)) {
+      if (!this.featureAllowed(entitlements, ["module_enterprise_features_sso", "sso_saml", "sso_enabled", "saml_sso"], false)) {
         throw new ForbiddenError("SSO is not enabled for current billing plan");
       }
       this.assertWithinLimit("SSO provider", counts.ssoProviders, this.limitFrom(entitlements, ["max_sso_providers", "sso_providers_max"], 1));
     }
     if (capability === "scim") {
-      if (!this.featureAllowed(entitlements, ["scim", "scim_enabled"], false)) {
+      if (!this.featureAllowed(entitlements, ["module_enterprise_features_scim", "scim", "scim_enabled"], false)) {
         throw new ForbiddenError("SCIM is not enabled for current billing plan");
       }
       this.assertWithinLimit("SCIM token", counts.scimTokens, this.limitFrom(entitlements, ["max_scim_tokens", "scim_tokens_max"], 1));

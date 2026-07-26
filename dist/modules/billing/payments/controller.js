@@ -1,5 +1,5 @@
 import { PaymentsService } from './service.js';
-import { ListPaymentsQuerySchema } from './schemas.js';
+import { ListPaymentsQuerySchema, RefundPaymentParamsSchema, RefundPaymentSchema, } from './schemas.js';
 import { handleBillingError, BillingError, BillingErrorCodes } from '../shared/errors.js';
 export class PaymentsController {
     service;
@@ -9,11 +9,26 @@ export class PaymentsController {
     listPayments = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = req.user?.currentOrgId || req.user?.orgId;
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const query = ListPaymentsQuerySchema.parse(req.query);
             const result = await this.service.listPayments(orgId, query.page, query.limit, query.status);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    };
+    refundPayment = async (request, reply) => {
+        const req = request;
+        try {
+            const orgId = req.user?.currentOrgId || req.user?.orgId;
+            if (!orgId)
+                throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+            const { paymentId } = RefundPaymentParamsSchema.parse(req.params);
+            const body = RefundPaymentSchema.parse(req.body ?? {});
+            const result = await this.service.refundPayment(orgId, paymentId, body.amount, body.reason);
             return reply.send(result);
         }
         catch (error) {

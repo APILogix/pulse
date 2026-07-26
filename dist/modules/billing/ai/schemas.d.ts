@@ -1,5 +1,6 @@
 import { z } from 'zod';
 export declare const ConsumeAiCreditsSchema: z.ZodObject<{
+    requestId: z.ZodOptional<z.ZodString>;
     featureKey: z.ZodString;
     provider: z.ZodString;
     model: z.ZodString;

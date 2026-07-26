@@ -3,6 +3,9 @@ export interface BillingProvisioningResult {
     subscriptionId: string;
     planId: string;
     status: 'active' | 'trialing';
+    featureCount: number;
+    eventLimit: number;
+    aiCreditLimit: number;
 }
 /** SQL boundary for the Billing-owned part of organization provisioning. */
 export declare class BillingProvisioningRepository {

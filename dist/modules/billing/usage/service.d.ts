@@ -1,21 +1,15 @@
-import { UsageRepository } from './repository.js';
+import type { UsageRepository } from './repository.js';
+interface BillingUserContext {
+    id: string;
+    currentOrgId?: string | null;
+    orgId?: string | null;
+}
 export declare class UsageService {
     private readonly repository;
     constructor(repository: UsageRepository);
+    resolveAuthorizedOrgId(user: BillingUserContext | undefined, requestedOrgId?: string): Promise<string>;
     getCurrentUsage(orgId: string): Promise<{
-        success: boolean;
-        data: {
-            eventsUsed: number;
-            eventLimit: number;
-            aiCreditsUsed: number;
-            aiCreditLimit: number;
-            remainingEvents?: never;
-            remainingAiCredits?: never;
-            projectsUsed?: never;
-            membersUsed?: never;
-        };
-    } | {
-        success: boolean;
+        success: true;
         data: {
             eventsUsed: number;
             eventLimit: number;
@@ -40,5 +34,27 @@ export declare class UsageService {
             requestsCount: any;
         }[];
     }>;
+    getProjectAttribution(orgId: string, options: {
+        bucket: 'minute' | 'hour' | 'day';
+        startDate?: Date;
+        endDate?: Date;
+        projectId?: string;
+        limit: number;
+        offset: number;
+    }): Promise<{
+        success: boolean;
+        data: any[];
+    }>;
+    getApiKeyAttribution(orgId: string, options: {
+        startDate?: Date;
+        endDate?: Date;
+        projectId?: string;
+        limit: number;
+        offset: number;
+    }): Promise<{
+        success: boolean;
+        data: any[];
+    }>;
 }
+export {};
 //# sourceMappingURL=service.d.ts.map

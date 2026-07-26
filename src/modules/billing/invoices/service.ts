@@ -30,19 +30,11 @@ export class InvoicesService {
   }
 
   async getUpcomingInvoice(orgId: string) {
-    // In a real system (like Stripe), we would ask Stripe to preview the next invoice.
-    // Locally, we would calculate it based on the active subscription, price, and current unbilled usage.
-    // For this rewrite, we will stub it to return a payload that matches the old behaviour.
-    return { 
-      success: true, 
-      data: {
-        organization_id: orgId,
-        status: InvoiceStatus.DRAFT,
-        subtotal_amount: 0,
-        total_amount: 0,
-        currency: 'USD'
-      }
-    };
+    const preview = await this.repository.getUpcomingInvoicePreview(orgId);
+    if (!preview) {
+      throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
+    }
+    return { success: true, data: preview };
   }
 
   async payInvoice(orgId: string, invoiceId: string, paymentMethodId?: string) {

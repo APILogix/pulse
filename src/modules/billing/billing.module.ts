@@ -21,6 +21,8 @@ import { webhooksRoutes } from './webhooks/routes.js';
 import { couponsRoutes } from './coupons/routes.js';
 import { billingAuditLogsRoutes } from './audit-logs/routes.js';
 import { aiBillingRoutes } from './ai/routes.js';
+import { refundsRoutes } from './refunds/routes.js';
+import { providerSurfacesRoutes } from './provider-surfaces/routes.js';
 import { internalBillingRoutes } from './internal/routes.js';
 
 import { createBillingLogger } from './shared/utils.js';
@@ -42,6 +44,8 @@ async function billingModule(
   await fastify.register(couponsRoutes, { prefix: '/billing/coupons' });
   await fastify.register(billingAuditLogsRoutes, { prefix: '/billing/audit-logs' });
   await fastify.register(aiBillingRoutes, { prefix: '/billing/ai' });
+  await fastify.register(refundsRoutes, { prefix: '/billing/refunds' });
+  await fastify.register(providerSurfacesRoutes, { prefix: '/billing' });
   await fastify.register(webhooksRoutes, { prefix: '/billing/webhooks' });
   await fastify.register(internalBillingRoutes, { prefix: '/internal/v1' });
 

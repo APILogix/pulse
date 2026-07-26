@@ -22,4 +22,52 @@ export const CreateQuotaRequestSchema = z.object({
 export const ReviewQuotaRequestSchema = z.object({
     notes: z.string().max(2000).optional(),
 });
+const LimitUsageSchema = z.object({
+    used: z.number(),
+    limit: z.number().nullable(),
+});
+const EnabledLimitUsageSchema = LimitUsageSchema.extend({
+    enabled: z.boolean(),
+});
+export const BillingSummaryResponseSchema = z.object({
+    orgId: z.string().uuid(),
+    subscriptionStatus: z.string(),
+    planTier: z.string(),
+    eventLimitMonthly: z.number(),
+    hardCap: z.boolean(),
+    usage: z.object({
+        activeMembers: LimitUsageSchema,
+        eventsMonthly: LimitUsageSchema.extend({
+            remaining: z.number(),
+        }),
+        aiCredits: LimitUsageSchema.extend({
+            remaining: z.number(),
+        }),
+        ssoProviders: EnabledLimitUsageSchema,
+        scimTokens: EnabledLimitUsageSchema,
+    }),
+}).strict();
+export const UsageLimitsResponseSchema = z.object({
+    subscriptionStatus: z.string(),
+    planKey: z.string(),
+    limits: z.object({
+        members: LimitUsageSchema.extend({
+            pending: z.number(),
+        }),
+        projects: LimitUsageSchema,
+        apiKeys: LimitUsageSchema,
+        connectors: LimitUsageSchema,
+        alertRules: LimitUsageSchema,
+        dashboards: LimitUsageSchema,
+        ssoProviders: EnabledLimitUsageSchema,
+        scimTokens: EnabledLimitUsageSchema,
+        eventsMonthly: LimitUsageSchema.extend({
+            remaining: z.number(),
+            hardCap: z.boolean(),
+        }),
+        aiCredits: LimitUsageSchema.extend({
+            remaining: z.number(),
+        }),
+    }),
+}).strict();
 //# sourceMappingURL=quotas.schema.js.map

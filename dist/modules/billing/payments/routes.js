@@ -7,9 +7,7 @@ export async function paymentsRoutes(fastify, options) {
     const service = new PaymentsService(repository);
     const controller = new PaymentsController(service);
     fastify.addHook('preHandler', authenticate);
-    // We map the legacy /payment-methods to /payments conceptually here,
-    // but for exact legacy contract compatibility we might mount this at /payment-methods
-    // For the new clean slice architecture, we keep it as payments route logic.
     fastify.get('/', controller.listPayments);
+    fastify.post('/:paymentId/refund', controller.refundPayment);
 }
 //# sourceMappingURL=routes.js.map

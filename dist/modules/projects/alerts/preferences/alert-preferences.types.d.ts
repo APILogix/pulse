@@ -33,8 +33,8 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         release: "release";
         security: "security";
         billing: "billing";
-        ai: "ai";
         usage: "usage";
+        ai: "ai";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";

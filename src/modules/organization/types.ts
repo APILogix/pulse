@@ -41,7 +41,7 @@ export const JoinMethodSchema = z.enum([
   "scim",
 ]);
 
-export { QuotaRequestStatusSchema, QuotaTypeSchema } from "./quotas/quotas.schema.js";
+export { BillingSummaryResponseSchema, QuotaRequestStatusSchema, QuotaTypeSchema, UsageLimitsResponseSchema } from "./quotas/quotas.schema.js";
 
 export const SecurityEventSeveritySchema = z.enum([
   "low",
@@ -52,7 +52,7 @@ export const SecurityEventSeveritySchema = z.enum([
 
 // (exported via shared/types.js)
 export type JoinMethod = z.infer<typeof JoinMethodSchema>;
-export type { QuotaRequestStatus, QuotaType } from "./quotas/quotas.schema.js";
+export type { BillingSummaryResponse, QuotaRequestStatus, QuotaType, UsageLimitsResponse } from "./quotas/quotas.schema.js";
 export type SecurityEventSeverity = z.infer<typeof SecurityEventSeveritySchema>;
 
 // (exported via shared/types.js)

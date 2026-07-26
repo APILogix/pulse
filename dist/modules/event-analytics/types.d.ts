@@ -109,9 +109,9 @@ export declare const ListErrorGroupsQuerySchema: z.ZodObject<{
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
     status: z.ZodOptional<z.ZodEnum<{
+        ignored: "ignored";
         resolved: "resolved";
         unresolved: "unresolved";
-        ignored: "ignored";
         muted: "muted";
     }>>;
     search: z.ZodOptional<z.ZodString>;

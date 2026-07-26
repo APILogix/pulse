@@ -16,6 +16,16 @@ export declare class WebhooksRepository {
     private readonly db;
     constructor(db?: Pool);
     insertWebhookEvent(event: WebhookEventRecord, db?: Db): Promise<void>;
+    listWebhookEvents(options: {
+        provider?: BillingProvider;
+        status?: string;
+        limit: number;
+        offset: number;
+    }, db?: Db): Promise<{
+        data: any[];
+        total: number;
+    }>;
+    markWebhookEventForRetry(eventId: string, db?: Db): Promise<any | null>;
 }
 export {};
 //# sourceMappingURL=repository.d.ts.map

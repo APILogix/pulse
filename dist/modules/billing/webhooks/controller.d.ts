@@ -5,5 +5,7 @@ export declare class WebhooksController {
     constructor(service: WebhooksService);
     stripeWebhook: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     razorpayWebhook: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    listEvents: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    retryEvent: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
 }
 //# sourceMappingURL=controller.d.ts.map

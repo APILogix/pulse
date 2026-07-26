@@ -9,6 +9,10 @@ export declare class InternalBillingRepository {
     getFeatureValue(orgId: string, featureKey: string, db?: Db): Promise<any>;
     getCurrentUsageForUpdate(orgId: string, db: PoolClient): Promise<any>;
     getCurrentUsage(orgId: string, db?: Db): Promise<any>;
+    lockIdempotencyKey(scope: string, orgId: string, requestId: string, db?: Db): Promise<void>;
+    getProcessedEventUsage(orgId: string, requestId: string, db?: Db): Promise<any>;
+    recordProcessedEventUsage(orgId: string, requestId: string, resultState: Record<string, unknown>, db?: Db): Promise<void>;
+    getAiUsageByRequestId(orgId: string, requestId: string, db?: Db): Promise<any>;
     incrementEventUsage(body: EventUsageBody, acceptedCount: number, overageCount: number, db: PoolClient): Promise<void>;
     incrementAiCredits(body: AiCreditUsageBody, db: PoolClient): Promise<void>;
     adjustResourceUsage(body: ResourceUsageBody, direction: 1 | -1, db: PoolClient): Promise<any>;

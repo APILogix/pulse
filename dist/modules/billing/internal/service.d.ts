@@ -21,26 +21,24 @@ export declare class InternalBillingService {
         featureKey: string;
         limit: number;
     }>;
-    consumeEvents(body: EventUsageBody): Promise<{
-        accepted: boolean;
-        remaining: number;
-        overage: boolean;
-        code: "BILLING_004";
-        overageEvents?: never;
-    } | {
-        accepted: boolean;
-        remaining: number;
-        overage: boolean;
-        overageEvents: number;
-        code: "BILLING_005" | undefined;
-    }>;
+    consumeEvents(body: EventUsageBody): Promise<any>;
     consumeAiCredits(body: AiCreditUsageBody): Promise<{
         accepted: boolean;
-        remaining: number;
-        code: "BILLING_004";
+        remaining: null;
+        creditsUsed: number;
+        idempotent: boolean;
+        code?: never;
     } | {
         accepted: boolean;
         remaining: number;
+        code: "BILLING_004";
+        creditsUsed?: never;
+        idempotent?: never;
+    } | {
+        accepted: boolean;
+        remaining: number;
+        creditsUsed: number;
+        idempotent: boolean;
         code?: never;
     }>;
     adjustResource(body: ResourceUsageBody, direction: 1 | -1): Promise<{

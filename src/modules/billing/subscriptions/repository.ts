@@ -1,5 +1,14 @@
 import { pool } from '../../../config/database.js';
 import type { Pool, PoolClient } from 'pg';
+import {
+  AI_CREDIT_LIMIT_FEATURE_KEY,
+  EVENT_LIMIT_FEATURE_KEY,
+  type BillingEntitlementSnapshotRow,
+  buildEntitlementsSnapshot,
+  buildModulesSnapshot,
+  integerEntitlement,
+  usageLimitParameter,
+} from '../shared/entitlement-snapshot.js';
 import { 
   SubscriptionStatus, 
   BillingProvider, 
@@ -22,6 +31,8 @@ const SUBSCRIPTION_UPDATE_COLUMNS = new Set<keyof SubscriptionRow>([
   'trial_end',
   'cancel_at_period_end',
   'cancelled_at',
+  'modules',
+  'addons',
   'metadata',
   'deleted_at',
 ]);
@@ -41,6 +52,8 @@ export interface SubscriptionRow {
   trial_end: Date | null;
   cancel_at_period_end: boolean;
   cancelled_at: Date | null;
+  modules: Record<string, unknown>;
+  addons: unknown[];
   metadata: Record<string, unknown>;
   created_at: Date;
   updated_at: Date;
@@ -56,7 +69,15 @@ export interface SubscriptionEventRow {
   actor_user_id: string | null;
   old_plan_id: string | null;
   new_plan_id: string | null;
+  metadata?: Record<string, unknown>;
   created_at: Date;
+}
+
+export interface UsageLimitSnapshot {
+  eventLimit: number;
+  aiCreditLimit: number;
+  modules: Record<string, unknown>;
+  entitlements: Record<string, unknown>;
 }
 
 export class SubscriptionsRepository {
@@ -107,17 +128,93 @@ export class SubscriptionsRepository {
       `INSERT INTO organization_subscriptions (
          organization_id, plan_id, status, provider, billing_interval,
          provider_customer_id, provider_subscription_id, current_period_start,
-         current_period_end, trial_start, trial_end, cancel_at_period_end
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         current_period_end, trial_start, trial_end, cancel_at_period_end,
+         modules, metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
        RETURNING *`,
       [
         sub.organization_id, sub.plan_id, sub.status, sub.provider ?? BillingProvider.SYSTEM,
         sub.billing_interval, sub.provider_customer_id, sub.provider_subscription_id,
         sub.current_period_start, sub.current_period_end, sub.trial_start, sub.trial_end,
-        sub.cancel_at_period_end ?? false
+        sub.cancel_at_period_end ?? false,
+        JSON.stringify(sub.modules ?? {}),
+        JSON.stringify(sub.metadata ?? {}),
       ]
     );
     return result.rows[0];
+  }
+
+  async getPlanUsageLimitSnapshot(planId: string, db: Db = this.db): Promise<UsageLimitSnapshot> {
+    const result = await db.query<BillingEntitlementSnapshotRow>(
+      `SELECT
+         bf.feature_key,
+         bf.module,
+         bf.is_module_root,
+         bf.value_type,
+         pfe.boolean_value,
+         pfe.integer_value,
+         pfe.decimal_value,
+         pfe.string_value
+       FROM plan_feature_entitlements pfe
+       JOIN billing_features bf ON bf.id = pfe.feature_id
+       WHERE pfe.plan_id = $1
+         AND pfe.deleted_at IS NULL
+         AND bf.deleted_at IS NULL
+         AND bf.is_deprecated = FALSE
+       ORDER BY bf.sort_order ASC, bf.feature_key ASC`,
+      [planId],
+    );
+    const rows = result.rows;
+    return {
+      eventLimit: integerEntitlement(rows, EVENT_LIMIT_FEATURE_KEY),
+      aiCreditLimit: integerEntitlement(rows, AI_CREDIT_LIMIT_FEATURE_KEY),
+      modules: buildModulesSnapshot(rows),
+      entitlements: buildEntitlementsSnapshot(rows),
+    };
+  }
+
+  async upsertUsageCurrentPeriod(
+    orgId: string,
+    subscription: Pick<SubscriptionRow, 'id' | 'current_period_start' | 'current_period_end'>,
+    limits: UsageLimitSnapshot,
+    db: Db = this.db,
+  ): Promise<void> {
+    await db.query(
+      `INSERT INTO organization_usage_current_period (
+         organization_id, subscription_id, period_start, period_end,
+         events_used, ai_credits_used, projects_used, members_used,
+         api_keys_used, connectors_used, alert_rules_used, dashboards_used,
+         event_limit, ai_credit_limit, overage_events, overage_ai_credits,
+         metadata
+       ) VALUES (
+         $1, $2, $3, $4,
+         0, 0, 0, 1,
+         0, 0, 0, 0,
+         $5, $6, 0, 0,
+         $7::jsonb
+       )
+       ON CONFLICT (organization_id) DO UPDATE
+       SET subscription_id = EXCLUDED.subscription_id,
+           period_start = EXCLUDED.period_start,
+           period_end = EXCLUDED.period_end,
+           event_limit = EXCLUDED.event_limit,
+           ai_credit_limit = EXCLUDED.ai_credit_limit,
+           metadata = organization_usage_current_period.metadata || EXCLUDED.metadata,
+           updated_at = NOW()`,
+      [
+        orgId,
+        subscription.id,
+        subscription.current_period_start,
+        subscription.current_period_end,
+        usageLimitParameter(limits.eventLimit),
+        usageLimitParameter(limits.aiCreditLimit),
+        JSON.stringify({
+          source: 'subscription_plan_change',
+          entitlements: limits.entitlements,
+          modules: limits.modules,
+        }),
+      ],
+    );
   }
 
   async updateSubscription(
@@ -158,11 +255,12 @@ export class SubscriptionsRepository {
     await db.query(
       `INSERT INTO subscription_events (
          organization_id, subscription_id, event_type, actor, 
-         actor_user_id, old_plan_id, new_plan_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         actor_user_id, old_plan_id, new_plan_id, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
       [
         event.organization_id, event.subscription_id, event.event_type, 
-        event.actor, event.actor_user_id, event.old_plan_id, event.new_plan_id
+        event.actor, event.actor_user_id, event.old_plan_id, event.new_plan_id,
+        JSON.stringify(event.metadata ?? {}),
       ]
     );
   }

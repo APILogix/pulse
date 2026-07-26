@@ -62,4 +62,70 @@ export interface OrganizationUsageCounts {
   pendingInvitations: number;
   ssoProviders: number;
   scimTokens: number;
+  eventsUsed: number;
+  eventLimit: number;
+  remainingEvents: number;
+  aiCreditsUsed: number;
+  aiCreditLimit: number;
+  remainingAiCredits: number;
+  projectsUsed: number;
+  apiKeysUsed: number;
+  connectorsUsed: number;
+  alertRulesUsed: number;
+  dashboardsUsed: number;
 }
+
+const LimitUsageSchema = z.object({
+  used: z.number(),
+  limit: z.number().nullable(),
+});
+
+const EnabledLimitUsageSchema = LimitUsageSchema.extend({
+  enabled: z.boolean(),
+});
+
+export const BillingSummaryResponseSchema = z.object({
+  orgId: z.string().uuid(),
+  subscriptionStatus: z.string(),
+  planTier: z.string(),
+  eventLimitMonthly: z.number(),
+  hardCap: z.boolean(),
+  usage: z.object({
+    activeMembers: LimitUsageSchema,
+    eventsMonthly: LimitUsageSchema.extend({
+      remaining: z.number(),
+    }),
+    aiCredits: LimitUsageSchema.extend({
+      remaining: z.number(),
+    }),
+    ssoProviders: EnabledLimitUsageSchema,
+    scimTokens: EnabledLimitUsageSchema,
+  }),
+}).strict();
+
+export const UsageLimitsResponseSchema = z.object({
+  subscriptionStatus: z.string(),
+  planKey: z.string(),
+  limits: z.object({
+    members: LimitUsageSchema.extend({
+      pending: z.number(),
+    }),
+    projects: LimitUsageSchema,
+    apiKeys: LimitUsageSchema,
+    connectors: LimitUsageSchema,
+    alertRules: LimitUsageSchema,
+    dashboards: LimitUsageSchema,
+    ssoProviders: EnabledLimitUsageSchema,
+    scimTokens: EnabledLimitUsageSchema,
+    eventsMonthly: LimitUsageSchema.extend({
+      remaining: z.number(),
+      hardCap: z.boolean(),
+    }),
+    aiCredits: LimitUsageSchema.extend({
+      remaining: z.number(),
+    }),
+  }),
+}).strict();
+
+export type BillingSummaryResponse = z.infer<typeof BillingSummaryResponseSchema>;
+export type UsageLimitsResponse = z.infer<typeof UsageLimitsResponseSchema>;

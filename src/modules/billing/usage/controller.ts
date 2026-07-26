@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { UsageService } from './service.js';
+import { BillingUuidSchema } from '../shared/types.js';
 import {
   GetUsageRecordsSchema,
   type GetUsageRecordsQuery,
@@ -8,17 +9,31 @@ import {
   UsageAttributionQuerySchema,
   type UsageAttributionQuery,
 } from './schemas.js';
-import { handleBillingError, BillingError, BillingErrorCodes } from '../shared/errors.js';
+import { BillingError, BillingErrorCodes, handleBillingError } from '../shared/errors.js';
 import type { RequestWithUser } from '../shared/types.js';
 
 export class UsageController {
   constructor(private readonly service: UsageService) { }
 
+  private requestedOrgId(request: FastifyRequest): string | undefined {
+    const header = request.headers['x-org-id'];
+    const raw = Array.isArray(header) ? header[0] : header;
+    if (!raw) return undefined;
+    const parsed = BillingUuidSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new BillingError('Invalid organization header', BillingErrorCodes.UNAUTHORIZED, 400);
+    }
+    return parsed.data;
+  }
+
+  private async resolveOrgId(req: RequestWithUser, request: FastifyRequest): Promise<string> {
+    return this.service.resolveAuthorizedOrgId(req.user, this.requestedOrgId(request));
+  }
+
   getCurrentUsage = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user?.currentOrgId || req.user?.orgId;
-      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+      const orgId = await this.resolveOrgId(req, request);
 
       const result = await this.service.getCurrentUsage(orgId);
       return reply.send(result);
@@ -30,8 +45,7 @@ export class UsageController {
   getDailyUsage = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user?.currentOrgId || req.user?.orgId;
-      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+      const orgId = await this.resolveOrgId(req, request);
 
       const query = GetUsageRecordsSchema.parse(req.query) as GetUsageRecordsQuery;
       const startDate = query.startDate ? new Date(query.startDate) : undefined;
@@ -47,8 +61,7 @@ export class UsageController {
   incrementEventUsage = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user?.currentOrgId || req.user?.orgId;
-      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+      const orgId = await this.resolveOrgId(req, request);
 
       const body = IncrementUsageSchema.parse(req.body) as IncrementUsageBody;
       const result = await this.service.incrementEventUsage(orgId, body.count);
@@ -61,8 +74,7 @@ export class UsageController {
   getProjectAttribution = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user?.currentOrgId || req.user?.orgId;
-      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+      const orgId = await this.resolveOrgId(req, request);
 
       const query = UsageAttributionQuerySchema.parse(req.query) as UsageAttributionQuery;
       const options: Parameters<UsageService['getProjectAttribution']>[1] = {
@@ -84,8 +96,7 @@ export class UsageController {
   getApiKeyAttribution = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = req.user?.currentOrgId || req.user?.orgId;
-      if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
+      const orgId = await this.resolveOrgId(req, request);
 
       const query = UsageAttributionQuerySchema.parse(req.query) as UsageAttributionQuery;
       const options: Parameters<UsageService['getApiKeyAttribution']>[1] = {

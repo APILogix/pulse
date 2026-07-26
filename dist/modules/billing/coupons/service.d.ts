@@ -6,9 +6,15 @@ export declare class CouponsService {
         success: boolean;
         data: import("./repository.js").CouponRow;
     }>;
-    applyCoupon(code: string, orgId: string, planId: string, userId: string): Promise<{
+    applyCoupon(code: string, orgId: string, userId: string): Promise<{
         success: boolean;
-        data: import("./repository.js").CouponRow;
+        data: {
+            coupon: import("./repository.js").CouponRow;
+            subscriptionId: string;
+            planId: string;
+            discountAmount: number;
+            currency: string;
+        };
     }>;
 }
 //# sourceMappingURL=service.d.ts.map

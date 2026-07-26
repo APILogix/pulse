@@ -14,6 +14,7 @@ import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import {
   AcceptInvitationSchema,
   AuditLogQuerySchema,
+  BillingSummaryResponseSchema,
   CreateInvitationSchema,
   CreateOrganizationSchema,
   CreateQuotaRequestSchema,
@@ -43,6 +44,7 @@ import {
   UpdateOrganizationSchema,
   UpdateSettingsSchema,
   UpdateSsoProviderSchema,
+  UsageLimitsResponseSchema,
   type RequestMeta,
 } from './types.js';
 import { registerDomainRoutes } from './domains/domains.routes.js';
@@ -445,13 +447,13 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   fastify.get('/:orgId/billing-summary', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
     const result = await svc.getBillingSummary(orgId, asAuth(request).user.id);
-    return reply.send({ success: true, data: result });
+    return reply.send({ success: true, data: BillingSummaryResponseSchema.parse(result) });
   }));
 
   fastify.get('/:orgId/usage-limits', auth, withErrorHandling(async (request, reply) => {
     const { orgId } = OrgIdParamsSchema.parse(request.params);
     const result = await svc.getUsageLimits(orgId, asAuth(request).user.id);
-    return reply.send({ success: true, data: result });
+    return reply.send({ success: true, data: UsageLimitsResponseSchema.parse(result) });
   }));
 
   fastify.get('/slug-available/:slug', withErrorHandling(async (request, reply) => {

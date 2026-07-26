@@ -1510,7 +1510,7 @@ export class BillingJobsRepository {
         ent AS (
           SELECT organization_id,
                  SUM(integer_value) FILTER (WHERE feature_key = 'monthly_events') AS event_limit,
-                 SUM(integer_value) FILTER (WHERE feature_key = 'ai_credits') AS ai_credit_limit
+                 SUM(integer_value) FILTER (WHERE feature_key = 'module_ai_insights_monthly_credits') AS ai_credit_limit
           FROM (
             SELECT * FROM plan_entitlements
             UNION ALL
@@ -1520,13 +1520,13 @@ export class BillingJobsRepository {
         ),
         refreshed AS (
           UPDATE organization_usage_current_period u
-          SET event_limit = COALESCE(ent.event_limit, u.event_limit),
-              ai_credit_limit = COALESCE(ent.ai_credit_limit, u.ai_credit_limit),
+          SET event_limit = CASE WHEN COALESCE(ent.event_limit, u.event_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.event_limit, u.event_limit) END,
+              ai_credit_limit = CASE WHEN COALESCE(ent.ai_credit_limit, u.ai_credit_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.ai_credit_limit, u.ai_credit_limit) END,
               updated_at = NOW()
           FROM ent
           WHERE u.organization_id = ent.organization_id
-            AND (u.event_limit IS DISTINCT FROM COALESCE(ent.event_limit, u.event_limit)
-              OR u.ai_credit_limit IS DISTINCT FROM COALESCE(ent.ai_credit_limit, u.ai_credit_limit))
+            AND (u.event_limit IS DISTINCT FROM CASE WHEN COALESCE(ent.event_limit, u.event_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.event_limit, u.event_limit) END
+              OR u.ai_credit_limit IS DISTINCT FROM CASE WHEN COALESCE(ent.ai_credit_limit, u.ai_credit_limit) < 0 THEN 9223372036854775807 ELSE COALESCE(ent.ai_credit_limit, u.ai_credit_limit) END)
           RETURNING u.organization_id
         )
         SELECT COUNT(*)::text AS count FROM refreshed

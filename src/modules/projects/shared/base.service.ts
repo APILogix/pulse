@@ -264,7 +264,7 @@ export class BaseProjectService {
       this.assertWithinLimit(
         "Project",
         counts.projects,
-        this.limitFrom(entitlements, ["max_projects", "projects_max"]),
+        this.limitFrom(entitlements, ["limit_projects_max", "max_projects", "projects_max"]),
         increment,
       );
     }
@@ -272,7 +272,7 @@ export class BaseProjectService {
       this.assertWithinLimit(
         "Project environment",
         counts.environments,
-        this.limitFrom(entitlements, ["max_project_environments", "max_environments", "environments_max"]),
+        this.limitFrom(entitlements, ["limit_environments_max", "max_project_environments", "max_environments", "environments_max"]),
         increment,
       );
     }
@@ -280,7 +280,7 @@ export class BaseProjectService {
       this.assertWithinLimit(
         "Project API key",
         counts.apiKeys,
-        this.limitFrom(entitlements, ["max_project_api_keys", "max_api_keys", "api_keys_max"]),
+        this.limitFrom(entitlements, ["limit_api_keys_max", "max_project_api_keys", "max_api_keys", "api_keys_max"]),
         increment,
       );
     }

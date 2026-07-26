@@ -54,5 +54,103 @@ export interface OrganizationUsageCounts {
     pendingInvitations: number;
     ssoProviders: number;
     scimTokens: number;
+    eventsUsed: number;
+    eventLimit: number;
+    remainingEvents: number;
+    aiCreditsUsed: number;
+    aiCreditLimit: number;
+    remainingAiCredits: number;
+    projectsUsed: number;
+    apiKeysUsed: number;
+    connectorsUsed: number;
+    alertRulesUsed: number;
+    dashboardsUsed: number;
 }
+export declare const BillingSummaryResponseSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    subscriptionStatus: z.ZodString;
+    planTier: z.ZodString;
+    eventLimitMonthly: z.ZodNumber;
+    hardCap: z.ZodBoolean;
+    usage: z.ZodObject<{
+        activeMembers: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        eventsMonthly: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            remaining: z.ZodNumber;
+        }, z.core.$strip>;
+        aiCredits: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            remaining: z.ZodNumber;
+        }, z.core.$strip>;
+        ssoProviders: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            enabled: z.ZodBoolean;
+        }, z.core.$strip>;
+        scimTokens: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            enabled: z.ZodBoolean;
+        }, z.core.$strip>;
+    }, z.core.$strip>;
+}, z.core.$strict>;
+export declare const UsageLimitsResponseSchema: z.ZodObject<{
+    subscriptionStatus: z.ZodString;
+    planKey: z.ZodString;
+    limits: z.ZodObject<{
+        members: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            pending: z.ZodNumber;
+        }, z.core.$strip>;
+        projects: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        apiKeys: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        connectors: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        alertRules: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        dashboards: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+        }, z.core.$strip>;
+        ssoProviders: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            enabled: z.ZodBoolean;
+        }, z.core.$strip>;
+        scimTokens: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            enabled: z.ZodBoolean;
+        }, z.core.$strip>;
+        eventsMonthly: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            remaining: z.ZodNumber;
+            hardCap: z.ZodBoolean;
+        }, z.core.$strip>;
+        aiCredits: z.ZodObject<{
+            used: z.ZodNumber;
+            limit: z.ZodNullable<z.ZodNumber>;
+            remaining: z.ZodNumber;
+        }, z.core.$strip>;
+    }, z.core.$strip>;
+}, z.core.$strict>;
+export type BillingSummaryResponse = z.infer<typeof BillingSummaryResponseSchema>;
+export type UsageLimitsResponse = z.infer<typeof UsageLimitsResponseSchema>;
 //# sourceMappingURL=quotas.schema.d.ts.map

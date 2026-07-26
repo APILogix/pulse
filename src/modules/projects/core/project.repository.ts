@@ -99,7 +99,7 @@ export class ProjectRepository {
       `SELECT
          ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")},
          COUNT(k.id)::int AS api_keys_count,
-         COUNT(k.id) FILTER (WHERE k.is_active = TRUE)::int AS active_api_keys_count
+         COUNT(k.id) FILTER (WHERE k.status = 'active')::int AS active_api_keys_count
        FROM projects p
        LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
        ${whereClause}
@@ -373,7 +373,7 @@ export class ProjectRepository {
       `SELECT
          COALESCE(SUM(total_events),0)::text AS total_requests,
          COUNT(DISTINCT k.id)::text AS api_keys_count,
-         COUNT(DISTINCT k.id) FILTER (WHERE k.is_active = TRUE)::text AS active_keys_count,
+         COUNT(DISTINCT k.id) FILTER (WHERE k.status = 'active')::text AS active_keys_count,
          COUNT(DISTINCT e.id)::text AS environment_count
        FROM projects p
        LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL

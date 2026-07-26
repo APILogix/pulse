@@ -7,18 +7,18 @@ export interface CurrentUsageRow {
   organization_id: string;
   period_start: Date;
   period_end: Date;
-  events_used: number;
-  event_limit: number;
-  remaining_events: number;
-  ai_credits_used: number;
-  ai_credit_limit: number;
-  remaining_ai_credits: number;
-  projects_used: number;
-  members_used: number;
-  api_keys_used: number;
-  connectors_used: number;
-  alert_rules_used: number;
-  dashboards_used: number;
+  events_used: number | string;
+  event_limit: number | string;
+  remaining_events: number | string;
+  ai_credits_used: number | string;
+  ai_credit_limit: number | string;
+  remaining_ai_credits: number | string;
+  projects_used: number | string;
+  members_used: number | string;
+  api_keys_used: number | string;
+  connectors_used: number | string;
+  alert_rules_used: number | string;
+  dashboards_used: number | string;
 }
 
 type UsageBucket = 'minute' | 'hour' | 'day';
@@ -38,6 +38,20 @@ export class UsageRepository {
       [orgId]
     );
     return result.rows[0] || null;
+  }
+
+  async isActiveOrganizationMember(orgId: string, userId: string, db: Db = this.db): Promise<boolean> {
+    const result = await db.query<{ is_member: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM organization_members
+         WHERE org_id = $1
+           AND user_id = $2
+           AND status = 'active'
+       ) AS is_member`,
+      [orgId, userId],
+    );
+    return result.rows[0]?.is_member === true;
   }
 
   async incrementEventUsage(orgId: string, count: number = 1, db: Db = this.db): Promise<void> {

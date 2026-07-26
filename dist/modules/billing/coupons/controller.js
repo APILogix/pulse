@@ -6,10 +6,13 @@ export class CouponsController {
     constructor(service) {
         this.service = service;
     }
+    getOrgId(req) {
+        return req.user?.currentOrgId || req.user?.orgId;
+    }
     validateCoupon = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const query = ValidateCouponSchema.parse(req.query);
@@ -23,17 +26,11 @@ export class CouponsController {
     applyCoupon = async (request, reply) => {
         const req = request;
         try {
-            const orgId = req.user.orgId;
+            const orgId = this.getOrgId(req);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const body = ApplyCouponSchema.parse(req.body);
-            // We assume planId is known from the context of what they are applying it to, 
-            // but if not provided, the service would need to look up their current cart/plan.
-            // For this API, let's assume they just apply it to their current active plan/subscription.
-            // In a real system, the cart/checkout session carries the planId. 
-            // We'll pass a dummy planId here to fulfill the typing since this is a decoupled slice.
-            const dummyPlanId = "00000000-0000-0000-0000-000000000000";
-            const result = await this.service.applyCoupon(body.code, orgId, dummyPlanId, req.user.id);
+            const result = await this.service.applyCoupon(body.code, orgId, req.user.id);
             return reply.send(result);
         }
         catch (error) {

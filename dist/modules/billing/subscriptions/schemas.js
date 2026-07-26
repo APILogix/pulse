@@ -16,6 +16,11 @@ export const ChangeIntervalSchema = z.object({
 export const PreviewChangeSchema = z.object({
     newPlanId: BillingUuidSchema,
 });
+export const ScheduledChangeSchema = z.object({
+    planId: BillingUuidSchema,
+    effectiveAt: z.coerce.date().optional(),
+    prorationBehavior: z.enum(['create_prorations', 'none', 'always_invoice']).optional(),
+});
 export const CancelSubscriptionSchema = z.object({
     reason: z.string().trim().max(500).optional(),
     immediate: z.boolean().optional(),

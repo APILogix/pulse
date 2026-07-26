@@ -29,6 +29,7 @@ export interface PaymentRow {
 export declare class PaymentsRepository {
     private readonly db;
     constructor(db?: Pool);
+    withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     listPayments(orgId: string, options: {
         status?: PaymentStatus;
         limit: number;
@@ -37,6 +38,8 @@ export declare class PaymentsRepository {
         data: PaymentRow[];
         total: number;
     }>;
+    getPaymentForUpdate(orgId: string, paymentId: string, db: PoolClient): Promise<PaymentRow | null>;
+    refundPayment(payment: PaymentRow, amount: number, reason: string | undefined, db: PoolClient): Promise<PaymentRow>;
 }
 export {};
 //# sourceMappingURL=repository.d.ts.map

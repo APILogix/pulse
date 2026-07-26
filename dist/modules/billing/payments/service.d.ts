@@ -13,5 +13,9 @@ export declare class PaymentsService {
             hasMore: boolean;
         };
     }>;
+    refundPayment(orgId: string, paymentId: string, amount?: number, reason?: string): Promise<{
+        success: boolean;
+        data: import("./repository.js").PaymentRow;
+    }>;
 }
 //# sourceMappingURL=service.d.ts.map
