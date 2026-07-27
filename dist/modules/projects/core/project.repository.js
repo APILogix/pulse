@@ -54,7 +54,7 @@ export class ProjectRepository {
         const result = await db.query(`SELECT
          ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")},
          COUNT(k.id)::int AS api_keys_count,
-         COUNT(k.id) FILTER (WHERE k.is_active = TRUE)::int AS active_api_keys_count
+         COUNT(k.id) FILTER (WHERE k.status = 'active')::int AS active_api_keys_count
        FROM projects p
        LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
        ${whereClause}
@@ -96,6 +96,44 @@ export class ProjectRepository {
             }
             throw error;
         }
+    }
+    async provisionRuntimeDefaults(project, actorUserId, meta, client) {
+        await client.query(`INSERT INTO project_environments (
+         project_id, organization_id, name, slug, description,
+         is_default, is_active, color, created_by_user_id
+       ) VALUES ($1, $2, 'Production', 'production', 'Production telemetry',
+                 TRUE, TRUE, '#16A34A', $3)
+       ON CONFLICT DO NOTHING`, [project.id, project.orgId, actorUserId]);
+        await client.query(`INSERT INTO project_usage_current (project_id, organization_id)
+       VALUES ($1, $2)
+       ON CONFLICT (project_id) DO NOTHING`, [project.id, project.orgId]);
+        await client.query(`INSERT INTO project_activity (
+         organization_id, project_id, actor_user_id, activity_type, category, summary, metadata
+       )
+       SELECT $1, $2, $3, 'project.created', 'project', 'Project created', $4::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM project_activity
+         WHERE organization_id = $1 AND project_id = $2 AND activity_type = 'project.created'
+       )`, [project.orgId, project.id, actorUserId, JSON.stringify({ name: project.name, slug: project.slug })]);
+        await client.query(`INSERT INTO project_audit_logs (
+         organization_id, project_id, actor_user_id, action, resource_type, resource_id,
+         new_values, request_id, ip_address, user_agent
+       )
+       SELECT $1, $2, $3, 'project.created', 'project', $2,
+              $4::jsonb, $5, NULLIF($6, '')::inet, $7
+       WHERE NOT EXISTS (
+         SELECT 1 FROM project_audit_logs
+         WHERE organization_id = $1 AND project_id = $2
+           AND action = 'project.created' AND resource_type = 'project' AND resource_id = $2
+       )`, [
+            project.orgId,
+            project.id,
+            actorUserId,
+            JSON.stringify({ name: project.name, slug: project.slug, visibility: project.visibility }),
+            meta.requestId,
+            meta.actorIp,
+            meta.actorUserAgent,
+        ]);
     }
     async findProjectBySlug(orgId, slug, client) {
         const db = client ?? this.db;
@@ -197,7 +235,9 @@ export class ProjectRepository {
         const db = client ?? this.db;
         const [projects, environments, apiKeys] = await Promise.all([
             db.query(`SELECT COUNT(*)::text FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, [orgId]),
-            db.query(`SELECT COUNT(*)::text FROM project_environments WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
+            db.query(`SELECT COUNT(*)::text FROM project_environments
+          WHERE organization_id = $1 AND deleted_at IS NULL
+            AND slug NOT IN ('production','staging','development')`, [orgId]),
             db.query(`SELECT COUNT(*)::text FROM project_api_keys WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
         ]);
         return {
@@ -211,7 +251,7 @@ export class ProjectRepository {
         const result = await db.query(`SELECT
          COALESCE(SUM(total_events),0)::text AS total_requests,
          COUNT(DISTINCT k.id)::text AS api_keys_count,
-         COUNT(DISTINCT k.id) FILTER (WHERE k.is_active = TRUE)::text AS active_keys_count,
+         COUNT(DISTINCT k.id) FILTER (WHERE k.status = 'active')::text AS active_keys_count,
          COUNT(DISTINCT e.id)::text AS environment_count
        FROM projects p
        LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
@@ -229,11 +269,22 @@ export class ProjectRepository {
     }
     async getProjectUsageCounters(projectId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`SELECT counter_type, value, period_start
-         FROM project_usage
-        WHERE project_id = $1
-        ORDER BY period_start DESC
-        LIMIT 100`, [projectId]);
+        const result = await db.query(`SELECT metric.counter_type, metric.value::text AS value, usage.period_start
+         FROM project_usage_current usage
+         CROSS JOIN LATERAL (VALUES
+           ('total_events', usage.total_events::numeric),
+           ('errors', usage.errors::numeric),
+           ('requests', usage.requests::numeric),
+           ('traces', usage.traces::numeric),
+           ('logs', usage.logs::numeric),
+           ('metrics', usage.metrics::numeric),
+           ('profiles', usage.profiles::numeric),
+           ('alert_count', usage.alert_count::numeric),
+           ('connector_deliveries', usage.connector_deliveries::numeric),
+           ('failed_notifications', usage.failed_notifications::numeric)
+         ) metric(counter_type, value)
+        WHERE usage.project_id = $1
+        ORDER BY metric.counter_type`, [projectId]);
         return result.rows.map((r) => ({
             counterType: r.counter_type,
             value: Number(r.value),

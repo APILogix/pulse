@@ -218,3 +218,294 @@ describe('AlertBatchProcessor connector delivery handoff', () => {
     ]);
   });
 });
+
+describe('AlertBatchProcessor project subscription gating', () => {
+  const organizationId = '44444444-4444-4444-8444-444444444444';
+  const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const allowedConnectorId = '77777777-7777-4777-8777-777777777777';
+  const blockedConnectorId = '88888888-8888-4888-8888-888888888888';
+
+  function dependencies(event: Record<string, unknown>, actions: Record<string, unknown>[] = []) {
+    const alertRepo = {
+      getBatchWithEvents: vi.fn().mockResolvedValue({ batch: { id: 'batch-project', status: 'processing' }, events: [event] }),
+      listRoutingRules: vi.fn().mockResolvedValue([{
+        id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        organization_id: organizationId,
+        name: 'project-route',
+        description: null,
+        priority: 100,
+        conditions: { severity: ['critical'] },
+        target_connector_ids: [blockedConnectorId, allowedConnectorId],
+        target_route_ids: [],
+        fallback_connector_ids: [],
+        template_id: null,
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date(),
+        deleted_at: null,
+      }]),
+      bulkUpdateEventStatus: vi.fn().mockResolvedValue(undefined),
+      bulkInsertDeliveryAttempts: vi.fn().mockResolvedValue(undefined),
+      completeBatch: vi.fn().mockResolvedValue(undefined),
+      getRuleActionsByRuleIds: vi.fn().mockResolvedValue(actions),
+      listEscalationStepsByPolicyIds: vi.fn().mockResolvedValue([]),
+      getThrottleStates: vi.fn().mockResolvedValue([]),
+      recordThrottleNotifications: vi.fn().mockResolvedValue(undefined),
+    };
+    const connectorRepo = {
+      listRoutesByIds: vi.fn().mockResolvedValue([]),
+      getByIds: vi.fn().mockResolvedValue([
+        { id: blockedConnectorId },
+        { id: allowedConnectorId },
+      ]),
+    };
+    return { alertRepo, connectorRepo };
+  }
+
+  function projectEvent() {
+    return {
+      id: '33333333-3333-4333-8333-333333333333',
+      organization_id: organizationId,
+      project_id: projectId,
+      rule_id: '55555555-5555-4555-8555-555555555555',
+      status: 'pending',
+      severity: 'critical',
+      source: 'monitoring',
+      labels: { category: 'performance' },
+      payload: { title: 'Security event', message: 'Investigate', category: 'security' },
+      fingerprint: 'fp-project',
+    };
+  }
+
+  const logger = { child: vi.fn().mockReturnThis(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  const authorize = async (events: never[]) => ({ eligible: events, suppressedUpdates: [], suppressedAttempts: [] });
+
+  function resolverWithChannelTargets(channelTargets: Array<{
+    userId: string;
+    channelId: string;
+    channelConnectorId: string;
+    subscriptionConnectorId: string;
+  }>) {
+    return {
+      resolveByProjectId: vi.fn().mockResolvedValue({
+        projectId,
+        organizationId,
+        environmentId: null,
+        apiKeyId: null,
+        subscriptions: [allowedConnectorId, blockedConnectorId].map((connectorId) => ({
+          subscriptionId: `subscription-${connectorId}`,
+          connectorId,
+          enabled: true,
+          alertCategories: ['security'],
+          severityThreshold: 'warning',
+          memberIds: [],
+          channelOverrides: {},
+        })),
+        members: [{
+          userId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          role: 'developer',
+          email: 'member@example.com',
+        }],
+      }),
+      resolveImmediateDeliveryTargets: vi.fn().mockResolvedValue(channelTargets),
+    };
+  }
+
+  it('fails closed for project events when no subscription resolver is configured', async () => {
+    const event = projectEvent();
+    const { alertRepo, connectorRepo } = dependencies(event);
+    const enqueue = vi.fn();
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      undefined,
+      authorize as never,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
+
+    expect(result.skipped).toBe(1);
+    expect(result.success).toBe(0);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('requires category, severity, active-member intersection and filters target connector IDs', async () => {
+    const event = projectEvent();
+    const actionId = '99999999-9999-4999-8999-999999999999';
+    const action = {
+      id: actionId,
+      rule_id: event.rule_id,
+      action_type: 'notify',
+      connector_id: allowedConnectorId,
+      route_id: null,
+      escalation_policy_id: null,
+      throttle_duration_seconds: 0,
+      max_notifications_per_hour: null,
+    };
+    const { alertRepo, connectorRepo } = dependencies(event, [action]);
+    const enqueue = vi.fn().mockResolvedValue('project-job');
+    const resolver = {
+      resolveByProjectId: vi.fn().mockResolvedValue({
+        projectId,
+        organizationId,
+        environmentId: null,
+        apiKeyId: null,
+        subscriptions: [{
+          subscriptionId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          connectorId: allowedConnectorId,
+          enabled: true,
+          alertCategories: ['security'],
+          severityThreshold: 'error',
+          memberIds: ['cccccccc-cccc-4ccc-8ccc-cccccccccccc'],
+          channelOverrides: {},
+        }],
+        members: [{
+          userId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          role: 'developer',
+          email: 'member@example.com',
+        }],
+      }),
+    };
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      resolver,
+      authorize as never,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
+
+    expect(result.success).toBe(1);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ connectorId: allowedConnectorId }),
+      expect.any(Object),
+    );
+    expect(alertRepo.recordThrottleNotifications).toHaveBeenCalledWith([actionId]);
+  });
+
+  it('drops subscribed targets when no authoritative channel recipient is eligible', async () => {
+    const event = projectEvent();
+    const { alertRepo, connectorRepo } = dependencies(event);
+    const enqueue = vi.fn();
+    const resolver = resolverWithChannelTargets([]);
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      resolver,
+      authorize as never,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
+
+    expect(result.skipped).toBe(1);
+    expect(result.success).toBe(0);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(resolver.resolveImmediateDeliveryTargets).toHaveBeenCalledOnce();
+    expect(resolver.resolveImmediateDeliveryTargets).toHaveBeenCalledWith({
+      organizationId,
+      projectId,
+      category: 'security',
+      severity: 'critical',
+    });
+  });
+
+  it('allows only matching authoritative channel connectors with one lookup per tuple', async () => {
+    const event = projectEvent();
+    const { alertRepo, connectorRepo } = dependencies(event);
+    const enqueue = vi.fn().mockResolvedValue('channel-authorized-job');
+    const resolver = resolverWithChannelTargets([{
+      userId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      channelId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+      channelConnectorId: allowedConnectorId,
+      subscriptionConnectorId: allowedConnectorId,
+    }]);
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      resolver,
+      authorize as never,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
+
+    expect(result.success).toBe(1);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ connectorId: allowedConnectorId }),
+      expect.any(Object),
+    );
+    expect(resolver.resolveImmediateDeliveryTargets).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        projectChannel: expect.objectContaining({
+          userId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          channelId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it('materializes a connectorless member email channel and audits the recipient', async () => {
+    const event = projectEvent();
+    const { alertRepo, connectorRepo } = dependencies(event);
+    const enqueue = vi.fn();
+    const sendDirectEmail = vi.fn().mockResolvedValue(undefined);
+    const userId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const channelId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    const resolver = {
+      resolveByProjectId: vi.fn().mockResolvedValue({
+        projectId,
+        organizationId,
+        environmentId: null,
+        apiKeyId: null,
+        subscriptions: [],
+        members: [{ userId, role: 'developer', email: 'member@example.com' }],
+      }),
+      resolveImmediateDeliveryTargets: vi.fn().mockResolvedValue([{
+        userId,
+        channelId,
+        channelType: 'email',
+        memberDestination: 'member@example.com',
+        channelMetadata: {},
+        channelConnectorId: null,
+        subscriptionConnectorId: null,
+      }]),
+    };
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      resolver,
+      authorize as never,
+      sendDirectEmail,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
+
+    expect(result.success).toBe(1);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(sendDirectEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'member@example.com' }));
+    expect(alertRepo.bulkInsertDeliveryAttempts).toHaveBeenCalledWith([
+      expect.objectContaining({
+        connectorId: null,
+        projectAlertChannelId: channelId,
+        recipientUserId: userId,
+        status: 'sent',
+      }),
+    ]);
+  });
+});

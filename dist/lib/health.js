@@ -7,7 +7,7 @@ const healthLogger = logger.child({ component: 'health-check' });
  * Balancer traffic gate and fails closed when the shared gauge is stale or deep.
  */
 export async function registerHealthChecks(app, config) {
-    app.get('/health/live', async (_req, reply) => {
+    app.get('/health/live', { config: { pressureHandler: () => undefined } }, async (_req, reply) => {
         return reply.status(200).send({
             status: 'alive',
             timestamp: new Date().toISOString(),

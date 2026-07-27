@@ -306,12 +306,12 @@ export declare const ExportSchema: z.ZodObject<{
     dataset: z.ZodEnum<{
         logs: "logs";
         metrics: "metrics";
-        requests: "requests";
         errors: "errors";
+        requests: "requests";
     }>;
     format: z.ZodDefault<z.ZodEnum<{
-        json: "json";
         csv: "csv";
+        json: "json";
     }>>;
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";

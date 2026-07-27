@@ -71,6 +71,8 @@ export interface DeliveryAttemptInsert {
   errorCategory: string | null;
   latencyMs: number | null;
   externalMessageId: string | null;
+  projectAlertChannelId?: string | null;
+  recipientUserId?: string | null;
 }
 
 export class EventsRepository {
@@ -395,15 +397,18 @@ export class EventsRepository {
     await this.db.query(
       `INSERT INTO alert_delivery_attempts
          (organization_id, event_id, connector_id, route_id, batch_id, status,
-          response_status_code, error_message, error_category, latency_ms, external_message_id)
+          response_status_code, error_message, error_category, latency_ms, external_message_id,
+          project_alert_channel_id, recipient_user_id)
        SELECT t.organization_id, t.event_id, t.connector_id, t.route_id, t.batch_id,
               t.status::delivery_attempt_status, t.response_status_code, t.error_message,
-              t.error_category, t.latency_ms, t.external_message_id
+              t.error_category, t.latency_ms, t.external_message_id,
+              t.project_alert_channel_id, t.recipient_user_id
        FROM UNNEST(
          $1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::uuid[], $6::text[],
-         $7::int[], $8::text[], $9::text[], $10::int[], $11::text[]
+         $7::int[], $8::text[], $9::text[], $10::int[], $11::text[], $12::uuid[], $13::uuid[]
        ) AS t(organization_id, event_id, connector_id, route_id, batch_id, status,
-              response_status_code, error_message, error_category, latency_ms, external_message_id)`,
+              response_status_code, error_message, error_category, latency_ms, external_message_id,
+              project_alert_channel_id, recipient_user_id)`,
       [
         rows.map((r) => r.organizationId),
         rows.map((r) => r.eventId),
@@ -416,6 +421,8 @@ export class EventsRepository {
         rows.map((r) => r.errorCategory),
         rows.map((r) => r.latencyMs),
         rows.map((r) => r.externalMessageId),
+        rows.map((r) => r.projectAlertChannelId ?? null),
+        rows.map((r) => r.recipientUserId ?? null),
       ],
     );
   }

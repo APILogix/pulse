@@ -42,9 +42,11 @@ export class ProjectService extends BaseProjectService {
                 metadata: body.metadata ?? {},
                 createdBy: userId,
             }, client);
-            await this.repository.addProjectMember(created.id, orgId, userId, ProjectMemberRole.OWNER, userId, client);
-            // Provision project defaults required by dashboards and alert routing.
+            await this.repository.ensureProjectOwner(created.id, orgId, userId, client);
+            // All application-side provisioning shares the project transaction. The
+            // canonical trigger remains an idempotent schema-level safety net.
             await this.settingsRepository.createDefault(created.id, orgId, client);
+            await this.repository.provisionRuntimeDefaults(created, userId, meta, client);
             await this.seedDefaultNotificationPreferences(created.id, orgId, client);
             return created;
         });
@@ -73,7 +75,7 @@ export class ProjectService extends BaseProjectService {
         await client.query(`INSERT INTO project_notification_preferences (
          project_id, organization_id, category, enabled
        ) VALUES ${placeholders.join(", ")}
-       ON CONFLICT (project_id, category) DO NOTHING`, values);
+       ON CONFLICT DO NOTHING`, values);
     }
     async getProject(orgId, projectId, userId) {
         return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
@@ -83,26 +85,23 @@ export class ProjectService extends BaseProjectService {
         const settings = await this.settingsRepository.findByProjectId(projectId);
         if (!settings)
             throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
-        const members = this.repository.findProjectMembers ? await this.repository.findProjectMembers(orgId, projectId) : [];
-        const apiKeys = await this.apiKeyRepository.listApiKeys(orgId, projectId);
-        const now = new Date();
-        const usage = {
-            totalEventsToday: 0,
-            totalBytesToday: 0,
-            peakHour: 0,
-            currentHourEvents: 0,
-            categoryBreakdown: {},
-            eventTypeBreakdown: {},
-            hourlyBreakdown: [],
-            dailyTrend: [],
-            heatmapData: []
-        };
+        const usage = await this.usageRepository.getProjectOverview(orgId, projectId);
         return {
             project,
             settings,
-            memberCount: members.length,
-            apiKeyCount: apiKeys.length,
-            usage,
+            memberCount: usage.memberCount,
+            apiKeyCount: usage.apiKeyCount,
+            usage: {
+                totalEventsToday: usage.totalEventsToday,
+                totalBytesToday: usage.totalBytesToday,
+                peakHour: usage.peakHour,
+                currentHourEvents: usage.currentHourEvents,
+                categoryBreakdown: usage.categoryBreakdown,
+                eventTypeBreakdown: usage.eventTypeBreakdown,
+                hourlyBreakdown: usage.hourlyBreakdown,
+                dailyTrend: usage.dailyTrend,
+                heatmapData: usage.heatmapData,
+            },
         };
     }
     async updateProject(orgId, projectId, userId, body, meta) {

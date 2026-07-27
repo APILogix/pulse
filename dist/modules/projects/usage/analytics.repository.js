@@ -285,14 +285,14 @@ export class UsageAnalyticsRepository {
     }
     async getMonthlyUsageVsPlan(projectId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`SELECT year_month, total_events::text, total_bytes::text,
+        const result = await db.query(`SELECT bucket::text AS month_bucket, total_events::text, total_bytes::text,
               api_key_requests::text, rate_limited_events::text,
               alert_notifications::text, active_users::text
          FROM project_usage_monthly
         WHERE project_id = $1
-        ORDER BY year_month DESC`, [projectId]);
+        ORDER BY bucket DESC`, [projectId]);
         return result.rows.map((row) => ({
-            yearMonth: row.year_month,
+            yearMonth: row.month_bucket,
             totalEvents: Number.parseInt(row.total_events, 10),
             totalBytes: Number.parseInt(row.total_bytes, 10),
             apiKeyRequests: Number.parseInt(row.api_key_requests, 10),

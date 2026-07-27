@@ -28,7 +28,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { AlertingRepository, DeliveryAttemptInsert } from './repository.js';
 import type { AlertEventRow, AlertEventStatus } from './types.js';
 import type { ConnectorRepository } from '../connectors/repository.js';
+import type { NotificationSeverity } from '../connectors/types.js';
 import { type ConnectorJobName } from '../connectors/job.constants.js';
+import type { EmailMessage } from '../../shared/email/email.types.js';
 export interface BatchJobData {
     batchId: string;
     organizationId: string;
@@ -53,12 +55,27 @@ export type BatchAuthorizationResult = {
     suppressedAttempts: DeliveryAttemptInsert[];
 };
 export type BatchAuthorizationVerifier = (events: AlertEventRow[], batchId: string, organizationId: string, log: FastifyBaseLogger) => Promise<BatchAuthorizationResult>;
+export type ProjectChannelEligibilityRequest = {
+    organizationId: string;
+    projectId: string;
+    category: string;
+    severity: NotificationSeverity;
+};
+export type ProjectChannelEligibilityTarget = {
+    userId: string;
+    channelId: string;
+    channelType?: string;
+    memberDestination?: string | null;
+    channelMetadata?: Record<string, unknown>;
+    channelConnectorId: string | null;
+    subscriptionConnectorId: string | null;
+};
 export type ProjectSubscriptionResolver = {
     resolveByProjectId(projectId: string): Promise<{
         projectId: string;
         organizationId: string;
         environmentId: string | null;
-        apiKeyId: string;
+        apiKeyId: string | null;
         subscriptions: {
             subscriptionId: string;
             connectorId: string;
@@ -74,6 +91,7 @@ export type ProjectSubscriptionResolver = {
             email: string | null;
         }[];
     } | null>;
+    resolveImmediateDeliveryTargets?(request: ProjectChannelEligibilityRequest): Promise<ProjectChannelEligibilityTarget[]>;
 };
 export declare class AlertBatchProcessor {
     private readonly alertRepo;
@@ -81,9 +99,10 @@ export declare class AlertBatchProcessor {
     private readonly enqueueConnectorJob;
     private readonly logger;
     private readonly projectSubscriptionResolver?;
+    private readonly sendDirectEmail;
     private static readonly EVENT_CONCURRENCY;
     private readonly authorize;
-    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined, authorize?: BatchAuthorizationVerifier);
+    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined, authorize?: BatchAuthorizationVerifier, sendDirectEmail?: (message: EmailMessage) => Promise<void>);
     private mapBounded;
     processBatch(data: BatchJobData): Promise<BatchProcessSummary>;
     /** Deliver a single event to all routed connectors concurrently. */
@@ -93,6 +112,8 @@ export declare class AlertBatchProcessor {
     /** Throttle check: min interval between notifications and/or per-hour cap. */
     private isThrottled;
     private throttledAttempt;
+    private deliverToTarget;
+    private escapeHtml;
     private deliverToConnector;
     /**
      * Re-verify, straight from the database on every run (never cached), that
@@ -128,15 +149,17 @@ export declare class AlertBatchProcessor {
     private routeMatchContext;
     private firstString;
     private toRouteEnvironment;
+    private eventCategory;
+    private channelEligibilityKey;
     /**
-     * Filter delivery targets to only connectors the originating project has
-     * explicitly subscribed to. This prevents alert leakage across projects and
-     * enforces the rule: alerts are scoped by Project -> Connector Subscriptions.
-     *
-     * If no resolver is configured, legacy routing-rule behavior is preserved.
-     * If the project has no active subscriptions, all targets are dropped.
+     * Organization-level events retain the existing routing behavior. Project
+     * events fail closed unless the resolver confirms the same tenant/project,
+     * active members, and an eligible connector subscription. When the optional
+     * authoritative channel resolver is configured, a connector must also have
+     * at least one eligible recipient/channel row for the exact event tuple.
      */
     private filterTargetsBySubscriptions;
+    private meetsSeverityThreshold;
 }
 export {};
 //# sourceMappingURL=batch-processor.d.ts.map

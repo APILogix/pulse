@@ -18,7 +18,7 @@ Status legend:
 | `004_analytics_create_core_schema.up.sql` | `partial` | `14_observability/*`, `15_analytics/*` |
 | `005_auth_extend_mfa_schema.up.sql` | `pending` | not yet split into draft MFA/organization follow-up files |
 | `006_organizations_create_core_schema.up.sql` | `covered` | `02_organizations/*`, `03_org_identity/*` |
-| `007_organizations_create_sdk_config_schema.up.sql` | `pending` | remote config domain not yet ported |
+| `007_organizations_create_sdk_config_schema.up.sql` | `covered` | organization config plus `04_projects/015_create_environment_sdk_configuration.up.sql` |
 | `008_projects_create_core_schema.up.sql` | `covered` | `04_projects/*`, `05_project_credentials/*` |
 | `009_ingestion_create_queue_schema.up.sql` | `covered` | `13_ingestion/001-005_*` |
 | `010_ingestion_create_usage_counters_schema.up.sql` | `covered` | `13_ingestion/006-009_*` |
@@ -36,9 +36,9 @@ Status legend:
 | `022_alerting_tenant_isolation_cleanup.up.sql` | `pending` | project/notification backfill cleanup not yet ported |
 | `023_project_alerting_hardening.up.sql` | `pending` | notification project-hardening indexes not yet ported |
 | `027_project_member_roles_and_status.up.sql` | `covered` | folded into `04_projects/002_create_project_members.up.sql` |
-| `028_project_api_keys.up.sql` | `covered` | folded into `05_project_credentials/001_create_project_api_keys.up.sql` |
+| `028_project_api_keys.up.sql` | `covered` | `04_projects/005_create_project_api_keys.up.sql`, `04_projects/009_converge_project_api_keys.up.sql` |
 | `029_project_settings.up.sql` | `covered` | `04_projects/004_create_project_settings.up.sql` |
-| `030_project_usage_tables.up.sql` | `covered` | `15_analytics/002_create_project_usage_hourly_and_daily.up.sql` |
+| `030_project_usage_tables.up.sql` | `covered` | `04_projects/010_create_api_key_usage.up.sql`, `04_projects/011_create_project_usage.up.sql` |
 | `031_audit_logs_enhancement.up.sql` | `covered` | `09_audit/002_enhance_audit_logs.up.sql` |
 
 ## Remaining Gaps

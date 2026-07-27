@@ -50,6 +50,7 @@ export declare class PostgresWriter {
     readonly pool: Pool;
     private readonly reader;
     constructor(pool: Pool);
+    private configObject;
     /**
      * Resolve an ingestion API key by extracting its public prefix, looking up
      * candidate rows, and comparing the SHA-256 secret hash in constant time.

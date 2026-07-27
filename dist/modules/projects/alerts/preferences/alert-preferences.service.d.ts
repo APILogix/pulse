@@ -13,7 +13,7 @@ export declare class ProjectMemberAlertPreferenceService {
     getPreferences(orgId: string, projectId: string, userId: string): Promise<ProjectMemberNotificationPreference[]>;
     updatePreference(orgId: string, projectId: string, prefId: string, userId: string, dto: UpdateAlertPreferenceBody, meta: RequestMeta): Promise<ProjectMemberNotificationPreference>;
     bulkSubscribe(orgId: string, projectId: string, channel: import("./alert-preferences.types.js").NotificationChannel, category: string, userIds: string[], actorId: string, meta: RequestMeta): Promise<void>;
-    resolveRecipients(projectId: string, category: string, severity: string): Promise<string[]>;
+    resolveRecipients(orgId: string, projectId: string, category: string, severity: string): Promise<string[]>;
     sync(orgId: string, projectId: string, userId: string): Promise<void>;
 }
 //# sourceMappingURL=alert-preferences.service.d.ts.map

@@ -1,5 +1,6 @@
 import { AlertRoutesRepository } from "./alert-routes.repository.js";
 import { ProjectsService } from "../../service.js";
+import { ProjectError } from "../../shared/utils.js";
 export class ProjectAlertRouteService {
     repository;
     projectsService;
@@ -31,7 +32,7 @@ export class ProjectAlertRouteService {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, "member");
         const route = await this.repository.getRoute(routeId, orgId, projectId);
         if (!route) {
-            throw new Error("Route not found");
+            throw new ProjectError("ROUTE_NOT_FOUND", "Route not found", 404);
         }
         return route;
     }
@@ -45,8 +46,8 @@ export class ProjectAlertRouteService {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, "admin");
         const route = await this.repository.getRoute(routeId, orgId, projectId);
         if (!route)
-            throw new Error("Route not found");
-        const updated = await this.repository.updateRoute(routeId, dto);
+            throw new ProjectError("ROUTE_NOT_FOUND", "Route not found", 404);
+        const updated = await this.repository.updateRoute(routeId, orgId, projectId, dto);
         await this.projectsService.audit(meta, {
             orgId: orgId,
             action: "route_updated",
@@ -63,8 +64,8 @@ export class ProjectAlertRouteService {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, "admin");
         const route = await this.repository.getRoute(routeId, orgId, projectId);
         if (!route)
-            throw new Error("Route not found");
-        await this.repository.deleteRoute(routeId);
+            throw new ProjectError("ROUTE_NOT_FOUND", "Route not found", 404);
+        await this.repository.deleteRoute(routeId, orgId, projectId);
         await this.projectsService.audit(meta, {
             orgId: orgId,
             action: "route_deleted",

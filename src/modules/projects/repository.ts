@@ -30,7 +30,6 @@ import { ProjectError } from "./shared/utils.js";
 import { ProjectRepository } from "./core/project.repository.js";
 import { MemberRepository } from "./members/member.repository.js";
 import { ProjectUsageRepository } from "./usage/project-usage.repository.js";
-import { ProjectSettingsRepository } from "./settings/project-settings.repository.js";
 
 export interface ProjectModuleUsageCounts {
   projects: number;
@@ -42,13 +41,11 @@ export class ProjectsRepository {
   private readonly core: ProjectRepository;
   private readonly members: MemberRepository;
   private readonly usage: ProjectUsageRepository;
-  private readonly settings: ProjectSettingsRepository;
 
   constructor(private readonly db: Pool = pool) {
     this.core = new ProjectRepository(db);
     this.members = new MemberRepository(db);
     this.usage = new ProjectUsageRepository(db);
-    this.settings = new ProjectSettingsRepository(db);
   }
 
   async withTransaction<T>(
@@ -75,13 +72,19 @@ export class ProjectsRepository {
   ): Promise<ProjectMemberRole | null> {
     const db = client ?? this.db;
     const result = await db.query<{ role: ProjectMemberRole }>(
-      `SELECT role
-         FROM project_members
-        WHERE project_id = $1
-          AND user_id = $2
-          AND (status IS NULL OR status = 'active')
+      `SELECT pm.role
+         FROM project_members pm
+         JOIN projects p
+           ON p.id = pm.project_id
+          AND p.org_id = pm.organization_id
+        WHERE pm.organization_id = $1
+          AND pm.project_id = $2
+          AND pm.user_id = $3
+          AND pm.status = 'active'
+          AND p.org_id = $1
+          AND p.deleted_at IS NULL
         LIMIT 1`,
-      [projectId, userId],
+      [orgId, projectId, userId],
     );
     return result.rows[0]?.role ?? null;
   }
@@ -102,6 +105,15 @@ export class ProjectsRepository {
       addedByUserId,
       client,
     );
+  }
+
+  async ensureProjectOwner(
+    projectId: string,
+    organizationId: string,
+    userId: string,
+    client: PoolClient,
+  ): Promise<ProjectMember> {
+    return this.members.ensureProjectOwner(projectId, organizationId, userId, client);
   }
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -132,6 +144,15 @@ export class ProjectsRepository {
     client?: PoolClient,
   ): Promise<Project> {
     return this.core.createProject(input as any, client);
+  }
+
+  async provisionRuntimeDefaults(
+    project: Project,
+    actorUserId: string,
+    meta: { requestId: string; actorIp: string; actorUserAgent: string | null },
+    client: PoolClient,
+  ): Promise<void> {
+    return this.core.provisionRuntimeDefaults(project, actorUserId, meta, client);
   }
 
   async findProjectBySlug(
@@ -209,22 +230,6 @@ export class ProjectsRepository {
     client?: PoolClient,
   ): Promise<ProjectModuleUsageCounts> {
     return this.usage.getProjectModuleUsageCounts(orgId, client);
-  }
-
-  async findSdkConfigPlanKey(
-    orgId: string,
-    client?: PoolClient,
-  ): Promise<string> {
-    return this.settings.findSdkConfigPlanKey(orgId, client);
-  }
-
-  async createDefaultSdkConfigs(
-    project: Project,
-    createdBy: string,
-    planKey: string,
-    client?: PoolClient,
-  ): Promise<number> {
-    return this.settings.createDefaultSdkConfigs(project, createdBy, planKey, client);
   }
 }
 

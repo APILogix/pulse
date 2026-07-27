@@ -11,7 +11,7 @@
  * 5. Write every sensitive lifecycle event to organization_audit_logs.
  */
 import type { FastifyBaseLogger } from "fastify";
-import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
+import { apiKeyCache } from "../../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
 import { ProjectMemberRole } from "../types.js";
 import {
@@ -32,7 +32,6 @@ import type {
   CreateApiKeyBody,
   CreateApiKeyResponse,
   ListApiKeysQuery,
-  Project,
   ProjectApiKey,
   ProjectApiKeyRecord,
   RotateApiKeyBody,
@@ -59,11 +58,6 @@ export interface RequestMeta {
   httpMethod: string;
   endpoint: string;
 }
-
-const DEFAULT_API_KEY_RATE_LIMITS = {
-  perSecond: 1000,
-  perMinute: 10000,
-} as const;
 
 const MAX_ACTIVE_KEYS_ON_CREATE = 5;
 const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
@@ -115,13 +109,13 @@ export class ApiKeyService extends BaseProjectService {
     body: CreateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
     this.assertFutureExpiry(body.expiresAt);
     await this.enforceProjectModuleLimit(orgId, "apiKey");
 
     const env = await this.environmentRepository.findEnvironment(projectId, body.environmentId);
-    if (!env) {
-      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    if (!env || !env.isActive || env.deletedAt !== null) {
+      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Active environment not found", 404);
     }
 
     const activeKeys = await this.apiKeyRepository.countActiveApiKeys(projectId, body.environmentId);
@@ -138,7 +132,7 @@ export class ApiKeyService extends BaseProjectService {
 
     const created = await this.apiKeyRepository.createApiKey({
       projectId,
-      orgId,
+      organizationId: orgId,
       publicKey: keyMaterial.publicKey,
       secretHash: keyMaterial.secretHash,
       keyType: body.keyType,
@@ -156,15 +150,10 @@ export class ApiKeyService extends BaseProjectService {
       allowedOrigins: body.allowedOrigins,
       allowedIps: body.allowedIps,
       allowedDomains: body.allowedDomains,
-      samplingRules: body.samplingRules,
-      featureFlags: body.featureFlags,
-      sdkConfig: body.sdkConfig,
       rateLimitPerSecond: body.rateLimitPerSecond ?? null,
       rateLimitPerMinute: body.rateLimitPerMinute ?? null,
       rateLimitPerHour: body.rateLimitPerHour ?? null,
     });
-
-    this.warmApiKeyCache(keyMaterial.secretHash, created, project, env);
 
     await this.audit(meta, {
       orgId,
@@ -210,9 +199,6 @@ export class ApiKeyService extends BaseProjectService {
     if (body.allowedOrigins !== undefined) updates.allowedOrigins = body.allowedOrigins;
     if (body.allowedIps !== undefined) updates.allowedIps = body.allowedIps;
     if (body.allowedDomains !== undefined) updates.allowedDomains = body.allowedDomains;
-    if (body.samplingRules !== undefined) updates.samplingRules = body.samplingRules;
-    if (body.featureFlags !== undefined) updates.featureFlags = body.featureFlags;
-    if (body.sdkConfig !== undefined) updates.sdkConfig = body.sdkConfig;
     if (body.rateLimitPerSecond !== undefined) updates.rateLimitPerSecond = body.rateLimitPerSecond;
     if (body.rateLimitPerMinute !== undefined) updates.rateLimitPerMinute = body.rateLimitPerMinute;
     if (body.rateLimitPerHour !== undefined) updates.rateLimitPerHour = body.rateLimitPerHour;
@@ -270,7 +256,7 @@ export class ApiKeyService extends BaseProjectService {
     body: RotateApiKeyBody,
     meta: RequestMeta,
   ): Promise<CreateApiKeyResponse> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
     this.assertFutureExpiry(body.expiresAt);
 
     const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
@@ -280,8 +266,8 @@ export class ApiKeyService extends BaseProjectService {
     }
 
     const env = await this.environmentRepository.findEnvironment(projectId, currentKey.environmentId);
-    if (!env) {
-      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    if (!env || !env.isActive || env.deletedAt !== null) {
+      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Active environment not found", 404);
     }
 
     const graceHours = body.gracePeriodHours ?? DEFAULT_GRACE_PERIOD_HOURS;
@@ -300,7 +286,7 @@ export class ApiKeyService extends BaseProjectService {
       return this.apiKeyRepository.createApiKey(
         {
           projectId,
-          orgId,
+          organizationId: orgId,
           publicKey: keyMaterial.publicKey,
           secretHash: keyMaterial.secretHash,
           keyType: currentKey.keyType,
@@ -318,9 +304,6 @@ export class ApiKeyService extends BaseProjectService {
           allowedOrigins: currentKey.allowedOrigins,
           allowedIps: currentKey.allowedIps,
           allowedDomains: currentKey.allowedDomains,
-          samplingRules: currentKey.samplingRules,
-          featureFlags: currentKey.featureFlags,
-          sdkConfig: currentKey.sdkConfig,
           rateLimitPerSecond: currentKey.rateLimitPerSecond,
           rateLimitPerMinute: currentKey.rateLimitPerMinute,
           rateLimitPerHour: currentKey.rateLimitPerHour,
@@ -333,7 +316,6 @@ export class ApiKeyService extends BaseProjectService {
     // If there is no grace window, evict the old key now. With a grace window
     // the old key stays valid (and cached) until grace ends.
     if (!graceEndsAt) this.evictApiKeyConfig(currentKey.secretHash);
-    this.warmApiKeyCache(keyMaterial.secretHash, rotated, project, env);
 
     await this.audit(meta, {
       orgId,
@@ -372,7 +354,7 @@ export class ApiKeyService extends BaseProjectService {
     userId: string,
     meta: RequestMeta,
   ): Promise<ProjectApiKey> {
-    const project = await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (!currentKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     if (currentKey.isActive) return this.publicApiKey(currentKey);
@@ -395,8 +377,6 @@ export class ApiKeyService extends BaseProjectService {
     }
 
     const updated = await this.apiKeyRepository.setApiKeyActiveState(projectId, apiKeyId, true);
-    const env = await this.environmentRepository.findEnvironment(projectId, currentKey.environmentId);
-    this.warmApiKeyCache(currentKey.secretHash, { ...currentKey, isActive: true }, project, env);
 
     await this.audit(meta, {
       orgId,
@@ -548,9 +528,9 @@ export class ApiKeyService extends BaseProjectService {
           rateLimitPerSecond: candidate.apiKey.rateLimitPerSecond,
           rateLimitPerMinute: candidate.apiKey.rateLimitPerMinute,
           rateLimitPerHour: candidate.apiKey.rateLimitPerHour,
-          samplingRules: candidate.apiKey.samplingRules,
-          featureFlags: candidate.apiKey.featureFlags,
-          sdkConfig: candidate.apiKey.sdkConfig,
+          samplingRules: this.configObject(candidate.publishedConfig.samplingRules),
+          featureFlags: this.configObject(candidate.publishedConfig.featureFlags),
+          sdkConfig: candidate.publishedConfig,
         };
       }
     }
@@ -582,46 +562,10 @@ export class ApiKeyService extends BaseProjectService {
     };
   }
 
-  /**
-   * Warm the in-process LRU so ingestion resolves the key without a Postgres
-   * round trip. Only active keys on active projects are cached as active;
-   * ingestion re-validates project status on a miss.
-   */
-  public warmApiKeyCache(
-    secretHash: string,
-    key: ProjectApiKeyRecord | ProjectApiKey,
-    project: Project,
-    env: { id: string; name: string; slug: string } | null = null,
-  ): void {
-    const config: CachedProjectConfig = {
-      id: project.id,
-      orgId: project.orgId,
-      name: key.name ?? project.name,
-      environment: env?.slug ?? "default",
-      environmentId: env?.id ?? key.environmentId,
-      environmentName: env?.name ?? null,
-      rateLimitPerSecond: key.rateLimitPerSecond ?? DEFAULT_API_KEY_RATE_LIMITS.perSecond,
-      rateLimitPerMinute: key.rateLimitPerMinute ?? DEFAULT_API_KEY_RATE_LIMITS.perMinute,
-      rateLimitPerHour: key.rateLimitPerHour ?? null,
-      allowedEventTypes: key.allowedEventTypes.length ? key.allowedEventTypes : ["*"],
-      permissions: key.permissions,
-      allowedEndpoints: key.allowedEndpoints.length ? key.allowedEndpoints : ["*"],
-      blockedEndpoints: key.blockedEndpoints,
-      allowedOrigins: key.allowedOrigins,
-      allowedIps: key.allowedIps,
-      allowedDomains: key.allowedDomains,
-      allowedSdks: key.allowedSdks,
-      samplingRules: key.samplingRules,
-      featureFlags: key.featureFlags,
-      sdkConfig: key.sdkConfig,
-      isActive: project.status === "active" && key.isActive,
-      apiKeyId: key.id,
-    };
-    try {
-      apiKeyCache.set(secretHash, config);
-    } catch (err) {
-      this.logger.warn({ err }, "Failed to warm API key cache");
-    }
+  private configObject(value: unknown): Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
   }
 
   public evictApiKeyConfig(secretHash: string): void {

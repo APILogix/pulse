@@ -48,6 +48,8 @@ import { pool } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { FEATURE_FLAGS, isEnabled } from '../feature-flags/service.js';
 import { getAlertAnalysisHook } from './ai/alert-analysis.js';
+import { sendEmail } from '../../shared/email/mailer.js';
+import type { EmailMessage } from '../../shared/email/email.types.js';
 
 export interface BatchJobData {
   batchId: string;
@@ -79,10 +81,17 @@ interface EventOutcome {
 }
 
 interface DeliveryTarget {
-  connectorId: string;
+  connectorId: string | null;
   routeId: string | null;
-  /** Rule action that produced this target (null when from routing rules). */
+  /** Rule action that produced this target (null when from routing/project channels). */
   actionId: string | null;
+  projectChannel?: {
+    userId: string;
+    channelId: string;
+    channelType: string;
+    destination: string | null;
+    metadata: Record<string, unknown>;
+  };
 }
 
 interface RouteMatchContext {
@@ -111,12 +120,31 @@ export type BatchAuthorizationVerifier = (
   log: FastifyBaseLogger,
 ) => Promise<BatchAuthorizationResult>;
 
+export type ProjectChannelEligibilityRequest = {
+  organizationId: string;
+  projectId: string;
+  category: string;
+  severity: NotificationSeverity;
+};
+
+export type ProjectChannelEligibilityTarget = {
+  userId: string;
+  channelId: string;
+  channelType?: string;
+  memberDestination?: string | null;
+  channelMetadata?: Record<string, unknown>;
+  channelConnectorId: string | null;
+  subscriptionConnectorId: string | null;
+};
+
+type ProjectChannelEligibilityCache = Map<string, ProjectChannelEligibilityTarget[]>;
+
 export type ProjectSubscriptionResolver = {
   resolveByProjectId(projectId: string): Promise<{
     projectId: string;
     organizationId: string;
     environmentId: string | null;
-    apiKeyId: string;
+    apiKeyId: string | null;
     subscriptions: {
       subscriptionId: string;
       connectorId: string;
@@ -128,6 +156,9 @@ export type ProjectSubscriptionResolver = {
     }[];
     members: { userId: string; role: string; email: string | null }[];
   } | null>;
+  resolveImmediateDeliveryTargets?(
+    request: ProjectChannelEligibilityRequest,
+  ): Promise<ProjectChannelEligibilityTarget[]>;
 };
 
 export class AlertBatchProcessor {
@@ -141,6 +172,7 @@ export class AlertBatchProcessor {
     private readonly logger: FastifyBaseLogger,
     private readonly projectSubscriptionResolver?: ProjectSubscriptionResolver,
     authorize?: BatchAuthorizationVerifier,
+    private readonly sendDirectEmail: (message: EmailMessage) => Promise<void> = sendEmail,
   ) {
     this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
   }
@@ -186,15 +218,34 @@ export class AlertBatchProcessor {
     const authz = await this.authorize(events, data.batchId, data.organizationId, log);
     const authorizedEvents = authz.eligible;
 
-    // 1b. Pre-load project connector subscriptions so delivery targets can be gated
-    // by project membership. A project with no subscriptions falls back to the
-    // legacy routing-rule behavior (soft rollout); a missing project suppresses.
+    // 1b. Pre-load project connector subscriptions and authoritative channel
+    // eligibility. Channel lookups are deduplicated by the full routing tuple,
+    // never performed once per connector target.
     const projectIds = [...new Set(authorizedEvents.map((e) => e.project_id).filter((id): id is string => id !== null))];
     const projectSubscriptions = new Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>();
-    if (this.projectSubscriptionResolver) {
-      for (const projectId of projectIds) {
-        projectSubscriptions.set(projectId, await this.projectSubscriptionResolver.resolveByProjectId(projectId));
+    const projectResolver = this.projectSubscriptionResolver;
+    if (projectResolver) {
+      await Promise.all(projectIds.map(async (projectId) => {
+        projectSubscriptions.set(projectId, await projectResolver.resolveByProjectId(projectId));
+      }));
+    }
+
+    const projectChannelEligibility: ProjectChannelEligibilityCache = new Map();
+    if (projectResolver?.resolveImmediateDeliveryTargets) {
+      const requests = new Map<string, ProjectChannelEligibilityRequest>();
+      for (const event of authorizedEvents) {
+        if (!event.project_id) continue;
+        const request: ProjectChannelEligibilityRequest = {
+          organizationId: event.organization_id,
+          projectId: event.project_id,
+          category: this.eventCategory(event),
+          severity: event.severity,
+        };
+        requests.set(this.channelEligibilityKey(request), request);
       }
+      await Promise.all([...requests].map(async ([key, request]) => {
+        projectChannelEligibility.set(key, await projectResolver.resolveImmediateDeliveryTargets!(request));
+      }));
     }
 
     // 2. Load routing rules, rule actions, connectors, routes, escalation steps
@@ -213,8 +264,13 @@ export class AlertBatchProcessor {
       data.organizationId,
       this.uniqueRouteIds(routingRules, ruleActions),
     );
-    const connectorIds = this.uniqueConnectorIds(authorizedEvents, routingRules, actionsByRuleId, connectorRoutes);
-    const connectors = await this.connectorRepo.getByIds(connectorIds);
+    const connectorIds = new Set(this.uniqueConnectorIds(authorizedEvents, routingRules, actionsByRuleId, connectorRoutes));
+    for (const channelTargets of projectChannelEligibility.values()) {
+      for (const target of channelTargets) {
+        if (target.channelConnectorId) connectorIds.add(target.channelConnectorId);
+      }
+    }
+    const connectors = await this.connectorRepo.getByIds([...connectorIds]);
     const connectorMap = new Map<string, ConnectorConfigRow>(connectors.map((c) => [c.id, c]));
 
     const escalationPolicyIds = [...new Set(
@@ -241,6 +297,7 @@ export class AlertBatchProcessor {
       (event) => this.processSingleEvent(
         event, routingRules, actionsByRuleId, connectorRoutes, connectorMap,
         firstStepByPolicyId, throttleByActionId, data.batchId, projectSubscriptions,
+        projectChannelEligibility,
       ),
     );
 
@@ -308,6 +365,7 @@ export class AlertBatchProcessor {
     throttleByActionId: Map<string, AlertThrottleWindowRow>,
     batchId: string,
     projectSubscriptions: Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>,
+    projectChannelEligibility: ProjectChannelEligibilityCache,
   ): Promise<EventOutcome> {
     const noEscalation = { escalationPolicyId: null, nextEscalationAt: null };
     const routable: RoutableAlert = { severity: event.severity, source: event.source, labels: event.labels };
@@ -325,12 +383,25 @@ export class AlertBatchProcessor {
     }
 
     const targets = this.resolveDeliveryTargets(event, decision, deliverableActions, connectorRoutes);
-    const filteredTargets = this.filterTargetsBySubscriptions(event, targets, projectSubscriptions);
+    const filteredTargets = this.filterTargetsBySubscriptions(
+      event,
+      targets,
+      projectSubscriptions,
+      projectChannelEligibility,
+    );
 
     const deliveries: DeliveryAttemptInsert[] = [];
-    // Throttled targets are skipped but audited as cancelled attempts.
+    // Throttled targets are audited only when the same project subscription
+    // and recipient eligibility checks would otherwise permit delivery.
     for (const action of throttledActions) {
-      for (const target of this.actionTargets(event, action, connectorRoutes)) {
+      const eligibleTargets = this.filterTargetsBySubscriptions(
+        event,
+        this.actionTargets(event, action, connectorRoutes),
+        projectSubscriptions,
+        projectChannelEligibility,
+        false,
+      );
+      for (const target of eligibleTargets) {
         deliveries.push(this.throttledAttempt(event, target, batchId));
       }
     }
@@ -351,7 +422,7 @@ export class AlertBatchProcessor {
 
     // Fan out to every target connector concurrently (Bulkhead per connector).
     const perConnector = await Promise.allSettled(
-      filteredTargets.map((target) => this.deliverToConnector(event, target, connectorMap, batchId, payload)),
+      filteredTargets.map((target) => this.deliverToTarget(event, target, connectorMap, batchId, payload)),
     );
 
     let anyDelivered = false;
@@ -361,7 +432,7 @@ export class AlertBatchProcessor {
         deliveries.push(res.value.log);
         if (res.value.delivered) {
           anyDelivered = true;
-          const actionId = targets[i]!.actionId;
+          const actionId = filteredTargets[i]!.actionId;
           if (actionId) deliveredActionIds.add(actionId);
         }
       }
@@ -428,7 +499,73 @@ export class AlertBatchProcessor {
       errorCategory: 'throttled',
       latencyMs: null,
       externalMessageId: null,
+      projectAlertChannelId: target.projectChannel?.channelId ?? null,
+      recipientUserId: target.projectChannel?.userId ?? null,
     };
+  }
+
+  private async deliverToTarget(
+    event: AlertEventRow,
+    target: DeliveryTarget,
+    connectorMap: Map<string, ConnectorConfigRow>,
+    batchId: string,
+    payload: NotificationPayload,
+  ): Promise<{ log: DeliveryAttemptInsert; delivered: boolean }> {
+    if (target.connectorId) {
+      return this.deliverToConnector(event, target, connectorMap, batchId, payload);
+    }
+
+    const channel = target.projectChannel;
+    const base: DeliveryAttemptInsert = {
+      organizationId: event.organization_id,
+      eventId: event.id,
+      connectorId: null,
+      routeId: null,
+      batchId,
+      status: 'pending',
+      responseStatusCode: null,
+      errorMessage: null,
+      errorCategory: null,
+      latencyMs: null,
+      externalMessageId: null,
+      projectAlertChannelId: channel?.channelId ?? null,
+      recipientUserId: channel?.userId ?? null,
+    };
+    if (!channel || channel.channelType !== 'email' || !channel.destination) {
+      return {
+        log: { ...base, status: 'failed', errorMessage: 'Unsupported direct project channel', errorCategory: 'config' },
+        delivered: false,
+      };
+    }
+
+    const startedAt = Date.now();
+    try {
+      const safeTitle = this.escapeHtml(payload.title);
+      const safeBody = this.escapeHtml(payload.body).replace(/\n/g, '<br>');
+      await this.sendDirectEmail({
+        to: channel.destination,
+        subject: `[${payload.severity.toUpperCase()}] ${payload.title}`,
+        text: `${payload.title}\n\n${payload.body}`,
+        html: `<!doctype html><html><body><h2>${safeTitle}</h2><p>${safeBody}</p></body></html>`,
+      });
+      return { log: { ...base, status: 'sent', latencyMs: Date.now() - startedAt }, delivered: true };
+    } catch (err) {
+      return {
+        log: {
+          ...base,
+          status: 'failed',
+          latencyMs: Date.now() - startedAt,
+          errorMessage: (err instanceof Error ? err.message : 'Direct email delivery failed').slice(0, 2000),
+          errorCategory: 'delivery',
+        },
+        delivered: false,
+      };
+    }
+  }
+
+  private escapeHtml(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   }
 
   private async deliverToConnector(
@@ -451,8 +588,13 @@ export class AlertBatchProcessor {
       errorCategory: null,
       latencyMs: null,
       externalMessageId: null,
+      projectAlertChannelId: target.projectChannel?.channelId ?? null,
+      recipientUserId: target.projectChannel?.userId ?? null,
     };
 
+    if (!connectorId) {
+      return { log: { ...base, status: 'failed', errorMessage: 'Connector target is missing an id', errorCategory: 'config' }, delivered: false };
+    }
     const connector = connectorMap.get(connectorId);
     if (!connector) {
       return { log: { ...base, status: 'failed', errorMessage: 'Connector not found or deleted', errorCategory: 'config' }, delivered: false };
@@ -461,14 +603,29 @@ export class AlertBatchProcessor {
     try {
       const queueName = `${CONNECTOR_JOBS.send}-${connector.type}` as ConnectorJobName;
       const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+      const projectChannel = target.projectChannel;
+      const targetPayload: NotificationPayload = projectChannel ? {
+        ...payload,
+        metadata: {
+          ...(payload.metadata ?? {}),
+          projectChannel: {
+            channelId: projectChannel.channelId,
+            userId: projectChannel.userId,
+            channelType: projectChannel.channelType,
+            ...projectChannel.metadata,
+            destination: projectChannel.destination,
+          },
+        },
+      } : payload;
 
       const jobId = await this.enqueueConnectorJob(
         queueName,
         {
           organizationId: event.organization_id,
           connectorId,
-          payload,
+          payload: targetPayload,
           routeId,
+          ...(projectChannel ? { projectChannel } : {}),
         },
         {
           priority,
@@ -636,7 +793,9 @@ export class AlertBatchProcessor {
       );
       const actions = event.rule_id ? actionsByRuleId.get(event.rule_id) ?? [] : [];
       this.resolveDeliveryTargets(event, decision, actions.filter((a) => this.isDeliverAction(a)), connectorRoutes)
-        .forEach((target) => ids.add(target.connectorId));
+        .forEach((target) => {
+          if (target.connectorId) ids.add(target.connectorId);
+        });
     }
     return [...ids];
   }
@@ -752,30 +911,112 @@ export class AlertBatchProcessor {
     return value === 'development' || value === 'staging' || value === 'production' ? value : null;
   }
 
+  private eventCategory(event: AlertEventRow): string {
+    const payload = event.payload as Record<string, unknown>;
+    return this.firstString(payload.category, event.labels.category, event.source) ?? event.source;
+  }
+
+  private channelEligibilityKey(request: ProjectChannelEligibilityRequest): string {
+    return JSON.stringify([
+      request.organizationId,
+      request.projectId,
+      request.category,
+      request.severity,
+    ]);
+  }
+
   /**
-   * Filter delivery targets to only connectors the originating project has
-   * explicitly subscribed to. This prevents alert leakage across projects and
-   * enforces the rule: alerts are scoped by Project -> Connector Subscriptions.
-   *
-   * If no resolver is configured, legacy routing-rule behavior is preserved.
-   * If the project has no active subscriptions, all targets are dropped.
+   * Organization-level events retain the existing routing behavior. Project
+   * events fail closed unless the resolver confirms the same tenant/project,
+   * active members, and an eligible connector subscription. When the optional
+   * authoritative channel resolver is configured, a connector must also have
+   * at least one eligible recipient/channel row for the exact event tuple.
    */
   private filterTargetsBySubscriptions(
     event: AlertEventRow,
     targets: DeliveryTarget[],
     projectSubscriptions: Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>,
+    projectChannelEligibility: ProjectChannelEligibilityCache,
+    allowChannelMaterialization = true,
   ): DeliveryTarget[] {
-    if (!this.projectSubscriptionResolver) return targets;
     if (!event.project_id) return targets;
+    if (!this.projectSubscriptionResolver) return [];
 
     const routing = projectSubscriptions.get(event.project_id);
-    if (!routing) return [];
+    if (!routing || routing.projectId !== event.project_id || routing.organizationId !== event.organization_id) return [];
 
+    const activeMemberIds = new Set(routing.members.map((member) => member.userId));
+    if (activeMemberIds.size === 0) return [];
+
+    const category = this.eventCategory(event);
     const allowedConnectorIds = new Set(
-      routing.subscriptions.filter((s) => s.enabled).map((s) => s.connectorId),
+      routing.subscriptions
+        .filter((subscription) => subscription.enabled
+          && subscription.alertCategories.some((candidate) => candidate === 'all' || candidate === category)
+          && this.meetsSeverityThreshold(event.severity, subscription.severityThreshold)
+          && (subscription.memberIds.length === 0
+            || subscription.memberIds.some((memberId) => activeMemberIds.has(memberId))))
+        .map((subscription) => subscription.connectorId),
     );
-    if (allowedConnectorIds.size === 0) return [];
 
-    return targets.filter((target) => allowedConnectorIds.has(target.connectorId));
+    if (!this.projectSubscriptionResolver.resolveImmediateDeliveryTargets) {
+      return targets.filter((target) => target.connectorId !== null && allowedConnectorIds.has(target.connectorId));
+    }
+
+    const channelTargets = projectChannelEligibility.get(this.channelEligibilityKey({
+      organizationId: event.organization_id,
+      projectId: event.project_id,
+      category,
+      severity: event.severity,
+    })) ?? [];
+    const materialized = new Map<string, DeliveryTarget>();
+
+    for (const channel of channelTargets) {
+      if (!activeMemberIds.has(channel.userId) || !channel.channelId) continue;
+      const projectChannel = {
+        userId: channel.userId,
+        channelId: channel.channelId,
+        channelType: channel.channelType ?? 'connector',
+        destination: channel.memberDestination ?? null,
+        metadata: channel.channelMetadata ?? {},
+      };
+
+      if (channel.channelConnectorId === null) {
+        if (allowChannelMaterialization && projectChannel.channelType === 'email' && projectChannel.destination) {
+          materialized.set(`direct:${channel.userId}:${channel.channelId}`, {
+            connectorId: null, routeId: null, actionId: null, projectChannel,
+          });
+        }
+        continue;
+      }
+      if (channel.channelConnectorId !== channel.subscriptionConnectorId
+          || !allowedConnectorIds.has(channel.channelConnectorId)) continue;
+
+      const baseTargets = targets.filter((target) => target.connectorId === channel.channelConnectorId);
+      if (baseTargets.length === 0 && allowChannelMaterialization) {
+        materialized.set(`${channel.channelConnectorId}:${channel.userId}:${channel.channelId}:direct`, {
+          connectorId: channel.channelConnectorId,
+          routeId: null,
+          actionId: null,
+          projectChannel,
+        });
+      } else {
+        for (const target of baseTargets) {
+          materialized.set(`${channel.channelConnectorId}:${channel.userId}:${channel.channelId}:${target.routeId ?? 'direct'}`, {
+            ...target,
+            projectChannel,
+          });
+        }
+      }
+    }
+
+    return [...materialized.values()];
+  }
+
+  private meetsSeverityThreshold(severity: string, threshold: string): boolean {
+    const order: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
+    const severityRank = order[severity];
+    const thresholdRank = order[threshold];
+    return severityRank !== undefined && thresholdRank !== undefined && severityRank >= thresholdRank;
   }
 }

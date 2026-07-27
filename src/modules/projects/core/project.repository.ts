@@ -168,6 +168,69 @@ export class ProjectRepository {
     }
   }
 
+  async provisionRuntimeDefaults(
+    project: Project,
+    actorUserId: string,
+    meta: {
+      requestId: string;
+      actorIp: string;
+      actorUserAgent: string | null;
+    },
+    client: PoolClient,
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO project_environments (
+         project_id, organization_id, name, slug, description,
+         is_default, is_active, color, created_by_user_id
+       ) VALUES ($1, $2, 'Production', 'production', 'Production telemetry',
+                 TRUE, TRUE, '#16A34A', $3)
+       ON CONFLICT DO NOTHING`,
+      [project.id, project.orgId, actorUserId],
+    );
+
+    await client.query(
+      `INSERT INTO project_usage_current (project_id, organization_id)
+       VALUES ($1, $2)
+       ON CONFLICT (project_id) DO NOTHING`,
+      [project.id, project.orgId],
+    );
+
+    await client.query(
+      `INSERT INTO project_activity (
+         organization_id, project_id, actor_user_id, activity_type, category, summary, metadata
+       )
+       SELECT $1, $2, $3, 'project.created', 'project', 'Project created', $4::jsonb
+       WHERE NOT EXISTS (
+         SELECT 1 FROM project_activity
+         WHERE organization_id = $1 AND project_id = $2 AND activity_type = 'project.created'
+       )`,
+      [project.orgId, project.id, actorUserId, JSON.stringify({ name: project.name, slug: project.slug })],
+    );
+
+    await client.query(
+      `INSERT INTO project_audit_logs (
+         organization_id, project_id, actor_user_id, action, resource_type, resource_id,
+         new_values, request_id, ip_address, user_agent
+       )
+       SELECT $1, $2, $3, 'project.created', 'project', $2,
+              $4::jsonb, $5, NULLIF($6, '')::inet, $7
+       WHERE NOT EXISTS (
+         SELECT 1 FROM project_audit_logs
+         WHERE organization_id = $1 AND project_id = $2
+           AND action = 'project.created' AND resource_type = 'project' AND resource_id = $2
+       )`,
+      [
+        project.orgId,
+        project.id,
+        actorUserId,
+        JSON.stringify({ name: project.name, slug: project.slug, visibility: project.visibility }),
+        meta.requestId,
+        meta.actorIp,
+        meta.actorUserAgent,
+      ],
+    );
+  }
+
   async findProjectBySlug(
     orgId: string,
     slug: string,
@@ -344,7 +407,9 @@ export class ProjectRepository {
         [orgId],
       ),
       db.query<{ count: string }>(
-        `SELECT COUNT(*)::text FROM project_environments WHERE organization_id = $1 AND deleted_at IS NULL`,
+        `SELECT COUNT(*)::text FROM project_environments
+          WHERE organization_id = $1 AND deleted_at IS NULL
+            AND slug NOT IN ('production','staging','development')`,
         [orgId],
       ),
       db.query<{ count: string }>(
@@ -402,11 +467,22 @@ export class ProjectRepository {
       value: string;
       period_start: Date;
     }>(
-      `SELECT counter_type, value, period_start
-         FROM project_usage
-        WHERE project_id = $1
-        ORDER BY period_start DESC
-        LIMIT 100`,
+      `SELECT metric.counter_type, metric.value::text AS value, usage.period_start
+         FROM project_usage_current usage
+         CROSS JOIN LATERAL (VALUES
+           ('total_events', usage.total_events::numeric),
+           ('errors', usage.errors::numeric),
+           ('requests', usage.requests::numeric),
+           ('traces', usage.traces::numeric),
+           ('logs', usage.logs::numeric),
+           ('metrics', usage.metrics::numeric),
+           ('profiles', usage.profiles::numeric),
+           ('alert_count', usage.alert_count::numeric),
+           ('connector_deliveries', usage.connector_deliveries::numeric),
+           ('failed_notifications', usage.failed_notifications::numeric)
+         ) metric(counter_type, value)
+        WHERE usage.project_id = $1
+        ORDER BY metric.counter_type`,
       [projectId],
     );
     return result.rows.map((r) => ({

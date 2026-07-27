@@ -7,6 +7,7 @@ import type {
 } from "./alert-preferences.types.js";
 import type { RequestMeta } from "../../service.js";
 import { ProjectsService } from "../../service.js";
+import { ProjectError } from "../../shared/utils.js";
 
 export class ProjectMemberAlertPreferenceService {
   constructor(
@@ -22,7 +23,7 @@ export class ProjectMemberAlertPreferenceService {
     userId: string,
   ): Promise<ProjectMemberNotificationPreference[]> {
     await this.projectsService.requireProjectAccess(orgId, projectId, userId, "member");
-    return this.repository.seedMissingMemberPreferences(projectId, userId);
+    return this.repository.seedMissingMemberPreferences(orgId, projectId, userId);
   }
 
   async updatePreference(
@@ -35,11 +36,11 @@ export class ProjectMemberAlertPreferenceService {
   ): Promise<ProjectMemberNotificationPreference> {
     await this.projectsService.requireProjectAccess(orgId, projectId, userId, "member");
 
-    const prefs = await this.repository.getMemberPreferences(projectId, userId);
+    const prefs = await this.repository.getMemberPreferences(orgId, projectId, userId);
     const existing = prefs.find((p) => p.id === prefId);
-    if (!existing) throw new Error("Preference not found");
+    if (!existing) throw new ProjectError("PREFERENCE_NOT_FOUND", "Preference not found", 404);
 
-    const updated = await this.repository.updateMemberPreference(prefId, projectId, userId, dto);
+    const updated = await this.repository.updateMemberPreference(prefId, orgId, projectId, userId, dto);
 
     await this.projectsService.audit(meta, {
       orgId: orgId,
@@ -62,7 +63,7 @@ export class ProjectMemberAlertPreferenceService {
     meta: RequestMeta,
   ): Promise<void> {
     await this.projectsService.requireProjectAccess(orgId, projectId, actorId, "admin");
-    await this.repository.bulkSubscribe(projectId, channel, category, userIds);
+    await this.repository.bulkSubscribe(orgId, projectId, channel, category, userIds);
 
     await this.projectsService.audit(meta, {
       orgId: orgId,
@@ -73,8 +74,8 @@ export class ProjectMemberAlertPreferenceService {
     });
   }
 
-  async resolveRecipients(projectId: string, category: string, severity: string): Promise<string[]> {
-    return this.repository.resolveRecipients(projectId, category, severity);
+  async resolveRecipients(orgId: string, projectId: string, category: string, severity: string): Promise<string[]> {
+    return this.repository.resolveRecipients(orgId, projectId, category, severity);
   }
 
   async sync(orgId: string, projectId: string, userId: string): Promise<void> {

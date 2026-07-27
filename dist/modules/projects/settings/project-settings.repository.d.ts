@@ -1,15 +1,8 @@
 /**
- * Project settings repository.
- *
- * Provides SDK config provisioning and plan-key lookups for projects.
+ * Environment SDK config heads are provisioned by the database when an
+ * environment is created. Project settings no longer seed credential-specific
+ * or config-key-specific SDK rows.
  */
-import type { Pool, PoolClient } from "pg";
-import type { Project } from "../types.js";
 export declare class ProjectSettingsRepository {
-    private readonly db;
-    constructor(db?: Pool);
-    withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
-    findSdkConfigPlanKey(orgId: string, client?: PoolClient): Promise<string>;
-    createDefaultSdkConfigs(project: Project, createdBy: string, planKey: string, client?: PoolClient): Promise<number>;
 }
 //# sourceMappingURL=project-settings.repository.d.ts.map

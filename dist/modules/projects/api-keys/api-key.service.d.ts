@@ -19,7 +19,7 @@ import { ApiKeyRepository } from "./api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, ListApiKeysQuery, Project, ProjectApiKey, ProjectApiKeyRecord, RotateApiKeyBody, UpdateApiKeyBody, ValidatedApiKey } from "../types.js";
+import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, ListApiKeysQuery, ProjectApiKey, ProjectApiKeyRecord, RotateApiKeyBody, UpdateApiKeyBody, ValidatedApiKey } from "../types.js";
 import { BaseProjectService } from "../shared/base.service.js";
 export interface RequestMeta {
     actorUserId: string;
@@ -62,16 +62,7 @@ export declare class ApiKeyService extends BaseProjectService {
     assertFutureExpiry(expiresAt: Date | null | undefined): void;
     publicApiKey(apiKey: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey;
     summarizeBulk(results: BulkOperationResult["results"]): BulkOperationResult;
-    /**
-     * Warm the in-process LRU so ingestion resolves the key without a Postgres
-     * round trip. Only active keys on active projects are cached as active;
-     * ingestion re-validates project status on a miss.
-     */
-    warmApiKeyCache(secretHash: string, key: ProjectApiKeyRecord | ProjectApiKey, project: Project, env?: {
-        id: string;
-        name: string;
-        slug: string;
-    } | null): void;
+    private configObject;
     evictApiKeyConfig(secretHash: string): void;
 }
 //# sourceMappingURL=api-key.service.d.ts.map

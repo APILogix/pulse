@@ -17,7 +17,13 @@ export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
         critical: "critical";
     }>>;
     digest_mode: z.ZodOptional<z.ZodString>;
-    quiet_hours: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
+    quiet_hours: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodObject<{}, z.core.$strict>, z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        timezone: z.ZodDefault<z.ZodString>;
+        start: z.ZodString;
+        end: z.ZodString;
+        days: z.ZodDefault<z.ZodArray<z.ZodNumber>>;
+    }, z.core.$strict>]>>>;
 }, z.core.$strip>;
 export type UpdateAlertPreferenceBody = z.infer<typeof UpdateAlertPreferenceBodySchema>;
 export declare const BulkSubscribeBodySchema: z.ZodObject<{
@@ -35,6 +41,7 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         billing: "billing";
         usage: "usage";
         ai: "ai";
+        all: "all";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";

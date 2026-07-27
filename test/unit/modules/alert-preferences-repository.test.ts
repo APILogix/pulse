@@ -23,6 +23,7 @@ describe('AlertPreferencesRepository.bulkSubscribe', () => {
     const repo = await createRepository();
     const maliciousUserId = "'); DROP TABLE users; --";
     await repo.bulkSubscribe(
+      'organization-id',
       'project-id',
       'email',
       'error',
@@ -34,16 +35,16 @@ describe('AlertPreferencesRepository.bulkSubscribe', () => {
 
     // The SQL must use placeholders, not string interpolation.
     expect(sql).not.toContain(maliciousUserId);
-    expect(values).toContain(maliciousUserId);
+    expect(values[4]).toContain(maliciousUserId);
 
-    // Expect exactly one placeholder group with 4 params.
-    expect(sql).toContain('($1, $2, $3, $4, TRUE)');
-    expect(values).toEqual(['project-id', maliciousUserId, 'email', 'error']);
+    expect(sql).toContain('unnest($5::uuid[])');
+    expect(values).toEqual(['organization-id', 'project-id', 'email', 'error', [maliciousUserId]]);
   });
 
   it('generates multiple placeholder groups for multiple users', async () => {
     const repo = await createRepository();
     await repo.bulkSubscribe(
+      'organization-id',
       'project-id',
       'slack',
       'critical',
@@ -51,16 +52,16 @@ describe('AlertPreferencesRepository.bulkSubscribe', () => {
     );
 
     const [sql, values] = query.mock.calls[0]!;
-    expect(sql).toContain('($1, $2, $3, $4, TRUE), ($5, $6, $7, $8, TRUE)');
+    expect(sql).toContain('project_member_alert_channel_preferences');
+    expect(sql).toContain('project_alert_channels');
     expect(values).toEqual([
-      'project-id', 'user-1', 'slack', 'critical',
-      'project-id', 'user-2', 'slack', 'critical',
+      'organization-id', 'project-id', 'slack', 'critical', ['user-1', 'user-2'],
     ]);
   });
 
   it('short-circuits on empty user list', async () => {
     const repo = await createRepository();
-    await repo.bulkSubscribe('project-id', 'email', 'error', []);
+    await repo.bulkSubscribe('organization-id', 'project-id', 'email', 'error', []);
     expect(query).not.toHaveBeenCalled();
   });
 });

@@ -1,9 +1,7 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { OrganizationError } from "../types.js";
-import { CreateSdkConfigSchema, UpdateSdkConfigSchema, RollbackSdkConfigSchema, ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, SdkConfigParamsSchema, SdkConfigVersionParamsSchema, } from "./sdk-config.types.js";
-function asAuth(request) {
-    return request;
-}
+import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, RollbackSdkConfigSchema, SdkConfigParamsSchema, SdkConfigVersionParamsSchema, UpdateSdkConfigSchema, } from "./sdk-config.types.js";
+const asAuth = (request) => request;
 function buildMeta(request) {
     const user = asAuth(request).user;
     return {
@@ -18,11 +16,16 @@ function buildMeta(request) {
     };
 }
 function handleError(error, reply) {
-    console.log('[organization.sdkConfig.handleError]', error);
     if (error instanceof OrganizationError) {
-        return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
+        return reply.code(error.statusCode).send({
+            success: false,
+            error: { code: error.code, message: error.message },
+        });
     }
-    return reply.code(500).send({ success: false, error: { code: "INTERNAL_ERROR", message: "Unexpected SDK config error" } });
+    return reply.code(500).send({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Unexpected SDK config error" },
+    });
 }
 function wrap(handler) {
     return async (request, reply) => {
@@ -34,85 +37,60 @@ function wrap(handler) {
         }
     };
 }
-/** Strip undefined to satisfy exactOptionalPropertyTypes. */
-function strip(obj) {
-    if (typeof obj !== "object" || obj === null)
-        return obj;
-    const out = {};
-    for (const [k, v] of Object.entries(obj)) {
-        if (v !== undefined)
-            out[k] = v;
-    }
-    return out;
+function strip(value) {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
-export function registerSdkConfigRoutes(fastify, svc) {
+export function registerSdkConfigRoutes(fastify, service) {
     const auth = { preHandler: [authenticate] };
-    // List configs (latest rows) for the org, with optional filters.
     fastify.get("/:orgId/sdk-configs", auth, wrap(async (request, reply) => {
         const { orgId } = request.params;
-        const q = ListSdkConfigsQuerySchema.parse(request.query ?? {});
-        const { cursor, limit, search, sortBy, sortOrder, ...filters } = q;
-        const result = await svc.listConfigs(orgId, asAuth(request).user.id, strip(filters), { cursor, limit, search, sortBy, sortOrder });
+        const query = ListSdkConfigsQuerySchema.parse(request.query ?? {});
+        const { cursor, limit, search, sortBy, sortOrder, ...filters } = query;
+        const scopedFilters = {};
+        if (filters.projectId !== undefined)
+            scopedFilters.projectId = filters.projectId;
+        if (filters.environmentId !== undefined)
+            scopedFilters.environmentId = filters.environmentId;
+        const result = await service.listConfigs(orgId, asAuth(request).user.id, scopedFilters, strip({ cursor, limit, search, sortBy, sortOrder }));
         return reply.send({ success: true, ...result });
     }));
-    // Create a config (version 1).
-    fastify.post("/:orgId/sdk-configs", auth, wrap(async (request, reply) => {
-        const { orgId } = request.params;
-        const body = CreateSdkConfigSchema.parse(request.body);
-        const result = await svc.createConfig(buildMeta(request), orgId, strip(body));
-        return reply.code(201).send({ success: true, data: result });
-    }));
-    // Resolve the active config set for an SDK (member-authenticated, cached).
-    // Declared before /:configId so "resolve" is not captured as a configId.
     fastify.get("/:orgId/sdk-configs/resolve", auth, wrap(async (request, reply) => {
         const { orgId } = request.params;
-        const q = ResolveSdkConfigQuerySchema.parse(request.query ?? {});
-        const result = await svc.resolveForSdk(orgId, asAuth(request).user.id, strip(q));
+        const query = ResolveSdkConfigQuerySchema.parse(request.query ?? {});
+        const result = await service.resolveForSdk(orgId, asAuth(request).user.id, query);
         return reply.send({ success: true, data: result });
     }));
-    // Get one config.
     fastify.get("/:orgId/sdk-configs/:configId", auth, wrap(async (request, reply) => {
         const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
-        const result = await svc.getConfig(orgId, asAuth(request).user.id, configId);
+        const result = await service.getConfig(orgId, asAuth(request).user.id, configId);
         return reply.send({ success: true, data: result });
     }));
-    // Update a config (mints a new version when the value changes).
     fastify.patch("/:orgId/sdk-configs/:configId", auth, wrap(async (request, reply) => {
         const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
         const body = UpdateSdkConfigSchema.parse(request.body);
-        const result = await svc.updateConfig(buildMeta(request), orgId, configId, strip(body));
+        const update = { configValue: body.configValue };
+        if (body.schemaVersion !== undefined)
+            update.schemaVersion = body.schemaVersion;
+        if (body.changeSummary !== undefined)
+            update.changeSummary = body.changeSummary;
+        const result = await service.updateConfig(buildMeta(request), orgId, configId, update);
         return reply.send({ success: true, data: result });
     }));
-    // Roll back to an earlier version (mints a new version with the old value).
     fastify.post("/:orgId/sdk-configs/:configId/rollback", auth, wrap(async (request, reply) => {
         const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
         const body = RollbackSdkConfigSchema.parse(request.body);
-        const result = await svc.rollbackConfig(buildMeta(request), orgId, configId, body.toVersion, body.reason);
+        const result = await service.rollbackConfig(buildMeta(request), orgId, configId, body.toRevision, body.reason);
         return reply.send({ success: true, data: result });
     }));
-    // List immutable version history.
     fastify.get("/:orgId/sdk-configs/:configId/versions", auth, wrap(async (request, reply) => {
         const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
-        const result = await svc.listVersions(orgId, asAuth(request).user.id, configId);
+        const result = await service.listVersions(orgId, asAuth(request).user.id, configId);
         return reply.send({ success: true, data: result });
     }));
-    // Get a specific version snapshot.
     fastify.get("/:orgId/sdk-configs/:configId/versions/:version", auth, wrap(async (request, reply) => {
         const { orgId, configId, version } = SdkConfigVersionParamsSchema.parse(request.params);
-        const result = await svc.getVersion(orgId, asAuth(request).user.id, configId, version);
+        const result = await service.getVersion(orgId, asAuth(request).user.id, configId, version);
         return reply.send({ success: true, data: result });
-    }));
-    // Deployment/rollout tracking for a config.
-    fastify.get("/:orgId/sdk-configs/:configId/deployments", auth, wrap(async (request, reply) => {
-        const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
-        const result = await svc.listDeployments(orgId, asAuth(request).user.id, configId);
-        return reply.send({ success: true, data: result });
-    }));
-    // Acknowledge receipt of a deployed version (bumps reached_count).
-    fastify.post("/:orgId/sdk-configs/:configId/versions/:version/ack", auth, wrap(async (request, reply) => {
-        const { orgId, configId, version } = SdkConfigVersionParamsSchema.parse(request.params);
-        await svc.acknowledgeDeployment(orgId, asAuth(request).user.id, configId, version);
-        return reply.send({ success: true });
     }));
 }
 //# sourceMappingURL=sdk-config.routes.js.map

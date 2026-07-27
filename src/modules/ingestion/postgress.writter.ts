@@ -62,6 +62,12 @@ export class PostgresWriter {
     this.reader = new TelemetryReader(pool);
   }
 
+  private configObject(value: unknown): Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  }
+
   /**
    * Resolve an ingestion API key by extracting its public prefix, looking up
    * candidate rows, and comparing the SHA-256 secret hash in constant time.
@@ -99,16 +105,20 @@ export class PostgresWriter {
         k.allowed_ips,
         k.allowed_domains,
         k.allowed_sdks,
-        k.sampling_rules,
-        k.feature_flags,
-        k.sdk_config,
-        COALESCE(k.rate_limit_per_second, e.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
-        COALESCE(k.rate_limit_per_minute, e.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute,
-        COALESCE(k.rate_limit_per_hour, e.rate_limit_per_hour, p.rate_limit_per_hour) AS rate_limit_per_hour,
+        cr.config_value AS sdk_config,
+        COALESCE(k.rate_limit_per_second, e.rate_limit_per_second) AS rate_limit_per_second,
+        COALESCE(k.rate_limit_per_minute, e.rate_limit_per_minute) AS rate_limit_per_minute,
+        COALESCE(k.rate_limit_per_hour, e.rate_limit_per_hour) AS rate_limit_per_hour,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
+      INNER JOIN project_environment_sdk_configs ch
+        ON ch.environment_id = k.environment_id
+       AND ch.project_id = k.project_id
+       AND ch.organization_id = k.organization_id
+      INNER JOIN project_environment_sdk_config_revisions cr
+        ON cr.id = ch.published_revision_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
        AND s.status IN ('trialing', 'active', 'past_due')
@@ -155,8 +165,8 @@ export class PostgresWriter {
         allowedIps: (row.allowed_ips as string[] | null) ?? [],
         allowedDomains: (row.allowed_domains as string[] | null) ?? [],
         allowedSdks: (row.allowed_sdks as string[] | null) ?? [],
-        samplingRules: (row.sampling_rules as Record<string, unknown> | null) ?? {},
-        featureFlags: (row.feature_flags as Record<string, unknown> | null) ?? {},
+        samplingRules: this.configObject((row.sdk_config as Record<string, unknown> | null)?.samplingRules),
+        featureFlags: this.configObject((row.sdk_config as Record<string, unknown> | null)?.featureFlags),
         sdkConfig: (row.sdk_config as Record<string, unknown> | null) ?? {},
         rateLimitPerSecond: row.rate_limit_per_second as number | null,
         rateLimitPerMinute: row.rate_limit_per_minute as number | null,

@@ -9,6 +9,10 @@ import { MemberRepository } from './members/member.repository.js';
 import { projectsRoutes } from './routes.js';
 import { projectMemberRoutes } from './members/member.routes.js';
 import { projectConnectorSubscriptionRoutes } from './alerts/subscriptions/connector-subscription.routes.js';
+import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js';
+import { ThresholdService } from './alerts/thresholds/threshold.service.js';
+import { AlertChannelRepository } from './alerts/channels/channel.repository.js';
+import { ProjectAlertChannelService } from './alerts/channels/channel.service.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
 import { pool } from '../../config/database.js';
@@ -38,8 +42,12 @@ async function projectsModule(fastify, _options) {
     const { projectAlertPreferencesRoutes } = await import('./alerts/preferences/alert-preferences.controller.js');
     const alertRoutesRepository = new AlertRoutesRepository();
     const alertPreferencesRepository = new AlertPreferencesRepository();
+    const alertThresholdsRepository = new ThresholdRepository(pool);
+    const alertChannelsRepository = new AlertChannelRepository(pool);
     const alertRoutesService = new ProjectAlertRouteService(alertRoutesRepository, service, fastify.organization.repository, fastify.log);
     const alertPreferencesService = new ProjectMemberAlertPreferenceService(alertPreferencesRepository, service, fastify.organization.repository, fastify.log);
+    const alertThresholdsService = new ThresholdService(alertThresholdsRepository, service);
+    const alertChannelsService = new ProjectAlertChannelService(alertChannelsRepository, service, fastify.log);
     fastify.decorate('projects', {
         repository,
         settingsRepository,
@@ -54,6 +62,10 @@ async function projectsModule(fastify, _options) {
         alertRoutesService,
         alertPreferencesRepository,
         alertPreferencesService,
+        alertThresholdsRepository,
+        alertThresholdsService,
+        alertChannelsRepository,
+        alertChannelsService,
     });
     await fastify.register(projectsRoutes, {
         prefix: '/organizations/:orgId/projects',

@@ -39,9 +39,10 @@ export interface EvaluatorTickSummary {
 export declare class AlertRuleEvaluator {
     private readonly repo;
     private readonly eventsService;
+    private readonly projectThresholds;
     private readonly log;
     constructor(logger: FastifyBaseLogger);
-    /** One evaluator tick: rule evaluation + preset seeding. Never throws. */
+    /** One evaluator tick: alert rules, project thresholds, and preset seeding. */
     runTick(limit?: number): Promise<EvaluatorTickSummary>;
     /** Enabled rules due for evaluation, oldest watermark first, bounded. */
     private findDueRules;

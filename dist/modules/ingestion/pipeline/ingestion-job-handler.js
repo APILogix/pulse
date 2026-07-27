@@ -17,14 +17,14 @@ export function createIngestionJobHandler(writer, usage) {
             throw new Error('NO_PERSISTABLE_EVENTS');
         }
         await writer.writeBatch(scoped);
-        // Fire-and-forget usage accounting (Tier-1, memory only — never awaited on
-        // the persistence path, never throws). One increment per persisted event,
-        // bucketed by type for per-signal usage/billing.
+        // Fire-and-forget canonical event accounting. Signal type remains an
+        // explicit rollup dimension instead of being encoded in a counter name.
         if (usage) {
-            for (const s of scoped) {
-                if (s.orgId) {
-                    usage.increment(s.projectId, s.orgId, 'events_ingested', 1);
-                    usage.increment(s.projectId, s.orgId, `events_ingested:${s.event.type}`, 1);
+            for (const scopedEvent of scoped) {
+                if (scopedEvent.orgId) {
+                    usage.increment(scopedEvent.projectId, scopedEvent.orgId, 'events', 1, {
+                        eventType: scopedEvent.event.type,
+                    });
                 }
             }
         }

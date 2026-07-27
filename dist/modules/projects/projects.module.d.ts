@@ -16,6 +16,10 @@ import { EnvironmentRepository } from './environments/environment.repository.js'
 import { ActivityRepository } from './activity/activity.repository.js';
 import { UsageRepository } from './usage/usage.repository.js';
 import { MemberRepository } from './members/member.repository.js';
+import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js';
+import { ThresholdService } from './alerts/thresholds/threshold.service.js';
+import { AlertChannelRepository } from './alerts/channels/channel.repository.js';
+import { ProjectAlertChannelService } from './alerts/channels/channel.service.js';
 import { ProjectsService } from './service.js';
 declare module 'fastify' {
     interface FastifyInstance {
@@ -33,6 +37,10 @@ declare module 'fastify' {
             alertRoutesService: import('./alerts/routes/alert-routes.service.js').ProjectAlertRouteService;
             alertPreferencesRepository: import('./alerts/preferences/alert-preferences.repository.js').AlertPreferencesRepository;
             alertPreferencesService: import('./alerts/preferences/alert-preferences.service.js').ProjectMemberAlertPreferenceService;
+            alertThresholdsRepository: ThresholdRepository;
+            alertThresholdsService: ThresholdService;
+            alertChannelsRepository: AlertChannelRepository;
+            alertChannelsService: ProjectAlertChannelService;
         };
     }
 }

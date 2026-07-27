@@ -82,11 +82,10 @@ export class CoreRepository extends BaseRepository {
         });
     }
     async listOrgApiKeyHashes(orgId) {
-        const r = await this.db.query(`SELECT k.key_hash
+        const r = await this.db.query(`SELECT k.secret_hash
        FROM project_api_keys k
-       JOIN projects p ON p.id=k.project_id
-       WHERE p.org_id=$1`, [orgId]);
-        return r.rows.map(row => row.key_hash);
+       WHERE k.organization_id=$1 AND k.deleted_at IS NULL`, [orgId]);
+        return r.rows.map(row => row.secret_hash);
     }
     async archiveOrg(id) {
         const r = await this.db.query(`UPDATE organizations SET status='archived',updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, [id]);

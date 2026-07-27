@@ -1,0 +1,88 @@
+import { ProjectMemberRole } from "../../types.js";
+import { ProjectError } from "../../shared/utils.js";
+import { ThresholdRepository } from "./threshold.repository.js";
+export class ThresholdService {
+    repository;
+    projectsService;
+    constructor(repository, projectsService) {
+        this.repository = repository;
+        this.projectsService = projectsService;
+    }
+    async list(orgId, projectId, userId, query) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+        const result = await this.repository.list(orgId, projectId, query);
+        return {
+            ...result,
+            limit: query.limit,
+            offset: query.offset ?? ((query.page ?? 1) - 1) * query.limit,
+        };
+    }
+    async get(orgId, projectId, thresholdId, userId) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+        return this.requireThreshold(orgId, projectId, thresholdId);
+    }
+    async create(orgId, projectId, userId, body, meta) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        const created = await this.repository.create(orgId, projectId, userId, body);
+        await this.audit(meta, orgId, projectId, "alert_threshold.created", created.id, null, created);
+        return created;
+    }
+    async update(orgId, projectId, thresholdId, userId, body, meta) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
+        const updated = await this.repository.update(orgId, projectId, thresholdId, userId, body);
+        await this.audit(meta, orgId, projectId, "alert_threshold.updated", thresholdId, existing, updated);
+        return updated;
+    }
+    async delete(orgId, projectId, thresholdId, userId, meta) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
+        const deleted = await this.repository.delete(orgId, projectId, thresholdId, userId);
+        await this.audit(meta, orgId, projectId, "alert_threshold.deleted", thresholdId, existing, deleted);
+    }
+    async toggle(orgId, projectId, thresholdId, userId, body, meta) {
+        await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
+        const updated = await this.repository.toggle(orgId, projectId, thresholdId, userId, body.enabled);
+        await this.audit(meta, orgId, projectId, "alert_threshold.toggled", thresholdId, existing, updated);
+        return updated;
+    }
+    async requireThreshold(orgId, projectId, thresholdId) {
+        const threshold = await this.repository.findById(orgId, projectId, thresholdId);
+        if (!threshold) {
+            throw new ProjectError("ALERT_THRESHOLD_NOT_FOUND", "Alert threshold not found", 404);
+        }
+        return threshold;
+    }
+    async audit(meta, orgId, projectId, action, entityId, oldThreshold, newThreshold) {
+        await this.projectsService.audit(meta, {
+            orgId,
+            action,
+            entityType: "project_alert_threshold",
+            entityId,
+            oldValues: oldThreshold ? this.auditValues(oldThreshold) : null,
+            newValues: this.auditValues(newThreshold),
+            metadata: { projectId },
+        });
+    }
+    auditValues(threshold) {
+        return {
+            environmentId: threshold.environmentId,
+            thresholdKey: threshold.thresholdKey,
+            metricName: threshold.metricName,
+            metricSource: threshold.metricSource,
+            category: threshold.category,
+            severity: threshold.severity,
+            comparisonOperator: threshold.comparisonOperator,
+            thresholdValue: threshold.thresholdValue,
+            thresholdUnit: threshold.thresholdUnit,
+            evaluationWindowMinutes: threshold.evaluationWindowMinutes,
+            cooldownMinutes: threshold.cooldownMinutes,
+            consecutiveBreaches: threshold.consecutiveBreaches,
+            enabled: threshold.enabled,
+            notifyOnRecovery: threshold.notifyOnRecovery,
+            version: threshold.version,
+        };
+    }
+}
+//# sourceMappingURL=threshold.service.js.map

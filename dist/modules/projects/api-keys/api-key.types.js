@@ -56,13 +56,10 @@ export const CreateApiKeyBodySchema = z.preprocess(normalizeObjectKeys, z.object
     allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
     allowedIps: z.array(Ipv4OrV6).max(256).optional(),
     allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-    samplingRules: z.record(z.string(), z.unknown()).optional(),
-    featureFlags: z.record(z.string(), z.unknown()).optional(),
-    sdkConfig: z.record(z.string(), z.unknown()).optional(),
     rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
     rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
     rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
-}));
+}).strict());
 export const UpdateApiKeyBodySchema = z.preprocess(normalizeObjectKeys, z
     .object({
     name: z.string().min(1).max(255).nullable().optional(),
@@ -77,9 +74,6 @@ export const UpdateApiKeyBodySchema = z.preprocess(normalizeObjectKeys, z
     allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
     allowedIps: z.array(Ipv4OrV6).max(256).optional(),
     allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-    samplingRules: z.record(z.string(), z.unknown()).optional(),
-    featureFlags: z.record(z.string(), z.unknown()).optional(),
-    sdkConfig: z.record(z.string(), z.unknown()).optional(),
     rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
     rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
     rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),

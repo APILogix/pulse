@@ -4,7 +4,7 @@ See [docs/enterprise-auth-implementation-plan.md](docs/enterprise-auth-implement
 
 ## Current Direction
 
-- Canonical SQL source of truth: `src/db/postgres/canonical_migrations`.
+- Canonical SQL source of truth: `src/db/postgres/canonical_migrations_draft` (the default migration runner path).
 - Legacy compatibility path: `src/db/postgres/migrations2` until the rename is completed everywhere.
 - Auth and control-plane components must remain Redis-free for the initial stage.
 - Use in-memory LRU only for short-lived single-process state and Postgres for durable/shared state.

@@ -21,24 +21,14 @@ export function evictAlertThresholdCache(orgId, projectId) {
 }
 export const sdkConfigCache = new LRUCache({
     max: 20000,
-    ttl: 1000 * 30, // 30 seconds
+    ttl: 1000 * 30,
     updateAgeOnGet: false,
     allowStale: false,
 });
-/** Build the cache key for a resolved SDK config set. */
-export function sdkConfigCacheKey(orgId, projectId, environment, platform) {
-    return `${orgId}:${projectId ?? 'org'}:${environment}:${platform ?? 'all'}`;
+export function sdkConfigCacheKey(environmentId) {
+    return environmentId;
 }
-/**
- * Evict every cached SDK config set for an org. Called on any config mutation.
- * LRUCache has no prefix delete, so we scan keys (bounded by `max`) and drop
- * those for the org — cheap relative to a DB round-trip and keeps reads correct.
- */
-export function evictSdkConfigCache(orgId) {
-    const prefix = `${orgId}:`;
-    for (const key of sdkConfigCache.keys()) {
-        if (key.startsWith(prefix))
-            sdkConfigCache.delete(key);
-    }
+export function evictSdkConfigCache(environmentId) {
+    sdkConfigCache.delete(environmentId);
 }
 //# sourceMappingURL=lrucashe.js.map

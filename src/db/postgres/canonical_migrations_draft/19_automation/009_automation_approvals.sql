@@ -1,0 +1,78 @@
+-- =============================================================================
+-- Module      : Automation
+-- Migration   : 009_automation_approvals.sql
+-- Description : Human approval gates for high-risk actions
+-- Author      : Pulse Platform
+-- PostgreSQL  : 16+
+-- Idempotent  : Yes
+-- =============================================================================
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS automation_approvals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  workflow_id UUID NOT NULL REFERENCES automation_workflows(id) ON DELETE CASCADE,
+  run_id UUID NOT NULL REFERENCES automation_runs(id) ON DELETE CASCADE,
+  step_id UUID NULL REFERENCES automation_run_steps(id) ON DELETE SET NULL,
+  requested_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  approved_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  rejected_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  status automation_approval_status NOT NULL DEFAULT 'pending',
+  risk_level automation_action_risk NOT NULL DEFAULT 'high',
+  approval_reason TEXT,
+  rejection_reason TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  decided_at TIMESTAMPTZ,
+  request_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  decision_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  -- expires_at must be after created_at
+  CONSTRAINT chk_approval_expires_after_created CHECK (expires_at > created_at),
+  -- Approved rows require approved_by and decided_at
+  CONSTRAINT chk_approval_approved CHECK (
+    status != 'approved' OR (approved_by IS NOT NULL AND decided_at IS NOT NULL)
+  ),
+  -- Rejected rows require rejected_by and decided_at
+  CONSTRAINT chk_approval_rejected CHECK (
+    status != 'rejected' OR (rejected_by IS NOT NULL AND decided_at IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_approvals_org_status
+  ON automation_approvals(organization_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_automation_approvals_run
+  ON automation_approvals(run_id);
+
+CREATE INDEX IF NOT EXISTS idx_automation_approvals_step
+  ON automation_approvals(step_id);
+
+CREATE INDEX IF NOT EXISTS idx_automation_approvals_pending_expiry
+  ON automation_approvals(expires_at)
+  WHERE status = 'pending';
+
+-- Unique partial index: at most one pending approval per step_id.
+-- Prevents concurrent duplicate approval creation.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_approvals_step_pending_unique
+  ON automation_approvals(step_id)
+  WHERE status = 'pending' AND step_id IS NOT NULL;
+
+-- Add FK from run_steps.approval_id -> automation_approvals.id
+ALTER TABLE automation_run_steps
+  DROP CONSTRAINT IF EXISTS fk_run_steps_approval;
+ALTER TABLE automation_run_steps
+  ADD CONSTRAINT fk_run_steps_approval
+  FOREIGN KEY (approval_id) REFERENCES automation_approvals(id) ON DELETE SET NULL;
+
+-- Updated-at trigger
+DROP TRIGGER IF EXISTS trg_automation_approvals_updated_at ON automation_approvals;
+CREATE TRIGGER trg_automation_approvals_updated_at
+  BEFORE UPDATE ON automation_approvals
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+COMMIT;

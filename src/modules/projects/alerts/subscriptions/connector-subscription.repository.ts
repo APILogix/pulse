@@ -28,6 +28,15 @@ const SUBSCRIPTION_COLUMNS = `
   created_by_user_id, updated_by_user_id, created_at, updated_at, deleted_at
 `;
 
+const RESOLVER_SUBSCRIPTION_COLUMNS = `
+  subscription.id, subscription.project_id, subscription.organization_id,
+  subscription.connector_id, subscription.enabled, subscription.alert_categories,
+  subscription.severity_threshold, subscription.member_ids, subscription.channel_overrides,
+  subscription.quiet_hours, subscription.digest_mode, subscription.created_by_user_id,
+  subscription.updated_by_user_id, subscription.created_at, subscription.updated_at,
+  subscription.deleted_at
+`;
+
 export class ConnectorSubscriptionRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -47,13 +56,14 @@ export class ConnectorSubscriptionRepository {
   }
 
   async listByProject(
+    organizationId: string,
     projectId: string,
     query: ListProjectConnectorSubscriptionsQuery,
     client?: DbClient,
   ): Promise<{ subscriptions: ProjectConnectorSubscription[]; total: number }> {
     const db = client ?? this.db;
-    const params: unknown[] = [projectId];
-    const whereClauses = ["project_id = $1", "deleted_at IS NULL"];
+    const params: unknown[] = [organizationId, projectId];
+    const whereClauses = ["organization_id = $1", "project_id = $2", "deleted_at IS NULL"];
 
     if (query.enabled !== undefined) {
       params.push(query.enabled);
@@ -89,6 +99,8 @@ export class ConnectorSubscriptionRepository {
   }
 
   async findById(
+    organizationId: string,
+    projectId: string,
     subscriptionId: string,
     client?: DbClient,
   ): Promise<ProjectConnectorSubscription | null> {
@@ -96,14 +108,15 @@ export class ConnectorSubscriptionRepository {
     const result = await db.query(
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE id = $1 AND deleted_at IS NULL
+        WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL
         LIMIT 1`,
-      [subscriptionId],
+      [organizationId, projectId, subscriptionId],
     );
     return result.rows[0] ? this.mapSubscription(result.rows[0]) : null;
   }
 
   async findByProjectAndConnector(
+    organizationId: string,
     projectId: string,
     connectorId: string,
     client?: DbClient,
@@ -112,9 +125,9 @@ export class ConnectorSubscriptionRepository {
     const result = await db.query(
       `SELECT ${SUBSCRIPTION_COLUMNS}
          FROM project_connector_subscriptions
-        WHERE project_id = $1 AND connector_id = $2 AND deleted_at IS NULL
+        WHERE organization_id = $1 AND project_id = $2 AND connector_id = $3 AND deleted_at IS NULL
         LIMIT 1`,
-      [projectId, connectorId],
+      [organizationId, projectId, connectorId],
     );
     return result.rows[0] ? this.mapSubscription(result.rows[0]) : null;
   }
@@ -164,6 +177,8 @@ export class ConnectorSubscriptionRepository {
   }
 
   async update(
+    organizationId: string,
+    projectId: string,
     subscriptionId: string,
     updatedByUserId: string,
     body: UpdateProjectConnectorSubscriptionBody,
@@ -204,20 +219,21 @@ export class ConnectorSubscriptionRepository {
     }
 
     if (assignments.length === 0) {
-      const existing = await this.findById(subscriptionId, db);
+      const existing = await this.findById(organizationId, projectId, subscriptionId, db);
       if (!existing) throw new ProjectError("CONNECTOR_SUBSCRIPTION_NOT_FOUND", "Subscription not found", 404);
       return existing;
     }
 
     assignments.push("updated_by_user_id = $" + i++);
     values.push(updatedByUserId);
-    assignments.push("updated_at = NOW()");
-    values.push(subscriptionId);
+    assignments.push("updated_at = NOW()", "version = version + 1");
+    values.push(subscriptionId, organizationId, projectId);
 
     const result = await db.query(
       `UPDATE project_connector_subscriptions
           SET ${assignments.join(", ")}
-        WHERE id = $${i++}
+        WHERE id = $${i++} AND organization_id = $${i++} AND project_id = $${i++}
+          AND deleted_at IS NULL
         RETURNING ${SUBSCRIPTION_COLUMNS}`,
       values,
     );
@@ -227,172 +243,133 @@ export class ConnectorSubscriptionRepository {
     return this.mapSubscription(result.rows[0]!);
   }
 
-  async delete(subscriptionId: string, deletedByUserId: string, client?: DbClient): Promise<void> {
+  async delete(
+    organizationId: string,
+    projectId: string,
+    subscriptionId: string,
+    deletedByUserId: string,
+    client?: DbClient,
+  ): Promise<void> {
     const db = client ?? this.db;
     const result = await db.query(
       `UPDATE project_connector_subscriptions
-          SET deleted_at = NOW(), updated_at = NOW(), updated_by_user_id = $2
-        WHERE id = $1 AND deleted_at IS NULL`,
-      [subscriptionId, deletedByUserId],
+          SET deleted_at = NOW(), updated_at = NOW(), updated_by_user_id = $4,
+              version = version + 1
+        WHERE organization_id = $1 AND project_id = $2 AND id = $3 AND deleted_at IS NULL`,
+      [organizationId, projectId, subscriptionId, deletedByUserId],
     );
     if (result.rowCount === 0) {
       throw new ProjectError("CONNECTOR_SUBSCRIPTION_NOT_FOUND", "Subscription not found", 404);
     }
   }
 
-  /**
-   * Deterministic alert routing lookup: API Key -> Environment -> Project ->
-   * Project Connector Subscriptions -> Project Members.
-   *
-   * Resolves a single API key to its routing context including the active
-   * connector subscriptions and project members that should receive alerts.
-   */
+  /** Resolve an active API key to project-scoped, tenant-safe delivery eligibility. */
   async resolveAlertRoutingTarget(
     apiKeyId: string,
     client?: DbClient,
   ): Promise<AlertRoutingTarget | null> {
     const db = client ?? this.db;
-
     const keyResult = await db.query<{
       id: string;
       project_id: string;
       organization_id: string;
       environment_id: string | null;
     }>(
-      `SELECT id, project_id, organization_id, environment_id
-         FROM project_api_keys
-        WHERE id = $1
-          AND deleted_at IS NULL
-          AND status = 'active'
+      `SELECT key.id, key.project_id, key.organization_id,
+              key.environment::text AS environment_id
+         FROM project_api_keys key
+         JOIN projects project
+           ON project.id = key.project_id
+          AND project.org_id = key.organization_id
+          AND project.status = 'active'
+          AND project.deleted_at IS NULL
+         JOIN organizations organization
+           ON organization.id = key.organization_id
+          AND organization.deleted_at IS NULL
+        WHERE key.id = $1 AND key.status = 'active' AND key.deleted_at IS NULL
         LIMIT 1`,
       [apiKeyId],
     );
-    const keyRow = keyResult.rows[0];
-    if (!keyRow) return null;
-
-    const projectResult = await db.query<{
-      id: string;
-      organization_id: string;
-      status: string;
-    }>(
-      `SELECT id, organization_id, status
-         FROM projects
-        WHERE id = $1
-          AND deleted_at IS NULL
-          AND status = 'active'
-        LIMIT 1`,
-      [keyRow.project_id],
+    const key = keyResult.rows[0];
+    if (!key) return null;
+    return this.loadRoutingTarget(
+      key.project_id,
+      key.organization_id,
+      key.environment_id,
+      key.id,
+      db,
     );
-    if (projectResult.rows.length === 0) return null;
-
-    const subscriptionResult = await db.query(
-      `SELECT ${SUBSCRIPTION_COLUMNS}
-         FROM project_connector_subscriptions
-        WHERE project_id = $1
-          AND enabled = TRUE
-          AND deleted_at IS NULL`,
-      [keyRow.project_id],
-    );
-
-    const memberResult = await db.query<{
-      user_id: string;
-      role: string;
-      email: string | null;
-    }>(
-      `SELECT m.user_id, m.role, u.email
-         FROM project_members m
-         LEFT JOIN users u ON u.id = m.user_id
-        WHERE m.project_id = $1
-          AND m.status = 'active'`,
-      [keyRow.project_id],
-    );
-
-    return {
-      projectId: keyRow.project_id,
-      organizationId: keyRow.organization_id,
-      environmentId: keyRow.environment_id,
-      apiKeyId: keyRow.id,
-      subscriptions: subscriptionResult.rows.map((row) => ({
-        subscriptionId: row.id,
-        connectorId: row.connector_id,
-        enabled: row.enabled,
-        alertCategories: row.alert_categories as AlertCategory[],
-        severityThreshold: row.severity_threshold,
-        memberIds: row.member_ids,
-        channelOverrides: row.channel_overrides,
-      })),
-      members: memberResult.rows.map((row) => ({
-        userId: row.user_id,
-        role: row.role,
-        email: row.email,
-      })),
-    };
   }
 
-  /**
-   * Resolve alert routing targets by project id.
-   *
-   * Fallback for alert events that do not carry an explicit api_key_id but are
-   * already scoped to a project. Still enforces the same Project -> Subscriptions
-   * -> Members lookup.
-   */
+  /** Resolve an active project to tenant-safe delivery eligibility. */
   async resolveAlertRoutingTargetByProjectId(
     projectId: string,
     client?: DbClient,
   ): Promise<AlertRoutingTarget | null> {
     const db = client ?? this.db;
-
-    const projectResult = await db.query<{
-      id: string;
-      organization_id: string;
-      status: string;
-    }>(
-      `SELECT id, organization_id, status
-         FROM projects
-        WHERE id = $1
-          AND deleted_at IS NULL
-          AND status = 'active'
+    const projectResult = await db.query<{ id: string; organization_id: string }>(
+      `SELECT project.id, project.org_id AS organization_id
+         FROM projects project
+         JOIN organizations organization
+           ON organization.id = project.org_id
+          AND organization.deleted_at IS NULL
+        WHERE project.id = $1 AND project.status = 'active' AND project.deleted_at IS NULL
         LIMIT 1`,
       [projectId],
     );
-    if (projectResult.rows.length === 0) return null;
-    const projectRow = projectResult.rows[0]!;
+    const project = projectResult.rows[0];
+    if (!project) return null;
+    return this.loadRoutingTarget(project.id, project.organization_id, null, null, db);
+  }
 
+  private async loadRoutingTarget(
+    projectId: string,
+    organizationId: string,
+    environmentId: string | null,
+    apiKeyId: string | null,
+    db: DbClient,
+  ): Promise<AlertRoutingTarget> {
     const subscriptionResult = await db.query(
-      `SELECT ${SUBSCRIPTION_COLUMNS}
-         FROM project_connector_subscriptions
-        WHERE project_id = $1
-          AND enabled = TRUE
-          AND deleted_at IS NULL`,
-      [projectId],
+      `SELECT ${RESOLVER_SUBSCRIPTION_COLUMNS}
+         FROM project_connector_subscriptions subscription
+         JOIN connector_configs connector
+           ON connector.id = subscription.connector_id
+          AND connector.organization_id = subscription.organization_id
+          AND connector.status = 'active'
+          AND connector.deleted_at IS NULL
+        WHERE subscription.project_id = $1
+          AND subscription.organization_id = $2
+          AND subscription.enabled = TRUE
+          AND subscription.deleted_at IS NULL`,
+      [projectId, organizationId],
     );
-
     const memberResult = await db.query<{
       user_id: string;
       role: string;
       email: string | null;
     }>(
-      `SELECT m.user_id, m.role, u.email
-         FROM project_members m
-         LEFT JOIN users u ON u.id = m.user_id
-        WHERE m.project_id = $1
-          AND m.status = 'active'`,
-      [projectId],
+      `SELECT member.user_id, member.role, users.email
+         FROM project_members member
+         LEFT JOIN users ON users.id = member.user_id
+        WHERE member.project_id = $1
+          AND member.organization_id = $2
+          AND member.status = 'active'`,
+      [projectId, organizationId],
     );
 
     return {
       projectId,
-      organizationId: projectRow.organization_id,
-      environmentId: null,
-      apiKeyId: "",
+      organizationId,
+      environmentId,
+      apiKeyId,
       subscriptions: subscriptionResult.rows.map((row) => ({
         subscriptionId: row.id,
         connectorId: row.connector_id,
         enabled: row.enabled,
         alertCategories: row.alert_categories as AlertCategory[],
         severityThreshold: row.severity_threshold,
-        memberIds: row.member_ids,
-        channelOverrides: row.channel_overrides,
+        memberIds: row.member_ids ?? [],
+        channelOverrides: row.channel_overrides ?? {},
       })),
       members: memberResult.rows.map((row) => ({
         userId: row.user_id,

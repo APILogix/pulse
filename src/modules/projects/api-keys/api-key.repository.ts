@@ -7,7 +7,7 @@
  * 3. Map snake_case rows into camelCase domain objects.
  * 4. Translate expected DB conflicts/misses into ProjectError with stable codes.
  *
- * Tenant isolation: every API key query is scoped by org_id (and project_id).
+ * Tenant isolation: every API key query is scoped by organization_id (and project_id).
  * Soft delete: API keys use deleted_at; reads filter deleted_at IS NULL.
  */
 import type { Pool, PoolClient } from "pg";
@@ -25,7 +25,7 @@ import type {
 import { ProjectError } from "../shared/utils.js";
 
 const API_KEY_COLUMNS = `
-  id, project_id, org_id, public_key, secret_hash, environment_id, key_type,
+  id, project_id, organization_id, public_key, secret_hash, environment_id, key_type,
   name, description, is_active, status, created_by,
   rotated_from_key_id, rotated_at, rotated_by, rotation_reason, grace_period_ends_at,
   revoked_at, revoked_by, revoked_reason, expires_at,
@@ -34,7 +34,6 @@ const API_KEY_COLUMNS = `
   rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
   permissions, allowed_endpoints, blocked_endpoints,
   allowed_sdks, allowed_origins, allowed_ips, allowed_domains, allowed_event_types,
-  sampling_rules, feature_flags, sdk_config,
   rotation_state, rotation_version,
   metadata, deleted_at, version,
   created_at, updated_at
@@ -43,7 +42,7 @@ const API_KEY_COLUMNS = `
 type ApiKeyRow = {
   id: string;
   project_id: string;
-  org_id: string | null;
+  organization_id: string;
   public_key: string;
   secret_hash: string;
   environment_id: string;
@@ -79,9 +78,6 @@ type ApiKeyRow = {
   allowed_ips: string[] | null;
   allowed_domains: string[] | null;
   allowed_event_types: string[] | null;
-  sampling_rules: Record<string, unknown> | null;
-  feature_flags: Record<string, unknown> | null;
-  sdk_config: Record<string, unknown> | null;
   rotation_state: string;
   rotation_version: number;
   metadata: Record<string, unknown> | null;
@@ -125,9 +121,6 @@ export interface ApiKeyUpdateInput {
   allowedOrigins?: string[];
   allowedIps?: string[];
   allowedDomains?: string[];
-  samplingRules?: Record<string, unknown>;
-  featureFlags?: Record<string, unknown>;
-  sdkConfig?: Record<string, unknown>;
   rateLimitPerSecond?: number | null;
   rateLimitPerMinute?: number | null;
   rateLimitPerHour?: number | null;
@@ -191,7 +184,7 @@ export class ApiKeyRepository {
   async createApiKey(
     input: {
       projectId: string;
-      orgId: string;
+      organizationId: string;
       publicKey: string;
       secretHash: string;
       keyType: ApiKeyType;
@@ -209,9 +202,6 @@ export class ApiKeyRepository {
       allowedOrigins?: string[] | undefined;
       allowedIps?: string[] | undefined;
       allowedDomains?: string[] | undefined;
-      samplingRules?: Record<string, unknown> | undefined;
-      featureFlags?: Record<string, unknown> | undefined;
-      sdkConfig?: Record<string, unknown> | undefined;
       rateLimitPerSecond?: number | null | undefined;
       rateLimitPerMinute?: number | null | undefined;
       rateLimitPerHour?: number | null | undefined;
@@ -223,12 +213,11 @@ export class ApiKeyRepository {
     try {
       const result = await db.query<ApiKeyRow>(
         `INSERT INTO project_api_keys (
-           project_id, org_id, public_key, secret_hash, environment_id, key_type,
+           project_id, organization_id, public_key, secret_hash, environment_id, key_type,
            name, description, created_by, expires_at,
            auto_rotate_enabled, auto_rotate_days,
            permissions, allowed_endpoints, blocked_endpoints,
            allowed_sdks, allowed_origins, allowed_ips, allowed_domains, allowed_event_types,
-           sampling_rules, feature_flags, sdk_config,
            rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
            rotated_from_key_id
          ) VALUES (
@@ -237,14 +226,13 @@ export class ApiKeyRepository {
            COALESCE($11,FALSE), COALESCE($12,90),
            $13, COALESCE($14,ARRAY['*']), COALESCE($15,'{}'),
            COALESCE($16::text[],ARRAY['*']::text[]), COALESCE($17,'{}'), COALESCE($18::inet[],'{}'::inet[]), COALESCE($19,'{}'), COALESCE($20,ARRAY['*']::text[]),
-           COALESCE($21,'{}'), COALESCE($22,'{}'), COALESCE($23,'{}'),
-           $24,$25,$26,
-           $27
+           $21,$22,$23,
+           $24
          )
          RETURNING ${API_KEY_COLUMNS}`,
         [
           input.projectId,
-          input.orgId,
+          input.organizationId,
           input.publicKey,
           input.secretHash,
           input.environmentId,
@@ -263,9 +251,6 @@ export class ApiKeyRepository {
           input.allowedIps ?? null,
           input.allowedDomains ?? null,
           input.allowedEventTypes ?? null,
-          input.samplingRules ?? null,
-          input.featureFlags ?? null,
-          input.sdkConfig ?? null,
           input.rateLimitPerSecond ?? null,
           input.rateLimitPerMinute ?? null,
           input.rateLimitPerHour ?? null,
@@ -373,9 +358,6 @@ export class ApiKeyRepository {
     if (input.allowedOrigins !== undefined) set("allowed_origins", input.allowedOrigins);
     if (input.allowedIps !== undefined) set("allowed_ips", input.allowedIps);
     if (input.allowedDomains !== undefined) set("allowed_domains", input.allowedDomains);
-    if (input.samplingRules !== undefined) set("sampling_rules", input.samplingRules);
-    if (input.featureFlags !== undefined) set("feature_flags", input.featureFlags);
-    if (input.sdkConfig !== undefined) set("sdk_config", input.sdkConfig);
     if (input.rateLimitPerSecond !== undefined) set("rate_limit_per_second", input.rateLimitPerSecond);
     if (input.rateLimitPerMinute !== undefined) set("rate_limit_per_minute", input.rateLimitPerMinute);
     if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
@@ -485,18 +467,23 @@ export class ApiKeyRepository {
   ): Promise<void> {
     const db = client ?? this.db;
     const keepActive = !!gracePeriodEndsAt && gracePeriodEndsAt.getTime() > Date.now();
+    const rotationState: ApiKeyRotationState = keepActive ? "grace_period" : "completed";
     const result = await db.query(
       `UPDATE project_api_keys
           SET status = 'rotated',
-              rotation_state = 'rotating',
+              rotation_state = $7,
               rotated_at = NOW(),
               rotated_by = $3,
               rotation_reason = $4,
               grace_period_ends_at = $5,
               is_active = $6
         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
-      [projectId, apiKeyId, rotatedBy, reason, gracePeriodEndsAt, keepActive],
+      [projectId, apiKeyId, rotatedBy, reason, gracePeriodEndsAt, keepActive, rotationState],
     );
+
+    // A completed rotation is terminal immediately. Grace-period rows remain
+    // active only until their timestamp and are accepted by the validation
+    // lookup without weakening the lifecycle constraint.
     if (result.rowCount === 0) {
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
@@ -539,9 +526,17 @@ export class ApiKeyRepository {
   async findActiveApiKeyCandidatesByPrefix(
     publicKey: string,
     client?: PoolClient,
-  ): Promise<Array<{ apiKey: ProjectApiKeyRecord; project: Project; environmentName: string }>> {
+  ): Promise<Array<{
+    apiKey: ProjectApiKeyRecord;
+    project: Project;
+    environmentName: string;
+    publishedConfig: Record<string, unknown>;
+  }>> {
     const db = client ?? this.db;
-    const result = await db.query<ApiKeyRow & ProjectRow & { env_name: string }>(
+    const result = await db.query<ApiKeyRow & ProjectRow & {
+      env_name: string;
+      environment_sdk_config: Record<string, unknown>;
+    }>(
       `SELECT
          ${API_KEY_COLUMNS.split(",").map((c) => `k.${c.trim()}`).join(", ")},
          p.id AS p_id, p.org_id AS p_org_id, p.name AS p_name, p.slug AS p_slug,
@@ -550,11 +545,24 @@ export class ApiKeyRepository {
          p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
          p.deleted_by AS p_deleted_by, p.created_at AS p_created_at, p.updated_at AS p_updated_at,
          p.version AS p_version,
-         e.name AS env_name
+         e.name AS env_name,
+         cr.config_value AS environment_sdk_config
        FROM project_api_keys k
-       INNER JOIN projects p ON p.id = k.project_id
-       LEFT JOIN project_environments e ON e.id = k.environment_id
+       INNER JOIN projects p ON p.id = k.project_id AND p.org_id = k.organization_id
+       INNER JOIN project_environments e
+         ON e.id = k.environment_id
+        AND e.project_id = k.project_id
+        AND e.organization_id = k.organization_id
+        AND e.is_active = TRUE
+        AND e.deleted_at IS NULL
+       INNER JOIN project_environment_sdk_configs ch
+         ON ch.environment_id = e.id
+        AND ch.project_id = k.project_id
+        AND ch.organization_id = k.organization_id
+       INNER JOIN project_environment_sdk_config_revisions cr
+         ON cr.id = ch.published_revision_id
        WHERE k.public_key = $1
+         AND p.status = 'active'
          AND p.deleted_at IS NULL
          AND k.deleted_at IS NULL
          AND (k.expires_at IS NULL OR k.expires_at > NOW())
@@ -569,6 +577,7 @@ export class ApiKeyRepository {
       apiKey: this.mapApiKeyRecord(row as unknown as ApiKeyRow),
       project: this.mapProject(this.prefixedProjectRow(row)),
       environmentName: row.env_name ?? "default",
+      publishedConfig: row.environment_sdk_config ?? {},
     }));
   }
 
@@ -593,23 +602,42 @@ export class ApiKeyRepository {
       bytes_ingested: string;
       events_ingested: string;
     }>(
-      `SELECT
-         COALESCE(SUM(request_count),0)::text AS total_requests,
-         COALESCE(SUM(success_count),0)::text AS total_success,
-         COALESCE(SUM(error_count),0)::text AS total_errors,
-         COALESCE(SUM(bytes_ingested),0)::text AS bytes_ingested,
-         COALESCE(SUM(events_ingested),0)::text AS events_ingested
-       FROM project_api_key_usage
-       WHERE key_id = $1`,
+      `WITH usage AS (
+         SELECT requests, errors, bytes_ingested, events
+         FROM api_key_usage_daily
+         WHERE api_key_id = $1 AND bucket < CURRENT_DATE
+         UNION ALL
+         SELECT requests, errors, bytes_ingested, events
+         FROM api_key_usage_minute
+         WHERE api_key_id = $1 AND bucket >= date_trunc('day', NOW())
+       )
+       SELECT
+         COALESCE(SUM(requests), 0)::text AS total_requests,
+         GREATEST(COALESCE(SUM(requests), 0) - COALESCE(SUM(errors), 0), 0)::text AS total_success,
+         COALESCE(SUM(errors), 0)::text AS total_errors,
+         COALESCE(SUM(bytes_ingested), 0)::text AS bytes_ingested,
+         COALESCE(SUM(events), 0)::text AS events_ingested
+       FROM usage`,
       [keyId],
     );
 
     const daily = await db.query<{ d: string; c: string }>(
-      `SELECT to_char(usage_date,'YYYY-MM-DD') AS d, SUM(request_count)::text AS c
-         FROM project_api_key_usage
-        WHERE key_id = $1 AND usage_date >= (CURRENT_DATE - INTERVAL '30 days')
-        GROUP BY usage_date
-        ORDER BY usage_date DESC`,
+      `WITH usage_by_day AS (
+         SELECT bucket::date AS day, requests
+         FROM api_key_usage_daily
+         WHERE api_key_id = $1
+           AND bucket >= (CURRENT_DATE - INTERVAL '30 days')
+           AND bucket < CURRENT_DATE
+         UNION ALL
+         SELECT bucket::date AS day, requests
+         FROM api_key_usage_minute
+         WHERE api_key_id = $1
+           AND bucket >= date_trunc('day', NOW())
+       )
+       SELECT to_char(day, 'YYYY-MM-DD') AS d, SUM(requests)::text AS c
+       FROM usage_by_day
+       GROUP BY day
+       ORDER BY day DESC`,
       [keyId],
     );
 
@@ -680,7 +708,7 @@ export class ApiKeyRepository {
     return {
       id: row.id,
       projectId: row.project_id,
-      orgId: row.org_id,
+      orgId: row.organization_id,
       publicKey: row.public_key,
       keyType: row.key_type,
       environmentId: row.environment_id,
@@ -718,9 +746,6 @@ export class ApiKeyRepository {
       allowedIps: row.allowed_ips ?? [],
       allowedDomains: row.allowed_domains ?? [],
       allowedSdks: row.allowed_sdks ?? [],
-      samplingRules: row.sampling_rules ?? {},
-      featureFlags: row.feature_flags ?? {},
-      sdkConfig: row.sdk_config ?? {},
       metadata: row.metadata ?? {},
       createdAt: row.created_at,
       updatedAt: row.updated_at,

@@ -20,6 +20,10 @@ import { MemberRepository } from './members/member.repository.js';
 import { projectsRoutes } from './routes.js';
 import { projectMemberRoutes } from './members/member.routes.js';
 import { projectConnectorSubscriptionRoutes } from './alerts/subscriptions/connector-subscription.routes.js';
+import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js';
+import { ThresholdService } from './alerts/thresholds/threshold.service.js';
+import { AlertChannelRepository } from './alerts/channels/channel.repository.js';
+import { ProjectAlertChannelService } from './alerts/channels/channel.service.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
 import { pool } from '../../config/database.js';
@@ -42,6 +46,10 @@ declare module 'fastify' {
       alertRoutesService: import('./alerts/routes/alert-routes.service.js').ProjectAlertRouteService;
       alertPreferencesRepository: import('./alerts/preferences/alert-preferences.repository.js').AlertPreferencesRepository;
       alertPreferencesService: import('./alerts/preferences/alert-preferences.service.js').ProjectMemberAlertPreferenceService;
+      alertThresholdsRepository: ThresholdRepository;
+      alertThresholdsService: ThresholdService;
+      alertChannelsRepository: AlertChannelRepository;
+      alertChannelsService: ProjectAlertChannelService;
     };
   }
 }
@@ -86,6 +94,8 @@ async function projectsModule(
 
   const alertRoutesRepository = new AlertRoutesRepository();
   const alertPreferencesRepository = new AlertPreferencesRepository();
+  const alertThresholdsRepository = new ThresholdRepository(pool);
+  const alertChannelsRepository = new AlertChannelRepository(pool);
 
   const alertRoutesService = new ProjectAlertRouteService(
     alertRoutesRepository,
@@ -99,6 +109,12 @@ async function projectsModule(
     service,
     fastify.organization.repository,
     fastify.log
+  );
+  const alertThresholdsService = new ThresholdService(alertThresholdsRepository, service);
+  const alertChannelsService = new ProjectAlertChannelService(
+    alertChannelsRepository,
+    service,
+    fastify.log,
   );
 
   fastify.decorate('projects', {
@@ -115,6 +131,10 @@ async function projectsModule(
     alertRoutesService,
     alertPreferencesRepository,
     alertPreferencesService,
+    alertThresholdsRepository,
+    alertThresholdsService,
+    alertChannelsRepository,
+    alertChannelsService,
   });
 
   await fastify.register(projectsRoutes, {

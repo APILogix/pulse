@@ -88,40 +88,20 @@ export function evictAlertThresholdCache(orgId: string, projectId?: string | nul
   alertThresholdCache.delete(alertThresholdCacheKey(orgId, projectId));
 }
 
-/**
- * Cached resolved SDK config sets for the SDK runtime fetch path, keyed by
- * `${orgId}:${projectId ?? 'org'}:${environment}:${platform ?? 'all'}`. The
- * fetch path can be very hot, so we keep the resolved set in-process (no Redis)
- * with a short TTL. The SDK-config service evicts the org's entries on any
- * create/update/rollback so changes propagate before the TTL elapses.
- */
+/** Published SDK configuration cache, keyed only by environment ID. */
 import type { SdkConfigResolvedDto } from '../modules/organization/sdk-config.types.js';
 
-export const sdkConfigCache = new LRUCache<string, SdkConfigResolvedDto[]>({
+export const sdkConfigCache = new LRUCache<string, SdkConfigResolvedDto>({
   max: 20000,
-  ttl: 1000 * 30, // 30 seconds
+  ttl: 1000 * 30,
   updateAgeOnGet: false,
   allowStale: false,
 });
 
-/** Build the cache key for a resolved SDK config set. */
-export function sdkConfigCacheKey(
-  orgId: string,
-  projectId: string | null | undefined,
-  environment: string,
-  platform: string | null | undefined,
-): string {
-  return `${orgId}:${projectId ?? 'org'}:${environment}:${platform ?? 'all'}`;
+export function sdkConfigCacheKey(environmentId: string): string {
+  return environmentId;
 }
 
-/**
- * Evict every cached SDK config set for an org. Called on any config mutation.
- * LRUCache has no prefix delete, so we scan keys (bounded by `max`) and drop
- * those for the org — cheap relative to a DB round-trip and keeps reads correct.
- */
-export function evictSdkConfigCache(orgId: string): void {
-  const prefix = `${orgId}:`;
-  for (const key of sdkConfigCache.keys()) {
-    if (key.startsWith(prefix)) sdkConfigCache.delete(key);
-  }
+export function evictSdkConfigCache(environmentId: string): void {
+  sdkConfigCache.delete(environmentId);
 }

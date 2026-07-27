@@ -236,14 +236,6 @@ export class ProjectsService {
     summarizeBulk(results) {
         return this.apiKeys.summarizeBulk(results);
     }
-    /**
-     * Warm the in-process LRU so ingestion resolves the key without a Postgres
-     * round trip. Only active keys on active projects are cached as active;
-     * ingestion re-validates project status on a miss.
-     */
-    warmApiKeyCache(keyHash, key, project) {
-        this.apiKeys.warmApiKeyCache(keyHash, key, project);
-    }
     evictApiKeyConfig(keyHash) {
         this.apiKeys.evictApiKeyConfig(keyHash);
     }

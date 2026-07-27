@@ -152,8 +152,8 @@ export function createApiKey(environment) {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .slice(0, 20);
-    const publicKey = `pk_${envSlug}_${randomBytes(4).toString("hex")}`;
-    const secretSuffix = randomBytes(16).toString("hex");
+    const publicKey = `pulsiv_${envSlug}_${randomBytes(8).toString("hex")}`;
+    const secretSuffix = randomBytes(32).toString("hex");
     const fullKey = `${publicKey}.${secretSuffix}`;
     return {
         fullKey,
@@ -165,7 +165,7 @@ export function extractApiKeyPrefix(rawKey) {
     const value = rawKey.trim();
     const dotIndex = value.indexOf(".");
     const prefix = dotIndex >= 0 ? value.slice(0, dotIndex) : value;
-    if (!prefix.startsWith("pk_")) {
+    if (!prefix.startsWith("pulsiv_")) {
         return null;
     }
     return prefix.length >= 12 ? prefix : null;

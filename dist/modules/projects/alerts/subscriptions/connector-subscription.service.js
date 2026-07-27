@@ -14,13 +14,13 @@ export class ProjectConnectorSubscriptionService {
     }
     async list(orgId, projectId, userId, query) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
-        const result = await this.repository.listByProject(projectId, query);
+        const result = await this.repository.listByProject(orgId, projectId, query);
         const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
         return { ...result, limit: query.limit, offset };
     }
     async get(orgId, projectId, subscriptionId, userId) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
-        const subscription = await this.repository.findById(subscriptionId);
+        const subscription = await this.repository.findById(orgId, projectId, subscriptionId);
         if (!subscription || subscription.projectId !== projectId) {
             throw new Error("Subscription not found");
         }
@@ -28,7 +28,7 @@ export class ProjectConnectorSubscriptionService {
     }
     async create(orgId, projectId, userId, body, meta) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.repository.findByProjectAndConnector(projectId, body.connectorId);
+        const existing = await this.repository.findByProjectAndConnector(orgId, projectId, body.connectorId);
         if (existing) {
             throw new Error("A subscription for this connector already exists in this project");
         }
@@ -43,11 +43,11 @@ export class ProjectConnectorSubscriptionService {
     }
     async update(orgId, projectId, subscriptionId, userId, body, meta) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.repository.findById(subscriptionId);
+        const existing = await this.repository.findById(orgId, projectId, subscriptionId);
         if (!existing || existing.projectId !== projectId) {
             throw new Error("Subscription not found");
         }
-        const updated = await this.repository.update(subscriptionId, userId, body);
+        const updated = await this.repository.update(orgId, projectId, subscriptionId, userId, body);
         await this.audit(meta, orgId, projectId, "connector_subscription_updated", updated.id, {
             connectorId: updated.connectorId,
             enabled: updated.enabled,
@@ -58,11 +58,11 @@ export class ProjectConnectorSubscriptionService {
     }
     async delete(orgId, projectId, subscriptionId, userId, meta) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.repository.findById(subscriptionId);
+        const existing = await this.repository.findById(orgId, projectId, subscriptionId);
         if (!existing || existing.projectId !== projectId) {
             throw new Error("Subscription not found");
         }
-        await this.repository.delete(subscriptionId, userId);
+        await this.repository.delete(orgId, projectId, subscriptionId, userId);
         await this.audit(meta, orgId, projectId, "connector_unsubscribed", subscriptionId, {
             connectorId: existing.connectorId,
         });

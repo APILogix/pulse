@@ -83,13 +83,10 @@ export declare const CreateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
     allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    samplingRules: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    featureFlags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    sdkConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type CreateApiKeyBody = z.infer<typeof CreateApiKeyBodySchema>;
 export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     name: z.ZodOptional<z.ZodNullable<z.ZodString>>;
@@ -110,9 +107,6 @@ export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, u
     allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    samplingRules: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    featureFlags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    sdkConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
     rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
@@ -183,9 +177,6 @@ export interface ProjectApiKey {
     allowedIps: string[];
     allowedDomains: string[];
     allowedSdks: string[];
-    samplingRules: Record<string, unknown>;
-    featureFlags: Record<string, unknown>;
-    sdkConfig: Record<string, unknown>;
     metadata: Record<string, unknown>;
     createdAt: Date;
     updatedAt: Date;
@@ -258,9 +249,6 @@ export interface ApiKeyUpdateInput {
     allowedOrigins?: string[];
     allowedIps?: string[];
     allowedDomains?: string[];
-    samplingRules?: Record<string, unknown>;
-    featureFlags?: Record<string, unknown>;
-    sdkConfig?: Record<string, unknown>;
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;

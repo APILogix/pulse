@@ -76,17 +76,31 @@ export class AIRepository {
         return this.authorizeFeature(tenantId, userId, 'module_ai_insights_features_chat_assistant');
     }
     async getAccessibleProjects(tenantId, userId, requestedProjectId) {
-        const result = await this.db.query(`SELECT p.id,p.name,p.slug,p.default_environment
+        const result = await this.db.query(`SELECT p.id, p.name, p.slug, environment.slug AS environment
        FROM projects p
-       JOIN organization_members om ON om.org_id=p.org_id AND om.user_id=$2 AND om.status='active'
-       WHERE p.org_id=$1 AND p.status='active' AND p.deleted_at IS NULL
-         AND ($3::uuid IS NULL OR p.id=$3)
+       JOIN project_members pm
+         ON pm.project_id = p.id
+        AND pm.organization_id = p.org_id
+        AND pm.user_id = $2
+        AND pm.status = 'active'
+       JOIN LATERAL (
+         SELECT e.slug
+         FROM project_environments e
+         WHERE e.project_id = p.id
+           AND e.organization_id = p.org_id
+           AND e.is_active = TRUE
+           AND e.deleted_at IS NULL
+         ORDER BY e.is_default DESC, e.created_at ASC, e.id ASC
+         LIMIT 1
+       ) environment ON TRUE
+       WHERE p.org_id = $1 AND p.status = 'active' AND p.deleted_at IS NULL
+         AND ($3::uuid IS NULL OR p.id = $3)
        ORDER BY p.created_at DESC LIMIT 25`, [tenantId, userId, requestedProjectId ?? null]);
         if (requestedProjectId && result.rows.length === 0) {
             throw new AIRepositoryError('Project not found or not accessible', 'NOT_FOUND');
         }
         return result.rows.map((row) => ({
-            id: row.id, name: row.name, slug: row.slug, environment: row.default_environment,
+            id: row.id, name: row.name, slug: row.slug, environment: row.environment,
         }));
     }
     async resolveCreditRules(tenantId, plan, mode) {

@@ -21,8 +21,13 @@ export class SmsConnector extends BaseConnector {
         const message = this.renderMessage(notification);
         const start = Date.now();
         const results = [];
-        // Twilio sends to one recipient per request; fan out across configured numbers.
-        for (const to of cfg.toNumbers) {
+        const projectChannel = notification.metadata?.projectChannel;
+        const destination = typeof projectChannel?.destination === 'string' && projectChannel.destination.trim()
+            ? projectChannel.destination.trim()
+            : null;
+        const recipients = destination ? [destination] : cfg.toNumbers;
+        // Twilio sends to one recipient per request; fan out across selected numbers.
+        for (const to of recipients) {
             const form = new URLSearchParams({ To: to, From: cfg.fromNumber, Body: message });
             const res = await httpRequest(url, {
                 method: 'POST',

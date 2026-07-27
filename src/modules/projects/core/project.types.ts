@@ -124,22 +124,6 @@ export const ProjectMemberRoleSchema = z.enum([
   "viewer",
 ]);
 
-export interface ProjectMember {
-  id: string;
-  projectId: string;
-  userId: string;
-  organizationId: string;
-  role: ProjectMemberRole;
-  roleId: string | null;
-  status: 'pending' | 'active' | 'inactive' | 'removed';
-  addedByUserId: string | null;
-  addedAt: Date;
-  removedByUserId: string | null;
-  removedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface ProjectOverviewDto {
   project: Project;
   settings: ProjectSettings;
@@ -173,14 +157,11 @@ export interface ProjectUpdateInput {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Project members, invitations, and custom roles
+// Project members (direct-add only)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const ProjectMemberStatusSchema = z.enum(["pending", "active", "inactive", "removed"]);
 export type ProjectMemberStatus = z.infer<typeof ProjectMemberStatusSchema>;
-
-export const InvitationStatusSchema = z.enum(["pending", "accepted", "declined", "expired", "cancelled"]);
-export type InvitationStatus = z.infer<typeof InvitationStatusSchema>;
 
 export interface ProjectMember {
   id: string;
@@ -188,14 +169,13 @@ export interface ProjectMember {
   userId: string;
   organizationId: string;
   role: ProjectMemberRole;
-  roleId: string | null;
   status: ProjectMemberStatus;
-  addedByUserId: string | null;
-  addedAt: Date;
-  removedByUserId: string | null;
-  removedAt: Date | null;
+  invitedByUserId: string | null;
+  invitedAt: Date | null;
+  joinedAt: Date | null;
+  createdByUserId: string | null;
   createdAt: Date;
-  updatedAt: Date;
+  updatedAt: Date | null;
   user: {
     id: string;
     email: string;
@@ -203,47 +183,8 @@ export interface ProjectMember {
   } | undefined;
 }
 
-export interface ProjectMemberInvitation {
-  id: string;
-  projectId: string;
-  organizationId: string;
-  email: string;
-  invitedByUserId: string;
-  invitedUserId: string | null;
-  role: ProjectMemberRole;
-  status: InvitationStatus;
-  expiresAt: Date;
-  acceptedAt: Date | null;
-  declinedAt: Date | null;
-  cancelledAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface ProjectRole {
-  id: string;
-  projectId: string | null;
-  organizationId: string;
-  name: string;
-  slug: string;
-  description: string | null;
-  isSystem: boolean;
-  isDefault: boolean;
-  permissions: string[];
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export const ProjectMemberParamsSchema = ProjectParamsSchema.extend({
   memberId: z.string().uuid(),
-});
-
-export const ProjectRoleParamsSchema = ProjectParamsSchema.extend({
-  roleId: z.string().uuid(),
-});
-
-export const ProjectInvitationParamsSchema = ProjectParamsSchema.extend({
-  invitationId: z.string().uuid(),
 });
 
 export const ListProjectMembersQuerySchema = z.preprocess(
@@ -261,20 +202,6 @@ export const ListProjectMembersQuerySchema = z.preprocess(
 );
 export type ListProjectMembersQuery = z.infer<typeof ListProjectMembersQuerySchema>;
 
-export const ListProjectInvitationsQuerySchema = z.preprocess(
-  normalizeObjectKeys,
-  z.object({
-    status: InvitationStatusSchema.optional(),
-    email: z.string().email().optional(),
-    page: z.coerce.number().int().min(1).optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
-    offset: z.coerce.number().int().min(0).optional(),
-    sortBy: z.enum(["created_at", "updated_at", "expires_at"]).default("created_at"),
-    sortOrder: z.enum(["asc", "desc"]).default("desc"),
-  }),
-);
-export type ListProjectInvitationsQuery = z.infer<typeof ListProjectInvitationsQuerySchema>;
-
 export const AddProjectMemberBodySchema = z.preprocess(
   normalizeObjectKeys,
   z.object({
@@ -286,53 +213,9 @@ export type AddProjectMemberBody = z.infer<typeof AddProjectMemberBodySchema>;
 
 export const UpdateProjectMemberBodySchema = z.preprocess(
   normalizeObjectKeys,
-  z.object({
-    role: ProjectMemberRoleSchema,
-  }),
+  z.object({ role: ProjectMemberRoleSchema }),
 );
 export type UpdateProjectMemberBody = z.infer<typeof UpdateProjectMemberBodySchema>;
-
-export const InviteProjectMemberBodySchema = z.preprocess(
-  normalizeObjectKeys,
-  z.object({
-    email: z.string().email(),
-    role: ProjectMemberRoleSchema.default("viewer"),
-  }),
-);
-export type InviteProjectMemberBody = z.infer<typeof InviteProjectMemberBodySchema>;
-
-export const AcceptProjectInvitationBodySchema = z.preprocess(
-  normalizeObjectKeys,
-  z.object({
-    token: z.string().min(1),
-  }),
-);
-export type AcceptProjectInvitationBody = z.infer<typeof AcceptProjectInvitationBodySchema>;
-
-export const CreateProjectRoleBodySchema = z.preprocess(
-  normalizeObjectKeys,
-  z.object({
-    name: z.string().min(1).max(100),
-    slug: z.string().min(1).max(100).regex(/^[a-z0-9_-]+$/),
-    description: z.string().max(5000).nullable().optional(),
-    permissions: z.array(z.string().min(1).max(100)).max(100).default([]),
-    isDefault: z.coerce.boolean().optional(),
-  }),
-);
-export type CreateProjectRoleBody = z.infer<typeof CreateProjectRoleBodySchema>;
-
-export const UpdateProjectRoleBodySchema = z.preprocess(
-  normalizeObjectKeys,
-  z.object({
-    name: z.string().min(1).max(100).optional(),
-    description: z.string().max(5000).nullable().optional(),
-    permissions: z.array(z.string().min(1).max(100)).max(100).optional(),
-    isDefault: z.coerce.boolean().optional(),
-  }).refine((value) => Object.keys(value).length > 0, {
-    message: "At least one field is required",
-  }),
-);
-export type UpdateProjectRoleBody = z.infer<typeof UpdateProjectRoleBodySchema>;
 
 export const TransferOwnershipBodySchema = z.preprocess(
   normalizeObjectKeys,

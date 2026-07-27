@@ -74,13 +74,10 @@ export const CreateApiKeyBodySchema = z.preprocess(
     allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
     allowedIps: z.array(Ipv4OrV6).max(256).optional(),
     allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-    samplingRules: z.record(z.string(), z.unknown()).optional(),
-    featureFlags: z.record(z.string(), z.unknown()).optional(),
-    sdkConfig: z.record(z.string(), z.unknown()).optional(),
     rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
     rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
     rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
-  }),
+  }).strict(),
 );
 export type CreateApiKeyBody = z.infer<typeof CreateApiKeyBodySchema>;
 
@@ -100,9 +97,6 @@ export const UpdateApiKeyBodySchema = z.preprocess(
       allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
       allowedIps: z.array(Ipv4OrV6).max(256).optional(),
       allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-      samplingRules: z.record(z.string(), z.unknown()).optional(),
-      featureFlags: z.record(z.string(), z.unknown()).optional(),
-      sdkConfig: z.record(z.string(), z.unknown()).optional(),
       rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
       rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
       rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
@@ -194,9 +188,6 @@ export interface ProjectApiKey {
   allowedIps: string[];
   allowedDomains: string[];
   allowedSdks: string[];
-  samplingRules: Record<string, unknown>;
-  featureFlags: Record<string, unknown>;
-  sdkConfig: Record<string, unknown>;
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -272,9 +263,6 @@ export interface ApiKeyUpdateInput {
   allowedOrigins?: string[];
   allowedIps?: string[];
   allowedDomains?: string[];
-  samplingRules?: Record<string, unknown>;
-  featureFlags?: Record<string, unknown>;
-  sdkConfig?: Record<string, unknown>;
   rateLimitPerSecond?: number | null;
   rateLimitPerMinute?: number | null;
   rateLimitPerHour?: number | null;

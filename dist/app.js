@@ -27,6 +27,7 @@ import { registerConnectorsModule } from './modules/connectors/connectors.module
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 import { registerAIModule } from './modules/ai/ai.module.js';
+import { registerAutomationModule } from './modules/automation/automation.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
@@ -75,14 +76,38 @@ export async function buildApp() {
     // ── Infrastructure Plugins ──────────────────────────────────────────
     // These MUST be registered first — they protect the server and provide
     // foundational capabilities that all modules depend on.
+    // Admission control protects latency by shedding new work before the process
+    // is OOM-killed or the event loop becomes unrecoverable. Pressure logs are
+    // rate-limited: logging every rejected request can itself prolong an overload.
+    let lastPressureLogAt = 0;
+    let suppressedPressureLogs = 0;
     await app.register(underPressure, {
-        maxEventLoopDelay: 1000,
-        maxHeapUsedBytes: 512 * 1024 * 1024,
-        maxRssBytes: 1 * 1024 * 1024 * 1024,
-        maxEventLoopUtilization: 0.98,
-        pressureHandler: (_req, rep, type) => {
-            appLogger.warn({ type }, 'Server under pressure');
-            rep.status(503).send({ error: 'Server busy', retryAfter: 10 });
+        maxEventLoopDelay: env.PRESSURE_MAX_EVENT_LOOP_DELAY_MS,
+        maxHeapUsedBytes: env.PRESSURE_MAX_HEAP_MB * 1024 * 1024,
+        maxRssBytes: env.PRESSURE_MAX_RSS_MB * 1024 * 1024,
+        maxEventLoopUtilization: env.PRESSURE_MAX_EVENT_LOOP_UTILIZATION,
+        retryAfter: 10,
+        pressureHandler: (_req, reply, type, value) => {
+            const now = Date.now();
+            if (now - lastPressureLogAt >= env.PRESSURE_LOG_INTERVAL_MS) {
+                const memory = process.memoryUsage();
+                appLogger.warn({
+                    type,
+                    value,
+                    suppressedSinceLastLog: suppressedPressureLogs,
+                    heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+                    rssMB: Math.round(memory.rss / 1024 / 1024),
+                }, 'Server under pressure — shedding new work');
+                lastPressureLogAt = now;
+                suppressedPressureLogs = 0;
+            }
+            else {
+                suppressedPressureLogs += 1;
+            }
+            reply
+                .header('Retry-After', '10')
+                .status(503)
+                .send({ error: 'Server busy', retryAfter: 10, reason: type });
         },
     });
     await app.register(helmet, {
@@ -159,6 +184,7 @@ export async function buildApp() {
     await app.register(registerAlertingModule);
     await app.register(registerEventAnalyticsModule);
     await app.register(registerAIModule);
+    await app.register(registerAutomationModule);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {

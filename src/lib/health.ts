@@ -18,12 +18,16 @@ interface HealthConfig {
  * Balancer traffic gate and fails closed when the shared gauge is stale or deep.
  */
 export async function registerHealthChecks(app: FastifyInstance, config: HealthConfig): Promise<void> {
-  app.get('/health/live', async (_req: FastifyRequest, reply: FastifyReply) => {
-    return reply.status(200).send({
-      status: 'alive',
-      timestamp: new Date().toISOString(),
-    });
-  });
+  app.get(
+    '/health/live',
+    { config: { pressureHandler: () => undefined } as never },
+    async (_req: FastifyRequest, reply: FastifyReply) => {
+      return reply.status(200).send({
+        status: 'alive',
+        timestamp: new Date().toISOString(),
+      });
+    },
+  );
 
   app.get('/health/ready', async (_req: FastifyRequest, reply: FastifyReply) => {
     try {

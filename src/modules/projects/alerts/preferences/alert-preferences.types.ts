@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { QuietHoursSchema } from "../channels/quiet-hours.js";
 import { AlertSeveritySchema } from "../../../alerting/common.js";
 import { UuidSchema } from "../../../alerting/types.js";
 import { normalizeObjectKeys } from "../../shared/schema-utils.js";
@@ -17,7 +18,7 @@ export const UpdateAlertPreferenceBodySchema = z.object({
   enabled: z.boolean().optional(),
   severity_threshold: AlertSeveritySchema.optional(),
   digest_mode: z.string().max(30).optional(),
-  quiet_hours: z.record(z.string(), z.unknown()).nullable().optional(),
+  quiet_hours: QuietHoursSchema.nullable().optional(),
 });
 export type UpdateAlertPreferenceBody = z.infer<typeof UpdateAlertPreferenceBodySchema>;
 

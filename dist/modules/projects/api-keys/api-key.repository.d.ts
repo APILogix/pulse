@@ -7,7 +7,7 @@
  * 3. Map snake_case rows into camelCase domain objects.
  * 4. Translate expected DB conflicts/misses into ProjectError with stable codes.
  *
- * Tenant isolation: every API key query is scoped by org_id (and project_id).
+ * Tenant isolation: every API key query is scoped by organization_id (and project_id).
  * Soft delete: API keys use deleted_at; reads filter deleted_at IS NULL.
  */
 import type { Pool, PoolClient } from "pg";
@@ -25,9 +25,6 @@ export interface ApiKeyUpdateInput {
     allowedOrigins?: string[];
     allowedIps?: string[];
     allowedDomains?: string[];
-    samplingRules?: Record<string, unknown>;
-    featureFlags?: Record<string, unknown>;
-    sdkConfig?: Record<string, unknown>;
     rateLimitPerSecond?: number | null;
     rateLimitPerMinute?: number | null;
     rateLimitPerHour?: number | null;
@@ -42,7 +39,7 @@ export declare class ApiKeyRepository {
     }>;
     createApiKey(input: {
         projectId: string;
-        orgId: string;
+        organizationId: string;
         publicKey: string;
         secretHash: string;
         keyType: ApiKeyType;
@@ -60,9 +57,6 @@ export declare class ApiKeyRepository {
         allowedOrigins?: string[] | undefined;
         allowedIps?: string[] | undefined;
         allowedDomains?: string[] | undefined;
-        samplingRules?: Record<string, unknown> | undefined;
-        featureFlags?: Record<string, unknown> | undefined;
-        sdkConfig?: Record<string, unknown> | undefined;
         rateLimitPerSecond?: number | null | undefined;
         rateLimitPerMinute?: number | null | undefined;
         rateLimitPerHour?: number | null | undefined;
@@ -94,6 +88,7 @@ export declare class ApiKeyRepository {
         apiKey: ProjectApiKeyRecord;
         project: Project;
         environmentName: string;
+        publishedConfig: Record<string, unknown>;
     }>>;
     getApiKeyUsageSummary(keyId: string, client?: PoolClient): Promise<{
         totalRequests: number;

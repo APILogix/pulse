@@ -9,6 +9,7 @@ import {
   slugifyProjectName,
   validateStatusTransition,
 } from '../../src/modules/projects/shared/utils.js';
+import { CreateApiKeyBodySchema } from '../../src/modules/projects/api-keys/api-key.types.js';
 
 // ... existing tests ...
 
@@ -87,11 +88,21 @@ describe('project status transitions', () => {
 });
 
 describe('api key generation', () => {
-  it('mints a key with a public prefix and secret suffix', () => {
+  it('mints a key with a platform-owned public prefix and secret suffix', () => {
     const result = createApiKey('Production');
     expect(result.fullKey).toContain(result.publicKey);
-    expect(result.publicKey.startsWith('pk_production_')).toBe(true);
+    expect(result.publicKey.startsWith('pulsiv_production_')).toBe(true);
     expect(result.fullKey.split('.').length).toBe(2);
+    expect(result.fullKey.split('.')[1]).toHaveLength(64);
+  });
+
+  it('rejects user-controlled API key prefixes', () => {
+    const result = CreateApiKeyBodySchema.safeParse({
+      environmentId: '55555555-5555-4555-8555-555555555555',
+      keyType: 'read_write',
+      publicKey: 'spoofed_prefix',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('returns a deterministic sha256 hash of the full key', () => {

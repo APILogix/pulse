@@ -129,13 +129,12 @@ export class CoreRepository extends BaseRepository {
   }
 
   async listOrgApiKeyHashes(orgId: string): Promise<string[]> {
-    const r = await this.db.query<{ key_hash: string }>(
-      `SELECT k.key_hash
+    const r = await this.db.query<{ secret_hash: string }>(
+      `SELECT k.secret_hash
        FROM project_api_keys k
-       JOIN projects p ON p.id=k.project_id
-       WHERE p.org_id=$1`, [orgId]
+       WHERE k.organization_id=$1 AND k.deleted_at IS NULL`, [orgId]
     );
-    return r.rows.map(row => row.key_hash);
+    return r.rows.map(row => row.secret_hash);
   }
 
   async archiveOrg(id: string): Promise<void> {
