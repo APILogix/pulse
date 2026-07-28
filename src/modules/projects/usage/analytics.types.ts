@@ -5,7 +5,7 @@ import { z } from "zod";
 import { normalizeObjectKeys } from "../shared/schema-utils.js";
 import { UuidSchema } from "../../alerting/types.js";
 
-export const UsageGranularitySchema = z.enum(["minute", "hourly", "daily"]);
+export const UsageGranularitySchema = z.enum(["minute", "hourly", "daily", "monthly"]);
 export type UsageGranularity = z.infer<typeof UsageGranularitySchema>;
 
 export const UsageAnalyticsQuerySchema = z.preprocess(
@@ -101,9 +101,6 @@ export interface UsageTimeSeriesPoint {
   connectorDeliveries: number;
   failedNotifications: number;
   rateLimitUsage: number;
-  latencyMsP50: number | null;
-  latencyMsP95: number | null;
-  latencyMsP99: number | null;
 }
 
 export interface UsageSummary {
@@ -126,9 +123,6 @@ export interface UsageSummary {
   connectorDeliveries: number;
   failedNotifications: number;
   rateLimitUsage: number;
-  latencyMsP50: number | null;
-  latencyMsP95: number | null;
-  latencyMsP99: number | null;
 }
 
 export interface HeatmapCell {

@@ -12,6 +12,11 @@ export class PostgresWriter {
         this.pool = pool;
         this.reader = new TelemetryReader(pool);
     }
+    configObject(value) {
+        return value !== null && typeof value === 'object' && !Array.isArray(value)
+            ? value
+            : {};
+    }
     /**
      * Resolve an ingestion API key by extracting its public prefix, looking up
      * candidate rows, and comparing the SHA-256 secret hash in constant time.
@@ -33,30 +38,20 @@ export class PostgresWriter {
         k.environment_id,
         e.name as environment_name,
         e.slug as environment_slug,
-        k.is_active,
         k.status as key_status,
-        k.key_type,
-        k.rotation_version,
         k.expires_at,
         k.secret_hash,
-        k.permissions,
-        k.allowed_endpoints,
-        k.blocked_endpoints,
-        k.allowed_event_types,
-        k.allowed_origins,
-        k.allowed_ips,
-        k.allowed_domains,
-        k.allowed_sdks,
-        k.sampling_rules,
-        k.feature_flags,
-        k.sdk_config,
-        COALESCE(k.rate_limit_per_second, e.rate_limit_per_second, p.rate_limit_per_second) AS rate_limit_per_second,
-        COALESCE(k.rate_limit_per_minute, e.rate_limit_per_minute, p.rate_limit_per_minute) AS rate_limit_per_minute,
-        COALESCE(k.rate_limit_per_hour, e.rate_limit_per_hour, p.rate_limit_per_hour) AS rate_limit_per_hour,
+        cr.config_value AS sdk_config,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
+      INNER JOIN project_environment_sdk_configs ch
+        ON ch.environment_id = k.environment_id
+       AND ch.project_id = k.project_id
+       AND ch.organization_id = k.organization_id
+      INNER JOIN project_environment_sdk_config_revisions cr
+        ON cr.id = ch.published_revision_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
        AND s.status IN ('trialing', 'active', 'past_due')
@@ -69,8 +64,17 @@ export class PostgresWriter {
         AND k.deleted_at IS NULL
         AND (k.expires_at IS NULL OR k.expires_at > NOW())
         AND (
-          k.is_active = TRUE
-          OR (k.status = 'rotated' AND k.grace_period_ends_at IS NOT NULL AND k.grace_period_ends_at > NOW())
+          k.status = 'active'
+          OR (
+            k.status = 'rotated'
+            AND EXISTS (
+              SELECT 1 FROM project_api_key_rotations r
+               WHERE r.old_key_id = k.id
+                 AND r.state = 'grace_period'
+                 AND r.grace_ends_at IS NOT NULL
+                 AND r.grace_ends_at > NOW()
+            )
+          )
         )
       ORDER BY s.created_at DESC NULLS LAST, k.created_at DESC
     `, [publicKey]);
@@ -88,25 +92,28 @@ export class PostgresWriter {
                 environmentName: row.environment_name,
                 environmentSlug: row.environment_slug,
                 apiKeyId: row.key_id,
-                keyType: row.key_type,
-                rotationVersion: Number(row.rotation_version ?? 1),
-                isActive: row.is_active,
+                // A credential only proves identity. Ingestion authorization and rate
+                // limits come from organization/platform configuration, so an
+                // authenticated key resolves to the permissive ingestion defaults.
+                keyType: 'ingest',
+                rotationVersion: 1,
+                isActive: true,
                 status: row.key_status,
                 expiresAt: row.expires_at,
-                permissions: row.permissions ?? [],
-                allowedEndpoints: row.allowed_endpoints ?? [],
-                blockedEndpoints: row.blocked_endpoints ?? [],
-                allowedEventTypes: row.allowed_event_types ?? [],
-                allowedOrigins: row.allowed_origins ?? [],
-                allowedIps: row.allowed_ips ?? [],
-                allowedDomains: row.allowed_domains ?? [],
-                allowedSdks: row.allowed_sdks ?? [],
-                samplingRules: row.sampling_rules ?? {},
-                featureFlags: row.feature_flags ?? {},
+                permissions: ['ingest:write'],
+                allowedEndpoints: ['*'],
+                blockedEndpoints: [],
+                allowedEventTypes: ['*'],
+                allowedOrigins: [],
+                allowedIps: [],
+                allowedDomains: [],
+                allowedSdks: [],
+                samplingRules: this.configObject(row.sdk_config?.samplingRules),
+                featureFlags: this.configObject(row.sdk_config?.featureFlags),
                 sdkConfig: row.sdk_config ?? {},
-                rateLimitPerSecond: row.rate_limit_per_second,
-                rateLimitPerMinute: row.rate_limit_per_minute,
-                rateLimitPerHour: row.rate_limit_per_hour,
+                rateLimitPerSecond: null,
+                rateLimitPerMinute: null,
+                rateLimitPerHour: null,
                 planTier: row.plan_tier,
                 orgRateLimitPerSecond: null,
                 orgRateLimitPerMinute: null,
@@ -146,8 +153,7 @@ export class PostgresWriter {
     async updateApiKeyLastUsed(apiKeyId) {
         await this.pool
             .query(`UPDATE project_api_keys
-            SET last_used_at = NOW(),
-                usage_count = usage_count + 1
+            SET last_used_at = NOW()
           WHERE id = $1`, [apiKeyId])
             .catch(() => { });
     }

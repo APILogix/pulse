@@ -1,28 +1,26 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
-import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectActivityQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "../types.js";
-import { handleProjectError, ProjectError } from "../shared/utils.js";
-import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling } from "../shared/route-utils.js";
+import { CreateEnvironmentBodySchema, EnvironmentParamsSchema, ListEnvironmentsQuerySchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, UpdateEnvironmentBodySchema, } from "../types.js";
+import { ProjectError } from "../shared/utils.js";
+import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling, } from "../shared/route-utils.js";
 export async function projectEnvironmentRoutes(fastify) {
     const service = fastify.projects.service;
     const sdkConfigService = fastify.organization.sdkConfigService;
-    // ── Project CRUD ──────────────────────────────────────────────────────────
-    // ── Project Settings & Overview ─────────────────────────────────────────────
-    // ── Environments ────────────────────────────────────────────────────────────
     fastify.get("/:projectId/sdk-configs", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
         const userId = authenticatedUser(request).id;
         await service.getProject(orgId, projectId, userId);
         const query = ListSdkConfigsQuerySchema.parse(request.query ?? {});
         const filters = { projectId };
-        if (query.environment !== undefined)
-            filters.environment = query.environment;
-        if (query.configKey !== undefined)
-            filters.configKey = query.configKey;
-        if (query.includeInactive !== undefined)
-            filters.includeInactive = query.includeInactive;
-        const { cursor, limit, search, sortBy, sortOrder } = query;
-        const result = await sdkConfigService.listConfigs(orgId, userId, filters, { cursor, limit, search, sortBy, sortOrder });
+        if (query.environmentId)
+            filters.environmentId = query.environmentId;
+        const result = await sdkConfigService.listConfigs(orgId, userId, filters, {
+            cursor: query.cursor,
+            limit: query.limit,
+            search: query.search,
+            sortBy: query.sortBy,
+            sortOrder: query.sortOrder,
+        });
         return reply.send({ success: true, ...result });
     }));
     fastify.get("/:projectId/sdk-configs/resolve", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
@@ -30,13 +28,10 @@ export async function projectEnvironmentRoutes(fastify) {
         const userId = authenticatedUser(request).id;
         await service.getProject(orgId, projectId, userId);
         const query = ResolveSdkConfigQuerySchema.parse(request.query ?? {});
-        const scopedQuery = {
-            projectId,
-            environment: query.environment,
-        };
-        if (query.platform !== undefined)
-            scopedQuery.platform = query.platform;
-        const result = await sdkConfigService.resolveForSdk(orgId, userId, scopedQuery);
+        const environment = await service.getEnvironment(orgId, projectId, query.environmentId, userId);
+        if (!environment)
+            throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+        const result = await sdkConfigService.resolveForSdk(orgId, userId, query);
         return reply.send({ success: true, data: result });
     }));
     fastify.get("/:projectId/sdk-configs/:configId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
@@ -54,21 +49,9 @@ export async function projectEnvironmentRoutes(fastify) {
         const userId = authenticatedUser(request).id;
         await service.getProject(orgId, projectId, userId);
         const body = UpdateSdkConfigSchema.parse(request.body);
-        const update = {};
-        if (body.configValue !== undefined)
-            update.configValue = body.configValue;
-        if (body.environment !== undefined)
-            update.environment = body.environment;
+        const update = { configValue: body.configValue };
         if (body.schemaVersion !== undefined)
             update.schemaVersion = body.schemaVersion;
-        if (body.targetSdkVersions !== undefined)
-            update.targetSdkVersions = body.targetSdkVersions;
-        if (body.targetPlatforms !== undefined)
-            update.targetPlatforms = body.targetPlatforms;
-        if (body.rolloutPercentage !== undefined)
-            update.rolloutPercentage = body.rolloutPercentage;
-        if (body.isActive !== undefined)
-            update.isActive = body.isActive;
         if (body.changeSummary !== undefined)
             update.changeSummary = body.changeSummary;
         const config = await sdkConfigService.updateProjectConfig(organizationRequestMeta(request), orgId, projectId, configId, update);
@@ -76,33 +59,46 @@ export async function projectEnvironmentRoutes(fastify) {
     }));
     fastify.get("/:projectId/environments", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-        const envs = await service.listEnvironments(orgId, projectId, authenticatedUser(request).id);
-        return reply.send({ success: true, data: envs });
+        const query = ListEnvironmentsQuerySchema.parse(request.query ?? {});
+        const environments = await service.listEnvironments(orgId, projectId, authenticatedUser(request).id, query.includeDeleted);
+        return reply.send({ success: true, data: environments });
     }));
     fastify.post("/:projectId/environments", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
         const body = CreateEnvironmentBodySchema.parse(request.body);
-        const env = await service.createEnvironment(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
-        return reply.code(201).send({ success: true, data: env });
+        const environment = await service.createEnvironment(orgId, projectId, authenticatedUser(request).id, body, requestMeta(request));
+        return reply.code(201).send({ success: true, data: environment });
     }));
     fastify.get("/:projectId/environments/:environmentId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
-        const env = await service.getEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id);
-        return reply.send({ success: true, data: env });
+        const environment = await service.getEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id);
+        return reply.send({ success: true, data: environment });
     }));
     fastify.patch("/:projectId/environments/:environmentId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
         const body = UpdateEnvironmentBodySchema.parse(request.body);
-        const env = await service.updateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, body, requestMeta(request));
-        return reply.send({ success: true, data: env });
+        const environment = await service.updateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, body, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/restore", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.restoreEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/set-default", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.setDefaultEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/deactivate", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.deactivateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.send({ success: true, data: environment });
     }));
     fastify.delete("/:projectId/environments/:environmentId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
         await service.deleteEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
         return reply.code(204).send();
     }));
-    // ── API keys ─────────────────────────────────────────────────────────────
-    // Bulk operations are registered before the parameterized :apiKeyId routes so
-    // "bulk-rotate"/"bulk-revoke" are never captured as an apiKeyId.
 }
 //# sourceMappingURL=environment.routes.js.map

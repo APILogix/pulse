@@ -40,6 +40,8 @@ export interface DeliveryAttemptInsert {
     errorCategory: string | null;
     latencyMs: number | null;
     externalMessageId: string | null;
+    projectAlertChannelId?: string | null;
+    recipientUserId?: string | null;
 }
 export declare class EventsRepository {
     private readonly db;

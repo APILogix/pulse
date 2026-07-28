@@ -34,8 +34,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
  */
 async function healthPlugin(fastify: FastifyInstance): Promise<void> {
 
-  // Liveness probe — always returns 200 if the process is running.
-  fastify.get('/health', async () => ({
+  // Liveness must answer while the process is alive, even when readiness is
+  // temporarily degraded. Otherwise orchestrators restart a recoverable process
+  // and create a pressure/restart loop. Readiness endpoints remain pressure-gated.
+  const livenessConfig = { pressureHandler: () => undefined };
+  fastify.get('/health', { config: livenessConfig }, async () => ({
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
@@ -47,7 +50,7 @@ async function healthPlugin(fastify: FastifyInstance): Promise<void> {
     },
   }));
 
-  fastify.get('/live', async () => ({ status: 'alive' }));
+  fastify.get('/live', { config: livenessConfig }, async () => ({ status: 'alive' }));
 
   // Readiness probe — verifies all critical dependencies with timeout.
   fastify.get('/ready', async (_request, reply) => {

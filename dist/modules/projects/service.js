@@ -4,12 +4,10 @@ import { ProjectsRepository } from "./repository.js";
 import { SettingsRepository } from "./settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "./environments/environment.repository.js";
-import { ActivityRepository } from "./activity/activity.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
-import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "./shared/utils.js";
+import { buildApiPrefixes, constantTimeEqualHex, createApiKey, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "./shared/utils.js";
 import { ProjectService } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
-import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
@@ -45,14 +43,13 @@ export class ProjectsService {
     repository;
     logger;
     orgRepo;
+    auditService;
     settingsRepository;
     apiKeyRepository;
     environmentRepository;
-    activityRepository;
     usageRepository;
     core;
     settings;
-    activity;
     environments;
     apiKeys;
     base;
@@ -62,30 +59,29 @@ export class ProjectsService {
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
-    orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository) {
+    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository) {
         this.repository = repository;
         this.logger = logger;
         this.orgRepo = orgRepo;
+        this.auditService = auditService;
         this.settingsRepository = settingsRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.environmentRepository = environmentRepository;
-        this.activityRepository = activityRepository;
         this.usageRepository = usageRepository;
-        this.core = new ProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-        this.settings = new SettingsService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-        this.activity = new ProjectActivityService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-        this.environments = new EnvironmentService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-        this.apiKeys = new ApiKeyService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-        this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+        this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.settings = new SettingsService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.apiKeys = new ApiKeyService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.base = new BaseProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
         this.members = new ProjectMemberService({
             repository,
             membersRepository: new MemberRepository(),
             logger,
             orgRepo,
+            auditService,
             settingsRepository,
             apiKeyRepository,
             environmentRepository,
-            activityRepository,
             usageRepository,
         });
         this.connectorSubscriptions = new ProjectConnectorSubscriptionService(new ConnectorSubscriptionRepository(), this.base, orgRepo, logger);
@@ -137,12 +133,9 @@ export class ProjectsService {
     async getProjectUsage(orgId, projectId, userId) {
         return this.base.getProjectUsage(orgId, projectId, userId);
     }
-    async listProjectActivity(orgId, projectId, userId, query) {
-        return this.activity.listProjectActivity(orgId, projectId, userId, query);
-    }
     // ── Environments ─────────────────────────────────────────────────────────
-    async listEnvironments(orgId, projectId, userId) {
-        return this.environments.listEnvironments(orgId, projectId, userId);
+    async listEnvironments(orgId, projectId, userId, includeDeleted = false) {
+        return this.environments.listEnvironments(orgId, projectId, userId, includeDeleted);
     }
     async getEnvironment(orgId, projectId, environmentId, userId) {
         return this.environments.getEnvironment(orgId, projectId, environmentId, userId);
@@ -155,6 +148,15 @@ export class ProjectsService {
     }
     async deleteEnvironment(orgId, projectId, environmentId, userId, meta) {
         return this.environments.deleteEnvironment(orgId, projectId, environmentId, userId, meta);
+    }
+    async restoreEnvironment(orgId, projectId, environmentId, userId, meta) {
+        return this.environments.restoreEnvironment(orgId, projectId, environmentId, userId, meta);
+    }
+    async setDefaultEnvironment(orgId, projectId, environmentId, userId, meta) {
+        return this.environments.setDefaultEnvironment(orgId, projectId, environmentId, userId, meta);
+    }
+    async deactivateEnvironment(orgId, projectId, environmentId, userId, meta) {
+        return this.environments.deactivateEnvironment(orgId, projectId, environmentId, userId, meta);
     }
     // ── API keys ─────────────────────────────────────────────────────────────
     async listApiKeys(orgId, projectId, userId, query) {
@@ -192,8 +194,12 @@ export class ProjectsService {
     async bulkRevokeKeys(orgId, projectId, userId, body, meta) {
         return this.apiKeys.bulkRevokeKeys(orgId, projectId, userId, body, meta);
     }
-    async getApiKeyUsage(orgId, projectId, apiKeyId, userId) {
-        return this.apiKeys.getApiKeyUsage(orgId, projectId, apiKeyId, userId);
+    async getApiKeyUsage(orgId, projectId, apiKeyId, userId, query) {
+        return this.apiKeys.getApiKeyUsage(orgId, projectId, apiKeyId, userId, query);
+    }
+    /** Rotation workflow history now lives outside the credential row. */
+    async listApiKeyRotations(orgId, projectId, apiKeyId, userId) {
+        return this.apiKeys.listApiKeyRotations(orgId, projectId, apiKeyId, userId);
     }
     // ── Verification (ingestion-facing) ─────────────────────────────────────────
     /**
@@ -235,14 +241,6 @@ export class ProjectsService {
     }
     summarizeBulk(results) {
         return this.apiKeys.summarizeBulk(results);
-    }
-    /**
-     * Warm the in-process LRU so ingestion resolves the key without a Postgres
-     * round trip. Only active keys on active projects are cached as active;
-     * ingestion re-validates project status on a miss.
-     */
-    warmApiKeyCache(keyHash, key, project) {
-        this.apiKeys.warmApiKeyCache(keyHash, key, project);
     }
     evictApiKeyConfig(keyHash) {
         this.apiKeys.evictApiKeyConfig(keyHash);

@@ -86,36 +86,46 @@ export class UsageRepository {
     async getApiKeyAttribution(orgId, options, db = this.db) {
         const values = [orgId];
         let i = 2;
-        const where = ['organization_id = $1'];
+        const where = ['u.organization_id = $1'];
         if (options.startDate) {
-            where.push(`bucket >= $${i++}`);
+            where.push(`u.bucket >= $${i++}`);
             values.push(options.startDate);
         }
         if (options.endDate) {
-            where.push(`bucket <= $${i++}`);
+            where.push(`u.bucket <= $${i++}`);
             values.push(options.endDate);
         }
         if (options.projectId) {
-            where.push(`project_id = $${i++}`);
+            where.push(`u.project_id = $${i++}`);
             values.push(options.projectId);
         }
         const limitParam = i++;
         const offsetParam = i++;
         values.push(options.limit, options.offset);
-        const result = await db.query(`SELECT
-         api_key_id,
-         project_id,
-         environment_id,
-         MIN(bucket) AS first_bucket,
-         MAX(bucket) AS last_bucket,
-         SUM(requests)::bigint AS requests,
-         SUM(events)::bigint AS events,
-         SUM(errors)::bigint AS errors,
-         SUM(rate_limited)::bigint AS rate_limited
-       FROM api_key_usage_minute
+        const result = await db.query(
+        // Billing attribution reads the daily physical fact: it is the retained
+        // billing grain (25 months) and is not bounded by minute retention.
+        `SELECT
+         u.api_key_id,
+         u.project_id,
+         u.environment_id,
+         k.name AS api_key_name,
+         k.public_key,
+         k.status AS api_key_status,
+         MIN(u.bucket) AS first_bucket,
+         MAX(u.bucket) AS last_bucket,
+         SUM(u.request_count)::bigint AS requests,
+         SUM(u.accepted_event_count)::bigint AS events,
+         SUM(u.error_event_count)::bigint AS errors,
+         SUM(u.ingestion_failure_count)::bigint AS ingestion_failures,
+         SUM(u.accepted_bytes)::bigint AS accepted_bytes,
+         SUM(u.rate_limited_request_count)::bigint AS rate_limited
+       FROM api_key_usage_daily u
+       JOIN project_api_keys k ON k.id = u.api_key_id
        WHERE ${where.join(' AND ')}
-       GROUP BY api_key_id, project_id, environment_id
-       ORDER BY events DESC, requests DESC, api_key_id
+       GROUP BY u.api_key_id, u.project_id, u.environment_id,
+                k.name, k.public_key, k.status
+       ORDER BY events DESC, requests DESC, u.api_key_id
        LIMIT $${limitParam} OFFSET $${offsetParam}`, values);
         return result.rows;
     }

@@ -2,7 +2,7 @@ BEGIN;
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  default_org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+  default_org_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

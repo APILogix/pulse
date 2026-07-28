@@ -8,6 +8,12 @@ declare const envSchema: z.ZodObject<{
     UV_THREADPOOL_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     PORT: z.ZodDefault<z.ZodPipe<z.ZodString, z.ZodTransform<number, string>>>;
     HOST: z.ZodDefault<z.ZodString>;
+    PRESSURE_MAX_EVENT_LOOP_DELAY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    PRESSURE_MAX_EVENT_LOOP_UTILIZATION: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    PRESSURE_MAX_HEAP_MB: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    PRESSURE_MAX_RSS_MB: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    PRESSURE_LOG_INTERVAL_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    SHUTDOWN_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     APP_NAME: z.ZodDefault<z.ZodString>;
     APP_URL: z.ZodDefault<z.ZodString>;
     API_PUBLIC_URL: z.ZodOptional<z.ZodString>;
@@ -161,6 +167,12 @@ export declare const env: {
     UV_THREADPOOL_SIZE: number;
     PORT: number;
     HOST: string;
+    PRESSURE_MAX_EVENT_LOOP_DELAY_MS: number;
+    PRESSURE_MAX_EVENT_LOOP_UTILIZATION: number;
+    PRESSURE_MAX_HEAP_MB: number;
+    PRESSURE_MAX_RSS_MB: number;
+    PRESSURE_LOG_INTERVAL_MS: number;
+    SHUTDOWN_TIMEOUT_MS: number;
     APP_NAME: string;
     APP_URL: string;
     DATABASE_URL: string;

@@ -10,10 +10,10 @@ export class ActivityRepository {
         const whereClauses = [
             "a.org_id = $1",
             `(
-        (a.entity_type = 'project' AND a.entity_id = $2::uuid)
-        OR a.metadata ->> 'projectId' = $2
-        OR a.new_values ->> 'projectId' = $2
-        OR a.old_values ->> 'projectId' = $2
+        (a.entity_type = 'project' AND a.entity_id = $2)
+        OR a.metadata ->> 'projectId' = $2::text
+        OR a.new_values ->> 'projectId' = $2::text
+        OR a.old_values ->> 'projectId' = $2::text
         OR (a.entity_type = 'api_key' AND EXISTS (
           SELECT 1 FROM project_api_keys k WHERE k.id = a.entity_id AND k.project_id = $2::uuid
         ))

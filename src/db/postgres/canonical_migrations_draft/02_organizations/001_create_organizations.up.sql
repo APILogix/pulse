@@ -35,6 +35,14 @@ CREATE INDEX IF NOT EXISTS idx_orgs_owner
 CREATE INDEX IF NOT EXISTS idx_orgs_status
   ON organizations(status) WHERE deleted_at IS NULL;
 
+-- Resolve the intentional users/organizations cycle after both sides exist.
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_current_org_id_fkey;
+ALTER TABLE users ADD CONSTRAINT users_current_org_id_fkey
+  FOREIGN KEY (current_org_id) REFERENCES organizations(id) ON DELETE SET NULL;
+ALTER TABLE user_preferences DROP CONSTRAINT IF EXISTS user_preferences_default_org_id_fkey;
+ALTER TABLE user_preferences ADD CONSTRAINT user_preferences_default_org_id_fkey
+  FOREIGN KEY (default_org_id) REFERENCES organizations(id) ON DELETE SET NULL;
+
 DROP TRIGGER IF EXISTS trg_org_updated_at ON organizations;
 CREATE TRIGGER trg_org_updated_at
   BEFORE UPDATE ON organizations

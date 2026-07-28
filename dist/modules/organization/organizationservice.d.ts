@@ -1,3 +1,4 @@
+import { OrganizationAuditService } from "./audit-logs/audit-logs.service.js";
 import { QuotasService } from "./quotas/quotas.service.js";
 import { MembersService } from "./members/members.service.js";
 import { InvitationsService } from "./invitations/invitations.service.js";
@@ -9,7 +10,7 @@ export declare class OrganizationService {
     private log;
     private readonly emitEvent;
     private readonly sso;
-    private readonly auditLogs;
+    readonly auditLogs: OrganizationAuditService;
     readonly core: CoreService;
     readonly invitations: InvitationsService;
     readonly quotas: QuotasService;
@@ -130,11 +131,7 @@ export declare class OrganizationService {
             totalCount: number;
         };
     }>;
-    listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: {
-        action?: string;
-        entityType?: string;
-        actorUserId?: string;
-    }): Promise<{
+    listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: import("./audit-logs/audit-logs.schema.js").AuditLogFilters): Promise<{
         data: AuditLogDto[];
         meta: {
             hasMore: boolean;
@@ -268,13 +265,7 @@ export declare class OrganizationService {
         slug: string;
         available: boolean;
     }>;
-    exportAuditLogs(orgId: string, userId: string, filters?: {
-        action?: string;
-        entityType?: string;
-        actorUserId?: string;
-        startDate?: string;
-        endDate?: string;
-    }): Promise<(AuditLogDto & {
+    exportAuditLogs(orgId: string, userId: string, filters?: import("./audit-logs/audit-logs.schema.js").AuditLogFilters): Promise<(AuditLogDto & {
         oldValues: unknown;
         newValues: unknown;
         changedFields: unknown;

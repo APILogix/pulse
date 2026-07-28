@@ -139,7 +139,12 @@ export class SlackConnector extends BaseConnector {
         Authorization: `Bearer ${cfg.botToken}`,
       },
       body: JSON.stringify({
-        channel: cfg.defaultChannel,
+        channel: (() => {
+          const projectChannel = notification.metadata?.projectChannel as Record<string, unknown> | undefined;
+          return typeof projectChannel?.destination === 'string' && projectChannel.destination.trim()
+            ? projectChannel.destination.trim()
+            : cfg.defaultChannel;
+        })(),
         ...(notification.threadKey ? { thread_ts: notification.threadKey } : {}),
         ...blocks,
       }),

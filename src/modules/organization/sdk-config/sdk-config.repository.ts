@@ -1,311 +1,207 @@
-/**
- * SDK Remote Config repository (PostgreSQL).
- *
- * Design: sdk_configs holds ONE live row per scope
- * (org_id, project_id, config_key, environment); it is updated in place with
- * version++ and a fresh version_hash. Every create/update/rollback also appends
- * an immutable snapshot to sdk_config_versions and a tracking row to
- * sdk_config_deployments. This keeps :configId stable across versions.
- *
- * version_hash is computed by the service (SHA-256 of canonical JSON) and passed
- * in, so the DB never has to know the hashing scheme.
- */
+/** Persistence for one published SDK configuration head per environment. */
 import type { PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
-import { ConflictError, NotFoundError } from "../types.js";
-import type {
-  ChangeType,
-  SdkConfigRow,
-  SdkConfigVersionRow,
-  SdkConfigDeploymentRow,
-  SdkConfigResolvedDto,
-} from "./sdk-config.types.js";
+import { NotFoundError } from "../types.js";
 import { cursorPage } from "../shared/base.repository.js";
 import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
+import type {
+  SdkConfigChangeType,
+  SdkConfigResolvedDto,
+  SdkConfigRow,
+  SdkConfigVersionRow,
+} from "./sdk-config.types.js";
 
-const CONFIG_COLS = `id,org_id,project_id,config_key,config_type,version,version_hash,is_latest,
-  config_value,schema_version,environment,target_sdk_versions,target_platforms,
-  rollout_percentage,is_active,is_encrypted,created_by,updated_by,created_at,updated_at`;
+const CONFIG_COLS = `
+  h.id,h.organization_id,h.project_id,h.environment_id,h.published_revision_id,
+  h.current_revision,h.current_hash,h.schema_version,h.created_by,h.updated_by,
+  h.created_at,h.updated_at,h.version,r.config_value,r.published_at
+`;
 
-const VERSION_COLS = `id,config_id,version,version_hash,config_value,config_value_encrypted,
-  change_type,change_summary,change_diff,rolled_back_at,rolled_back_by,rolled_back_to_version,
-  created_by,created_at`;
+const VERSION_COLS = `
+  id,config_id,organization_id,project_id,environment_id,revision_number,
+  config_value,config_hash,schema_version,change_type,change_summary,
+  rolled_back_to_revision,published_by,published_at
+`;
 
-const DEPLOYMENT_COLS = `id,config_id,version,status,rollout_percentage,target_count,
-  reached_count,error_count,last_error,started_at,completed_at,created_at,updated_at`;
-
-export interface CreateSdkConfigData {
-  orgId: string;
-  projectId: string | null;
-  configKey: string;
-  configType: string;
+export interface PublishSdkConfigData {
   configValue: Record<string, unknown>;
-  versionHash: string;
+  configHash: string;
   schemaVersion: string | null;
-  environment: string;
-  targetSdkVersions: string[] | null;
-  targetPlatforms: string[] | null;
-  rolloutPercentage: number;
-  isEncrypted: boolean;
-  createdBy: string;
-}
-
-export interface UpdateSdkConfigData {
-  configValue: Record<string, unknown>;
-  versionHash: string;
-  newVersion: number;
-  schemaVersion?: string | null | undefined;
-  environment?: string | undefined;
-  targetSdkVersions?: string[] | null | undefined;
-  targetPlatforms?: string[] | null | undefined;
-  rolloutPercentage?: number | undefined;
-  isActive?: boolean | undefined;
-  changeType: ChangeType;
+  changeType: SdkConfigChangeType;
   changeSummary: string | null;
-  changeDiff: Record<string, unknown> | null;
-  rolledBackToVersion?: number | null | undefined;
-  updatedBy: string;
+  rolledBackToRevision?: number | null;
+  publishedBy: string;
 }
 
 export class SdkConfigRepository {
   private readonly db = pool;
 
-  private async withTransaction<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
+  private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
-      const r = await fn(client);
+      const result = await fn(client);
       await client.query("COMMIT");
-      return r;
-    } catch (e) {
+      return result;
+    } catch (error) {
       await client.query("ROLLBACK");
-      throw e;
+      throw error;
     } finally {
       client.release();
     }
   }
 
-  // ── Create ────────────────────────────────────
-  async create(data: CreateSdkConfigData): Promise<SdkConfigRow> {
-    return this.withTransaction(async (client) => {
-      let row: SdkConfigRow;
-      try {
-        const r = await client.query<SdkConfigRow>(
-          `INSERT INTO sdk_configs
-             (org_id,project_id,config_key,config_type,version,version_hash,is_latest,
-              config_value,schema_version,environment,target_sdk_versions,target_platforms,
-              rollout_percentage,is_active,is_encrypted,created_by,updated_by)
-           VALUES ($1,$2,$3,$4,1,$5,TRUE,$6,$7,$8,$9,$10,$11,TRUE,$12,$13,$13)
-           RETURNING ${CONFIG_COLS}`,
-          [
-            data.orgId, data.projectId, data.configKey, data.configType, data.versionHash,
-            JSON.stringify(data.configValue), data.schemaVersion, data.environment,
-            data.targetSdkVersions, data.targetPlatforms, data.rolloutPercentage,
-            data.isEncrypted, data.createdBy,
-          ],
-        );
-        row = r.rows[0]!;
-      } catch (e) {
-        if ((e as { code?: string }).code === "23505") {
-          throw new ConflictError("An SDK config with this key already exists for this scope");
-        }
-        throw e;
-      }
-
-      await client.query(
-        `INSERT INTO sdk_config_versions
-           (config_id,version,version_hash,config_value,change_type,change_summary,created_by)
-         VALUES ($1,1,$2,$3,'create',$4,$5)`,
-        [row.id, data.versionHash, JSON.stringify(data.configValue), "Initial version", data.createdBy],
-      );
-
-      await client.query(
-        `INSERT INTO sdk_config_deployments
-           (config_id,version,status,rollout_percentage,started_at)
-         VALUES ($1,1,'deploying',$2,NOW())`,
-        [row.id, data.rolloutPercentage],
-      );
-
-      return row;
-    });
-  }
-
-  // ── Read ──────────────────────────────────────
   async findById(orgId: string, configId: string): Promise<SdkConfigRow | null> {
-    const r = await this.db.query<SdkConfigRow>(
-      `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE org_id=$1 AND id=$2`,
+    const result = await this.db.query<SdkConfigRow>(
+      `SELECT ${CONFIG_COLS}
+         FROM project_environment_sdk_configs h
+         JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+        WHERE h.organization_id=$1 AND h.id=$2`,
       [orgId, configId],
     );
-    return r.rows[0] ?? null;
+    return result.rows[0] ?? null;
   }
 
   async list(
     orgId: string,
-    filters: { projectId?: string; environment?: string; configKey?: string; includeInactive?: boolean },
-    q: CursorPaginationQuery
+    filters: { projectId?: string; environmentId?: string },
+    query: CursorPaginationQuery,
   ): Promise<CursorPaginatedResponse<SdkConfigRow>> {
-    const countParams: unknown[] = [orgId];
-    let countWhere = `org_id=$1 AND is_latest=TRUE`;
-    if (!filters.includeInactive) countWhere += ` AND is_active=TRUE`;
-    if (filters.projectId) { countParams.push(filters.projectId); countWhere += ` AND project_id=$${countParams.length}`; }
-    if (filters.environment) { countParams.push(filters.environment); countWhere += ` AND environment=$${countParams.length}`; }
-    if (filters.configKey) { countParams.push(filters.configKey); countWhere += ` AND config_key=$${countParams.length}`; }
-
-    const countRes = await this.db.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count FROM sdk_configs WHERE ${countWhere}`, countParams
-    );
-    const totalCount = Number(countRes.rows[0]?.count ?? 0);
-
-    const params: unknown[] = [...countParams];
-    let where = countWhere;
-    if (q.cursor) { params.push(q.cursor); where += ` AND created_at < $${params.length}`; }
-    params.push(q.limit + 1);
-
-    const r = await this.db.query<SdkConfigRow>(
-      `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`,
+    const params: unknown[] = [orgId];
+    const where = ["h.organization_id=$1"];
+    if (filters.projectId) {
+      params.push(filters.projectId);
+      where.push(`h.project_id=$${params.length}`);
+    }
+    if (filters.environmentId) {
+      params.push(filters.environmentId);
+      where.push(`h.environment_id=$${params.length}`);
+    }
+    const count = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM project_environment_sdk_configs h WHERE ${where.join(" AND ")}`,
       params,
     );
-    return cursorPage(r.rows, q.limit, totalCount);
+    if (query.cursor) {
+      params.push(query.cursor);
+      where.push(`h.created_at < $${params.length}`);
+    }
+    params.push(query.limit + 1);
+    const rows = await this.db.query<SdkConfigRow>(
+      `SELECT ${CONFIG_COLS}
+         FROM project_environment_sdk_configs h
+         JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY h.created_at DESC LIMIT $${params.length}`,
+      params,
+    );
+    return cursorPage(rows.rows, query.limit, Number(count.rows[0]?.count ?? 0));
   }
-
-  // ── Update (in-place, version++) ──────────────
-  async update(orgId: string, configId: string, data: UpdateSdkConfigData): Promise<SdkConfigRow> {
+  async publish(orgId: string, configId: string, data: PublishSdkConfigData): Promise<SdkConfigRow> {
     return this.withTransaction(async (client) => {
-      // Lock the live row so concurrent updates serialize and versions stay monotonic.
-      const cur = await client.query<SdkConfigRow>(
-        `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE org_id=$1 AND id=$2 FOR UPDATE`,
+      const current = await client.query<{
+        id: string;
+        organization_id: string;
+        project_id: string;
+        environment_id: string;
+        current_revision: number;
+      }>(
+        `SELECT id,organization_id,project_id,environment_id,current_revision
+           FROM project_environment_sdk_configs
+          WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
         [orgId, configId],
       );
-      if (!cur.rows[0]) throw new NotFoundError("SDK config");
-
-      const sets: string[] = [
-        `config_value=$3`, `version=$4`, `version_hash=$5`, `updated_by=$6`,
-      ];
-      const vals: unknown[] = [
-        orgId, configId, JSON.stringify(data.configValue), data.newVersion, data.versionHash, data.updatedBy,
-      ];
-      const push = (col: string, v: unknown) => { vals.push(v); sets.push(`${col}=$${vals.length}`); };
-      if (data.schemaVersion !== undefined) push("schema_version", data.schemaVersion);
-      if (data.environment !== undefined) push("environment", data.environment);
-      if (data.targetSdkVersions !== undefined) push("target_sdk_versions", data.targetSdkVersions);
-      if (data.targetPlatforms !== undefined) push("target_platforms", data.targetPlatforms);
-      if (data.rolloutPercentage !== undefined) push("rollout_percentage", data.rolloutPercentage);
-      if (data.isActive !== undefined) push("is_active", data.isActive);
-
-      const upd = await client.query<SdkConfigRow>(
-        `UPDATE sdk_configs SET ${sets.join(",")} WHERE org_id=$1 AND id=$2 RETURNING ${CONFIG_COLS}`,
-        vals,
-      );
-      const row = upd.rows[0]!;
-
-      await client.query(
-        `INSERT INTO sdk_config_versions
-           (config_id,version,version_hash,config_value,change_type,change_summary,change_diff,
-            rolled_back_by,rolled_back_to_version,rolled_back_at,created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      const head = current.rows[0];
+      if (!head) throw new NotFoundError("SDK config");
+      const revision = head.current_revision + 1;
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO project_environment_sdk_config_revisions(
+           config_id,organization_id,project_id,environment_id,revision_number,
+           config_value,config_hash,schema_version,change_type,change_summary,
+           rolled_back_to_revision,published_by
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         RETURNING id`,
         [
-          configId, data.newVersion, data.versionHash, JSON.stringify(data.configValue),
-          data.changeType, data.changeSummary, data.changeDiff ? JSON.stringify(data.changeDiff) : null,
-          data.changeType === "rollback" ? data.updatedBy : null,
-          data.rolledBackToVersion ?? null,
-          data.changeType === "rollback" ? new Date() : null,
-          data.updatedBy,
+          head.id,
+          head.organization_id,
+          head.project_id,
+          head.environment_id,
+          revision,
+          JSON.stringify(data.configValue),
+          data.configHash,
+          data.schemaVersion,
+          data.changeType,
+          data.changeSummary,
+          data.rolledBackToRevision ?? null,
+          data.publishedBy,
         ],
       );
-
       await client.query(
-        `INSERT INTO sdk_config_deployments
-           (config_id,version,status,rollout_percentage,started_at)
-         VALUES ($1,$2,'deploying',$3,NOW())`,
-        [configId, data.newVersion, row.rollout_percentage],
+        `UPDATE project_environment_sdk_configs
+            SET published_revision_id=$3,current_revision=$4,current_hash=$5,
+                schema_version=$6,updated_by=$7,version=version+1
+          WHERE organization_id=$1 AND id=$2`,
+        [orgId, configId, inserted.rows[0]!.id, revision, data.configHash, data.schemaVersion, data.publishedBy],
       );
-
-      return row;
+      const result = await client.query<SdkConfigRow>(
+        `SELECT ${CONFIG_COLS}
+           FROM project_environment_sdk_configs h
+           JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+          WHERE h.organization_id=$1 AND h.id=$2`,
+        [orgId, configId],
+      );
+      return result.rows[0]!;
     });
   }
 
-  // ── Versions ──────────────────────────────────
   async listVersions(configId: string): Promise<SdkConfigVersionRow[]> {
-    const r = await this.db.query<SdkConfigVersionRow>(
-      `SELECT ${VERSION_COLS} FROM sdk_config_versions WHERE config_id=$1 ORDER BY version DESC`,
+    const result = await this.db.query<SdkConfigVersionRow>(
+      `SELECT ${VERSION_COLS}
+         FROM project_environment_sdk_config_revisions
+        WHERE config_id=$1 ORDER BY revision_number DESC`,
       [configId],
     );
-    return r.rows;
+    return result.rows;
   }
 
-  async getVersion(configId: string, version: number): Promise<SdkConfigVersionRow | null> {
-    const r = await this.db.query<SdkConfigVersionRow>(
-      `SELECT ${VERSION_COLS} FROM sdk_config_versions WHERE config_id=$1 AND version=$2`,
-      [configId, version],
+  async getVersion(configId: string, revision: number): Promise<SdkConfigVersionRow | null> {
+    const result = await this.db.query<SdkConfigVersionRow>(
+      `SELECT ${VERSION_COLS}
+         FROM project_environment_sdk_config_revisions
+        WHERE config_id=$1 AND revision_number=$2`,
+      [configId, revision],
     );
-    return r.rows[0] ?? null;
+    return result.rows[0] ?? null;
   }
-
-  // ── Deployments ───────────────────────────────
-  async listDeployments(configId: string): Promise<SdkConfigDeploymentRow[]> {
-    const r = await this.db.query<SdkConfigDeploymentRow>(
-      `SELECT ${DEPLOYMENT_COLS} FROM sdk_config_deployments WHERE config_id=$1 ORDER BY version DESC`,
-      [configId],
+  async resolveForEnvironment(orgId: string, environmentId: string): Promise<SdkConfigResolvedDto | null> {
+    const result = await this.db.query<{
+      environment_id: string;
+      current_revision: number;
+      current_hash: string;
+      schema_version: string | null;
+      config_value: Record<string, unknown>;
+      published_at: Date;
+    }>(
+      `SELECT h.environment_id,h.current_revision,h.current_hash,h.schema_version,
+              r.config_value,r.published_at
+         FROM project_environment_sdk_configs h
+         JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+         JOIN project_environments e
+           ON e.id=h.environment_id AND e.project_id=h.project_id
+          AND e.organization_id=h.organization_id
+        WHERE h.organization_id=$1 AND h.environment_id=$2
+          AND e.is_active=TRUE AND e.deleted_at IS NULL`,
+      [orgId, environmentId],
     );
-    return r.rows;
-  }
-
-  /** Bump reached_count for a (config,version) deployment; mark deployed when target reached. */
-  async acknowledgeDeployment(configId: string, version: number): Promise<void> {
-    await this.db.query(
-      `UPDATE sdk_config_deployments
-       SET reached_count = reached_count + 1,
-           status = CASE
-             WHEN target_count IS NOT NULL AND reached_count + 1 >= target_count THEN 'deployed'
-             ELSE status END,
-           completed_at = CASE
-             WHEN target_count IS NOT NULL AND reached_count + 1 >= target_count THEN NOW()
-             ELSE completed_at END
-       WHERE config_id=$1 AND version=$2`,
-      [configId, version],
-    );
-  }
-
-  // ── SDK runtime resolve ───────────────────────
-  /**
-   * Resolve the active config set an SDK should receive for a scope. Matches the
-   * org-wide rows plus (optionally) the project's rows, the requested
-   * environment or 'all', and platform targeting (NULL target = all platforms).
-   * Rollout filtering is applied by the caller (needs a stable per-instance key).
-   */
-  async resolveForSdk(
-    orgId: string,
-    projectId: string | null,
-    environment: string,
-    platform: string | null,
-  ): Promise<Array<SdkConfigResolvedDto & { rollout_percentage: number }>> {
-    const params: unknown[] = [orgId, environment];
-    let where = `org_id=$1 AND is_latest=TRUE AND is_active=TRUE
-      AND environment IN ($2,'all')`;
-    if (projectId) {
-      params.push(projectId);
-      where += ` AND (project_id IS NULL OR project_id=$${params.length})`;
-    } else {
-      where += ` AND project_id IS NULL`;
-    }
-    if (platform) {
-      params.push(platform);
-      where += ` AND (target_platforms IS NULL OR $${params.length} = ANY(target_platforms))`;
-    }
-    const r = await this.db.query<SdkConfigRow>(
-      `SELECT ${CONFIG_COLS} FROM sdk_configs WHERE ${where}
-       ORDER BY config_key ASC, (project_id IS NOT NULL) DESC`,
-      params,
-    );
-    return r.rows.map((row) => ({
-      configKey: row.config_key,
-      configValue: row.config_value,
-      version: row.version,
-      versionHash: row.version_hash,
-      schemaVersion: row.schema_version,
-      environment: row.environment,
-      targetPlatforms: row.target_platforms,
-      rollout_percentage: row.rollout_percentage,
-    }));
+    const row = result.rows[0];
+    return row
+      ? {
+          environmentId: row.environment_id,
+          revision: row.current_revision,
+          revisionHash: row.current_hash,
+          schemaVersion: row.schema_version,
+          configValue: row.config_value,
+          publishedAt: row.published_at,
+        }
+      : null;
   }
 }

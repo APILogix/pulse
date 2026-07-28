@@ -32,6 +32,7 @@ import { AlertingRepository } from '../repository.js';
 import { EventsService } from '../events/events.service.js';
 import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { seedDefaultPresetsForOrg } from './presets.js';
+import { ProjectThresholdWorker } from '../../projects/alerts/thresholds/threshold.worker.js';
 import type { AlertRuleConditionRow, AlertRuleRow } from '../types.js';
 
 const EVAL_SOURCE = 'rule-evaluator';
@@ -64,21 +65,30 @@ interface ConditionOutcome {
 export class AlertRuleEvaluator {
   private readonly repo = new AlertingRepository();
   private readonly eventsService: EventsService;
+  private readonly projectThresholds: ProjectThresholdWorker;
   private readonly log: FastifyBaseLogger;
 
   constructor(logger: FastifyBaseLogger) {
     this.log = logger.child({ component: 'alert-rule-evaluator' });
     this.eventsService = new EventsService({ repository: this.repo, logger });
+    this.projectThresholds = new ProjectThresholdWorker(logger);
   }
 
-  /** One evaluator tick: rule evaluation + preset seeding. Never throws. */
+  /** One evaluator tick: alert rules, project thresholds, and preset seeding. */
   async runTick(limit: number = RULE_BATCH_LIMIT): Promise<EvaluatorTickSummary> {
     const summary: EvaluatorTickSummary = {
       rulesDue: 0, evaluated: 0, fired: 0, recovered: 0, cooldownSkipped: 0, failed: 0, orgsSeeded: 0,
     };
 
-    const due = await this.findDueRules(limit);
-    summary.rulesDue = due.length;
+    const [due, thresholdSummary] = await Promise.all([
+      this.findDueRules(limit),
+      this.projectThresholds.runTick(limit),
+    ]);
+    summary.rulesDue = due.length + thresholdSummary.due;
+    summary.evaluated += thresholdSummary.evaluated;
+    summary.fired += thresholdSummary.fired;
+    summary.recovered += thresholdSummary.recovered;
+    summary.failed += thresholdSummary.failed;
 
     await mapBounded(due, RULE_CONCURRENCY, async (rule) => {
       try {
@@ -97,7 +107,7 @@ export class AlertRuleEvaluator {
 
     summary.orgsSeeded = await this.seedPresetsForActiveOrgs();
     if (summary.evaluated > 0 || summary.fired > 0 || summary.orgsSeeded > 0 || summary.failed > 0) {
-      this.log.info({ ...summary }, 'Rule evaluation tick finished');
+      this.log.info({ ...summary }, 'Rule and project-threshold evaluation tick finished');
     }
     return summary;
   }

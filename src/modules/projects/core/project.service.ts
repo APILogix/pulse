@@ -16,6 +16,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { PoolClient } from "pg";
 import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "../types.js";
 import { AlertCategorySchema } from "../alerts/subscriptions/connector-subscription.types.js";
 import {
@@ -25,7 +26,6 @@ import {
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import type {
   ApiKeyUsage,
@@ -37,11 +37,9 @@ import type {
   CreateEnvironmentBody,
   CreateProjectBody,
   ListApiKeysQuery,
-  ListProjectActivityQuery,
   ListProjectsQuery,
   OrgRole,
   Project,
-  ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
   ProjectEnvironmentConfig,
@@ -54,11 +52,35 @@ import type {
   UpdateProjectBody,
   ValidatedApiKey, ProjectUpdateInput, ApiKeyUpdateInput } from "../types.js";
 import {
+  createApiKey,
   ProjectError,
   slugifyProjectName,
   validateStatusTransition,
 } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { EnvironmentType } from "../environments/environment.types.js";
+import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+
+/**
+ * Result of creating a project: the project itself plus the single Production
+ * environment provisioned with it and the initial Production API key. The raw
+ * key (`fullKey`) is returned exactly once and never persisted in plaintext.
+ */
+export interface CreateProjectResult {
+  project: Project;
+  environment: ProjectEnvironmentConfig;
+  apiKey: ProjectApiKey;
+  fullKey: string;
+}
+
+/** Fixed identity of the single default environment created with every project. */
+const DEFAULT_PRODUCTION_ENVIRONMENT = {
+  name: "Production",
+  slug: "production",
+  type: EnvironmentType.PRODUCTION,
+  description: "Production telemetry",
+  color: "#16A34A",
+} as const;
 
 // Audit/request footprint passed from routes. Mirrors the organization
 // module's RequestMeta so audit rows are uniform across modules.
@@ -80,13 +102,14 @@ export class ProjectService extends BaseProjectService {
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
     orgRepo: OrganizationRepository,
+    auditService: OrganizationAuditService,
     settingsRepository: SettingsRepository,
     apiKeyRepository: ApiKeyRepository,
     environmentRepository: EnvironmentRepository,
-    activityRepository: ActivityRepository,
     usageRepository: UsageRepository,
+    private readonly sdkConfigProvisioner: SdkConfigProvisioner = new SdkConfigProvisioner(),
   ) {
-      super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+      super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
   }
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -107,18 +130,35 @@ export class ProjectService extends BaseProjectService {
     return { ...result, limit: query.limit, offset };
   }
 
+  /**
+   * Create a project and provision a complete, production-ready runtime in a
+   * single database transaction:
+   *   1. Project row
+   *   2. Owner membership
+   *   3. Project settings
+   *   4. Exactly ONE Production environment (default, active)
+   *   5. SDK configuration head + published revision #1 for that environment
+   *   6. One initial Production API key (shown once)
+   *   7. Usage counters
+   *   8. Notification preferences
+   *
+   * No additional environments (Staging/Development/Testing/Preview/...) are
+   * created here — those exist only when the user explicitly creates them.
+   */
   public async createProject(
     orgId: string,
     userId: string,
     body: CreateProjectBody,
     meta: RequestMeta,
-  ): Promise<Project> {
+  ): Promise<CreateProjectResult> {
     await this.requireOrganizationAccess(orgId, userId, "admin");
     await this.enforceProjectModuleLimit(orgId, "project");
     const slug = await this.generateUniqueSlug(orgId, body.name);
 
-    const project = await this.repository.withTransaction(async (client) => {
-      const created = await this.repository.createProject(
+    const keyMaterial = createApiKey(DEFAULT_PRODUCTION_ENVIRONMENT.slug);
+
+    const result = await this.repository.withTransaction(async (client) => {
+      const project = await this.repository.createProject(
         {
           orgId,
           name: body.name,
@@ -136,33 +176,86 @@ export class ProjectService extends BaseProjectService {
         client,
       );
 
-      await this.repository.addProjectMember(
-        created.id,
-        orgId,
-        userId,
-        ProjectMemberRole.OWNER,
-        userId,
+      await this.repository.ensureProjectOwner(project.id, orgId, userId, client);
+      await this.settingsRepository.createDefault(project.id, orgId, client);
+
+      // Exactly one Production environment. All runtime resources below are
+      // provisioned explicitly in this same transaction (no DB trigger).
+      const environment = await this.environmentRepository.createEnvironment(
+        {
+          projectId: project.id,
+          orgId,
+          name: DEFAULT_PRODUCTION_ENVIRONMENT.name,
+          slug: DEFAULT_PRODUCTION_ENVIRONMENT.slug,
+          type: DEFAULT_PRODUCTION_ENVIRONMENT.type,
+          description: DEFAULT_PRODUCTION_ENVIRONMENT.description,
+          color: DEFAULT_PRODUCTION_ENVIRONMENT.color,
+          isDefault: true,
+          isActive: true,
+        },
         client,
       );
 
-      // Provision project defaults required by dashboards and alert routing.
-      await this.settingsRepository.createDefault(created.id, orgId, client);
-      await this.seedDefaultNotificationPreferences(created.id, orgId, client);
+      // SDK configuration head + published revision #1 for the environment.
+      await this.sdkConfigProvisioner.provisionInitial(
+        client,
+        {
+          organizationId: orgId,
+          projectId: project.id,
+          environmentId: environment.id,
+          environmentKey: environment.slug,
+        },
+        userId,
+      );
 
-      return created;
+      // One initial Production API key (subsequent environments do NOT get keys).
+      const apiKey = await this.apiKeyRepository.createApiKey(
+        {
+          projectId: project.id,
+          organizationId: orgId,
+          environmentId: environment.id,
+          publicKey: keyMaterial.publicKey,
+          secretHash: keyMaterial.secretHash,
+          name: "Production Default Key",
+          createdBy: userId,
+          expiresAt: null,
+        },
+        client,
+      );
+
+      await this.repository.provisionUsageCounter(project, client);
+      await this.seedDefaultNotificationPreferences(project.id, orgId, client);
+
+      return { project, environment, apiKey };
     });
 
     await this.audit(meta, {
       orgId,
+      projectId: result.project.id,
       action: "project.created",
       entityType: "project",
-      entityId: project.id,
-      entityName: project.name,
-      newValues: { name: project.name, slug: project.slug, visibility: project.visibility },
+      entityId: result.project.id,
+      entityName: result.project.name,
+      newValues: {
+        name: result.project.name,
+        slug: result.project.slug,
+        visibility: result.project.visibility,
+        environmentId: result.environment.id,
+        apiKeyId: result.apiKey.id,
+      },
     });
 
-    this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
-    return project;
+    this.logger.info(
+      { orgId, projectId: result.project.id, environmentId: result.environment.id, userId },
+      "Project created with Production environment, SDK configuration, and initial API key",
+    );
+
+    return {
+      project: result.project,
+      environment: result.environment,
+      apiKey: this.apiKeyRepository.publicShape(result.apiKey),
+      fullKey: keyMaterial.fullKey,
+    };
   }
 
   private async seedDefaultNotificationPreferences(
@@ -185,7 +278,7 @@ export class ProjectService extends BaseProjectService {
       `INSERT INTO project_notification_preferences (
          project_id, organization_id, category, enabled
        ) VALUES ${placeholders.join(", ")}
-       ON CONFLICT (project_id, category) DO NOTHING`,
+       ON CONFLICT DO NOTHING`,
       values,
     );
   }
@@ -198,29 +291,24 @@ export class ProjectService extends BaseProjectService {
     const project = await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
     const settings = await this.settingsRepository.findByProjectId(projectId);
     if (!settings) throw new ProjectError("SETTINGS_NOT_FOUND", "Project settings not found", 404);
-    
-    const members = (this.repository as any).findProjectMembers ? await (this.repository as any).findProjectMembers(orgId, projectId) : [];
-    const apiKeys = await (this.apiKeyRepository as any).listApiKeys(orgId, projectId);
-
-    const now = new Date();
-    const usage = {
-      totalEventsToday: 0,
-      totalBytesToday: 0,
-      peakHour: 0,
-      currentHourEvents: 0,
-      categoryBreakdown: {},
-      eventTypeBreakdown: {},
-      hourlyBreakdown: [],
-      dailyTrend: [],
-      heatmapData: []
-    };
+    const usage = await this.usageRepository.getProjectOverview(orgId, projectId);
 
     return {
       project,
       settings,
-      memberCount: members.length,
-      apiKeyCount: apiKeys.length,
-      usage,
+      memberCount: usage.memberCount,
+      apiKeyCount: usage.apiKeyCount,
+      usage: {
+        totalEventsToday: usage.totalEventsToday,
+        totalBytesToday: usage.totalBytesToday,
+        peakHour: usage.peakHour,
+        currentHourEvents: usage.currentHourEvents,
+        categoryBreakdown: usage.categoryBreakdown,
+        eventTypeBreakdown: usage.eventTypeBreakdown,
+        hourlyBreakdown: usage.hourlyBreakdown,
+        dailyTrend: usage.dailyTrend,
+        heatmapData: usage.heatmapData,
+      },
     };
   }
 
@@ -270,6 +358,7 @@ export class ProjectService extends BaseProjectService {
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.updated",
       entityType: "project",
       entityId: updated.id,
@@ -294,13 +383,14 @@ export class ProjectService extends BaseProjectService {
     await this.repository.withTransaction(async (client) => {
       const keys = await this.apiKeyRepository.listActiveApiKeyRecords(projectId, undefined, client);
       for (const key of keys) {
-        await this.apiKeyRepository.revokeApiKey(projectId, key.id, userId, "project_deleted", client);
+        await this.apiKeyRepository.revokeApiKey(projectId, key.id, client);
       }
       await this.repository.softDeleteProject(orgId, projectId, userId, client);
     });
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.deleted",
       entityType: "project",
       entityId: projectId,
@@ -320,6 +410,7 @@ export class ProjectService extends BaseProjectService {
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.restored",
       entityType: "project",
       entityId: restored.id,

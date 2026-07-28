@@ -61,9 +61,6 @@ WHERE status='processing';
 CREATE INDEX idx_email_sent
 ON auth_email_outbox(sent_at)
 WHERE status='sent';
-CREATE INDEX idx_email_sent
-ON auth_email_outbox(sent_at)
-WHERE status='sent';
 CREATE UNIQUE INDEX idx_email_dedupe
 ON auth_email_outbox(dedupe_key)
 WHERE dedupe_key IS NOT NULL

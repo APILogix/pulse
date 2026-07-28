@@ -168,6 +168,24 @@ export class ProjectRepository {
     }
   }
 
+  /**
+   * Seed the per-project usage counter row. Environment + SDK-configuration
+   * provisioning is orchestrated explicitly by the service layer (a single
+   * Production environment at project creation), so this no longer seeds any
+   * environments.
+   */
+  async provisionUsageCounter(
+    project: Project,
+    client: PoolClient,
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO project_usage_current (project_id, organization_id)
+       VALUES ($1, $2)
+       ON CONFLICT (project_id) DO NOTHING`,
+      [project.id, project.orgId],
+    );
+  }
+
   async findProjectBySlug(
     orgId: string,
     slug: string,
@@ -344,7 +362,9 @@ export class ProjectRepository {
         [orgId],
       ),
       db.query<{ count: string }>(
-        `SELECT COUNT(*)::text FROM project_environments WHERE organization_id = $1 AND deleted_at IS NULL`,
+        `SELECT COUNT(*)::text FROM project_environments
+          WHERE organization_id = $1 AND deleted_at IS NULL
+            AND type = 'custom'::project_environment_type`,
         [orgId],
       ),
       db.query<{ count: string }>(
@@ -402,11 +422,22 @@ export class ProjectRepository {
       value: string;
       period_start: Date;
     }>(
-      `SELECT counter_type, value, period_start
-         FROM project_usage
-        WHERE project_id = $1
-        ORDER BY period_start DESC
-        LIMIT 100`,
+      `SELECT metric.counter_type, metric.value::text AS value, usage.period_start
+         FROM project_usage_current usage
+         CROSS JOIN LATERAL (VALUES
+           ('total_events', usage.total_events::numeric),
+           ('errors', usage.errors::numeric),
+           ('requests', usage.requests::numeric),
+           ('traces', usage.traces::numeric),
+           ('logs', usage.logs::numeric),
+           ('metrics', usage.metrics::numeric),
+           ('profiles', usage.profiles::numeric),
+           ('alert_count', usage.alert_count::numeric),
+           ('connector_deliveries', usage.connector_deliveries::numeric),
+           ('failed_notifications', usage.failed_notifications::numeric)
+         ) metric(counter_type, value)
+        WHERE usage.project_id = $1
+        ORDER BY metric.counter_type`,
       [projectId],
     );
     return result.rows.map((r) => ({

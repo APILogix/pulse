@@ -4,6 +4,7 @@
 import { z } from "zod";
 export declare const UsageGranularitySchema: z.ZodEnum<{
     minute: "minute";
+    monthly: "monthly";
     hourly: "hourly";
     daily: "daily";
 }>;
@@ -13,6 +14,7 @@ export declare const UsageAnalyticsQuerySchema: z.ZodPipe<z.ZodTransform<unknown
     to: z.ZodCoercedDate<unknown>;
     granularity: z.ZodDefault<z.ZodEnum<{
         minute: "minute";
+        monthly: "monthly";
         hourly: "hourly";
         daily: "daily";
     }>>;
@@ -93,9 +95,6 @@ export interface UsageTimeSeriesPoint {
     connectorDeliveries: number;
     failedNotifications: number;
     rateLimitUsage: number;
-    latencyMsP50: number | null;
-    latencyMsP95: number | null;
-    latencyMsP99: number | null;
 }
 export interface UsageSummary {
     totalEvents: number;
@@ -117,9 +116,6 @@ export interface UsageSummary {
     connectorDeliveries: number;
     failedNotifications: number;
     rateLimitUsage: number;
-    latencyMsP50: number | null;
-    latencyMsP95: number | null;
-    latencyMsP99: number | null;
 }
 export interface HeatmapCell {
     x: string;

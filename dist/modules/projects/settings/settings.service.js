@@ -4,9 +4,8 @@ import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import { buildApiPrefixes, constantTimeEqualHex, createApiKey, defaultPermissionsForType, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
+import { buildApiPrefixes, constantTimeEqualHex, createApiKey, extractApiKeyPrefix, hasRequiredRole, hashApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
 // Per-key defaults used when warming the cache. Aligned with the ingestion
 // service defaults so a key gets the same limit regardless of which path warmed
@@ -34,8 +33,8 @@ export class SettingsService extends BaseProjectService {
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
-    orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository) {
-        super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository) {
+        super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async getProjectSettings(orgId, projectId, userId) {
@@ -50,6 +49,7 @@ export class SettingsService extends BaseProjectService {
         const result = await this.settingsRepository.update(projectId, updates);
         await this.audit(meta, {
             orgId,
+            projectId,
             action: "project.settings.updated",
             entityType: "project_settings",
             entityId: result.id,

@@ -1,9 +1,11 @@
 import { z } from "zod";
+import { QuietHoursSchema } from "../channels/quiet-hours.js";
 import { UuidSchema } from "../../../alerting/types.js";
 import { AlertSeveritySchema } from "../../../alerting/common.js";
 import { normalizeObjectKeys } from "../../shared/schema-utils.js";
 
 export const AlertCategorySchema = z.enum([
+  "all",
   "error",
   "performance",
   "deployment",
@@ -31,8 +33,8 @@ export const CreateProjectConnectorSubscriptionBodySchema = z.preprocess(
     severityThreshold: AlertSeveritySchema.default("error"),
     memberIds: z.array(UuidSchema).default([]),
     channelOverrides: z.record(z.string(), z.unknown()).default({}),
-    quietHours: z.record(z.string(), z.unknown()).nullable().optional(),
-    digestMode: z.record(z.string(), z.unknown()).nullable().optional(),
+    quietHours: QuietHoursSchema.nullable().optional(),
+    digestMode: z.string().max(30).nullable().optional(),
   }),
 );
 export type CreateProjectConnectorSubscriptionBody = z.infer<
@@ -47,8 +49,8 @@ export const UpdateProjectConnectorSubscriptionBodySchema = z.preprocess(
     severityThreshold: AlertSeveritySchema.optional(),
     memberIds: z.array(UuidSchema).optional(),
     channelOverrides: z.record(z.string(), z.unknown()).optional(),
-    quietHours: z.record(z.string(), z.unknown()).nullable().optional(),
-    digestMode: z.record(z.string(), z.unknown()).nullable().optional(),
+    quietHours: QuietHoursSchema.nullable().optional(),
+    digestMode: z.string().max(30).nullable().optional(),
   }).refine((value) => Object.keys(value).length > 0, {
     message: "At least one field is required",
   }),
@@ -83,7 +85,7 @@ export interface ProjectConnectorSubscription {
   memberIds: string[];
   channelOverrides: Record<string, unknown>;
   quietHours: Record<string, unknown> | null;
-  digestMode: Record<string, unknown> | null;
+  digestMode: string | null;
   createdByUserId: string | null;
   updatedByUserId: string | null;
   createdAt: Date;
@@ -95,7 +97,7 @@ export interface AlertRoutingTarget {
   projectId: string;
   organizationId: string;
   environmentId: string | null;
-  apiKeyId: string;
+  apiKeyId: string | null;
   subscriptions: {
     subscriptionId: string;
     connectorId: string;

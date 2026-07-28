@@ -30,7 +30,6 @@ import {
   CreateProjectBodySchema,
   EnvironmentParamsSchema,
   ListApiKeysQuerySchema,
-  ListProjectActivityQuerySchema,
   ListProjectsQuerySchema,
   OrgIdParamsSchema,
   ProjectParamsSchema,
@@ -80,8 +79,18 @@ export async function projectCoreRoutes(fastify: FastifyInstance): Promise<void>
     withErrorHandling(async (request, reply) => {
       const { orgId } = OrgIdParamsSchema.parse(request.params);
       const body = CreateProjectBodySchema.parse(request.body);
-      const project = await service.createProject(orgId, authenticatedUser(request).id, body, requestMeta(request));
-      return reply.code(201).send({ success: true, data: project });
+      const result = await service.createProject(orgId, authenticatedUser(request).id, body, requestMeta(request));
+      // The Production environment, its SDK configuration, and the initial API
+      // key are all provisioned with the project. `fullKey` is shown exactly once.
+      return reply.code(201).send({
+        success: true,
+        data: {
+          project: result.project,
+          environment: result.environment,
+          apiKey: result.apiKey,
+          fullKey: result.fullKey,
+        },
+      });
     }),
   );
 

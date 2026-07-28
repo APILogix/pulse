@@ -6,6 +6,7 @@ export declare const AlertCategorySchema: z.ZodEnum<{
     billing: "billing";
     usage: "usage";
     ai: "ai";
+    all: "all";
     deployment: "deployment";
     performance: "performance";
     cron: "cron";
@@ -26,6 +27,7 @@ export declare const CreateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         billing: "billing";
         usage: "usage";
         ai: "ai";
+        all: "all";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";
@@ -38,8 +40,14 @@ export declare const CreateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
     }>>;
     memberIds: z.ZodDefault<z.ZodArray<z.ZodString>>;
     channelOverrides: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    quietHours: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
-    digestMode: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
+    quietHours: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodObject<{}, z.core.$strict>, z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        timezone: z.ZodDefault<z.ZodString>;
+        start: z.ZodString;
+        end: z.ZodString;
+        days: z.ZodDefault<z.ZodArray<z.ZodNumber>>;
+    }, z.core.$strict>]>>>;
+    digestMode: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, z.core.$strip>>;
 export type CreateProjectConnectorSubscriptionBody = z.infer<typeof CreateProjectConnectorSubscriptionBodySchema>;
 export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
@@ -51,6 +59,7 @@ export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         billing: "billing";
         usage: "usage";
         ai: "ai";
+        all: "all";
         deployment: "deployment";
         performance: "performance";
         cron: "cron";
@@ -63,8 +72,14 @@ export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
     }>>;
     memberIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
     channelOverrides: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
-    quietHours: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
-    digestMode: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
+    quietHours: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodObject<{}, z.core.$strict>, z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+        timezone: z.ZodDefault<z.ZodString>;
+        start: z.ZodString;
+        end: z.ZodString;
+        days: z.ZodDefault<z.ZodArray<z.ZodNumber>>;
+    }, z.core.$strict>]>>>;
+    digestMode: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, z.core.$strip>>;
 export type UpdateProjectConnectorSubscriptionBody = z.infer<typeof UpdateProjectConnectorSubscriptionBodySchema>;
 export declare const ListProjectConnectorSubscriptionsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
@@ -93,7 +108,7 @@ export interface ProjectConnectorSubscription {
     memberIds: string[];
     channelOverrides: Record<string, unknown>;
     quietHours: Record<string, unknown> | null;
-    digestMode: Record<string, unknown> | null;
+    digestMode: string | null;
     createdByUserId: string | null;
     updatedByUserId: string | null;
     createdAt: Date;
@@ -104,7 +119,7 @@ export interface AlertRoutingTarget {
     projectId: string;
     organizationId: string;
     environmentId: string | null;
-    apiKeyId: string;
+    apiKeyId: string | null;
     subscriptions: {
         subscriptionId: string;
         connectorId: string;

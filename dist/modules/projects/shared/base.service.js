@@ -4,7 +4,6 @@ import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { hasRequiredRole, ProjectError, slugifyProjectName, validateStatusTransition, isReservedProjectSlug, } from "../shared/utils.js";
 // Per-key defaults used when warming the cache. Aligned with the ingestion
@@ -33,22 +32,22 @@ export class BaseProjectService {
     repository;
     logger;
     orgRepo;
+    auditService;
     settingsRepository;
     apiKeyRepository;
     environmentRepository;
-    activityRepository;
     usageRepository;
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
-    orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository) {
+    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository) {
         this.repository = repository;
         this.logger = logger;
         this.orgRepo = orgRepo;
+        this.auditService = auditService;
         this.settingsRepository = settingsRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.environmentRepository = environmentRepository;
-        this.activityRepository = activityRepository;
         this.usageRepository = usageRepository;
     }
     // ── Projects ────────────────────────────────────────────────────────────────
@@ -162,44 +161,7 @@ export class BaseProjectService {
      * Non-fatal: a failed audit write never breaks the originating request.
      */
     async audit(meta, data) {
-        try {
-            const record = {
-                orgId: data.orgId,
-                action: data.action,
-                entityType: data.entityType,
-                actorUserId: meta.actorUserId,
-                actorIp: meta.actorIp,
-                actorUserAgent: meta.actorUserAgent,
-                requestId: meta.requestId,
-                httpMethod: meta.httpMethod,
-                endpoint: meta.endpoint,
-                status: "success",
-            };
-            // Only attach optional fields when present so exactOptionalPropertyTypes
-            // is satisfied (no explicit `undefined` values).
-            if (meta.actorEmail)
-                record.actorEmail = meta.actorEmail;
-            if (meta.actorSessionId)
-                record.actorSessionId = meta.actorSessionId;
-            if (data.entityId !== undefined)
-                record.entityId = data.entityId;
-            if (data.entityName !== undefined)
-                record.entityName = data.entityName;
-            if (data.oldValues !== undefined)
-                record.oldValues = data.oldValues;
-            if (data.newValues !== undefined)
-                record.newValues = data.newValues;
-            if (data.changedFields !== undefined)
-                record.changedFields = data.changedFields;
-            if (data.isSensitive !== undefined)
-                record.isSensitive = data.isSensitive;
-            if (data.metadata !== undefined)
-                record.metadata = data.metadata;
-            await this.orgRepo.createAuditLog(record);
-        }
-        catch (err) {
-            this.logger.error({ err, action: data.action }, "Failed to write project audit log");
-        }
+        await this.auditService.audit(meta, data);
     }
     async evictProjectApiKeys(projectId) {
         try {

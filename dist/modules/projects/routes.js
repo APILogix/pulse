@@ -1,14 +1,15 @@
 import { authenticate } from "../../shared/middleware/auth.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../organization/sdk-config.types.js";
-import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectActivityQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "./types.js";
+import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "./types.js";
 import { handleProjectError, ProjectError } from "./shared/utils.js";
 import { projectCoreRoutes } from "./core/project.routes.js";
 import { projectSettingsRoutes } from "./settings/settings.routes.js";
-import { projectActivityRoutes } from "./activity/activity.routes.js";
 import { projectEnvironmentRoutes } from "./environments/environment.routes.js";
 import { projectApiKeyRoutes } from "./api-keys/api-key.routes.js";
 import { projectMemberRoutes } from "./members/member.routes.js";
 import { projectConnectorSubscriptionRoutes } from "./alerts/subscriptions/connector-subscription.routes.js";
+import { thresholdRoutes } from "./alerts/thresholds/threshold.routes.js";
+import { projectAlertChannelRoutes } from "./alerts/channels/channel.routes.js";
 import { projectAnalyticsRoutes } from "./usage/analytics.routes.js";
 export async function projectsRoutes(fastify) {
     // ── Project CRUD ──────────────────────────────────────────────────────────
@@ -21,8 +22,9 @@ export async function projectsRoutes(fastify) {
     await fastify.register(projectCoreRoutes);
     await fastify.register(projectMemberRoutes);
     await fastify.register(projectConnectorSubscriptionRoutes);
+    await fastify.register(thresholdRoutes, { prefix: "/:projectId/alert-thresholds" });
+    await fastify.register(projectAlertChannelRoutes, { prefix: "/:projectId/alert-channels" });
     await fastify.register(projectSettingsRoutes);
-    await fastify.register(projectActivityRoutes);
     await fastify.register(projectEnvironmentRoutes);
     await fastify.register(projectApiKeyRoutes);
 }

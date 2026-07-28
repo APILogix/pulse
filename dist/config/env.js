@@ -8,6 +8,14 @@ const envSchema = z.object({
     UV_THREADPOOL_SIZE: z.coerce.number().int().min(1).max(64).default(8),
     PORT: z.string().transform(Number).default(3000),
     HOST: z.string().default('0.0.0.0'),
+    // Admission-control thresholds. Keep these below the process/container hard
+    // limits so Fastify can shed load and recover instead of being OOM-killed.
+    PRESSURE_MAX_EVENT_LOOP_DELAY_MS: z.coerce.number().int().min(50).default(1000),
+    PRESSURE_MAX_EVENT_LOOP_UTILIZATION: z.coerce.number().min(0.5).max(1).default(0.95),
+    PRESSURE_MAX_HEAP_MB: z.coerce.number().int().min(64).default(420),
+    PRESSURE_MAX_RSS_MB: z.coerce.number().int().min(128).default(768),
+    PRESSURE_LOG_INTERVAL_MS: z.coerce.number().int().min(1000).default(10_000),
+    SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(5000).default(20_000),
     APP_NAME: z.string().default('Pulsiv'),
     APP_URL: z.string().url().default('http://localhost:5173'),
     API_PUBLIC_URL: z.string().url().optional(),
@@ -23,8 +31,9 @@ const envSchema = z.object({
     // Log Database (Primary + Replica)
     LOG_DB_PRIMARY: z.string().optional(),
     LOG_DB_REPLICA: z.string().optional(),
-    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(20),
-    LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(5),
+    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(10),
+    // Do not pin warm log connections in every API replica while idle.
+    LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(0),
     // Read-path statement timeout (ms). Bounds runaway analytical reads.
     LOG_QUERY_TIMEOUT: z.coerce.number().int().min(0).default(30000),
     LOG_RETRIES: z.coerce.number().int().min(1).max(20).default(3),

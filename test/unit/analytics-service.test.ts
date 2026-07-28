@@ -88,9 +88,6 @@ describe('UsageAnalyticsService', () => {
     connectorDeliveries: 0,
     failedNotifications: 0,
     rateLimitUsage: 0,
-    latencyMsP50: null,
-    latencyMsP95: null,
-    latencyMsP99: null,
   };
 
   const point: UsageTimeSeriesPoint = {
@@ -114,9 +111,6 @@ describe('UsageAnalyticsService', () => {
     connectorDeliveries: 0,
     failedNotifications: 0,
     rateLimitUsage: 0,
-    latencyMsP50: null,
-    latencyMsP95: null,
-    latencyMsP99: null,
   };
 
   it('authorizes viewers before reading analytics', async () => {

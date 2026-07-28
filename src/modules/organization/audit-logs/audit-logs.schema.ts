@@ -5,15 +5,26 @@ export const AuditLogQuerySchema = CursorPaginationSchema.extend({
   action: z.string().max(100).optional(),
   entityType: z.string().max(100).optional(),
   actorUserId: UuidSchema.optional(),
+  projectId: UuidSchema.optional(),
 });
+
+export interface AuditLogFilters {
+  action?: string;
+  entityType?: string;
+  actorUserId?: string;
+  projectId?: string;
+  startDate?: string;
+  endDate?: string;
+}
 
 export interface CreateAuditLogRecord {
   orgId: string;
+  projectId?: string | null;
   actorUserId: string | null;
-  actorEmail?: string;
+  actorEmail?: string | null;
   actorIp?: string;
   actorUserAgent?: string | null;
-  actorSessionId?: string;
+  actorSessionId?: string | null;
   action: string;
   entityType: string;
   entityId?: string;

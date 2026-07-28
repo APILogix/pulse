@@ -14,12 +14,12 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import type { OrgRole, Project, ProjectUsageCounter, ProjectWithStats } from "../types.js";
 export interface RequestMeta {
@@ -37,12 +37,12 @@ export declare class BaseProjectService {
     readonly repository: ProjectsRepository;
     readonly logger: FastifyBaseLogger;
     readonly orgRepo: OrganizationRepository;
+    readonly auditService: OrganizationAuditService;
     readonly settingsRepository: SettingsRepository;
     readonly apiKeyRepository: ApiKeyRepository;
     readonly environmentRepository: EnvironmentRepository;
-    readonly activityRepository: ActivityRepository;
     readonly usageRepository: UsageRepository;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, usageRepository: UsageRepository);
     getProjectStats(orgId: string, projectId: string, userId: string): Promise<ProjectWithStats>;
     getProjectUsage(orgId: string, projectId: string, userId: string): Promise<ProjectUsageCounter[]>;
     requireOrganizationAccess(orgId: string, userId: string, requiredRole?: OrgRole): Promise<import("./schema-utils.js").OrganizationMembership>;
@@ -58,6 +58,7 @@ export declare class BaseProjectService {
      */
     audit(meta: RequestMeta, data: {
         orgId: string;
+        projectId: string;
         action: string;
         entityType: string;
         entityId?: string;

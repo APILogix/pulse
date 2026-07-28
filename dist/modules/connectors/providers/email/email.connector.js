@@ -87,9 +87,13 @@ export class EmailConnector extends BaseConnector {
         const fromEmail = cfg.fromEmail ?? env.SMTP_FROM_EMAIL;
         const start = Date.now();
         try {
+            const projectChannel = notification.metadata?.projectChannel;
+            const destination = typeof projectChannel?.destination === 'string' && projectChannel.destination.trim()
+                ? projectChannel.destination.trim()
+                : null;
             const info = await transporter.sendMail({
                 from: `"${fromName}" <${fromEmail}>`,
-                to: cfg.to.join(', '),
+                to: (destination ? [destination] : cfg.to).join(', '),
                 subject: `[${notification.severity.toUpperCase()}] ${notification.title}`,
                 text: this.renderText(notification),
                 html: this.renderHtml(notification),

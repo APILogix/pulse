@@ -1,21 +1,23 @@
 /**
  * Project API key repository.
  *
- * Flow:
- * 1. Accept service-level identifiers and already-validated options.
- * 2. Execute parameterized SQL against project_api_keys and project_environments.
- * 3. Map snake_case rows into camelCase domain objects.
- * 4. Translate expected DB conflicts/misses into ProjectError with stable codes.
+ * The credential table holds identity and lifecycle only. Rotation workflow
+ * history lives in `project_api_key_rotations`, and usage analytics live in the
+ * partitioned `api_key_usage_minute` / `api_key_usage_daily` facts (with
+ * read-only hourly/monthly views).
  *
- * Tenant isolation: every API key query is scoped by org_id (and project_id).
- * Soft delete: API keys use deleted_at; reads filter deleted_at IS NULL.
+ * Tenant isolation: every query is scoped by project (and organization for
+ * writes). Soft delete: reads filter `deleted_at IS NULL`.
  */
 import type { Pool, PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
 import type {
+  ApiKeyRotation,
   ApiKeyRotationState,
   ApiKeyStatus,
-  ApiKeyType,
+  ApiKeyUpdateInput,
+  ApiKeyUsageGranularity,
+  ApiKeyUsageSeriesPoint,
   ListApiKeysQuery,
   Project,
   ProjectApiKey,
@@ -25,70 +27,45 @@ import type {
 import { ProjectError } from "../shared/utils.js";
 
 const API_KEY_COLUMNS = `
-  id, project_id, org_id, public_key, secret_hash, environment_id, key_type,
-  name, description, is_active, status, created_by,
-  rotated_from_key_id, rotated_at, rotated_by, rotation_reason, grace_period_ends_at,
-  revoked_at, revoked_by, revoked_reason, expires_at,
-  auto_rotate_enabled, auto_rotate_days,
-  last_used_at, last_used_ip, usage_count, error_count,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
-  permissions, allowed_endpoints, blocked_endpoints,
-  allowed_sdks, allowed_origins, allowed_ips, allowed_domains, allowed_event_types,
-  sampling_rules, feature_flags, sdk_config,
-  rotation_state, rotation_version,
-  metadata, deleted_at, version,
-  created_at, updated_at
+  id, organization_id, project_id, environment_id, name, public_key, secret_hash,
+  status, expires_at, last_used_at, created_by, rotated_from_key_id,
+  created_at, updated_at, deleted_at
 `;
+
+/** Statuses that still authenticate telemetry (rotation grace is checked separately). */
+const AUTHENTICATING_STATUSES = ["active", "rotated"] as const;
 
 type ApiKeyRow = {
   id: string;
+  organization_id: string;
   project_id: string;
-  org_id: string | null;
+  environment_id: string;
+  name: string;
   public_key: string;
   secret_hash: string;
-  environment_id: string;
-  key_type: ApiKeyType;
-  name: string | null;
-  description: string | null;
-  is_active: boolean;
   status: ApiKeyStatus;
+  expires_at: Date | null;
+  last_used_at: Date | null;
   created_by: string | null;
   rotated_from_key_id: string | null;
-  rotated_at: Date | null;
-  rotated_by: string | null;
-  rotation_reason: string | null;
-  grace_period_ends_at: Date | null;
-  revoked_at: Date | null;
-  revoked_by: string | null;
-  revoked_reason: string | null;
-  expires_at: Date | null;
-  auto_rotate_enabled: boolean;
-  auto_rotate_days: number;
-  last_used_at: Date | null;
-  last_used_ip: string | null;
-  usage_count: string | number;
-  error_count: string | number;
-  rate_limit_per_second: number | null;
-  rate_limit_per_minute: number | null;
-  rate_limit_per_hour: number | null;
-  permissions: string[] | null;
-  allowed_endpoints: string[] | null;
-  blocked_endpoints: string[] | null;
-  allowed_sdks: string[] | null;
-  allowed_origins: string[] | null;
-  allowed_ips: string[] | null;
-  allowed_domains: string[] | null;
-  allowed_event_types: string[] | null;
-  sampling_rules: Record<string, unknown> | null;
-  feature_flags: Record<string, unknown> | null;
-  sdk_config: Record<string, unknown> | null;
-  rotation_state: string;
-  rotation_version: number;
-  metadata: Record<string, unknown> | null;
-  deleted_at: Date | null;
-  version: number;
   created_at: Date;
   updated_at: Date;
+  deleted_at: Date | null;
+};
+
+type RotationRow = {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  environment_id: string;
+  old_key_id: string;
+  new_key_id: string | null;
+  state: ApiKeyRotationState;
+  reason: string | null;
+  initiated_by: string | null;
+  initiated_at: Date;
+  grace_ends_at: Date | null;
+  completed_at: Date | null;
 };
 
 type ProjectRow = {
@@ -112,27 +89,22 @@ type ProjectRow = {
   version: number;
 };
 
-export interface ApiKeyUpdateInput {
-  name?: string | null;
-  description?: string | null;
-  expiresAt?: Date | null;
-  autoRotateEnabled?: boolean;
-  autoRotateDays?: number;
-  permissions?: string[];
-  allowedEndpoints?: string[];
-  blockedEndpoints?: string[];
-  allowedEventTypes?: string[];
-  allowedOrigins?: string[];
-  allowedIps?: string[];
-  allowedDomains?: string[];
-  samplingRules?: Record<string, unknown>;
-  featureFlags?: Record<string, unknown>;
-  sdkConfig?: Record<string, unknown>;
-  rateLimitPerSecond?: number | null;
-  rateLimitPerMinute?: number | null;
-  rateLimitPerHour?: number | null;
-  version?: number;
-}
+type UsageRow = {
+  bucket: Date;
+  request_count: string;
+  accepted_event_count: string;
+  error_event_count: string;
+  ingestion_failure_count: string;
+  accepted_bytes: string;
+  rate_limited_request_count: string;
+};
+
+/** Physical facts and read-only projections that serve each usage grain. */
+const USAGE_SOURCES: Record<ApiKeyUsageGranularity, string> = {
+  hourly: "api_key_usage_hourly",
+  daily: "api_key_usage_daily",
+  monthly: "api_key_usage_monthly",
+};
 
 export class ApiKeyRepository {
   constructor(private readonly db: Pool = pool) {}
@@ -150,19 +122,11 @@ export class ApiKeyRepository {
       params.push(query.environmentId);
       whereClauses.push(`environment_id = $${params.length}`);
     }
-    if (query.keyType) {
-      params.push(query.keyType);
-      whereClauses.push(`key_type = $${params.length}`);
-    }
     if (query.status) {
       params.push(query.status);
       whereClauses.push(`status = $${params.length}`);
-    }
-    if (query.isActive !== undefined) {
-      params.push(query.isActive);
-      whereClauses.push(`is_active = $${params.length}`);
     } else if (query.includeInactive === false) {
-      whereClauses.push("is_active = TRUE");
+      whereClauses.push("status = 'active'");
     }
 
     const whereClause = `WHERE ${whereClauses.join(" AND ")}`;
@@ -191,30 +155,13 @@ export class ApiKeyRepository {
   async createApiKey(
     input: {
       projectId: string;
-      orgId: string;
+      organizationId: string;
+      environmentId: string;
       publicKey: string;
       secretHash: string;
-      keyType: ApiKeyType;
-      environmentId: string;
-      name: string | null;
-      description: string | null;
+      name: string;
       createdBy: string;
       expiresAt: Date | null;
-      autoRotateEnabled?: boolean | undefined;
-      autoRotateDays?: number | undefined;
-      permissions: string[];
-      allowedEndpoints?: string[] | undefined;
-      blockedEndpoints?: string[] | undefined;
-      allowedEventTypes?: string[] | undefined;
-      allowedOrigins?: string[] | undefined;
-      allowedIps?: string[] | undefined;
-      allowedDomains?: string[] | undefined;
-      samplingRules?: Record<string, unknown> | undefined;
-      featureFlags?: Record<string, unknown> | undefined;
-      sdkConfig?: Record<string, unknown> | undefined;
-      rateLimitPerSecond?: number | null | undefined;
-      rateLimitPerMinute?: number | null | undefined;
-      rateLimitPerHour?: number | null | undefined;
       rotatedFromKeyId?: string | null | undefined;
     },
     client?: PoolClient,
@@ -223,52 +170,19 @@ export class ApiKeyRepository {
     try {
       const result = await db.query<ApiKeyRow>(
         `INSERT INTO project_api_keys (
-           project_id, org_id, public_key, secret_hash, environment_id, key_type,
-           name, description, created_by, expires_at,
-           auto_rotate_enabled, auto_rotate_days,
-           permissions, allowed_endpoints, blocked_endpoints,
-           allowed_sdks, allowed_origins, allowed_ips, allowed_domains, allowed_event_types,
-           sampling_rules, feature_flags, sdk_config,
-           rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
-           rotated_from_key_id
-         ) VALUES (
-           $1,$2,$3,$4,$5,$6,
-           $7,$8,$9,$10,
-           COALESCE($11,FALSE), COALESCE($12,90),
-           $13, COALESCE($14,ARRAY['*']), COALESCE($15,'{}'),
-           COALESCE($16::text[],ARRAY['*']::text[]), COALESCE($17,'{}'), COALESCE($18::inet[],'{}'::inet[]), COALESCE($19,'{}'), COALESCE($20,ARRAY['*']::text[]),
-           COALESCE($21,'{}'), COALESCE($22,'{}'), COALESCE($23,'{}'),
-           $24,$25,$26,
-           $27
-         )
+           organization_id, project_id, environment_id, name, public_key, secret_hash,
+           created_by, expires_at, rotated_from_key_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING ${API_KEY_COLUMNS}`,
         [
+          input.organizationId,
           input.projectId,
-          input.orgId,
+          input.environmentId,
+          input.name,
           input.publicKey,
           input.secretHash,
-          input.environmentId,
-          input.keyType,
-          input.name,
-          input.description,
           input.createdBy,
           input.expiresAt,
-          input.autoRotateEnabled ?? null,
-          input.autoRotateDays ?? null,
-          input.permissions,
-          input.allowedEndpoints ?? null,
-          input.blockedEndpoints ?? null,
-          null, // allowed_sdks defaults to ARRAY['*']
-          input.allowedOrigins ?? null,
-          input.allowedIps ?? null,
-          input.allowedDomains ?? null,
-          input.allowedEventTypes ?? null,
-          input.samplingRules ?? null,
-          input.featureFlags ?? null,
-          input.sdkConfig ?? null,
-          input.rateLimitPerSecond ?? null,
-          input.rateLimitPerMinute ?? null,
-          input.rateLimitPerHour ?? null,
           input.rotatedFromKeyId ?? null,
         ],
       );
@@ -293,7 +207,8 @@ export class ApiKeyRepository {
     const db = client ?? this.db;
     const result = await db.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM project_api_keys
-        WHERE project_id = $1 AND environment_id = $2 AND is_active = TRUE AND deleted_at IS NULL`,
+        WHERE project_id = $1 AND environment_id = $2
+          AND status = 'active' AND deleted_at IS NULL`,
       [projectId, environmentId],
     );
     return Number.parseInt(result.rows[0]?.count ?? "0", 10);
@@ -304,13 +219,8 @@ export class ApiKeyRepository {
     apiKeyId: string,
     client?: PoolClient,
   ): Promise<ProjectApiKey | null> {
-    const db = client ?? this.db;
-    const result = await db.query<ApiKeyRow>(
-      `SELECT ${API_KEY_COLUMNS} FROM project_api_keys
-        WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL LIMIT 1`,
-      [projectId, apiKeyId],
-    );
-    return result.rows[0] ? this.mapApiKey(result.rows[0]) : null;
+    const record = await this.findApiKeyRecordById(projectId, apiKeyId, client);
+    return record ? this.publicShape(record) : null;
   }
 
   async findApiKeyRecordById(
@@ -333,8 +243,8 @@ export class ApiKeyRepository {
     client?: PoolClient,
   ): Promise<ProjectApiKeyRecord[]> {
     const db = client ?? this.db;
-    const params: Array<string> = [projectId];
-    let where = "project_id = $1 AND is_active = TRUE AND deleted_at IS NULL";
+    const params: string[] = [projectId];
+    let where = "project_id = $1 AND status = 'active' AND deleted_at IS NULL";
     if (environmentId) {
       params.push(environmentId);
       where += ` AND environment_id = $${params.length}`;
@@ -355,166 +265,172 @@ export class ApiKeyRepository {
     const db = client ?? this.db;
     const assignments: string[] = [];
     const values: unknown[] = [];
-    let i = 1;
-    const set = (col: string, val: unknown) => {
-      assignments.push(`${col} = $${i++}`);
-      values.push(val);
+    const set = (column: string, value: unknown) => {
+      values.push(value);
+      assignments.push(`${column} = $${values.length}`);
     };
 
     if (input.name !== undefined) set("name", input.name);
-    if (input.description !== undefined) set("description", input.description);
     if (input.expiresAt !== undefined) set("expires_at", input.expiresAt);
-    if (input.autoRotateEnabled !== undefined) set("auto_rotate_enabled", input.autoRotateEnabled);
-    if (input.autoRotateDays !== undefined) set("auto_rotate_days", input.autoRotateDays);
-    if (input.permissions !== undefined) set("permissions", input.permissions);
-    if (input.allowedEndpoints !== undefined) set("allowed_endpoints", input.allowedEndpoints);
-    if (input.blockedEndpoints !== undefined) set("blocked_endpoints", input.blockedEndpoints);
-    if (input.allowedEventTypes !== undefined) set("allowed_event_types", input.allowedEventTypes);
-    if (input.allowedOrigins !== undefined) set("allowed_origins", input.allowedOrigins);
-    if (input.allowedIps !== undefined) set("allowed_ips", input.allowedIps);
-    if (input.allowedDomains !== undefined) set("allowed_domains", input.allowedDomains);
-    if (input.samplingRules !== undefined) set("sampling_rules", input.samplingRules);
-    if (input.featureFlags !== undefined) set("feature_flags", input.featureFlags);
-    if (input.sdkConfig !== undefined) set("sdk_config", input.sdkConfig);
-    if (input.rateLimitPerSecond !== undefined) set("rate_limit_per_second", input.rateLimitPerSecond);
-    if (input.rateLimitPerMinute !== undefined) set("rate_limit_per_minute", input.rateLimitPerMinute);
-    if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
 
     if (assignments.length === 0) {
       const apiKey = await this.findApiKeyById(projectId, apiKeyId, client);
-      if (!apiKey) {
-        throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-      }
+      if (!apiKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
       return apiKey;
     }
 
     values.push(projectId, apiKeyId);
-    const expectedVersion = input.version;
-    if (expectedVersion !== undefined) values.splice(values.length - 1, 0, expectedVersion);
-
-    const projectIdIdx = values.length - (expectedVersion !== undefined ? 3 : 2);
-    const apiKeyIdIdx = values.length - 1;
-    const versionIdx = expectedVersion !== undefined ? values.length - 2 : null;
-    const versionCondition = expectedVersion !== undefined ? ` AND version = $${versionIdx}` : "";
-
     const result = await db.query<ApiKeyRow>(
       `UPDATE project_api_keys
           SET ${assignments.join(", ")}
-        WHERE project_id = $${projectIdIdx}
-          AND id = $${apiKeyIdIdx}
-          AND deleted_at IS NULL${versionCondition}
+        WHERE project_id = $${values.length - 1}
+          AND id = $${values.length}
+          AND deleted_at IS NULL
         RETURNING ${API_KEY_COLUMNS}`,
       values,
     );
     if (result.rowCount === 0) {
-      if (expectedVersion !== undefined) {
-        const current = await this.findApiKeyById(projectId, apiKeyId, client);
-        if (current) {
-          throw new ProjectError(
-            "API_KEY_CONCURRENT_UPDATE",
-            "API key was modified by another request. Please refresh and try again.",
-            409,
-          );
-        }
-      }
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
-    return this.mapApiKey(result.rows[0]!);
+    return this.publicShape(this.mapApiKeyRecord(result.rows[0]!));
   }
 
-  /** Enable/disable the fast ingestion gate and sync the lifecycle status. */
-  async setApiKeyActiveState(
+  /** Suspend/resume ingestion. `status` is the only lifecycle source of truth. */
+  async setApiKeyStatus(
     projectId: string,
     apiKeyId: string,
-    isActive: boolean,
+    status: Extract<ApiKeyStatus, "active" | "suspended">,
     client?: PoolClient,
   ): Promise<ProjectApiKey> {
     const db = client ?? this.db;
     const result = await db.query<ApiKeyRow>(
-      `UPDATE project_api_keys
-          SET is_active = $3,
-              status = CASE WHEN $3 THEN 'active'::api_key_status ELSE 'suspended'::api_key_status END
+      `UPDATE project_api_keys SET status = $3
         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL
         RETURNING ${API_KEY_COLUMNS}`,
-      [projectId, apiKeyId, isActive],
+      [projectId, apiKeyId, status],
     );
     if (result.rowCount === 0) {
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
-    return this.mapApiKey(result.rows[0]!);
+    return this.publicShape(this.mapApiKeyRecord(result.rows[0]!));
   }
 
-  /** Revoke a key permanently: deactivate, set status + reason + actor. */
+  /** Revoke permanently. Reason/actor are captured by audit and rotation history. */
   async revokeApiKey(
     projectId: string,
     apiKeyId: string,
-    revokedBy: string,
-    reason: string | null,
     client?: PoolClient,
   ): Promise<ProjectApiKey> {
     const db = client ?? this.db;
     const result = await db.query<ApiKeyRow>(
       `UPDATE project_api_keys
-          SET is_active = FALSE,
-              status = 'revoked',
-              deleted_at = COALESCE(deleted_at, NOW()),
-              revoked_at = NOW(),
-              revoked_by = $3,
-              revoked_reason = $4
+          SET status = 'revoked', deleted_at = COALESCE(deleted_at, NOW())
         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL
         RETURNING ${API_KEY_COLUMNS}`,
-      [projectId, apiKeyId, revokedBy, reason],
+      [projectId, apiKeyId],
     );
     if (result.rowCount === 0) {
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
-    return this.mapApiKey(result.rows[0]!);
+    return this.publicShape(this.mapApiKeyRecord(result.rows[0]!));
   }
 
-  /**
-   * Mark a rotated key. If gracePeriodEndsAt is in the future the key stays
-   * active (is_active stays TRUE) until then; otherwise it is deactivated now.
-   */
+  /** Mark the superseded credential as rotated. Grace lives on the rotation row. */
   async markApiKeyRotated(
     projectId: string,
     apiKeyId: string,
-    rotatedBy: string,
-    reason: string | null,
-    gracePeriodEndsAt: Date | null,
     client?: PoolClient,
   ): Promise<void> {
     const db = client ?? this.db;
-    const keepActive = !!gracePeriodEndsAt && gracePeriodEndsAt.getTime() > Date.now();
     const result = await db.query(
-      `UPDATE project_api_keys
-          SET status = 'rotated',
-              rotation_state = 'rotating',
-              rotated_at = NOW(),
-              rotated_by = $3,
-              rotation_reason = $4,
-              grace_period_ends_at = $5,
-              is_active = $6
+      `UPDATE project_api_keys SET status = 'rotated'
         WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
-      [projectId, apiKeyId, rotatedBy, reason, gracePeriodEndsAt, keepActive],
+      [projectId, apiKeyId],
     );
     if (result.rowCount === 0) {
       throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
     }
+  }
+
+  // ── Rotation history ────────────────────────────────────────────────────────
+
+  async recordRotation(
+    input: {
+      organizationId: string;
+      projectId: string;
+      environmentId: string;
+      oldKeyId: string;
+      newKeyId: string;
+      reason: string | null;
+      initiatedBy: string;
+      graceEndsAt: Date | null;
+    },
+    client?: PoolClient,
+  ): Promise<ApiKeyRotation> {
+    const db = client ?? this.db;
+    const inGrace = !!input.graceEndsAt && input.graceEndsAt.getTime() > Date.now();
+    const result = await db.query<RotationRow>(
+      `INSERT INTO project_api_key_rotations(
+         organization_id, project_id, environment_id, old_key_id, new_key_id,
+         state, reason, initiated_by, grace_ends_at, completed_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, organization_id, project_id, environment_id, old_key_id, new_key_id,
+                 state, reason, initiated_by, initiated_at, grace_ends_at, completed_at`,
+      [
+        input.organizationId,
+        input.projectId,
+        input.environmentId,
+        input.oldKeyId,
+        input.newKeyId,
+        inGrace ? "grace_period" : "completed",
+        input.reason,
+        input.initiatedBy,
+        inGrace ? input.graceEndsAt : null,
+        inGrace ? null : new Date(),
+      ],
+    );
+    return this.mapRotation(result.rows[0]!);
+  }
+
+  async listRotations(
+    projectId: string,
+    apiKeyId: string,
+    client?: PoolClient,
+  ): Promise<ApiKeyRotation[]> {
+    const db = client ?? this.db;
+    const result = await db.query<RotationRow>(
+      `SELECT id, organization_id, project_id, environment_id, old_key_id, new_key_id,
+              state, reason, initiated_by, initiated_at, grace_ends_at, completed_at
+         FROM project_api_key_rotations
+        WHERE project_id = $1 AND (old_key_id = $2 OR new_key_id = $2)
+        ORDER BY initiated_at DESC`,
+      [projectId, apiKeyId],
+    );
+    return result.rows.map((row) => this.mapRotation(row));
+  }
+
+  /** Finalize grace windows that have elapsed so rotated keys stop authenticating. */
+  async completeElapsedRotations(client?: PoolClient): Promise<number> {
+    const db = client ?? this.db;
+    const result = await db.query(
+      `UPDATE project_api_key_rotations
+          SET state = 'completed', completed_at = NOW()
+        WHERE state = 'grace_period'
+          AND grace_ends_at IS NOT NULL
+          AND grace_ends_at <= NOW()`,
+    );
+    return result.rowCount ?? 0;
   }
 
   async touchApiKeyLastUsed(
     apiKeyId: string,
-    ip?: string | null,
     client?: PoolClient,
   ): Promise<void> {
     const db = client ?? this.db;
     await db.query(
-      `UPDATE project_api_keys
-          SET last_used_at = NOW(),
-              last_used_ip = COALESCE($2::inet, last_used_ip),
-              usage_count = usage_count + 1
+      `UPDATE project_api_keys SET last_used_at = NOW()
         WHERE id = $1 AND deleted_at IS NULL`,
-      [apiKeyId, ip ?? null],
+      [apiKeyId],
     );
   }
 
@@ -532,104 +448,118 @@ export class ApiKeyRepository {
   }
 
   /**
-   * Candidate lookup for verification. Narrows by public_key to the small set of
-   * keys that could match, then the service does the constant-time hash compare.
-   * Includes keys that are active OR in a still-valid rotation grace window.
+   * Candidate lookup for verification. Narrows by public_key, then the service
+   * performs the constant-time hash compare. Accepts active keys and rotated
+   * keys whose rotation grace window is still open.
    */
   async findActiveApiKeyCandidatesByPrefix(
     publicKey: string,
     client?: PoolClient,
-  ): Promise<Array<{ apiKey: ProjectApiKeyRecord; project: Project; environmentName: string }>> {
+  ): Promise<Array<{
+    apiKey: ProjectApiKeyRecord;
+    project: Project;
+    environmentName: string;
+    environmentSlug: string;
+    publishedConfig: Record<string, unknown>;
+  }>> {
     const db = client ?? this.db;
-    const result = await db.query<ApiKeyRow & ProjectRow & { env_name: string }>(
+    const result = await db.query<ApiKeyRow & Record<string, unknown>>(
       `SELECT
-         ${API_KEY_COLUMNS.split(",").map((c) => `k.${c.trim()}`).join(", ")},
+         ${API_KEY_COLUMNS.split(",").map((column) => `k.${column.trim()}`).join(", ")},
          p.id AS p_id, p.org_id AS p_org_id, p.name AS p_name, p.slug AS p_slug,
          p.description AS p_description, p.status AS p_status, p.visibility AS p_visibility,
          p.timezone AS p_timezone, p.tags AS p_tags, p.icon AS p_icon, p.color AS p_color,
          p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
          p.deleted_by AS p_deleted_by, p.created_at AS p_created_at, p.updated_at AS p_updated_at,
          p.version AS p_version,
-         e.name AS env_name
+         e.name AS env_name, e.slug AS env_slug,
+         cr.config_value AS environment_sdk_config
        FROM project_api_keys k
-       INNER JOIN projects p ON p.id = k.project_id
-       LEFT JOIN project_environments e ON e.id = k.environment_id
+       INNER JOIN projects p ON p.id = k.project_id AND p.org_id = k.organization_id
+       INNER JOIN project_environments e
+         ON e.id = k.environment_id
+        AND e.project_id = k.project_id
+        AND e.organization_id = k.organization_id
+        AND e.is_active = TRUE
+        AND e.deleted_at IS NULL
+       INNER JOIN project_environment_sdk_configs ch
+         ON ch.environment_id = e.id
+        AND ch.project_id = k.project_id
+        AND ch.organization_id = k.organization_id
+       INNER JOIN project_environment_sdk_config_revisions cr
+         ON cr.id = ch.published_revision_id
        WHERE k.public_key = $1
+         AND p.status = 'active'
          AND p.deleted_at IS NULL
          AND k.deleted_at IS NULL
          AND (k.expires_at IS NULL OR k.expires_at > NOW())
+         AND k.status = ANY($2::api_key_status[])
          AND (
-           k.is_active = TRUE
-           OR (k.status = 'rotated' AND k.grace_period_ends_at IS NOT NULL AND k.grace_period_ends_at > NOW())
+           k.status = 'active'
+           OR EXISTS (
+             SELECT 1 FROM project_api_key_rotations r
+              WHERE r.old_key_id = k.id
+                AND r.state = 'grace_period'
+                AND r.grace_ends_at IS NOT NULL
+                AND r.grace_ends_at > NOW()
+           )
          )`,
-      [publicKey],
+      [publicKey, [...AUTHENTICATING_STATUSES]],
     );
 
     return result.rows.map((row) => ({
-      apiKey: this.mapApiKeyRecord(row as unknown as ApiKeyRow),
+      apiKey: this.mapApiKeyRecord(row as ApiKeyRow),
       project: this.mapProject(this.prefixedProjectRow(row)),
-      environmentName: row.env_name ?? "default",
+      environmentName: (row.env_name as string | null) ?? "default",
+      environmentSlug: (row.env_slug as string | null) ?? "production",
+      publishedConfig: (row.environment_sdk_config as Record<string, unknown> | null) ?? {},
     }));
   }
 
-  // ── Usage rollups ──────────────────────────────────────────────────────────
+  // ── Usage analytics ─────────────────────────────────────────────────────────
 
-  async getApiKeyUsageSummary(
-    keyId: string,
+  /**
+   * Graph-ready series for one key. Hourly reads the minute-derived view,
+   * daily reads the physical daily fact, and monthly reads the daily-derived
+   * view, so no grain re-aggregates another grain's percentiles or duplicates.
+   */
+  async getApiKeyUsageSeries(
+    apiKeyId: string,
+    from: Date,
+    to: Date,
+    granularity: ApiKeyUsageGranularity,
     client?: PoolClient,
-  ): Promise<{
-    totalRequests: number;
-    totalSuccess: number;
-    totalErrors: number;
-    bytesIngested: number;
-    eventsIngested: number;
-    requestsByDay: Array<{ date: string; count: number }>;
-  }> {
+  ): Promise<ApiKeyUsageSeriesPoint[]> {
     const db = client ?? this.db;
-    const totals = await db.query<{
-      total_requests: string;
-      total_success: string;
-      total_errors: string;
-      bytes_ingested: string;
-      events_ingested: string;
-    }>(
-      `SELECT
-         COALESCE(SUM(request_count),0)::text AS total_requests,
-         COALESCE(SUM(success_count),0)::text AS total_success,
-         COALESCE(SUM(error_count),0)::text AS total_errors,
-         COALESCE(SUM(bytes_ingested),0)::text AS bytes_ingested,
-         COALESCE(SUM(events_ingested),0)::text AS events_ingested
-       FROM project_api_key_usage
-       WHERE key_id = $1`,
-      [keyId],
+    const source = USAGE_SOURCES[granularity];
+    const result = await db.query<UsageRow>(
+      `SELECT bucket::timestamptz AS bucket,
+              COALESCE(SUM(request_count),0)::text AS request_count,
+              COALESCE(SUM(accepted_event_count),0)::text AS accepted_event_count,
+              COALESCE(SUM(error_event_count),0)::text AS error_event_count,
+              COALESCE(SUM(ingestion_failure_count),0)::text AS ingestion_failure_count,
+              COALESCE(SUM(accepted_bytes),0)::text AS accepted_bytes,
+              COALESCE(SUM(rate_limited_request_count),0)::text AS rate_limited_request_count
+         FROM ${source}
+        WHERE api_key_id = $1 AND bucket >= $2 AND bucket <= $3
+        GROUP BY bucket
+        ORDER BY bucket ASC`,
+      [apiKeyId, from, to],
     );
 
-    const daily = await db.query<{ d: string; c: string }>(
-      `SELECT to_char(usage_date,'YYYY-MM-DD') AS d, SUM(request_count)::text AS c
-         FROM project_api_key_usage
-        WHERE key_id = $1 AND usage_date >= (CURRENT_DATE - INTERVAL '30 days')
-        GROUP BY usage_date
-        ORDER BY usage_date DESC`,
-      [keyId],
-    );
-
-    const t = totals.rows[0];
-    return {
-      totalRequests: Number.parseInt(t?.total_requests ?? "0", 10),
-      totalSuccess: Number.parseInt(t?.total_success ?? "0", 10),
-      totalErrors: Number.parseInt(t?.total_errors ?? "0", 10),
-      bytesIngested: Number.parseInt(t?.bytes_ingested ?? "0", 10),
-      eventsIngested: Number.parseInt(t?.events_ingested ?? "0", 10),
-      requestsByDay: daily.rows.map((r) => ({
-        date: r.d,
-        count: Number.parseInt(r.c ?? "0", 10),
-      })),
-    };
+    return result.rows.map((row) => ({
+      bucket: row.bucket.toISOString(),
+      requests: Number.parseInt(row.request_count, 10),
+      acceptedEvents: Number.parseInt(row.accepted_event_count, 10),
+      errorEvents: Number.parseInt(row.error_event_count, 10),
+      ingestionFailures: Number.parseInt(row.ingestion_failure_count, 10),
+      acceptedBytes: Number.parseInt(row.accepted_bytes, 10),
+      rateLimitedRequests: Number.parseInt(row.rate_limited_request_count, 10),
+    }));
   }
 
   // ── Mapping helpers ─────────────────────────────────────────────────────────
 
-  /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
   private prefixedProjectRow(row: Record<string, unknown>): ProjectRow {
     return {
       id: row.p_id as string,
@@ -661,7 +591,7 @@ export class ApiKeyRepository {
       slug: row.slug,
       description: row.description,
       status: row.status,
-      visibility: row.visibility as any,
+      visibility: row.visibility as Project["visibility"],
       timezone: row.timezone,
       tags: row.tags ?? [],
       icon: row.icon,
@@ -676,62 +606,51 @@ export class ApiKeyRepository {
     };
   }
 
-  private mapApiKey(row: ApiKeyRow): ProjectApiKey {
+  private mapRotation(row: RotationRow): ApiKeyRotation {
     return {
       id: row.id,
+      organizationId: row.organization_id,
       projectId: row.project_id,
-      orgId: row.org_id,
-      publicKey: row.public_key,
-      keyType: row.key_type,
       environmentId: row.environment_id,
-      environment: null,
-      name: row.name,
-      description: row.description,
-      isActive: row.is_active,
-      status: row.status,
-      rotationState: row.rotation_state as ApiKeyRotationState,
-      rotationVersion: row.rotation_version,
-      createdBy: row.created_by,
-      rotatedFromKeyId: row.rotated_from_key_id,
-      rotatedAt: row.rotated_at,
-      rotatedBy: row.rotated_by,
-      rotationReason: row.rotation_reason,
-      gracePeriodEndsAt: row.grace_period_ends_at,
-      revokedAt: row.revoked_at,
-      revokedBy: row.revoked_by,
-      revokedReason: row.revoked_reason,
-      expiresAt: row.expires_at,
-      autoRotateEnabled: row.auto_rotate_enabled,
-      autoRotateDays: Number(row.auto_rotate_days ?? 90),
-      lastUsedAt: row.last_used_at,
-      lastUsedIp: row.last_used_ip,
-      usageCount: Number(row.usage_count ?? 0),
-      errorCount: Number(row.error_count ?? 0),
-      rateLimitPerSecond: row.rate_limit_per_second,
-      rateLimitPerMinute: row.rate_limit_per_minute,
-      rateLimitPerHour: row.rate_limit_per_hour,
-      permissions: row.permissions ?? [],
-      allowedEndpoints: row.allowed_endpoints ?? [],
-      blockedEndpoints: row.blocked_endpoints ?? [],
-      allowedEventTypes: row.allowed_event_types ?? [],
-      allowedOrigins: row.allowed_origins ?? [],
-      allowedIps: row.allowed_ips ?? [],
-      allowedDomains: row.allowed_domains ?? [],
-      allowedSdks: row.allowed_sdks ?? [],
-      samplingRules: row.sampling_rules ?? {},
-      featureFlags: row.feature_flags ?? {},
-      sdkConfig: row.sdk_config ?? {},
-      metadata: row.metadata ?? {},
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      version: row.version,
+      oldKeyId: row.old_key_id,
+      newKeyId: row.new_key_id,
+      state: row.state,
+      reason: row.reason,
+      initiatedBy: row.initiated_by,
+      initiatedAt: row.initiated_at,
+      graceEndsAt: row.grace_ends_at,
+      completedAt: row.completed_at,
     };
   }
 
-  private mapApiKeyRecord(row: ApiKeyRow): ProjectApiKeyRecord {
+  public mapApiKeyRecord(row: ApiKeyRow): ProjectApiKeyRecord {
     return {
-      ...this.mapApiKey(row),
+      id: row.id,
+      organizationId: row.organization_id,
+      projectId: row.project_id,
+      environmentId: row.environment_id,
+      name: row.name,
+      publicKey: row.public_key,
       secretHash: row.secret_hash,
+      status: row.status,
+      expiresAt: row.expires_at,
+      lastUsedAt: row.last_used_at,
+      createdBy: row.created_by,
+      rotatedFromKeyId: row.rotated_from_key_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      deletedAt: row.deleted_at,
     };
+  }
+
+  private mapApiKey(row: ApiKeyRow): ProjectApiKey {
+    return this.publicShape(this.mapApiKeyRecord(row));
+  }
+
+  /** Strip the secret verifier before a credential leaves the repository. */
+  public publicShape(record: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey {
+    const shape = { ...record };
+    delete (shape as Partial<ProjectApiKeyRecord>).secretHash;
+    return shape as ProjectApiKey;
   }
 }

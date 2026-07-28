@@ -1,14 +1,11 @@
 import type { Pool, PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
 import { ProjectError } from "../shared/utils.js";
-import type { ProjectEnvironmentConfig } from "./environment.types.js";
+import { EnvironmentType, type ProjectEnvironmentConfig } from "./environment.types.js";
 
 const ENV_COLUMNS = `
-  id, project_id, organization_id, name, slug, description, is_default, is_active, color, icon,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-  created_by_user_id, created_by_api_key_id, created_at, updated_at, deleted_at
+  id, project_id, organization_id, name, slug, type, description, color,
+  is_default, is_active, created_at, updated_at, deleted_at
 `;
 
 export type EnvRow = {
@@ -17,42 +14,69 @@ export type EnvRow = {
   organization_id: string;
   name: string;
   slug: string;
+  type: EnvironmentType;
   description: string | null;
+  color: string;
   is_default: boolean;
   is_active: boolean;
-  color: string | null;
-  icon: string | null;
-  rate_limit_per_second: number | null;
-  rate_limit_per_minute: number | null;
-  rate_limit_per_hour: number | null;
-  burst_limit: number | null;
-  allowed_event_types: string[] | null;
-  max_event_size_bytes: number | null;
-  max_batch_size: number | null;
-  require_https: boolean;
-  ip_allowlist: string[] | null;
-  ip_blocklist: string[] | null;
-  alert_email: string | null;
-  alert_webhook_url: string | null;
-  created_by_user_id: string | null;
-  created_by_api_key_id: string | null;
   created_at: Date;
   updated_at: Date;
   deleted_at: Date | null;
 };
 
+type EnvironmentWrite = {
+  name?: string | undefined;
+  slug?: string | undefined;
+  type?: EnvironmentType | undefined;
+  description?: string | null | undefined;
+  color?: string | undefined;
+  isDefault?: boolean | undefined;
+  isActive?: boolean | undefined;
+};
+
 export class EnvironmentRepository {
   constructor(private readonly db: Pool = pool) {}
 
+  private async transaction<T>(
+    client: PoolClient | undefined,
+    work: (tx: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    if (client) return work(client);
+    const tx = await this.db.connect();
+    try {
+      await tx.query("BEGIN");
+      const result = await work(tx);
+      await tx.query("COMMIT");
+      return result;
+    } catch (error) {
+      await tx.query("ROLLBACK");
+      throw error;
+    } finally {
+      tx.release();
+    }
+  }
+
+  private translateConflict(error: unknown): never {
+    if ((error as { code?: string }).code === "23505") {
+      throw new ProjectError(
+        "ENVIRONMENT_EXISTS",
+        "An active environment with this slug already exists in the project",
+        409,
+      );
+    }
+    throw error;
+  }
+
   async listEnvironments(
     projectId: string,
+    includeDeleted = false,
     client?: PoolClient,
   ): Promise<ProjectEnvironmentConfig[]> {
     const db = client ?? this.db;
     const result = await db.query<EnvRow>(
       `SELECT ${ENV_COLUMNS} FROM project_environments
-        WHERE project_id = $1 AND deleted_at IS NULL
-        ORDER BY name ASC`,
+        WHERE project_id = $1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+        ORDER BY deleted_at NULLS FIRST, is_default DESC, name ASC`,
       [projectId],
     );
     return result.rows.map((row) => this.mapEnv(row));
@@ -66,172 +90,167 @@ export class EnvironmentRepository {
     const db = client ?? this.db;
     const result = await db.query<EnvRow>(
       `SELECT ${ENV_COLUMNS} FROM project_environments
-        WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL
-        LIMIT 1`,
+        WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [projectId, environmentId],
+    );
+    return result.rows[0] ? this.mapEnv(result.rows[0]) : null;
+  }
+
+  async findEnvironmentIncludingDeleted(
+    projectId: string,
+    environmentId: string,
+    client?: PoolClient,
+    forUpdate = false,
+  ): Promise<ProjectEnvironmentConfig | null> {
+    const db = client ?? this.db;
+    const result = await db.query<EnvRow>(
+      `SELECT ${ENV_COLUMNS} FROM project_environments
+        WHERE project_id = $1 AND id = $2 LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`,
       [projectId, environmentId],
     );
     return result.rows[0] ? this.mapEnv(result.rows[0]) : null;
   }
 
   async createEnvironment(
-    input: {
-      projectId: string;
-      orgId: string;
-      name: string;
-      slug: string;
-      description?: string | null | undefined;
-      color?: string | null | undefined;
-      icon?: string | null | undefined;
-      isDefault?: boolean | undefined;
-      isActive?: boolean | undefined;
-      createdByUserId?: string | null | undefined;
-      createdByApiKeyId?: string | null | undefined;
-      rateLimitPerSecond?: number | null | undefined;
-      rateLimitPerMinute?: number | null | undefined;
-      rateLimitPerHour?: number | null | undefined;
-      burstLimit?: number | null | undefined;
-      allowedEventTypes?: string[] | undefined;
-      maxEventSizeBytes?: number | null | undefined;
-      maxBatchSize?: number | null | undefined;
-      requireHttps?: boolean | undefined;
-      ipAllowlist?: string[] | null | undefined;
-      ipBlocklist?: string[] | null | undefined;
-      alertEmail?: string | null | undefined;
-      alertWebhookUrl?: string | null | undefined;
-    },
+    input: EnvironmentWrite & { projectId: string; orgId: string; name: string; slug: string; type: EnvironmentType; color: string },
     client?: PoolClient,
   ): Promise<ProjectEnvironmentConfig> {
-    const db = client ?? this.db;
     try {
-      const result = await db.query<EnvRow>(
-        `INSERT INTO project_environments (
-           project_id, organization_id, name, slug, description, is_default, is_active, color, icon,
-           rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-           allowed_event_types, max_event_size_bytes, max_batch_size,
-           require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-           created_by_user_id, created_by_api_key_id
-         ) VALUES (
-           $1, $2, $3, $4, $5, COALESCE($6, FALSE), COALESCE($7, TRUE), $8, $9,
-           $10, $11, $12, $13,
-           COALESCE($14, ARRAY[]::text[]), $15, $16,
-           COALESCE($17, TRUE), $18::inet[], $19::inet[], $20, $21,
-           $22, $23
-         )
-         RETURNING ${ENV_COLUMNS}`,
-        [
-          input.projectId,
-          input.orgId,
-          input.name,
-          input.slug,
-          input.description ?? null,
-          input.isDefault ?? null,
-          input.isActive ?? null,
-          input.color ?? null,
-          input.icon ?? null,
-          input.rateLimitPerSecond ?? null,
-          input.rateLimitPerMinute ?? null,
-          input.rateLimitPerHour ?? null,
-          input.burstLimit ?? null,
-          input.allowedEventTypes ?? null,
-          input.maxEventSizeBytes ?? null,
-          input.maxBatchSize ?? null,
-          input.requireHttps ?? null,
-          input.ipAllowlist ?? null,
-          input.ipBlocklist ?? null,
-          input.alertEmail ?? null,
-          input.alertWebhookUrl ?? null,
-          input.createdByUserId ?? null,
-          input.createdByApiKeyId ?? null,
-        ],
-      );
-      return this.mapEnv(result.rows[0]!);
-    } catch (error) {
-      if ((error as { code?: string }).code === "23505") {
-        throw new ProjectError(
-          "ENVIRONMENT_EXISTS",
-          "This environment already exists for the project",
-          409,
+      return await this.transaction(client, async (tx) => {
+        if (input.isDefault) {
+          await tx.query(
+            `UPDATE project_environments SET is_default = FALSE
+              WHERE project_id = $1 AND is_default AND deleted_at IS NULL`,
+            [input.projectId],
+          );
+        }
+        const result = await tx.query<EnvRow>(
+          `INSERT INTO project_environments (
+             project_id, organization_id, name, slug, type, description, color, is_default, is_active
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,FALSE),COALESCE($9,TRUE))
+           RETURNING ${ENV_COLUMNS}`,
+          [input.projectId, input.orgId, input.name, input.slug, input.type,
+           input.description ?? null, input.color, input.isDefault ?? null, input.isActive ?? null],
         );
-      }
-      throw error;
+        return this.mapEnv(result.rows[0]!);
+      });
+    } catch (error) {
+      return this.translateConflict(error);
     }
   }
 
   async updateEnvironment(
     projectId: string,
     environmentId: string,
-    input: {
-      name?: string | undefined;
-      slug?: string | undefined;
-      description?: string | null | undefined;
-      color?: string | null | undefined;
-      icon?: string | null | undefined;
-      isDefault?: boolean | undefined;
-      isActive?: boolean | undefined;
-      rateLimitPerSecond?: number | null | undefined;
-      rateLimitPerMinute?: number | null | undefined;
-      rateLimitPerHour?: number | null | undefined;
-      burstLimit?: number | null | undefined;
-      allowedEventTypes?: string[] | undefined;
-      maxEventSizeBytes?: number | null | undefined;
-      maxBatchSize?: number | null | undefined;
-      requireHttps?: boolean | undefined;
-      ipAllowlist?: string[] | null | undefined;
-      ipBlocklist?: string[] | null | undefined;
-      alertEmail?: string | null | undefined;
-      alertWebhookUrl?: string | null | undefined;
-    },
+    input: EnvironmentWrite,
     client?: PoolClient,
   ): Promise<ProjectEnvironmentConfig> {
-    const db = client ?? this.db;
-    const assignments: string[] = [];
-    const values: unknown[] = [];
-    let i = 1;
-    const set = (col: string, val: unknown) => {
-      assignments.push(`${col} = $${i++}`);
-      values.push(val);
-    };
+    try {
+      return await this.transaction(client, async (tx) => {
+        const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+        if (!current || current.deletedAt) {
+          throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+        }
+        if (current.isDefault && input.isDefault === false) {
+          throw new ProjectError(
+            "DEFAULT_ENVIRONMENT_REQUIRED",
+            "Set another environment as default before removing the current default",
+            409,
+          );
+        }
 
-    if (input.name !== undefined) set("name", input.name);
-    if (input.slug !== undefined) set("slug", input.slug);
-    if (input.description !== undefined) set("description", input.description);
-    if (input.color !== undefined) set("color", input.color);
-    if (input.icon !== undefined) set("icon", input.icon);
-    if (input.isDefault !== undefined) set("is_default", input.isDefault);
-    if (input.isActive !== undefined) set("is_active", input.isActive);
-    if (input.rateLimitPerSecond !== undefined) set("rate_limit_per_second", input.rateLimitPerSecond);
-    if (input.rateLimitPerMinute !== undefined) set("rate_limit_per_minute", input.rateLimitPerMinute);
-    if (input.rateLimitPerHour !== undefined) set("rate_limit_per_hour", input.rateLimitPerHour);
-    if (input.burstLimit !== undefined) set("burst_limit", input.burstLimit);
-    if (input.allowedEventTypes !== undefined) set("allowed_event_types", input.allowedEventTypes);
-    if (input.maxEventSizeBytes !== undefined) set("max_event_size_bytes", input.maxEventSizeBytes);
-    if (input.maxBatchSize !== undefined) set("max_batch_size", input.maxBatchSize);
-    if (input.requireHttps !== undefined) set("require_https", input.requireHttps);
-    if (input.ipAllowlist !== undefined) set("ip_allowlist", input.ipAllowlist);
-    if (input.ipBlocklist !== undefined) set("ip_blocklist", input.ipBlocklist);
-    if (input.alertEmail !== undefined) set("alert_email", input.alertEmail);
-    if (input.alertWebhookUrl !== undefined) set("alert_webhook_url", input.alertWebhookUrl);
+        const nextActive = input.isActive ?? current.isActive;
+        if (!nextActive && current.isActive) {
+          await this.assertCanDeactivate(tx, projectId, current);
+        }
+        if (input.isDefault === true) {
+          if (!nextActive) {
+            throw new ProjectError("DEFAULT_ENVIRONMENT_INACTIVE", "The default environment must be active", 409);
+          }
+          await tx.query(
+            `UPDATE project_environments SET is_default = FALSE
+              WHERE project_id = $1 AND id <> $2 AND is_default AND deleted_at IS NULL`,
+            [projectId, environmentId],
+          );
+        }
 
-    if (assignments.length === 0) {
-      const env = await this.findEnvironment(projectId, environmentId, client);
-      if (!env) {
-        throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
-      }
-      return env;
+        const assignments: string[] = [];
+        const values: unknown[] = [];
+        const set = (column: string, value: unknown) => {
+          values.push(value);
+          assignments.push(`${column} = $${values.length}`);
+        };
+        if (input.name !== undefined) set("name", input.name);
+        if (input.slug !== undefined) set("slug", input.slug);
+        if (input.type !== undefined) set("type", input.type);
+        if (input.description !== undefined) set("description", input.description);
+        if (input.color !== undefined) set("color", input.color);
+        if (input.isActive !== undefined) set("is_active", input.isActive);
+        if (input.isDefault !== undefined) set("is_default", input.isDefault);
+        if (assignments.length === 0) return current;
+
+        values.push(projectId, environmentId);
+        const result = await tx.query<EnvRow>(
+          `UPDATE project_environments SET ${assignments.join(", ")}
+            WHERE project_id = $${values.length - 1} AND id = $${values.length} AND deleted_at IS NULL
+            RETURNING ${ENV_COLUMNS}`,
+          values,
+        );
+        return this.mapEnv(result.rows[0]!);
+      });
+    } catch (error) {
+      return this.translateConflict(error);
     }
+  }
 
-    values.push(projectId, environmentId);
-    const result = await db.query<EnvRow>(
-      `UPDATE project_environments
-          SET ${assignments.join(", ")}
-        WHERE project_id = $${values.length - 1} AND id = $${values.length} AND deleted_at IS NULL
-        RETURNING ${ENV_COLUMNS}`,
-      values,
+  private async assertCanDeactivate(
+    tx: PoolClient,
+    projectId: string,
+    environment: ProjectEnvironmentConfig,
+  ): Promise<void> {
+    const active = await tx.query<{ id: string }>(
+      `SELECT id FROM project_environments
+        WHERE project_id = $1 AND is_active AND deleted_at IS NULL
+        FOR UPDATE`,
+      [projectId],
     );
-    if (result.rowCount === 0) {
-      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    if ((active.rowCount ?? 0) <= 1) {
+      throw new ProjectError(
+        "LAST_ACTIVE_ENVIRONMENT",
+        "The last active environment cannot be deactivated or deleted",
+        409,
+      );
     }
-    return this.mapEnv(result.rows[0]!);
+    if (environment.isDefault) {
+      const replacement = await tx.query(
+        `SELECT 1 FROM project_environments
+          WHERE project_id = $1 AND id <> $2 AND is_default AND is_active AND deleted_at IS NULL LIMIT 1`,
+        [projectId, environment.id],
+      );
+      if (replacement.rowCount === 0) {
+        throw new ProjectError(
+          "DEFAULT_ENVIRONMENT_REQUIRED",
+          "Set another active environment as default first",
+          409,
+        );
+      }
+    }
+  }
+
+  async setDefaultEnvironment(
+    projectId: string,
+    environmentId: string,
+    client?: PoolClient,
+  ): Promise<ProjectEnvironmentConfig> {
+    return this.updateEnvironment(projectId, environmentId, { isDefault: true, isActive: true }, client);
+  }
+
+  async deactivateEnvironment(
+    projectId: string,
+    environmentId: string,
+    client?: PoolClient,
+  ): Promise<ProjectEnvironmentConfig> {
+    return this.updateEnvironment(projectId, environmentId, { isActive: false }, client);
   }
 
   async deleteEnvironment(
@@ -239,13 +258,43 @@ export class EnvironmentRepository {
     environmentId: string,
     client?: PoolClient,
   ): Promise<void> {
-    const db = client ?? this.db;
-    const result = await db.query(
-      `UPDATE project_environments SET deleted_at = NOW() WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
-      [projectId, environmentId],
-    );
-    if (result.rowCount === 0) {
-      throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    await this.transaction(client, async (tx) => {
+      const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+      if (!current || current.deletedAt) {
+        throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+      }
+      if (current.isActive) await this.assertCanDeactivate(tx, projectId, current);
+      await tx.query(
+        `UPDATE project_environments
+            SET deleted_at = NOW(), is_active = FALSE, is_default = FALSE
+          WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`,
+        [projectId, environmentId],
+      );
+    });
+  }
+
+  async restoreEnvironment(
+    projectId: string,
+    environmentId: string,
+    client?: PoolClient,
+  ): Promise<ProjectEnvironmentConfig> {
+    try {
+      return await this.transaction(client, async (tx) => {
+        const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+        if (!current || !current.deletedAt) {
+          throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Deleted environment not found", 404);
+        }
+        const result = await tx.query<EnvRow>(
+          `UPDATE project_environments
+              SET deleted_at = NULL, is_active = TRUE, is_default = FALSE
+            WHERE project_id = $1 AND id = $2 AND deleted_at IS NOT NULL
+            RETURNING ${ENV_COLUMNS}`,
+          [projectId, environmentId],
+        );
+        return this.mapEnv(result.rows[0]!);
+      });
+    } catch (error) {
+      return this.translateConflict(error);
     }
   }
 
@@ -256,25 +305,11 @@ export class EnvironmentRepository {
       orgId: row.organization_id,
       name: row.name,
       slug: row.slug,
+      type: row.type,
       description: row.description,
       color: row.color,
-      icon: row.icon,
       isDefault: row.is_default,
       isActive: row.is_active,
-      rateLimitPerSecond: row.rate_limit_per_second,
-      rateLimitPerMinute: row.rate_limit_per_minute,
-      rateLimitPerHour: row.rate_limit_per_hour,
-      burstLimit: row.burst_limit,
-      allowedEventTypes: row.allowed_event_types ?? [],
-      maxEventSizeBytes: row.max_event_size_bytes,
-      maxBatchSize: row.max_batch_size,
-      requireHttps: row.require_https,
-      ipAllowlist: row.ip_allowlist,
-      ipBlocklist: row.ip_blocklist,
-      alertEmail: row.alert_email,
-      alertWebhookUrl: row.alert_webhook_url,
-      createdByUserId: row.created_by_user_id,
-      createdByApiKeyId: row.created_by_api_key_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       deletedAt: row.deleted_at,

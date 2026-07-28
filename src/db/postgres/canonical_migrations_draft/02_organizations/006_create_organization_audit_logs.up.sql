@@ -3,6 +3,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS organization_audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID,
   actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   actor_email VARCHAR(255),
   actor_ip INET,
@@ -28,6 +29,9 @@ CREATE TABLE IF NOT EXISTS organization_audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_org_audit_org_created
   ON organization_audit_logs(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_org_audit_project_created
+  ON organization_audit_logs(org_id, project_id, created_at DESC, id DESC)
+  WHERE project_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_org_audit_actor
   ON organization_audit_logs(actor_user_id);
 CREATE INDEX IF NOT EXISTS idx_org_audit_entity

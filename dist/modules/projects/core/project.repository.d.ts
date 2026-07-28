@@ -43,6 +43,7 @@ export declare class ProjectRepository {
         metadata?: Record<string, unknown>;
         createdBy?: string | null;
     }, client?: PoolClient): Promise<Project>;
+    provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;

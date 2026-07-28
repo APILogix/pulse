@@ -489,6 +489,7 @@ export class IngestionService {
     const receivedAt = new Date().toISOString();
     const errors: Array<{ eventId: string; reason: string }> = [];
     const acceptedByType = new Map<SdkEventType, unknown[]>();
+    let acceptedBytes = 0;
     let shed = 0;
 
     // 7. Per-event BASIC validation only. Full Zod normalization runs in the
@@ -537,6 +538,7 @@ export class IngestionService {
 
       const list = acceptedByType.get(eventType) ?? [];
       list.push(raw);
+      acceptedBytes += Buffer.byteLength(serialized);
       acceptedByType.set(eventType, list);
     }
 
@@ -553,9 +555,11 @@ export class IngestionService {
         receivedAt,
         byType: acceptedByType,
       });
+      const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
       const result = await enqueueIngestJobs(jobs);
       accepted = result.enqueuedEvents;
-      if (accepted < jobs.reduce((n, j) => n + j.payload.events.length, 0)) {
+      if (accepted < submittedEvents) {
+        acceptedBytes = submittedEvents > 0 ? Math.floor(acceptedBytes * accepted / submittedEvents) : 0;
         svcLogger.warn(
           { projectId: project.id, batchId, accepted },
           'enqueueIngestJobs accepted fewer events than submitted',
@@ -576,15 +580,23 @@ export class IngestionService {
       );
     }
 
-    // Fire-and-forget usage accounting at ingest time (Tier-1, memory only —
-    // never awaited, never throws). Captures the request-path view of usage
-    // (accepted/rejected/shed) distinct from the worker's persisted count.
-    this.usage.increment(project.id, project.orgId, 'events_received', events.length);
-    if (accepted > 0) this.usage.increment(project.id, project.orgId, 'events_accepted', accepted);
-    if (errors.length > 0) {
-      this.usage.increment(project.id, project.orgId, 'events_rejected', errors.length);
+    // Canonical usage accounting: the gateway records requests/errors/rate
+    // limits, while the persistence worker records accepted events exactly
+    // once after idempotent storage.
+    const usageDimensions = {
+      apiKeyId: project.apiKeyId,
+      eventType: 'all',
+    };
+    this.usage.increment(project.id, project.orgId, 'requests', 1, usageDimensions);
+    if (acceptedBytes > 0) {
+      this.usage.increment(project.id, project.orgId, 'bytes_ingested', acceptedBytes, usageDimensions);
     }
-    if (shed > 0) this.usage.increment(project.id, project.orgId, 'events_shed', shed);
+    if (errors.length > 0) {
+      this.usage.increment(project.id, project.orgId, 'errors', errors.length, usageDimensions);
+    }
+    if (shed > 0) {
+      this.usage.increment(project.id, project.orgId, 'rate_limited', shed, usageDimensions);
+    }
 
     const nextMinuteMs = (Math.floor(Date.now() / 60_000) + 1) * 60_000;
 
@@ -1023,24 +1035,38 @@ export class IngestionService {
     projectId: string,
     counterType?: string,
   ): Promise<Array<{ counterType: string; total: number; periodStart: string | null }>> {
-    const params: unknown[] = [projectId];
-    let typeClause = '';
-    if (counterType) {
-      params.push(counterType);
-      typeClause = 'AND counter_type = $2';
+    const canonicalMetrics = [
+      "total_events",
+      "errors",
+      "requests",
+      "total_bytes",
+      "rate_limit_usage",
+    ] as const;
+    if (counterType && !canonicalMetrics.includes(counterType as (typeof canonicalMetrics)[number])) {
+      return [];
     }
+    const params: unknown[] = [projectId];
+    const metricClause = counterType ? "WHERE metric.counter_type = $2" : "";
+    if (counterType) params.push(counterType);
     const r = await this.pool.query<{
       counter_type: string;
       total: string;
       period_start: string | null;
     }>(
-      `SELECT counter_type,
-              SUM(total_value)::text AS total,
-              MAX(period_start)::text AS period_start
-       FROM project_usage_realtime
-       WHERE project_id = $1 ${typeClause}
-       GROUP BY counter_type
-       ORDER BY counter_type`,
+      `SELECT metric.counter_type,
+              SUM(metric.value)::text AS total,
+              MAX(usage.bucket)::text AS period_start
+         FROM project_usage_realtime usage
+         CROSS JOIN LATERAL (VALUES
+           ('total_events', usage.total_events::numeric),
+           ('errors', usage.errors::numeric),
+           ('requests', usage.requests::numeric),
+           ('total_bytes', usage.total_bytes::numeric),
+           ('rate_limit_usage', usage.rate_limit_usage::numeric)
+         ) metric(counter_type, value)
+        ${metricClause}
+        GROUP BY metric.counter_type
+        ORDER BY metric.counter_type`,
       params,
     );
     return r.rows.map((row) => ({

@@ -13,6 +13,11 @@ export interface ProjectAuthResult {
     environmentName: string;
     environmentSlug: string;
     apiKeyId: string;
+    /**
+     * Ingestion-side policy defaults. These are NOT credential columns: the API
+     * key only selects a project/environment, so authorization, endpoint/event
+     * scoping, and rate limits resolve from organization/platform configuration.
+     */
     keyType: string;
     rotationVersion: number;
     isActive: boolean;
@@ -50,6 +55,7 @@ export declare class PostgresWriter {
     readonly pool: Pool;
     private readonly reader;
     constructor(pool: Pool);
+    private configObject;
     /**
      * Resolve an ingestion API key by extracting its public prefix, looking up
      * candidate rows, and comparing the SHA-256 secret hash in constant time.

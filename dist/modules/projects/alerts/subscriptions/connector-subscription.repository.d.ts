@@ -15,31 +15,20 @@ export declare class ConnectorSubscriptionRepository {
     private readonly db;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
-    listByProject(projectId: string, query: ListProjectConnectorSubscriptionsQuery, client?: DbClient): Promise<{
+    listByProject(organizationId: string, projectId: string, query: ListProjectConnectorSubscriptionsQuery, client?: DbClient): Promise<{
         subscriptions: ProjectConnectorSubscription[];
         total: number;
     }>;
-    findById(subscriptionId: string, client?: DbClient): Promise<ProjectConnectorSubscription | null>;
-    findByProjectAndConnector(projectId: string, connectorId: string, client?: DbClient): Promise<ProjectConnectorSubscription | null>;
+    findById(organizationId: string, projectId: string, subscriptionId: string, client?: DbClient): Promise<ProjectConnectorSubscription | null>;
+    findByProjectAndConnector(organizationId: string, projectId: string, connectorId: string, client?: DbClient): Promise<ProjectConnectorSubscription | null>;
     create(projectId: string, organizationId: string, createdByUserId: string, body: CreateProjectConnectorSubscriptionBody, client?: DbClient): Promise<ProjectConnectorSubscription>;
-    update(subscriptionId: string, updatedByUserId: string, body: UpdateProjectConnectorSubscriptionBody, client?: DbClient): Promise<ProjectConnectorSubscription>;
-    delete(subscriptionId: string, deletedByUserId: string, client?: DbClient): Promise<void>;
-    /**
-     * Deterministic alert routing lookup: API Key -> Environment -> Project ->
-     * Project Connector Subscriptions -> Project Members.
-     *
-     * Resolves a single API key to its routing context including the active
-     * connector subscriptions and project members that should receive alerts.
-     */
+    update(organizationId: string, projectId: string, subscriptionId: string, updatedByUserId: string, body: UpdateProjectConnectorSubscriptionBody, client?: DbClient): Promise<ProjectConnectorSubscription>;
+    delete(organizationId: string, projectId: string, subscriptionId: string, deletedByUserId: string, client?: DbClient): Promise<void>;
+    /** Resolve an active API key to project-scoped, tenant-safe delivery eligibility. */
     resolveAlertRoutingTarget(apiKeyId: string, client?: DbClient): Promise<AlertRoutingTarget | null>;
-    /**
-     * Resolve alert routing targets by project id.
-     *
-     * Fallback for alert events that do not carry an explicit api_key_id but are
-     * already scoped to a project. Still enforces the same Project -> Subscriptions
-     * -> Members lookup.
-     */
+    /** Resolve an active project to tenant-safe delivery eligibility. */
     resolveAlertRoutingTargetByProjectId(projectId: string, client?: DbClient): Promise<AlertRoutingTarget | null>;
+    private loadRoutingTarget;
     private mapSubscription;
 }
 export {};

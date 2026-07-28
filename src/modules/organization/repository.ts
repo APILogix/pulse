@@ -217,13 +217,6 @@ export class OrganizationRepository extends BaseRepository {
     };
   }
 
-  async createAuditLog(entry: import("./audit-logs/audit-logs.schema.js").CreateAuditLogRecord): Promise<void> {
-    await this.db.query(
-      `INSERT INTO organization_audit_logs (org_id,actor_user_id,actor_email,actor_ip,actor_user_agent,actor_session_id,action,entity_type,entity_id,entity_name,request_id,http_method,endpoint,old_values,new_values,changed_fields,status,failure_reason,is_sensitive,metadata) VALUES ($1,$2,$3,$4::inet,$5,$6::uuid,$7,$8,$9::uuid,$10,$11::uuid,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-      [entry.orgId, entry.actorUserId, entry.actorEmail??null, entry.actorIp??null, entry.actorUserAgent??null, entry.actorSessionId??null, entry.action, entry.entityType, entry.entityId??null, entry.entityName??null, entry.requestId??null, entry.httpMethod??null, entry.endpoint??null, entry.oldValues?JSON.stringify(entry.oldValues):null, entry.newValues?JSON.stringify(entry.newValues):null, entry.changedFields??null, entry.status??'success', entry.failureReason??null, entry.isSensitive??false, entry.metadata?JSON.stringify(entry.metadata):'{}']
-    );
-  }
-
   // ── Backward Compatibility for Modules ────────────────────────
   async findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null> {
     const r = await this.db.query<OrgMemberRow>(

@@ -1,85 +1,61 @@
-/**
- * Environment business service.
- *
- * Flow:
- * 1. Authorize via organization membership before any read/mutation.
- * 2. Manage project environments as first-class rows in project_environments.
- * 3. Write every lifecycle event to organization_audit_logs.
- */
+/** Project environment lifecycle and authorization service. */
 import type { FastifyBaseLogger } from "fastify";
-import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
-import { ProjectMemberRole } from "../types.js";
-import {
-  ProjectsRepository,
-  type ProjectModuleUsageCounts
-} from "../repository.js";
+import type { OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
+import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
-import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
+import { EnvironmentRepository } from "./environment.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import type {
-  CreateEnvironmentBody,
-  ProjectEnvironmentConfig,
-  UpdateEnvironmentBody,
-} from "../types.js";
+import {
+  EnvironmentType,
+  type CreateEnvironmentBody,
+  type ProjectEnvironmentConfig,
+  type UpdateEnvironmentBody,
+} from "./environment.types.js";
 import { ProjectError } from "../shared/utils.js";
-import { BaseProjectService } from "../shared/base.service.js";
-import { randomBytes } from "crypto";
-
-export interface RequestMeta {
-  actorUserId: string;
-  actorEmail: string | null;
-  actorSessionId: string | null;
-  actorIp: string;
-  actorUserAgent: string | null;
-  requestId: string;
-  httpMethod: string;
-  endpoint: string;
-}
-
-function slugifyEnvironmentName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 48);
-  return slug || `env-${randomBytes(3).toString("hex")}`;
-}
+import { BaseProjectService, type RequestMeta } from "../shared/base.service.js";
+import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
 
 export class EnvironmentService extends BaseProjectService {
   constructor(
     repository: ProjectsRepository,
     logger: FastifyBaseLogger,
     orgRepo: OrganizationRepository,
+    auditService: OrganizationAuditService,
     settingsRepository: SettingsRepository,
     apiKeyRepository: ApiKeyRepository,
     environmentRepository: EnvironmentRepository,
-    activityRepository: ActivityRepository,
     usageRepository: UsageRepository,
+    private readonly sdkConfigProvisioner: SdkConfigProvisioner = new SdkConfigProvisioner(),
   ) {
-      super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+    super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository,
+      environmentRepository, usageRepository);
   }
 
-  public async listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]> {
+  async listEnvironments(
+    orgId: string,
+    projectId: string,
+    userId: string,
+    includeDeleted = false,
+  ): Promise<ProjectEnvironmentConfig[]> {
     await this.requireProjectAccess(orgId, projectId, userId, "member");
-    return this.environmentRepository.listEnvironments(projectId);
+    return this.environmentRepository.listEnvironments(projectId, includeDeleted);
   }
 
-  public async getEnvironment(
+  async getEnvironment(
     orgId: string,
     projectId: string,
     environmentId: string,
     userId: string,
   ): Promise<ProjectEnvironmentConfig> {
     await this.requireProjectAccess(orgId, projectId, userId, "member");
-    const env = await this.environmentRepository.findEnvironment(projectId, environmentId);
-    if (!env) throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
-    return env;
+    const environment = await this.environmentRepository.findEnvironment(projectId, environmentId);
+    if (!environment) throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    return environment;
   }
 
-  public async createEnvironment(
+  async createEnvironment(
     orgId: string,
     projectId: string,
     userId: string,
@@ -87,43 +63,51 @@ export class EnvironmentService extends BaseProjectService {
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    await this.enforceProjectModuleLimit(orgId, "environment");
-    const env = await this.environmentRepository.createEnvironment({
-      projectId,
-      orgId,
-      name: body.name,
-      slug: slugifyEnvironmentName(body.name),
-      description: body.description ?? null,
-      color: body.color ?? null,
-      icon: body.icon ?? null,
-      isDefault: body.isDefault,
-      isActive: body.isActive,
-      createdByUserId: userId,
-      rateLimitPerSecond: body.rateLimitPerSecond ?? null,
-      rateLimitPerMinute: body.rateLimitPerMinute ?? null,
-      rateLimitPerHour: body.rateLimitPerHour ?? null,
-      burstLimit: body.burstLimit ?? null,
-      allowedEventTypes: body.allowedEventTypes,
-      maxEventSizeBytes: body.maxEventSizeBytes ?? null,
-      maxBatchSize: body.maxBatchSize ?? null,
-      requireHttps: body.requireHttps,
-      ipAllowlist: body.ipAllowlist ?? null,
-      ipBlocklist: body.ipBlocklist ?? null,
-      alertEmail: body.alertEmail ?? null,
-      alertWebhookUrl: body.alertWebhookUrl ?? null,
+    if (body.type === EnvironmentType.CUSTOM) {
+      await this.enforceProjectModuleLimit(orgId, "environment");
+    }
+
+    // Every environment creation atomically provisions its SDK configuration
+    // head + published revision #1 in the same transaction. This applies to
+    // ALL environment types with no exceptions. No API keys are created here —
+    // additional environments only receive keys when the user requests them.
+    const environment = await this.repository.withTransaction(async (client) => {
+      const created = await this.environmentRepository.createEnvironment(
+        {
+          projectId,
+          orgId,
+          name: body.name,
+          slug: body.slug,
+          type: body.type,
+          description: body.description ?? null,
+          color: body.color,
+          isDefault: body.isDefault,
+          isActive: body.isActive,
+        },
+        client,
+      );
+      await this.sdkConfigProvisioner.provisionInitial(
+        client,
+        {
+          organizationId: orgId,
+          projectId,
+          environmentId: created.id,
+          environmentKey: created.slug,
+        },
+        userId,
+      );
+      return created;
     });
 
-    await this.audit(meta, {
-      orgId,
-      action: "environment.created",
-      entityType: "project_environment",
-      entityId: env.id,
-      newValues: { name: env.name, slug: env.slug },
+    await this.writeAudit(meta, orgId, "environment.created", environment, {
+      name: environment.name,
+      slug: environment.slug,
+      type: environment.type,
     });
-    return env;
+    return environment;
   }
 
-  public async updateEnvironment(
+  async updateEnvironment(
     orgId: string,
     projectId: string,
     environmentId: string,
@@ -132,38 +116,27 @@ export class EnvironmentService extends BaseProjectService {
     meta: RequestMeta,
   ): Promise<ProjectEnvironmentConfig> {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
-    const updated = await this.environmentRepository.updateEnvironment(projectId, environmentId, {
-      name: body.name,
-      description: body.description,
-      color: body.color,
-      icon: body.icon,
-      isActive: body.isActive,
-      isDefault: body.isDefault,
-      rateLimitPerSecond: body.rateLimitPerSecond,
-      rateLimitPerMinute: body.rateLimitPerMinute,
-      rateLimitPerHour: body.rateLimitPerHour,
-      burstLimit: body.burstLimit,
-      allowedEventTypes: body.allowedEventTypes,
-      maxEventSizeBytes: body.maxEventSizeBytes,
-      maxBatchSize: body.maxBatchSize,
-      requireHttps: body.requireHttps,
-      ipAllowlist: body.ipAllowlist,
-      ipBlocklist: body.ipBlocklist,
-      alertEmail: body.alertEmail,
-      alertWebhookUrl: body.alertWebhookUrl,
-    });
-
+    const existing = await this.environmentRepository.findEnvironment(projectId, environmentId);
+    if (!existing) throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+    if (body.type === EnvironmentType.CUSTOM && existing.type !== EnvironmentType.CUSTOM) {
+      await this.enforceProjectModuleLimit(orgId, "environment");
+    }
+    const updated = await this.environmentRepository.updateEnvironment(projectId, environmentId, body);
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "environment.updated",
       entityType: "project_environment",
       entityId: updated.id,
+      entityName: updated.name,
+      oldValues: { ...existing },
+      newValues: { ...updated },
       changedFields: Object.keys(body),
     });
     return updated;
   }
 
-  public async deleteEnvironment(
+  async deleteEnvironment(
     orgId: string,
     projectId: string,
     environmentId: string,
@@ -174,10 +147,68 @@ export class EnvironmentService extends BaseProjectService {
     await this.environmentRepository.deleteEnvironment(projectId, environmentId);
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "environment.deleted",
       entityType: "project_environment",
       entityId: environmentId,
       isSensitive: true,
+    });
+  }
+
+  async restoreEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    const restored = await this.environmentRepository.restoreEnvironment(projectId, environmentId);
+    await this.writeAudit(meta, orgId, "environment.restored", restored);
+    return restored;
+  }
+
+  async setDefaultEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    const environment = await this.environmentRepository.setDefaultEnvironment(projectId, environmentId);
+    await this.writeAudit(meta, orgId, "environment.default_set", environment);
+    return environment;
+  }
+
+  async deactivateEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+    await this.requireProjectAccess(orgId, projectId, userId, "admin");
+    const environment = await this.environmentRepository.deactivateEnvironment(projectId, environmentId);
+    await this.writeAudit(meta, orgId, "environment.deactivated", environment);
+    return environment;
+  }
+
+  private async writeAudit(
+    meta: RequestMeta,
+    orgId: string,
+    action: string,
+    environment: ProjectEnvironmentConfig,
+    newValues?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.audit(meta, {
+      orgId,
+      projectId: environment.projectId,
+      action,
+      entityType: "project_environment",
+      entityId: environment.id,
+      entityName: environment.name,
+      ...(newValues ? { newValues } : {}),
     });
   }
 }

@@ -6,15 +6,16 @@ import type { PoolClient } from 'pg';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const CANDIDATE_MIGRATION_DIRS = [
-  path.resolve(__dirname, '../../src/db/postgres/canonical_migrations'),
-  path.resolve(__dirname, '../../src/db/postgres/migrations2'),
-];
-
 export const DRAFT_MIGRATIONS_DIR = path.resolve(
   __dirname,
   '../../src/db/postgres/canonical_migrations_draft',
 );
+
+export const CANDIDATE_MIGRATION_DIRS = [
+  DRAFT_MIGRATIONS_DIR,
+  path.resolve(__dirname, '../../src/db/postgres/canonical_migrations'),
+  path.resolve(__dirname, '../../src/db/postgres/migrations2'),
+];
 
 export function resolveMigrationDirOverride(
   env: NodeJS.ProcessEnv = process.env,
@@ -69,6 +70,13 @@ export const LEGACY_MIGRATION_ALIASES: Record<string, string> = {
   '012_auth_harden_email_outbox_schema.up.sql': '012_auth_email_outbox_hardening.up.sql',
 };
 
+function isMigrationFile(filename: string): boolean {
+  if (!filename.endsWith('.sql')) return false;
+  if (filename.endsWith('.down.sql')) return false;
+  // Include both .up.sql and plain .sql (used by billing, automation, etc.)
+  return true;
+}
+
 async function collectMigrationFiles(
   rootDir: string,
   currentDir: string = rootDir,
@@ -79,7 +87,7 @@ async function collectMigrationFiles(
     if (entry.isDirectory()) {
       return collectMigrationFiles(rootDir, fullPath);
     }
-    if (!entry.isFile() || !entry.name.endsWith('.up.sql')) {
+    if (!entry.isFile() || !isMigrationFile(entry.name)) {
       return [];
     }
     return [path.relative(rootDir, fullPath).split(path.sep).join('/')];

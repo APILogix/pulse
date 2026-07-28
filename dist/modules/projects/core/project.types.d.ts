@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ProjectSettings } from "../settings/settings.types.js";
-import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../activity/activity.types.js";
+import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../usage/usage.types.js";
 export declare const ProjectVisibilitySchema: z.ZodEnum<{
     public: "public";
     private: "private";
@@ -133,21 +133,6 @@ export declare const ProjectMemberRoleSchema: z.ZodEnum<{
     viewer: "viewer";
     qa: "qa";
 }>;
-export interface ProjectMember {
-    id: string;
-    projectId: string;
-    userId: string;
-    organizationId: string;
-    role: ProjectMemberRole;
-    roleId: string | null;
-    status: 'pending' | 'active' | 'inactive' | 'removed';
-    addedByUserId: string | null;
-    addedAt: Date;
-    removedByUserId: string | null;
-    removedAt: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
-}
 export interface ProjectOverviewDto {
     project: Project;
     settings: ProjectSettings;
@@ -185,77 +170,29 @@ export declare const ProjectMemberStatusSchema: z.ZodEnum<{
     pending: "pending";
 }>;
 export type ProjectMemberStatus = z.infer<typeof ProjectMemberStatusSchema>;
-export declare const InvitationStatusSchema: z.ZodEnum<{
-    expired: "expired";
-    pending: "pending";
-    cancelled: "cancelled";
-    accepted: "accepted";
-    declined: "declined";
-}>;
-export type InvitationStatus = z.infer<typeof InvitationStatusSchema>;
 export interface ProjectMember {
     id: string;
     projectId: string;
     userId: string;
     organizationId: string;
     role: ProjectMemberRole;
-    roleId: string | null;
     status: ProjectMemberStatus;
-    addedByUserId: string | null;
-    addedAt: Date;
-    removedByUserId: string | null;
-    removedAt: Date | null;
+    invitedByUserId: string | null;
+    invitedAt: Date | null;
+    joinedAt: Date | null;
+    createdByUserId: string | null;
     createdAt: Date;
-    updatedAt: Date;
+    updatedAt: Date | null;
     user: {
         id: string;
         email: string;
         fullName: string;
     } | undefined;
 }
-export interface ProjectMemberInvitation {
-    id: string;
-    projectId: string;
-    organizationId: string;
-    email: string;
-    invitedByUserId: string;
-    invitedUserId: string | null;
-    role: ProjectMemberRole;
-    status: InvitationStatus;
-    expiresAt: Date;
-    acceptedAt: Date | null;
-    declinedAt: Date | null;
-    cancelledAt: Date | null;
-    createdAt: Date;
-    updatedAt: Date;
-}
-export interface ProjectRole {
-    id: string;
-    projectId: string | null;
-    organizationId: string;
-    name: string;
-    slug: string;
-    description: string | null;
-    isSystem: boolean;
-    isDefault: boolean;
-    permissions: string[];
-    createdAt: Date;
-    updatedAt: Date;
-}
 export declare const ProjectMemberParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     projectId: z.ZodString;
     memberId: z.ZodString;
-}, z.core.$strip>;
-export declare const ProjectRoleParamsSchema: z.ZodObject<{
-    orgId: z.ZodString;
-    projectId: z.ZodString;
-    roleId: z.ZodString;
-}, z.core.$strip>;
-export declare const ProjectInvitationParamsSchema: z.ZodObject<{
-    orgId: z.ZodString;
-    projectId: z.ZodString;
-    invitationId: z.ZodString;
 }, z.core.$strip>;
 export declare const ListProjectMembersQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     status: z.ZodOptional<z.ZodEnum<{
@@ -286,29 +223,6 @@ export declare const ListProjectMembersQuerySchema: z.ZodPipe<z.ZodTransform<unk
     }>>;
 }, z.core.$strip>>;
 export type ListProjectMembersQuery = z.infer<typeof ListProjectMembersQuerySchema>;
-export declare const ListProjectInvitationsQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    status: z.ZodOptional<z.ZodEnum<{
-        expired: "expired";
-        pending: "pending";
-        cancelled: "cancelled";
-        accepted: "accepted";
-        declined: "declined";
-    }>>;
-    email: z.ZodOptional<z.ZodString>;
-    page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    sortBy: z.ZodDefault<z.ZodEnum<{
-        expires_at: "expires_at";
-        created_at: "created_at";
-        updated_at: "updated_at";
-    }>>;
-    sortOrder: z.ZodDefault<z.ZodEnum<{
-        asc: "asc";
-        desc: "desc";
-    }>>;
-}, z.core.$strip>>;
-export type ListProjectInvitationsQuery = z.infer<typeof ListProjectInvitationsQuerySchema>;
 export declare const AddProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     userId: z.ZodString;
     role: z.ZodDefault<z.ZodEnum<{
@@ -330,36 +244,6 @@ export declare const UpdateProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unk
     }>;
 }, z.core.$strip>>;
 export type UpdateProjectMemberBody = z.infer<typeof UpdateProjectMemberBodySchema>;
-export declare const InviteProjectMemberBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    email: z.ZodString;
-    role: z.ZodDefault<z.ZodEnum<{
-        admin: "admin";
-        owner: "owner";
-        developer: "developer";
-        viewer: "viewer";
-        qa: "qa";
-    }>>;
-}, z.core.$strip>>;
-export type InviteProjectMemberBody = z.infer<typeof InviteProjectMemberBodySchema>;
-export declare const AcceptProjectInvitationBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    token: z.ZodString;
-}, z.core.$strip>>;
-export type AcceptProjectInvitationBody = z.infer<typeof AcceptProjectInvitationBodySchema>;
-export declare const CreateProjectRoleBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    name: z.ZodString;
-    slug: z.ZodString;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    permissions: z.ZodDefault<z.ZodArray<z.ZodString>>;
-    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-}, z.core.$strip>>;
-export type CreateProjectRoleBody = z.infer<typeof CreateProjectRoleBodySchema>;
-export declare const UpdateProjectRoleBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    name: z.ZodOptional<z.ZodString>;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    permissions: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-}, z.core.$strip>>;
-export type UpdateProjectRoleBody = z.infer<typeof UpdateProjectRoleBodySchema>;
 export declare const TransferOwnershipBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     newOwnerUserId: z.ZodString;
 }, z.core.$strip>>;

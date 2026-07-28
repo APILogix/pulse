@@ -1,108 +1,89 @@
 import { z } from "zod";
-export declare const WellKnownEnvironmentSchema: z.ZodEnum<{
-    development: "development";
-    staging: "staging";
-    production: "production";
-    qa: "qa";
-    testing: "testing";
-    canary: "canary";
-    sandbox: "sandbox";
+export declare enum EnvironmentType {
+    PRODUCTION = "production",
+    PRE_PRODUCTION = "pre_production",
+    STAGING = "staging",
+    PRE_STAGING = "pre_staging",
+    DEVELOPMENT = "development",
+    TESTING = "testing",
+    PREVIEW = "preview",
+    PRE_DEPLOYMENT = "pre_deployment",
+    CUSTOM = "custom"
+}
+export declare const EnvironmentTypeSchema: z.ZodEnum<{
+    production: EnvironmentType.PRODUCTION;
+    pre_production: EnvironmentType.PRE_PRODUCTION;
+    staging: EnvironmentType.STAGING;
+    pre_staging: EnvironmentType.PRE_STAGING;
+    development: EnvironmentType.DEVELOPMENT;
+    testing: EnvironmentType.TESTING;
+    preview: EnvironmentType.PREVIEW;
+    pre_deployment: EnvironmentType.PRE_DEPLOYMENT;
+    custom: EnvironmentType.CUSTOM;
 }>;
-export type WellKnownEnvironment = z.infer<typeof WellKnownEnvironmentSchema>;
 export declare const EnvironmentNameSchema: z.ZodString;
-export type EnvironmentName = z.infer<typeof EnvironmentNameSchema>;
+export declare const EnvironmentSlugSchema: z.ZodString;
+export declare const EnvironmentColorSchema: z.ZodString;
 export declare const EnvironmentParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     projectId: z.ZodString;
     environmentId: z.ZodString;
 }, z.core.$strip>;
-export declare const environmentConfigShape: {
-    readonly name: z.ZodString;
-    readonly description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly isActive: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    readonly isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    readonly rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly burstLimit: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    readonly maxEventSizeBytes: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly maxBatchSize: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    readonly requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    readonly ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    readonly ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    readonly alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    readonly alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-};
 export declare const CreateEnvironmentBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     name: z.ZodString;
+    slug: z.ZodString;
+    type: z.ZodEnum<{
+        production: EnvironmentType.PRODUCTION;
+        pre_production: EnvironmentType.PRE_PRODUCTION;
+        staging: EnvironmentType.STAGING;
+        pre_staging: EnvironmentType.PRE_STAGING;
+        development: EnvironmentType.DEVELOPMENT;
+        testing: EnvironmentType.TESTING;
+        preview: EnvironmentType.PREVIEW;
+        pre_deployment: EnvironmentType.PRE_DEPLOYMENT;
+        custom: EnvironmentType.CUSTOM;
+    }>;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    isActive: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    burstLimit: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    maxEventSizeBytes: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    maxBatchSize: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-}, z.core.$strip>>;
+    color: z.ZodString;
+    isActive: z.ZodOptional<z.ZodBoolean>;
+    isDefault: z.ZodOptional<z.ZodBoolean>;
+}, z.core.$strict>>;
 export declare const UpdateEnvironmentBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    name: z.ZodString;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    isActive: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    isDefault: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    burstLimit: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    maxEventSizeBytes: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    maxBatchSize: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    requireHttps: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    ipAllowlist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    ipBlocklist: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodString>>>;
-    alertEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    alertWebhookUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-}, z.core.$strip>>;
+    name: z.ZodOptional<z.ZodString>;
+    slug: z.ZodOptional<z.ZodString>;
+    type: z.ZodOptional<z.ZodEnum<{
+        production: EnvironmentType.PRODUCTION;
+        pre_production: EnvironmentType.PRE_PRODUCTION;
+        staging: EnvironmentType.STAGING;
+        pre_staging: EnvironmentType.PRE_STAGING;
+        development: EnvironmentType.DEVELOPMENT;
+        testing: EnvironmentType.TESTING;
+        preview: EnvironmentType.PREVIEW;
+        pre_deployment: EnvironmentType.PRE_DEPLOYMENT;
+        custom: EnvironmentType.CUSTOM;
+    }>>;
+    description: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodString>>>;
+    color: z.ZodOptional<z.ZodString>;
+    isActive: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
+    isDefault: z.ZodOptional<z.ZodOptional<z.ZodBoolean>>;
+}, z.core.$strict>>;
+export declare const ListEnvironmentsQuerySchema: z.ZodObject<{
+    includeDeleted: z.ZodDefault<z.ZodPipe<z.ZodTransform<boolean, unknown>, z.ZodBoolean>>;
+}, z.core.$strip>;
 export type CreateEnvironmentBody = z.infer<typeof CreateEnvironmentBodySchema>;
 export type UpdateEnvironmentBody = z.infer<typeof UpdateEnvironmentBodySchema>;
+export type ListEnvironmentsQuery = z.infer<typeof ListEnvironmentsQuerySchema>;
 export interface ProjectEnvironmentConfig {
     id: string;
     projectId: string;
     orgId: string;
     name: string;
     slug: string;
+    type: EnvironmentType;
     description: string | null;
-    color: string | null;
-    icon: string | null;
+    color: string;
     isDefault: boolean;
     isActive: boolean;
-    rateLimitPerSecond: number | null;
-    rateLimitPerMinute: number | null;
-    rateLimitPerHour: number | null;
-    burstLimit: number | null;
-    allowedEventTypes: string[];
-    maxEventSizeBytes: number | null;
-    maxBatchSize: number | null;
-    requireHttps: boolean;
-    ipAllowlist: string[] | null;
-    ipBlocklist: string[] | null;
-    alertEmail: string | null;
-    alertWebhookUrl: string | null;
-    createdByUserId: string | null;
-    createdByApiKeyId: string | null;
     createdAt: Date;
     updatedAt: Date;
     deletedAt: Date | null;
@@ -111,5 +92,6 @@ export interface EnvironmentReference {
     id: string;
     name: string;
     slug: string;
+    type: EnvironmentType;
 }
 //# sourceMappingURL=environment.types.d.ts.map

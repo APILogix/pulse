@@ -1,12 +1,16 @@
 import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 export class AuditLogsRepository extends BaseRepository {
     async createAuditLog(entry) {
-        await this.db.query(`INSERT INTO organization_audit_logs (org_id,actor_user_id,actor_email,actor_ip,actor_user_agent,actor_session_id,action,entity_type,entity_id,entity_name,request_id,http_method,endpoint,old_values,new_values,changed_fields,status,failure_reason,is_sensitive,metadata)
-       VALUES ($1,$2,$3,$4::inet,$5,$6::uuid,$7,$8,$9::uuid,$10,$11::uuid,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, [entry.orgId, entry.actorUserId, entry.actorEmail ?? null, entry.actorIp ?? null, entry.actorUserAgent ?? null, entry.actorSessionId ?? null,
-            entry.action, entry.entityType, entry.entityId ?? null, entry.entityName ?? null, entry.requestId ?? null, entry.httpMethod ?? null,
-            entry.endpoint ?? null, entry.oldValues ? JSON.stringify(entry.oldValues) : null, entry.newValues ? JSON.stringify(entry.newValues) : null,
-            entry.changedFields ?? null, entry.status ?? 'success', entry.failureReason ?? null, entry.isSensitive ?? false,
-            entry.metadata ? JSON.stringify(entry.metadata) : '{}']);
+        await this.db.query(`INSERT INTO organization_audit_logs (
+         org_id,project_id,actor_user_id,actor_email,actor_ip,actor_user_agent,actor_session_id,
+         action,entity_type,entity_id,entity_name,request_id,correlation_id,http_method,endpoint,
+         old_values,new_values,changed_fields,status,failure_reason,is_sensitive,metadata
+       ) VALUES ($1,$2::uuid,$3,$4,$5::inet,$6,$7::uuid,$8,$9,$10::uuid,$11,$12::uuid,$13::uuid,$14,$15,$16,$17,$18,$19,$20,$21,$22)`, [entry.orgId, entry.projectId ?? null, entry.actorUserId, entry.actorEmail ?? null, entry.actorIp ?? null,
+            entry.actorUserAgent ?? null, entry.actorSessionId ?? null, entry.action, entry.entityType, entry.entityId ?? null,
+            entry.entityName ?? null, entry.requestId ?? null, entry.correlationId ?? null, entry.httpMethod ?? null,
+            entry.endpoint ?? null, entry.oldValues ? JSON.stringify(entry.oldValues) : null,
+            entry.newValues ? JSON.stringify(entry.newValues) : null, entry.changedFields ?? null, entry.status ?? 'success',
+            entry.failureReason ?? null, entry.isSensitive ?? false, entry.metadata ? JSON.stringify(entry.metadata) : '{}']);
     }
     async listAuditLogs(orgId, q, filters) {
         const countParams = [orgId];
@@ -23,6 +27,10 @@ export class AuditLogsRepository extends BaseRepository {
             countParams.push(filters.actorUserId);
             countWhere += ` AND actor_user_id=$${countParams.length}`;
         }
+        if (filters?.projectId) {
+            countParams.push(filters.projectId);
+            countWhere += ` AND project_id=$${countParams.length}::uuid`;
+        }
         const countRes = await this.db.query(`SELECT COUNT(*)::text as count FROM organization_audit_logs WHERE ${countWhere}`, countParams);
         const totalCount = Number(countRes.rows[0]?.count ?? 0);
         const params = [...countParams];
@@ -32,7 +40,7 @@ export class AuditLogsRepository extends BaseRepository {
             where += ` AND created_at < $${params.length}`;
         }
         params.push(q.limit + 1);
-        const r = await this.db.query(`SELECT id,org_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
+        const r = await this.db.query(`SELECT id,org_id,project_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
        FROM organization_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params);
         return cursorPage(r.rows, q.limit, totalCount);
     }
@@ -51,6 +59,10 @@ export class AuditLogsRepository extends BaseRepository {
             params.push(filters.actorUserId);
             where += ` AND actor_user_id=$${params.length}`;
         }
+        if (filters?.projectId) {
+            params.push(filters.projectId);
+            where += ` AND project_id=$${params.length}::uuid`;
+        }
         if (filters?.startDate) {
             params.push(filters.startDate);
             where += ` AND created_at >= $${params.length}::timestamptz`;
@@ -60,7 +72,7 @@ export class AuditLogsRepository extends BaseRepository {
             where += ` AND created_at <= $${params.length}::timestamptz`;
         }
         params.push(10000); // hard cap
-        const r = await this.db.query(`SELECT id,org_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
+        const r = await this.db.query(`SELECT id,org_id,project_id,actor_user_id,actor_email,action,entity_type,entity_id,entity_name,old_values,new_values,changed_fields,status,is_sensitive,metadata,created_at
        FROM organization_audit_logs WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length}`, params);
         return r.rows;
     }

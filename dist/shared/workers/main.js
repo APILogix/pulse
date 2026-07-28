@@ -24,8 +24,10 @@ import { registerAnalyticsWorkers } from '../../modules/event-analytics/queue.js
 import { registerOrganizationCleanupWorkers } from '../../modules/organization/shared/background/queue.js';
 import { registerUserDataExportWorker } from '../../modules/user-account/queue.js';
 import { registerAIWorkers } from '../../modules/ai/queue.js';
+import { registerAutomationWorkers } from '../../modules/automation/workers.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
+import { AlertChannelRepository } from '../../modules/projects/alerts/channels/channel.repository.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
@@ -34,11 +36,13 @@ const workerLogger = logger.child({ component: 'workers' });
 async function bootstrapWorkers() {
     const pgPool = new Pool({
         connectionString: env.DATABASE_URL,
-        max: 10,
-        idleTimeoutMillis: 10000,
-        connectionTimeoutMillis: 30000,
-        application_name: 'ingestion_workers',
+        max: env.DB_POOL_MAX,
+        min: env.DB_POOL_MIN,
+        idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
+        connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
+        application_name: `pulse_background_workers_${env.NODE_ENV}`,
         keepAlive: true,
+        keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
     });
     pgPool.on('error', (err) => {
         workerLogger.error({ err }, 'Unexpected worker pool error (idle connection lost)');
@@ -54,6 +58,7 @@ async function bootstrapWorkers() {
     let orgCleanupWorkers = null;
     let userDataExportWorker = null;
     let aiWorkers = null;
+    let automationWorkers = null;
     // Ingestion persistence moved to the dedicated ingestion worker process
     // (src/shared/workers/ingestion-worker-main.ts — pg-boss per-type queues).
     // This process no longer polls the legacy ingestion_jobs table; the legacy
@@ -84,6 +89,8 @@ async function bootstrapWorkers() {
             await userDataExportWorker.stop();
         if (aiWorkers)
             await aiWorkers.stop();
+        if (automationWorkers)
+            await automationWorkers.stop();
         await stopPgBoss();
         await pgPool.end();
         process.exit(0);
@@ -97,13 +104,16 @@ async function bootstrapWorkers() {
     billingJobWorkers = await registerBillingJobWorkers(workerLogger);
     connectorMonitor = await startConnectorMonitor(workerLogger);
     const connectorSubRepo = new ConnectorSubscriptionRepository();
+    const alertChannelRepo = new AlertChannelRepository(pgPool);
     const projectSubscriptionResolver = {
         resolveByProjectId: (projectId) => connectorSubRepo.resolveAlertRoutingTargetByProjectId(projectId),
+        resolveImmediateDeliveryTargets: (request) => alertChannelRepo.resolveImmediateDeliveryTargets(request),
     };
     alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver);
     analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
     userDataExportWorker = await registerUserDataExportWorker(workerLogger);
     aiWorkers = await registerAIWorkers(workerLogger);
+    automationWorkers = await registerAutomationWorkers(workerLogger);
     if (process.env.ORG_CRON_ENABLED !== 'false') {
         orgCleanupWorkers = await registerOrganizationCleanupWorkers(workerLogger);
     }
@@ -111,8 +121,11 @@ async function bootstrapWorkers() {
         workerLogger.info('Organization cleanup cron disabled in worker (ORG_CRON_ENABLED=false)');
     }
     startAuthCleanupWorker();
+    // PM2's wait_ready gate keeps the worker out of the healthy process set
+    // until every queue consumer and scheduled job has registered successfully.
+    process.send?.('ready');
     workerLogger.info('Worker process started');
-    workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss), user-data-export (pg-boss), ai-reliability-analysis (pg-boss)');
+    workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss), user-data-export (pg-boss), ai-reliability-analysis (pg-boss), automation (pg-boss)');
 }
 bootstrapWorkers().catch((error) => {
     workerLogger.fatal({ error }, 'Failed to start worker process');

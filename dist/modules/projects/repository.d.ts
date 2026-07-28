@@ -23,12 +23,12 @@ export declare class ProjectsRepository {
     private readonly core;
     private readonly members;
     private readonly usage;
-    private readonly settings;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     findOrganizationMembership(orgId: string, userId: string, client?: PoolClient): Promise<OrganizationMembership | null>;
     getProjectMemberRole(orgId: string, projectId: string, userId: string, client?: PoolClient): Promise<ProjectMemberRole | null>;
     addProjectMember(projectId: string, organizationId: string, userId: string, role: ProjectMemberRole, addedByUserId: string, client?: PoolClient): Promise<ProjectMember>;
+    ensureProjectOwner(projectId: string, organizationId: string, userId: string, client: PoolClient): Promise<ProjectMember>;
     listProjects(orgId: string, query: ListProjectsQuery, client?: PoolClient): Promise<{
         projects: ProjectListItem[];
         total: number;
@@ -47,6 +47,7 @@ export declare class ProjectsRepository {
         metadata?: Record<string, unknown> | undefined;
         createdBy?: string | null | undefined;
     }, client?: PoolClient): Promise<Project>;
+    provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
@@ -62,8 +63,6 @@ export declare class ProjectsRepository {
     }>;
     getProjectUsageCounters(projectId: string, client?: PoolClient): Promise<ProjectUsageCounter[]>;
     getProjectModuleUsageCounts(orgId: string, client?: PoolClient): Promise<ProjectModuleUsageCounts>;
-    findSdkConfigPlanKey(orgId: string, client?: PoolClient): Promise<string>;
-    createDefaultSdkConfigs(project: Project, createdBy: string, planKey: string, client?: PoolClient): Promise<number>;
 }
 export * from "./core/project.repository.js";
 export * from "./members/member.repository.js";

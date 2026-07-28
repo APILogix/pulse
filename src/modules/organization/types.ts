@@ -194,7 +194,7 @@ export const SecurityEventsQuerySchema = CursorPaginationSchema.extend({
 // AUDIT LOG TYPES — matches enterprise organization_audit_logs schema
 // ═══════════════════════════════════════════════════
 
-export type { CreateAuditLogRecord } from "./audit-logs/audit-logs.schema.js";
+export type { CreateAuditLogRecord, AuditLogFilters } from "./audit-logs/audit-logs.schema.js";
 
 // ═══════════════════════════════════════════════════
 // DB ROW TYPES — snake_case matching database columns

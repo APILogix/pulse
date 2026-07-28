@@ -15,6 +15,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache, type CachedProjectConfig } from "../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../organization/repository.js";
+import type { OrganizationAuditService } from "../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "./types.js";
 import {
   ProjectsRepository,
@@ -23,10 +24,11 @@ import {
 import { SettingsRepository } from "./settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "./environments/environment.repository.js";
-import { ActivityRepository } from "./activity/activity.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
 import type {
+  ApiKeyRotation,
   ApiKeyUsage,
+  ApiKeyUsageQuery,
   BulkOperationResult,
   BulkRevokeBody,
   BulkRotateBody,
@@ -35,11 +37,9 @@ import type {
   CreateEnvironmentBody,
   CreateProjectBody,
   ListApiKeysQuery,
-  ListProjectActivityQuery,
   ListProjectsQuery,
   OrgRole,
   Project,
-  ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
   ProjectEnvironmentConfig,
@@ -55,7 +55,6 @@ import {
   buildApiPrefixes,
   constantTimeEqualHex,
   createApiKey,
-  defaultPermissionsForType,
   extractApiKeyPrefix,
   hasRequiredRole,
   hashApiKey,
@@ -63,10 +62,10 @@ import {
   slugifyProjectName,
   validateStatusTransition,
 } from "./shared/utils.js";
-import { ProjectService } from "./core/project.service.js";
+import { ProjectService, type CreateProjectResult } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
-import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
+import { SdkConfigProvisioner } from "./sdk-config/sdk-config.provisioner.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
 import { MemberRepository } from "./members/member.repository.js";
@@ -118,7 +117,6 @@ export function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMem
 export class ProjectsService {
     public readonly core: ProjectService;
     public readonly settings: SettingsService;
-    public readonly activity: ProjectActivityService;
     public readonly environments: EnvironmentService;
     public readonly apiKeys: ApiKeyService;
     public readonly base: BaseProjectService;
@@ -132,28 +130,31 @@ export class ProjectsService {
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
     private readonly orgRepo: OrganizationRepository,
+    private readonly auditService: OrganizationAuditService,
     private readonly settingsRepository: SettingsRepository,
     private readonly apiKeyRepository: ApiKeyRepository,
     private readonly environmentRepository: EnvironmentRepository,
-    private readonly activityRepository: ActivityRepository,
     private readonly usageRepository: UsageRepository,
   ) {
 
-          this.core = new ProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.settings = new SettingsService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.activity = new ProjectActivityService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.environments = new EnvironmentService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.apiKeys = new ApiKeyService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
-          this.base = new BaseProjectService(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+          // Single provisioner shared by project + environment creation so SDK
+          // configurations are seeded explicitly inside the service transaction
+          // (no PostgreSQL trigger).
+          const sdkConfigProvisioner = new SdkConfigProvisioner();
+          this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
+          this.settings = new SettingsService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+          this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
+          this.apiKeys = new ApiKeyService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+          this.base = new BaseProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
           this.members = new ProjectMemberService({
             repository,
             membersRepository: new MemberRepository(),
             logger,
             orgRepo,
+            auditService,
             settingsRepository,
             apiKeyRepository,
             environmentRepository,
-            activityRepository,
             usageRepository,
           });
           this.connectorSubscriptions = new ProjectConnectorSubscriptionService(
@@ -188,8 +189,8 @@ export class ProjectsService {
     userId: string,
     body: CreateProjectBody,
     meta: RequestMeta,
-  ): Promise<Project> {
-      return this.core.createProject(orgId, userId, body, meta) as any;
+  ): Promise<CreateProjectResult> {
+      return this.core.createProject(orgId, userId, body, meta);
   }
 
   async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {
@@ -265,19 +266,15 @@ export class ProjectsService {
       return this.base.getProjectUsage(orgId, projectId, userId) as any;
   }
 
-  async listProjectActivity(
+  // ── Environments ─────────────────────────────────────────────────────────
+
+  async listEnvironments(
     orgId: string,
     projectId: string,
     userId: string,
-    query: ListProjectActivityQuery,
-  ): Promise<ProjectActivityResult> {
-      return this.activity.listProjectActivity(orgId, projectId, userId, query) as any;
-  }
-
-  // ── Environments ─────────────────────────────────────────────────────────
-
-  async listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]> {
-      return this.environments.listEnvironments(orgId, projectId, userId) as any;
+    includeDeleted = false,
+  ): Promise<ProjectEnvironmentConfig[]> {
+      return this.environments.listEnvironments(orgId, projectId, userId, includeDeleted) as any;
   }
 
   async getEnvironment(
@@ -318,6 +315,36 @@ export class ProjectsService {
     meta: RequestMeta,
   ): Promise<void> {
       return (this.environments as any).deleteEnvironment(orgId, projectId, environmentId, userId, meta) as any;
+  }
+
+  async restoreEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+      return this.environments.restoreEnvironment(orgId, projectId, environmentId, userId, meta);
+  }
+
+  async setDefaultEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+      return this.environments.setDefaultEnvironment(orgId, projectId, environmentId, userId, meta);
+  }
+
+  async deactivateEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<ProjectEnvironmentConfig> {
+      return this.environments.deactivateEnvironment(orgId, projectId, environmentId, userId, meta);
   }
 
   // ── API keys ─────────────────────────────────────────────────────────────
@@ -435,8 +462,19 @@ export class ProjectsService {
     projectId: string,
     apiKeyId: string,
     userId: string,
+    query: ApiKeyUsageQuery,
   ): Promise<ApiKeyUsage> {
-      return this.apiKeys.getApiKeyUsage(orgId, projectId, apiKeyId, userId) as any;
+      return this.apiKeys.getApiKeyUsage(orgId, projectId, apiKeyId, userId, query) as any;
+  }
+
+  /** Rotation workflow history now lives outside the credential row. */
+  async listApiKeyRotations(
+    orgId: string,
+    projectId: string,
+    apiKeyId: string,
+    userId: string,
+  ): Promise<ApiKeyRotation[]> {
+      return this.apiKeys.listApiKeyRotations(orgId, projectId, apiKeyId, userId) as any;
   }
 
   // ── Verification (ingestion-facing) ─────────────────────────────────────────
@@ -516,19 +554,6 @@ export class ProjectsService {
       return this.apiKeys.summarizeBulk(results) as any;
   }
 
-  /**
-   * Warm the in-process LRU so ingestion resolves the key without a Postgres
-   * round trip. Only active keys on active projects are cached as active;
-   * ingestion re-validates project status on a miss.
-   */
-  private warmApiKeyCache(
-    keyHash: string,
-    key: ProjectApiKeyRecord | ProjectApiKey,
-    project: Project,
-  ): void {
-      this.apiKeys.warmApiKeyCache(keyHash, key, project);
-  }
-
   private evictApiKeyConfig(keyHash: string): void {
       this.apiKeys.evictApiKeyConfig(keyHash);
   }
@@ -545,6 +570,7 @@ export class ProjectsService {
     meta: RequestMeta,
     data: {
       orgId: string;
+      projectId: string;
       action: string;
       entityType: string;
       entityId?: string;

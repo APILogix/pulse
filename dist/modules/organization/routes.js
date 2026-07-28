@@ -302,14 +302,19 @@ export async function organizationRoutes(fastify, _options) {
     fastify.get('/:orgId/audit-logs', auth, withErrorHandling(async (request, reply) => {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const query = AuditLogQuerySchema.parse(request.query ?? {});
-        const { action, entityType, actorUserId, ...pagination } = query;
-        const result = await svc.listAuditLogs(orgId, asAuth(request).user.id, pagination, strip({ action, entityType, actorUserId }));
+        const { action, entityType, actorUserId, projectId, ...pagination } = query;
+        const result = await svc.listAuditLogs(orgId, asAuth(request).user.id, pagination, strip({ action, entityType, actorUserId, projectId }));
         return reply.send({ success: true, ...result });
     }));
     fastify.get('/:orgId/audit-logs/export', auth, withErrorHandling(async (request, reply) => {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const query = AuditLogQuerySchema.parse(request.query ?? {});
-        const result = await svc.exportAuditLogs(orgId, asAuth(request).user.id, strip({ action: query.action, entityType: query.entityType, actorUserId: query.actorUserId }));
+        const result = await svc.exportAuditLogs(orgId, asAuth(request).user.id, strip({
+            action: query.action,
+            entityType: query.entityType,
+            actorUserId: query.actorUserId,
+            projectId: query.projectId,
+        }));
         return reply.send({ success: true, data: result });
     }));
     // ═══════════════════════════════════════════════

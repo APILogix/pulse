@@ -165,7 +165,10 @@ export class EventProcessor {
         // 5) Usage accounting (inserted rows only — duplicates are never billed).
         if (result.totalInserted > 0 && orgId && projectId) {
             this.usage.increment(projectId, orgId, `billing:events:${type}`, result.totalInserted);
-            this.usage.increment(projectId, orgId, 'events_persisted', result.totalInserted);
+            this.usage.increment(projectId, orgId, 'events', result.totalInserted, {
+                apiKeyId: payload.metadata.apiKeyId || null,
+                eventType: type ?? 'all',
+            });
         }
         // 6) Metrics.
         const receivedAt = Date.parse(payload?.metadata?.receivedAt ?? '');

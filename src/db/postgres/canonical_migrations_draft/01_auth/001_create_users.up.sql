@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
   marketing_consent_updated_at TIMESTAMPTZ,
   data_processing_consent BOOLEAN NOT NULL DEFAULT FALSE,
   suspended_at TIMESTAMPTZ,
-  current_org_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+  current_org_id UUID,
   suspended_by UUID,
   deletion_scheduled_at TIMESTAMPTZ,
   deleted_at TIMESTAMPTZ,

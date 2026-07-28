@@ -2,7 +2,7 @@
 
 You are Codex working in the Pulse backend repository.
 
-Your task is to implement Phase 2 enterprise automation as a dedicated backend module. Automation workflows must not be modeled as alert rules. Alert rules detect conditions and create alert events. Automation workflows orchestrate triggers, conditions, approvals, actions, retries, and audit trails across observability, alerting, billing, AI, connectors, incidents, releases, and operations.
+Your task is to implement enterprise automation as a dedicated backend module. Automation workflows must not be modeled as alert rules. Alert rules detect conditions and create alert events. Automation workflows orchestrate triggers, conditions, approvals, actions, retries, and audit trails across observability, alerting, billing, AI, connectors, incidents, releases, and operations.
 
 Do not directly start implementation until you have read the existing code and schemas listed in this prompt.
 

@@ -15,6 +15,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "../types.js";
 import {
   ProjectsRepository,
@@ -23,7 +24,6 @@ import {
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import type {
   ApiKeyUsage,
@@ -35,11 +35,9 @@ import type {
   CreateEnvironmentBody,
   CreateProjectBody,
   ListApiKeysQuery,
-  ListProjectActivityQuery,
   ListProjectsQuery,
   OrgRole,
   Project,
-  ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
   ProjectEnvironmentConfig,
@@ -58,7 +56,6 @@ import {
   buildApiPrefixes,
   constantTimeEqualHex,
   createApiKey,
-  defaultPermissionsForType,
   extractApiKeyPrefix,
   hasRequiredRole,
   hashApiKey,
@@ -114,13 +111,13 @@ export class SettingsService extends BaseProjectService {
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
     orgRepo: OrganizationRepository,
+    auditService: OrganizationAuditService,
     settingsRepository: SettingsRepository,
     apiKeyRepository: ApiKeyRepository,
     environmentRepository: EnvironmentRepository,
-    activityRepository: ActivityRepository,
     usageRepository: UsageRepository,
   ) {
-      super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+      super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
   }
 
   // ── Projects ────────────────────────────────────────────────────────────────
@@ -144,6 +141,7 @@ export class SettingsService extends BaseProjectService {
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.settings.updated",
       entityType: "project_settings",
       entityId: result.id,

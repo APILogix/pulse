@@ -27,12 +27,14 @@ import { registerUserAccountModule } from './modules/user-account/user-account.m
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
+import { registerSdkConfigDeliveryModule } from './modules/projects/sdk-config/sdk-config.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 import { registerAIModule } from './modules/ai/ai.module.js';
+import { registerAutomationModule } from './modules/automation/automation.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 
 declare module 'fastify' {
@@ -92,14 +94,41 @@ export async function buildApp(): Promise<FastifyInstance> {
   // These MUST be registered first — they protect the server and provide
   // foundational capabilities that all modules depend on.
 
+  // Admission control protects latency by shedding new work before the process
+  // is OOM-killed or the event loop becomes unrecoverable. Pressure logs are
+  // rate-limited: logging every rejected request can itself prolong an overload.
+  let lastPressureLogAt = 0;
+  let suppressedPressureLogs = 0;
   await app.register(underPressure, {
-    maxEventLoopDelay: 1000,
-    maxHeapUsedBytes: 512 * 1024 * 1024,
-    maxRssBytes: 1 * 1024 * 1024 * 1024,
-    maxEventLoopUtilization: 0.98,
-    pressureHandler: (_req, rep, type) => {
-      appLogger.warn({ type }, 'Server under pressure');
-      rep.status(503).send({ error: 'Server busy', retryAfter: 10 });
+    maxEventLoopDelay: env.PRESSURE_MAX_EVENT_LOOP_DELAY_MS,
+    maxHeapUsedBytes: env.PRESSURE_MAX_HEAP_MB * 1024 * 1024,
+    maxRssBytes: env.PRESSURE_MAX_RSS_MB * 1024 * 1024,
+    maxEventLoopUtilization: env.PRESSURE_MAX_EVENT_LOOP_UTILIZATION,
+    retryAfter: 10,
+    pressureHandler: (_req, reply, type, value) => {
+      const now = Date.now();
+      if (now - lastPressureLogAt >= env.PRESSURE_LOG_INTERVAL_MS) {
+        const memory = process.memoryUsage();
+        appLogger.warn(
+          {
+            type,
+            value,
+            suppressedSinceLastLog: suppressedPressureLogs,
+            heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+            rssMB: Math.round(memory.rss / 1024 / 1024),
+          },
+          'Server under pressure — shedding new work',
+        );
+        lastPressureLogAt = now;
+        suppressedPressureLogs = 0;
+      } else {
+        suppressedPressureLogs += 1;
+      }
+
+      reply
+        .header('Retry-After', '10')
+        .status(503)
+        .send({ error: 'Server busy', retryAfter: 10, reason: type });
     },
   });
 
@@ -180,11 +209,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerBillingModule);
   await app.register(ingestionModule);          // Must be before projects
   await app.register(registerProjectsModule);   // Depends on ingestion.redisCache
+  await app.register(registerSdkConfigDeliveryModule); // API-key SDK delivery: POST /v1/sdk-config
   await app.register(registerAnalyticsModule);
   await app.register(registerConnectorsModule);
   await app.register(registerAlertingModule);
   await app.register(registerEventAnalyticsModule);
   await app.register(registerAIModule);
+  await app.register(registerAutomationModule);
 
   appLogger.info('All modules registered');
 

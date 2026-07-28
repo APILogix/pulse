@@ -152,8 +152,8 @@ export function createApiKey(environment) {
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .slice(0, 20);
-    const publicKey = `pk_${envSlug}_${randomBytes(4).toString("hex")}`;
-    const secretSuffix = randomBytes(16).toString("hex");
+    const publicKey = `pulsiv_${envSlug}_${randomBytes(8).toString("hex")}`;
+    const secretSuffix = randomBytes(32).toString("hex");
     const fullKey = `${publicKey}.${secretSuffix}`;
     return {
         fullKey,
@@ -165,7 +165,7 @@ export function extractApiKeyPrefix(rawKey) {
     const value = rawKey.trim();
     const dotIndex = value.indexOf(".");
     const prefix = dotIndex >= 0 ? value.slice(0, dotIndex) : value;
-    if (!prefix.startsWith("pk_")) {
+    if (!prefix.startsWith("pulsiv_")) {
         return null;
     }
     return prefix.length >= 12 ? prefix : null;
@@ -178,19 +178,13 @@ export function constantTimeEqualHex(left, right) {
     }
     return timingSafeEqual(leftBuffer, rightBuffer);
 }
-/** Default permission set for a freshly minted key of a given type. */
-export function defaultPermissionsForType(keyType) {
-    switch (keyType) {
-        case "read_only":
-            return ["ingest:read", "events:read", "metrics:read"];
-        case "write_only":
-            return ["ingest:write"];
-        case "temporary":
-            return ["ingest:write", "ingest:read"];
-        case "read_write":
-        default:
-            return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
-    }
+/**
+ * Ingestion permissions granted to an authenticated credential. API keys are
+ * not a permission engine: every valid key may ingest telemetry for its
+ * environment, and finer authorization belongs to the policy modules.
+ */
+export function defaultIngestionPermissions() {
+    return ["ingest:write"];
 }
 /**
  * Reserved project slugs that are blocked at the application layer to prevent

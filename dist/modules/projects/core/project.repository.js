@@ -97,6 +97,20 @@ export class ProjectRepository {
             throw error;
         }
     }
+    async provisionRuntimeDefaults(project, client) {
+        await client.query(`INSERT INTO project_environments (
+         project_id, organization_id, name, slug, type, description, is_default, is_active, color
+       ) VALUES
+         ($1, $2, 'Production', 'production', 'production', 'Production telemetry', TRUE, TRUE, '#16A34A'),
+         ($1, $2, 'Staging', 'staging', 'staging', 'Pre-production telemetry', FALSE, TRUE, '#D97706'),
+         ($1, $2, 'Development', 'development', 'development', 'Development telemetry', FALSE, TRUE, '#2563EB'),
+         ($1, $2, 'Testing', 'testing', 'testing', 'Quality assurance and automated testing telemetry', FALSE, TRUE, '#7C3AED'),
+         ($1, $2, 'Preview', 'preview', 'preview', 'Short-lived preview deployment telemetry', FALSE, TRUE, '#DB2777')
+       ON CONFLICT DO NOTHING`, [project.id, project.orgId]);
+        await client.query(`INSERT INTO project_usage_current (project_id, organization_id)
+       VALUES ($1, $2)
+       ON CONFLICT (project_id) DO NOTHING`, [project.id, project.orgId]);
+    }
     async findProjectBySlug(orgId, slug, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
@@ -197,7 +211,9 @@ export class ProjectRepository {
         const db = client ?? this.db;
         const [projects, environments, apiKeys] = await Promise.all([
             db.query(`SELECT COUNT(*)::text FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, [orgId]),
-            db.query(`SELECT COUNT(*)::text FROM project_environments WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
+            db.query(`SELECT COUNT(*)::text FROM project_environments
+          WHERE organization_id = $1 AND deleted_at IS NULL
+            AND type = 'custom'::project_environment_type`, [orgId]),
             db.query(`SELECT COUNT(*)::text FROM project_api_keys WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
         ]);
         return {
@@ -229,11 +245,22 @@ export class ProjectRepository {
     }
     async getProjectUsageCounters(projectId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`SELECT counter_type, value, period_start
-         FROM project_usage
-        WHERE project_id = $1
-        ORDER BY period_start DESC
-        LIMIT 100`, [projectId]);
+        const result = await db.query(`SELECT metric.counter_type, metric.value::text AS value, usage.period_start
+         FROM project_usage_current usage
+         CROSS JOIN LATERAL (VALUES
+           ('total_events', usage.total_events::numeric),
+           ('errors', usage.errors::numeric),
+           ('requests', usage.requests::numeric),
+           ('traces', usage.traces::numeric),
+           ('logs', usage.logs::numeric),
+           ('metrics', usage.metrics::numeric),
+           ('profiles', usage.profiles::numeric),
+           ('alert_count', usage.alert_count::numeric),
+           ('connector_deliveries', usage.connector_deliveries::numeric),
+           ('failed_notifications', usage.failed_notifications::numeric)
+         ) metric(counter_type, value)
+        WHERE usage.project_id = $1
+        ORDER BY metric.counter_type`, [projectId]);
         return result.rows.map((r) => ({
             counterType: r.counter_type,
             value: Number(r.value),
