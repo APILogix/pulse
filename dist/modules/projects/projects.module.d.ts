@@ -13,7 +13,6 @@ import { ProjectsRepository } from './repository.js';
 import { SettingsRepository } from './settings/settings.repository.js';
 import { ApiKeyRepository } from './api-keys/api-key.repository.js';
 import { EnvironmentRepository } from './environments/environment.repository.js';
-import { ActivityRepository } from './activity/activity.repository.js';
 import { UsageRepository } from './usage/usage.repository.js';
 import { MemberRepository } from './members/member.repository.js';
 import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js';
@@ -28,7 +27,6 @@ declare module 'fastify' {
             settingsRepository: SettingsRepository;
             apiKeyRepository: ApiKeyRepository;
             environmentRepository: EnvironmentRepository;
-            activityRepository: ActivityRepository;
             usageRepository: UsageRepository;
             membersRepository: MemberRepository;
             connectorSubscriptionsService: import('./alerts/subscriptions/connector-subscription.service.js').ProjectConnectorSubscriptionService;

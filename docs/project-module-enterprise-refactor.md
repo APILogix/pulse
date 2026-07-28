@@ -26,7 +26,7 @@ The Project Module is the tenant-scoped container for a logical application. It 
           ▼                            ▼                            ▼
 ┌─────────────────┐      ┌─────────────────┐            ┌─────────────────┐
 │  Environments   │      │    API Keys     │            │    Members      │
-│ (owned by keys) │      │ (hash + prefix) │            │(roles, invites) │
+│ (owned by keys) │      │ (public + hash) │            │(roles, invites) │
 └─────────────────┘      └─────────────────┘            └─────────────────┘
           │                            │                            │
           │                            │                            │
@@ -44,13 +44,13 @@ The Project Module is the tenant-scoped container for a logical application. It 
 | Domain | Responsibility | Owns? |
 |---|---|---|
 | **Project** | Lightweight application identity. | `projects` table. |
-| **Environment** | Runtime scope (production, staging, QA, …). | `project_environments`. Created lazily when an API key is minted. |
-| **API Key** | Ingestion credential, scoping, rate limits, sampling. | `project_api_keys`. Stores only `public_key` + `secret_hash`. |
-| **Members** | Project-level RBAC, invitations, ownership transfer. | `project_members`, `project_member_invitations`, `project_roles`. |
+| **Environment** | User-facing deployment scope with a stable business type and editable SDK slug. | `project_environments`; five predefined environments are provisioned with each project. |
+| **API Key** | Minimal ingestion credential and direct lineage. Rotation workflow and usage are separate. | `project_api_keys`, `project_api_key_rotations`; stores only `public_key` + `secret_hash` secret material. See [API-key normalization](api-key-normalization.md). |
+| **Members** | Direct project-level RBAC membership selected from active organization members. | `project_members`. |
 | **Connector Subscriptions** | References org-owned connectors from the project. | `project_connector_subscriptions`. |
 | **Alert Preferences** | Project defaults + per-member overrides. | `project_notification_preferences`, `project_member_notification_preferences`. |
 | **Usage Analytics** | Time-series aggregations for dashboards. | `project_usage_*` tables (minute/hourly/daily). |
-| **Audit / Activity** | Immutable lifecycle records. | `project_audit_logs`, `project_activity`. |
+| **Organization Audit** | Immutable organization lifecycle records, optionally scoped by `project_id`. | `organization_audit_logs`. |
 
 ---
 
@@ -64,19 +64,18 @@ erDiagram
     PROJECTS ||--o{ PROJECT_ENVIRONMENTS : has
     PROJECTS ||--o{ PROJECT_API_KEYS : has
     PROJECTS ||--o{ PROJECT_MEMBERS : has
-    PROJECTS ||--o{ PROJECT_MEMBER_INVITATIONS : has
-    PROJECTS ||--o{ PROJECT_ROLES : defines
     PROJECTS ||--o{ PROJECT_CONNECTOR_SUBSCRIPTIONS : subscribes
     PROJECTS ||--o{ PROJECT_NOTIFICATION_PREFERENCES : configures
     PROJECTS ||--o{ PROJECT_MEMBER_NOTIFICATION_PREFERENCES : configures
-    PROJECTS ||--o{ PROJECT_AUDIT_LOGS : audits
-    PROJECTS ||--o{ PROJECT_ACTIVITY : tracks
+    ORGANIZATIONS ||--o{ ORGANIZATION_AUDIT_LOGS : records
+    PROJECTS ||--o{ ORGANIZATION_AUDIT_LOGS : filters_by_project_id
     PROJECTS ||--o{ PROJECT_USAGE_DAILY : aggregates
     PROJECTS ||--o{ PROJECT_USAGE_HOURLY : aggregates
     PROJECTS ||--o{ PROJECT_USAGE_MINUTE : aggregates
     PROJECT_API_KEYS }o--|| PROJECT_ENVIRONMENTS : belongs_to
-    PROJECT_API_KEYS ||--o{ PROJECT_API_KEY_USAGE : consumed
-    PROJECT_MEMBERS }o--|| PROJECT_ROLES : assigned
+    PROJECT_API_KEYS ||--o{ PROJECT_API_KEY_ROTATIONS : rotates
+    PROJECT_API_KEYS ||--o{ API_KEY_USAGE_MINUTE : consumed
+    PROJECT_API_KEYS ||--o{ API_KEY_USAGE_DAILY : summarized
     PROJECT_CONNECTOR_SUBSCRIPTIONS }o--|| CONNECTOR_CONFIGS : references
     PROJECT_MEMBER_NOTIFICATION_PREFERENCES }o--|| USERS : belongs_to
 
@@ -107,57 +106,47 @@ erDiagram
         uuid organization_id FK
         varchar name
         varchar slug
+        project_environment_type type
         text description
+        varchar color
         boolean is_default
         boolean is_active
-        varchar color
-        varchar icon
+        timestamptz created_at
+        timestamptz updated_at
         timestamptz deleted_at
     }
 
     PROJECT_API_KEYS {
         uuid id PK
+        uuid organization_id FK
         uuid project_id FK
-        uuid org_id FK
         uuid environment_id FK
+        varchar name
         varchar public_key
         text secret_hash
-        api_key_type key_type
-        varchar name
-        text description
-        boolean is_active
         api_key_status status
-        api_key_rotation_state rotation_state
-        int rotation_version
-        uuid rotated_from_key_id
-        timestamptz grace_period_ends_at
-        timestamptz revoked_at
-        uuid revoked_by
-        text revoked_reason
         timestamptz expires_at
-        boolean auto_rotate_enabled
-        int auto_rotate_days
         timestamptz last_used_at
-        inet last_used_ip
-        bigint usage_count
-        bigint error_count
-        text[] permissions
-        text[] allowed_endpoints
-        text[] blocked_endpoints
-        text[] allowed_sdks
-        text[] allowed_origins
-        inet[] allowed_ips
-        text[] allowed_domains
-        text[] allowed_event_types
-        jsonb sampling_rules
-        jsonb feature_flags
-        jsonb sdk_config
-        jsonb metadata
-        int rate_limit_per_second
-        int rate_limit_per_minute
-        int rate_limit_per_hour
+        uuid created_by FK
+        uuid rotated_from_key_id FK
+        timestamptz created_at
+        timestamptz updated_at
         timestamptz deleted_at
-        int version
+    }
+
+    PROJECT_API_KEY_ROTATIONS {
+        uuid id PK
+        uuid organization_id FK
+        uuid project_id FK
+        uuid environment_id FK
+        uuid old_key_id FK
+        uuid new_key_id FK
+        api_key_rotation_state state
+        text reason
+        uuid initiated_by FK
+        timestamptz initiated_at
+        timestamptz grace_ends_at
+        timestamptz completed_at
     }
 
     PROJECT_MEMBERS {
@@ -214,8 +203,7 @@ erDiagram
 - `idx_api_keys_active_env` — list/filter active keys by environment.
 - `idx_project_members_active` — membership checks.
 - `idx_project_connector_subs_enabled` — partial index for alert routing target resolution (excludes soft-deleted rows).
-- `idx_project_audit_logs_project_time` — audit log pagination.
-- `idx_project_activity_project_time` — activity feed pagination.
+- `idx_org_audit_project_created` — organization audit pagination filtered by project.
 - `idx_project_usage_daily_project_time` — dashboard time-series reads.
 
 ---
@@ -480,8 +468,7 @@ Base path: `/organizations/:orgId/projects`
 | POST | `/:projectId/connectors` | admin | Subscribe to org connector. |
 | PATCH | `/:projectId/connectors/:subId` | admin | Update subscription. |
 | DELETE | `/:projectId/connectors/:subId` | admin | Unsubscribe. |
-| GET | `/:projectId/activity` | viewer | Activity feed. |
-| GET | `/:projectId/audit-logs` | admin | Audit logs. |
+| GET | `/organizations/:orgId/audit-logs?projectId=:projectId` | organization admin | Project-filtered organization audit trail. |
 | GET | `/:projectId/analytics` | viewer | Usage analytics dashboard. |
 | GET | `/:projectId/analytics/heatmap` | viewer | Calendar/hourly heatmaps. |
 | GET | `/:projectId/analytics/top` | viewer | Top endpoints/errors/releases. |
@@ -518,7 +505,7 @@ Base path: `/organizations/:orgId/projects`
 |---|---|
 | **Tenant isolation** | Every repository query is scoped by `org_id` and/or `project_id`. Authorization is enforced in the service layer before any data access. |
 | **Soft delete** | Projects, environments, API keys, and members use soft delete (`deleted_at` / `status = 'removed'`). Hard delete is reserved for connectors subscriptions (with audit log) and must be migrated to soft delete if audit retention is required. |
-| **Optimistic locking** | `projects` and `project_api_keys` have a `version` column. `PATCH` requests include `version`; concurrent updates return `409 PROJECT_CONCURRENT_UPDATE` or `409 API_KEY_CONCURRENT_UPDATE`. |
+| **Optimistic locking** | `projects` uses a `version` column. API-key credentials intentionally do not carry policy/workflow version state; rotation history is append-oriented. |
 | **API key secrets** | Only `public_key` + `secret_hash` (SHA-256) are persisted. The raw `fullKey` is returned exactly once during `create` and `rotate`. `get/update/enable/disable` never return `secretHash`. |
 | **Constant-time verification** | `constantTimeEqualHex` prevents timing attacks during key verification. |
 | **Input validation** | Zod schemas at the route boundary; reserved slug validation at the application layer; unique partial indexes at the database layer. |
@@ -539,7 +526,7 @@ Base path: `/organizations/:orgId/projects`
 | Millions of API keys | In-process LRU cache for key verification (30-min TTL); indexes on `public_key` + `deleted_at IS NULL`; verification touches `last_used_at` asynchronously. |
 | Millions of members | `project_members` partial index on `status = 'active'`; alert routing loads only active members for a single project. |
 | Billions of events | Ingestion writes raw events; analytics reads from pre-aggregated time-series tables (`project_usage_minute`, `project_usage_hourly`, `project_usage_daily`). Dashboards never query raw events. |
-| Analytics queries | Downsampling based on time range; cursor pagination; materialized aggregates; cached responses for large ranges. |
+| Analytics queries | Downsampling by time range over minute/daily physical facts and read-only hourly/monthly views; PostgreSQL worker rollups are recommended over materialized or continuous aggregates until measurements justify a change. |
 
 ### Performance rules
 
@@ -562,7 +549,7 @@ Base path: `/organizations/:orgId/projects`
 
 1. `POST /projects/:projectId/api-keys/bulk-revoke` with `revokedReason`.
 2. Re-create keys and redistribute `fullKey` values securely.
-3. Review `project_audit_logs` for suspicious key usage.
+3. Review `organization_audit_logs` filtered by `project_id` for suspicious key usage.
 
 ### 10.3 Restoring a soft-deleted project
 
@@ -587,15 +574,15 @@ Base path: `/organizations/:orgId/projects`
 
 ## 11. Migration notes
 
-The refactor is delivered in migration `003_project_module_refactor.sql` plus related code changes.
+The current API-key database shape is delivered as the forward-only `04_projects/018_normalize_project_api_keys_and_usage.up.sql` convergence. Earlier project migrations remain ledgered history and are not edited to upgrade deployed databases. Detailed phases and backfill precedence are in [API-key normalization](api-key-normalization.md).
 
 ### Breaking changes
 
 1. `projects.default_environment` removed. Environments are now first-class `project_environments` rows.
 2. `connector_configs.project_id` removed. Connectors are organization resources; projects subscribe via `project_connector_subscriptions`.
 3. `project_api_keys.environment` text column removed; replaced by `environment_id` foreign key.
-4. `project_api_keys` now stores `public_key` + `secret_hash`; legacy keys may need rotation.
-5. New `version` columns on `projects` and `project_api_keys` for optimistic locking.
+4. `project_api_keys` stores only the canonical 15 credential/lineage columns; rotation workflow is in `project_api_key_rotations`.
+5. API-key usage has two partitioned physical facts (`minute`, `daily`) and read-only `hourly`/`monthly` views; project/API-key percentile columns are removed.
 
 ### Backfill steps
 
@@ -617,7 +604,7 @@ The refactor is delivered in migration `003_project_module_refactor.sql` plus re
 ## 12. Future extensibility
 
 - Add `project_connector_subscriptions.deleted_at` for full soft-delete parity.
-- Move project audit logs to a separate time-series store for long-term retention.
+- Scale organization audit retention with partitioning or archival while preserving `project_id` filtering.
 - Add read replicas for analytics queries.
 - Implement event-sourced projections for project membership changes.
 - Add support for SAML/SCIM-provisioned project memberships.

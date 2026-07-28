@@ -23,6 +23,7 @@ declare module 'fastify' {
     organization: {
       repository: OrganizationRepository;
       service: OrganizationService;
+      auditService: import('./audit-logs/audit-logs.service.js').OrganizationAuditService;
       sdkConfigService: SdkConfigService;
     };
   }
@@ -51,11 +52,16 @@ async function organizationModule(
   // SDK Remote Config: its own repository, but reuses the organization
   // repository for membership/RBAC checks and audit-log writes.
   const sdkConfigRepository = new SdkConfigRepository();
-  const sdkConfigService = new SdkConfigService(sdkConfigRepository, repository, fastify.log);
+  const sdkConfigService = new SdkConfigService(
+    sdkConfigRepository,
+    repository,
+    service.auditLogs,
+  );
 
   fastify.decorate('organization', {
     repository,
     service,
+    auditService: service.auditLogs,
     sdkConfigService
   });
 

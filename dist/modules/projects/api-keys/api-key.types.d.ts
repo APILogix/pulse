@@ -1,5 +1,10 @@
 import { z } from "zod";
 import type { EnvironmentReference } from "../environments/environment.types.js";
+/**
+ * An API key is only an authentication credential: it answers "which
+ * project/environment is sending this telemetry?". Rate limits, permissions,
+ * network policy, SDK configuration, and analytics live in their own modules.
+ */
 export declare const ApiKeyStatusSchema: z.ZodEnum<{
     active: "active";
     suspended: "suspended";
@@ -8,28 +13,19 @@ export declare const ApiKeyStatusSchema: z.ZodEnum<{
     rotated: "rotated";
 }>;
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatusSchema>;
-export declare const ApiKeyTypeSchema: z.ZodEnum<{
-    read_write: "read_write";
-    read_only: "read_only";
-    write_only: "write_only";
-    temporary: "temporary";
-}>;
-export type ApiKeyType = z.infer<typeof ApiKeyTypeSchema>;
-export declare const ApiKeyPermissionSchema: z.ZodEnum<{
-    "ingest:write": "ingest:write";
-    "ingest:read": "ingest:read";
-    "events:read": "events:read";
-    "metrics:read": "metrics:read";
-    "config:read": "config:read";
-}>;
-export type ApiKeyPermission = z.infer<typeof ApiKeyPermissionSchema>;
+/** Rotation workflow state is owned by `project_api_key_rotations`. */
 export declare const ApiKeyRotationStateSchema: z.ZodEnum<{
-    none: "none";
     completed: "completed";
     rotating: "rotating";
     grace_period: "grace_period";
 }>;
 export type ApiKeyRotationState = z.infer<typeof ApiKeyRotationStateSchema>;
+export declare const ApiKeyUsageGranularitySchema: z.ZodEnum<{
+    monthly: "monthly";
+    hourly: "hourly";
+    daily: "daily";
+}>;
+export type ApiKeyUsageGranularity = z.infer<typeof ApiKeyUsageGranularitySchema>;
 export declare const ApiKeyParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     projectId: z.ZodString;
@@ -37,12 +33,6 @@ export declare const ApiKeyParamsSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const ListApiKeysQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
-    keyType: z.ZodOptional<z.ZodEnum<{
-        read_write: "read_write";
-        read_only: "read_only";
-        write_only: "write_only";
-        temporary: "temporary";
-    }>>;
     status: z.ZodOptional<z.ZodEnum<{
         active: "active";
         suspended: "suspended";
@@ -50,137 +40,74 @@ export declare const ListApiKeysQuerySchema: z.ZodPipe<z.ZodTransform<unknown, u
         revoked: "revoked";
         rotated: "rotated";
     }>>;
-    isActive: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     includeInactive: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     page: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type ListApiKeysQuery = z.infer<typeof ListApiKeysQuerySchema>;
 export declare const CreateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     environmentId: z.ZodString;
-    name: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    keyType: z.ZodDefault<z.ZodEnum<{
-        read_write: "read_write";
-        read_only: "read_only";
-        write_only: "write_only";
-        temporary: "temporary";
-    }>>;
+    name: z.ZodString;
     expiresAt: z.ZodPipe<z.ZodTransform<{} | null | undefined, unknown>, z.ZodOptional<z.ZodNullable<z.ZodDate>>>;
-    autoRotateEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    autoRotateDays: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    permissions: z.ZodOptional<z.ZodArray<z.ZodEnum<{
-        "ingest:write": "ingest:write";
-        "ingest:read": "ingest:read";
-        "events:read": "events:read";
-        "metrics:read": "metrics:read";
-        "config:read": "config:read";
-    }>>>;
-    allowedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
 }, z.core.$strict>>;
 export type CreateApiKeyBody = z.infer<typeof CreateApiKeyBodySchema>;
 export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    name: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    name: z.ZodOptional<z.ZodString>;
     expiresAt: z.ZodPipe<z.ZodTransform<{} | null | undefined, unknown>, z.ZodOptional<z.ZodNullable<z.ZodDate>>>;
-    autoRotateEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
-    autoRotateDays: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-    permissions: z.ZodOptional<z.ZodArray<z.ZodEnum<{
-        "ingest:write": "ingest:write";
-        "ingest:read": "ingest:read";
-        "events:read": "events:read";
-        "metrics:read": "metrics:read";
-        "config:read": "config:read";
-    }>>>;
-    allowedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    blockedEndpoints: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedEventTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedOrigins: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedIps: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    rateLimitPerSecond: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerMinute: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    rateLimitPerHour: z.ZodOptional<z.ZodNullable<z.ZodCoercedNumber<unknown>>>;
-    version: z.ZodOptional<z.ZodNumber>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type UpdateApiKeyBody = z.infer<typeof UpdateApiKeyBodySchema>;
 export declare const RotateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
-    name: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    name: z.ZodOptional<z.ZodString>;
     expiresAt: z.ZodPipe<z.ZodTransform<{} | null | undefined, unknown>, z.ZodOptional<z.ZodNullable<z.ZodDate>>>;
     rotationReason: z.ZodOptional<z.ZodString>;
     gracePeriodHours: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type RotateApiKeyBody = z.infer<typeof RotateApiKeyBodySchema>;
 export declare const RevokeApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     revokedReason: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type RevokeApiKeyBody = z.infer<typeof RevokeApiKeyBodySchema>;
 export declare const BulkRotateBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
     rotationReason: z.ZodOptional<z.ZodString>;
     gracePeriodHours: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type BulkRotateBody = z.infer<typeof BulkRotateBodySchema>;
 export declare const BulkRevokeBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     environmentId: z.ZodOptional<z.ZodString>;
     apiKeyIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
     revokedReason: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>>;
+}, z.core.$strict>>;
 export type BulkRevokeBody = z.infer<typeof BulkRevokeBodySchema>;
+export declare const ApiKeyUsageQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
+    from: z.ZodCoercedDate<unknown>;
+    to: z.ZodCoercedDate<unknown>;
+    granularity: z.ZodDefault<z.ZodEnum<{
+        monthly: "monthly";
+        hourly: "hourly";
+        daily: "daily";
+    }>>;
+}, z.core.$strip>>;
+export type ApiKeyUsageQuery = z.infer<typeof ApiKeyUsageQuerySchema>;
+/** Canonical minimal credential. */
 export interface ProjectApiKey {
     id: string;
+    organizationId: string;
     projectId: string;
-    orgId: string | null;
-    publicKey: string;
-    keyType: ApiKeyType;
     environmentId: string;
-    environment: EnvironmentReference | null;
-    name: string | null;
-    description: string | null;
-    isActive: boolean;
+    name: string;
+    publicKey: string;
     status: ApiKeyStatus;
-    rotationState: ApiKeyRotationState;
-    rotationVersion: number;
+    expiresAt: Date | null;
+    lastUsedAt: Date | null;
     createdBy: string | null;
     rotatedFromKeyId: string | null;
-    rotatedAt: Date | null;
-    rotatedBy: string | null;
-    rotationReason: string | null;
-    gracePeriodEndsAt: Date | null;
-    revokedAt: Date | null;
-    revokedBy: string | null;
-    revokedReason: string | null;
-    expiresAt: Date | null;
-    autoRotateEnabled: boolean;
-    autoRotateDays: number;
-    lastUsedAt: Date | null;
-    lastUsedIp: string | null;
-    usageCount: number;
-    errorCount: number;
-    rateLimitPerSecond: number | null;
-    rateLimitPerMinute: number | null;
-    rateLimitPerHour: number | null;
-    permissions: string[];
-    allowedEndpoints: string[];
-    blockedEndpoints: string[];
-    allowedEventTypes: string[];
-    allowedOrigins: string[];
-    allowedIps: string[];
-    allowedDomains: string[];
-    allowedSdks: string[];
-    metadata: Record<string, unknown>;
     createdAt: Date;
     updatedAt: Date;
-    version: number;
+    deletedAt: Date | null;
+    /** Derived display data; never stored on the credential. */
+    environment?: EnvironmentReference | null;
 }
 export interface ProjectApiKeyRecord extends ProjectApiKey {
     secretHash: string;
@@ -189,41 +116,62 @@ export interface CreateApiKeyResponse {
     apiKey: ProjectApiKey;
     fullKey: string;
 }
+export interface ApiKeyRotation {
+    id: string;
+    organizationId: string;
+    projectId: string;
+    environmentId: string;
+    oldKeyId: string;
+    newKeyId: string | null;
+    state: ApiKeyRotationState;
+    reason: string | null;
+    initiatedBy: string | null;
+    initiatedAt: Date;
+    graceEndsAt: Date | null;
+    completedAt: Date | null;
+}
+/**
+ * Authentication context. Rate limits and ingestion policy are resolved from
+ * organization/platform configuration, not from the credential row.
+ */
 export interface ValidatedApiKey {
     id: string;
     projectId: string;
     orgId: string;
     environmentId: string;
     environmentName: string;
-    keyType: ApiKeyType;
-    permissions: string[];
-    allowedEndpoints: string[];
-    blockedEndpoints: string[];
-    allowedEventTypes: string[];
-    allowedOrigins: string[];
-    allowedIps: string[];
-    allowedDomains: string[];
-    allowedSdks: string[];
-    rateLimitPerSecond: number | null;
-    rateLimitPerMinute: number | null;
-    rateLimitPerHour: number | null;
+    environmentSlug: string;
     samplingRules: Record<string, unknown>;
     featureFlags: Record<string, unknown>;
     sdkConfig: Record<string, unknown>;
 }
+export interface ApiKeyUsageSeriesPoint {
+    bucket: string;
+    requests: number;
+    acceptedEvents: number;
+    errorEvents: number;
+    ingestionFailures: number;
+    acceptedBytes: number;
+    rateLimitedRequests: number;
+}
+export interface ApiKeyUsageSummary {
+    requests: number;
+    acceptedEvents: number;
+    errorEvents: number;
+    ingestionFailures: number;
+    acceptedBytes: number;
+    rateLimitedRequests: number;
+    errorRate: number;
+}
 export interface ApiKeyUsage {
     keyId: string;
     keyPrefix: string;
-    totalRequests: number;
-    totalSuccess: number;
-    totalErrors: number;
-    bytesIngested: number;
-    eventsIngested: number;
     lastUsedAt: Date | null;
-    requestsByDay: Array<{
-        date: string;
-        count: number;
-    }>;
+    granularity: ApiKeyUsageGranularity;
+    from: string;
+    to: string;
+    summary: ApiKeyUsageSummary;
+    series: ApiKeyUsageSeriesPoint[];
 }
 export interface BulkOperationResult {
     total: number;
@@ -237,21 +185,7 @@ export interface BulkOperationResult {
     }>;
 }
 export interface ApiKeyUpdateInput {
-    name?: string | null;
-    description?: string | null;
+    name?: string;
     expiresAt?: Date | null;
-    autoRotateEnabled?: boolean;
-    autoRotateDays?: number;
-    permissions?: string[];
-    allowedEndpoints?: string[];
-    blockedEndpoints?: string[];
-    allowedEventTypes?: string[];
-    allowedOrigins?: string[];
-    allowedIps?: string[];
-    allowedDomains?: string[];
-    rateLimitPerSecond?: number | null;
-    rateLimitPerMinute?: number | null;
-    rateLimitPerHour?: number | null;
-    version?: number;
 }
 //# sourceMappingURL=api-key.types.d.ts.map

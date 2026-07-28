@@ -28,7 +28,6 @@ import {
   CreateProjectBodySchema,
   EnvironmentParamsSchema,
   ListApiKeysQuerySchema,
-  ListProjectActivityQuerySchema,
   ListProjectsQuerySchema,
   OrgIdParamsSchema,
   ProjectParamsSchema,

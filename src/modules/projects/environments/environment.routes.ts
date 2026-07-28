@@ -9,6 +9,7 @@ import {
 import {
   CreateEnvironmentBodySchema,
   EnvironmentParamsSchema,
+  ListEnvironmentsQuerySchema,
   ProjectParamsSchema,
   ProjectSdkConfigParamsSchema,
   UpdateEnvironmentBodySchema,
@@ -104,8 +105,9 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
+      const query = ListEnvironmentsQuerySchema.parse(request.query ?? {});
       const environments = await service.listEnvironments(
-        orgId, projectId, authenticatedUser(request).id,
+        orgId, projectId, authenticatedUser(request).id, query.includeDeleted,
       );
       return reply.send({ success: true, data: environments });
     }),
@@ -143,6 +145,42 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
       const body = UpdateEnvironmentBodySchema.parse(request.body);
       const environment = await service.updateEnvironment(
         orgId, projectId, environmentId, authenticatedUser(request).id, body, requestMeta(request),
+      );
+      return reply.send({ success: true, data: environment });
+    }),
+  );
+
+  fastify.post(
+    "/:projectId/environments/:environmentId/restore",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      const environment = await service.restoreEnvironment(
+        orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request),
+      );
+      return reply.send({ success: true, data: environment });
+    }),
+  );
+
+  fastify.post(
+    "/:projectId/environments/:environmentId/set-default",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      const environment = await service.setDefaultEnvironment(
+        orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request),
+      );
+      return reply.send({ success: true, data: environment });
+    }),
+  );
+
+  fastify.post(
+    "/:projectId/environments/:environmentId/deactivate",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      const environment = await service.deactivateEnvironment(
+        orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request),
       );
       return reply.send({ success: true, data: environment });
     }),

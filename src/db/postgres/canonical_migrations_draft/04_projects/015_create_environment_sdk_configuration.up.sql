@@ -88,7 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_project_environment_sdk_revisions_history
 INSERT INTO project_environment_sdk_configs(
   organization_id, project_id, environment_id, created_by, updated_by
 )
-SELECT e.organization_id, e.project_id, e.id, e.created_by_user_id, e.created_by_user_id
+SELECT e.organization_id, e.project_id, e.id, NULL, NULL
 FROM project_environments e
 ON CONFLICT(environment_id) DO NOTHING;
 
@@ -128,18 +128,18 @@ DECLARE
 BEGIN
   INSERT INTO project_environment_sdk_configs(
     id, organization_id, project_id, environment_id, published_revision_id,
-    current_revision, current_hash, created_by, updated_by
+    current_revision, current_hash
   ) VALUES(
     head_id, NEW.organization_id, NEW.project_id, NEW.id, revision_id,
-    1, empty_hash, NEW.created_by_user_id, NEW.created_by_user_id
+    1, empty_hash
   );
 
   INSERT INTO project_environment_sdk_config_revisions(
     id, config_id, organization_id, project_id, environment_id, revision_number,
-    config_value, config_hash, change_type, change_summary, published_by
+    config_value, config_hash, change_type, change_summary
   ) VALUES(
     revision_id, head_id, NEW.organization_id, NEW.project_id, NEW.id, 1,
-    '{}'::jsonb, empty_hash, 'initial', 'Initial environment SDK configuration', NEW.created_by_user_id
+    '{}'::jsonb, empty_hash, 'initial', 'Initial environment SDK configuration'
   );
 
   RETURN NEW;

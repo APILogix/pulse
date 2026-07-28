@@ -4,7 +4,7 @@ import { ScimTokenService } from "../scim/scim-token.service.js";
 import { SsoRepository } from "./sso/sso.repository.js";
 import { SsoService } from "./sso/sso.service.js";
 import { AuditLogsRepository } from "./audit-logs/audit-logs.repository.js";
-import { AuditLogsService } from "./audit-logs/audit-logs.service.js";
+import { OrganizationAuditService } from "./audit-logs/audit-logs.service.js";
 import { QuotasRepository } from "./quotas/quotas.repository.js";
 import { QuotasService } from "./quotas/quotas.service.js";
 import { MembersService } from "./members/members.service.js";
@@ -107,7 +107,7 @@ export class OrganizationService {
             requireMember: this.requireMember.bind(this),
             audit: this.audit.bind(this),
         });
-        this.auditLogs = new AuditLogsService({
+        this.auditLogs = new OrganizationAuditService({
             repository: new AuditLogsRepository(),
             requireMember: this.requireMember.bind(this),
             log: this.log,

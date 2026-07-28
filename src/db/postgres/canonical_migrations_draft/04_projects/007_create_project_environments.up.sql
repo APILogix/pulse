@@ -101,37 +101,55 @@ ALTER TABLE project_settings
   DROP COLUMN IF EXISTS metadata,
   DROP COLUMN IF EXISTS retention_days;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'project_environment_type') THEN
+    CREATE TYPE project_environment_type AS ENUM (
+      'production', 'pre_production', 'staging', 'pre_staging', 'development',
+      'testing', 'preview', 'pre_deployment', 'custom'
+    );
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS project_environments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name VARCHAR(100) NOT NULL,
   slug VARCHAR(100) NOT NULL,
+  type project_environment_type NOT NULL DEFAULT 'custom',
   description TEXT,
+  color VARCHAR(7) NOT NULL DEFAULT '#64748B',
   is_default BOOLEAN NOT NULL DEFAULT false,
   is_active BOOLEAN NOT NULL DEFAULT true,
-  color VARCHAR(20),
-  icon VARCHAR(255),
-  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  created_by_api_key_id UUID REFERENCES project_api_keys(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMPTZ,
-  version INTEGER NOT NULL DEFAULT 1,
-  CONSTRAINT project_environments_slug_check CHECK (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$')
+  CONSTRAINT project_environments_name_check CHECK (length(btrim(name)) BETWEEN 1 AND 100),
+  CONSTRAINT project_environments_slug_check CHECK (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  CONSTRAINT project_environments_color_check CHECK (color ~ '^#[0-9A-Fa-f]{6}$'),
+  CONSTRAINT project_environments_default_active_check CHECK (NOT is_default OR is_active)
 );
-INSERT INTO project_environments (project_id, organization_id, name, slug, description, is_default, color)
-SELECT p.id, p.org_id, v.name, v.slug, v.description, v.is_default, v.color
+INSERT INTO project_environments (project_id, organization_id, name, slug, type, description, is_default, color)
+SELECT p.id, p.org_id, v.name, v.slug, v.type::project_environment_type, v.description, v.is_default, v.color
 FROM projects p CROSS JOIN (VALUES
-  ('Production','production','Production telemetry',true,'#16A34A'),
-  ('Staging','staging','Pre-production telemetry',false,'#D97706'),
-  ('Development','development','Development telemetry',false,'#2563EB')
-) AS v(name,slug,description,is_default,color)
+  ('Production','production','production','Production telemetry',true,'#16A34A'),
+  ('Staging','staging','staging','Pre-production telemetry',false,'#D97706'),
+  ('Development','development','development','Development telemetry',false,'#2563EB'),
+  ('Testing','testing','testing','Quality assurance and automated testing telemetry',false,'#7C3AED'),
+  ('Preview','preview','preview','Short-lived preview deployment telemetry',false,'#DB2777')
+) AS v(name,slug,type,description,is_default,color)
 WHERE NOT EXISTS (SELECT 1 FROM project_environments e WHERE e.project_id=p.id AND e.slug=v.slug AND e.deleted_at IS NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_active_slug ON project_environments(project_id, slug) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_default ON project_environments(project_id) WHERE is_default AND deleted_at IS NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_tenant_id ON project_environments(id, project_id, organization_id);
-CREATE INDEX IF NOT EXISTS idx_project_environments_tenant ON project_environments(organization_id, project_id, is_active) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_active_slug
+  ON project_environments(project_id, slug) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_default
+  ON project_environments(project_id) WHERE is_default AND is_active AND deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_environments_tenant_id
+  ON project_environments(id, project_id, organization_id);
+CREATE INDEX IF NOT EXISTS idx_project_environments_org_type
+  ON project_environments(organization_id, type) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_project_environments_project_list
+  ON project_environments(project_id, is_active, type, name) WHERE deleted_at IS NULL;
 
 ALTER TABLE project_releases
   ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,

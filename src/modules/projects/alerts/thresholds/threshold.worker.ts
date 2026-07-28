@@ -28,11 +28,9 @@ const METRIC_EXPRESSIONS: Readonly<Record<string, string>> = {
   requests: "COALESCE(SUM(requests),0)::float8",
   failed_notifications: "COALESCE(SUM(failed_notifications),0)::float8",
   rate_limit_usage: "COALESCE(SUM(rate_limit_usage),0)::float8",
-  latency_ms_p50: "MAX(latency_ms_p50)::float8",
-  latency_ms_p75: "MAX(latency_ms_p75)::float8",
-  latency_ms_p90: "MAX(latency_ms_p90)::float8",
-  latency_ms_p95: "MAX(latency_ms_p95)::float8",
-  latency_ms_p99: "MAX(latency_ms_p99)::float8",
+  // Latency percentiles are intentionally absent: percentiles are not
+  // composable across buckets, so they cannot be derived from additive usage
+  // rollups. Latency SLOs must be evaluated by a mergeable-sketch pipeline.
 };
 
 export class ProjectThresholdWorker {

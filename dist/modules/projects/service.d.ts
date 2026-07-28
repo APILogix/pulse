@@ -14,17 +14,16 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../organization/repository.js";
+import type { OrganizationAuditService } from "../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "./types.js";
 import { ProjectsRepository } from "./repository.js";
 import { SettingsRepository } from "./settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "./environments/environment.repository.js";
-import { ActivityRepository } from "./activity/activity.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
-import type { ApiKeyUsage, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectActivityQuery, ListProjectsQuery, OrgRole, Project, ProjectActivityResult, ProjectApiKey, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
+import type { ApiKeyRotation, ApiKeyUsage, ApiKeyUsageQuery, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, OrgRole, Project, ProjectApiKey, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
 import { ProjectService } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
-import { ProjectActivityService } from "./activity/activity.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
@@ -46,21 +45,20 @@ export declare class ProjectsService {
     private readonly repository;
     private readonly logger;
     private readonly orgRepo;
+    private readonly auditService;
     private readonly settingsRepository;
     private readonly apiKeyRepository;
     private readonly environmentRepository;
-    private readonly activityRepository;
     private readonly usageRepository;
     readonly core: ProjectService;
     readonly settings: SettingsService;
-    readonly activity: ProjectActivityService;
     readonly environments: EnvironmentService;
     readonly apiKeys: ApiKeyService;
     readonly base: BaseProjectService;
     readonly members: ProjectMemberService;
     readonly connectorSubscriptions: ProjectConnectorSubscriptionService;
     readonly analytics: UsageAnalyticsService;
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, usageRepository: UsageRepository);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;
@@ -81,12 +79,14 @@ export declare class ProjectsService {
     resumeProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project>;
     getProjectStats(orgId: string, projectId: string, userId: string): Promise<ProjectWithStats>;
     getProjectUsage(orgId: string, projectId: string, userId: string): Promise<ProjectUsageCounter[]>;
-    listProjectActivity(orgId: string, projectId: string, userId: string, query: ListProjectActivityQuery): Promise<ProjectActivityResult>;
-    listEnvironments(orgId: string, projectId: string, userId: string): Promise<ProjectEnvironmentConfig[]>;
+    listEnvironments(orgId: string, projectId: string, userId: string, includeDeleted?: boolean): Promise<ProjectEnvironmentConfig[]>;
     getEnvironment(orgId: string, projectId: string, environmentId: string, userId: string): Promise<ProjectEnvironmentConfig>;
     createEnvironment(orgId: string, projectId: string, userId: string, body: CreateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     updateEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, body: UpdateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     deleteEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<void>;
+    restoreEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
+    setDefaultEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
+    deactivateEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     listApiKeys(orgId: string, projectId: string, userId: string, query: ListApiKeysQuery): Promise<{
         keys: ProjectApiKey[];
         total: number;
@@ -105,7 +105,9 @@ export declare class ProjectsService {
     disableApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string, meta: RequestMeta): Promise<ProjectApiKey>;
     bulkRotateKeys(orgId: string, projectId: string, userId: string, body: BulkRotateBody, meta: RequestMeta): Promise<BulkOperationResult>;
     bulkRevokeKeys(orgId: string, projectId: string, userId: string, body: BulkRevokeBody, meta: RequestMeta): Promise<BulkOperationResult>;
-    getApiKeyUsage(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ApiKeyUsage>;
+    getApiKeyUsage(orgId: string, projectId: string, apiKeyId: string, userId: string, query: ApiKeyUsageQuery): Promise<ApiKeyUsage>;
+    /** Rotation workflow history now lives outside the credential row. */
+    listApiKeyRotations(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ApiKeyRotation[]>;
     /**
      * Resolve a raw key to its validated context. Prefix narrows the candidate
      * set, then a constant-time hash compare prevents timing leaks. Enforces
@@ -130,6 +132,7 @@ export declare class ProjectsService {
      */
     audit(meta: RequestMeta, data: {
         orgId: string;
+        projectId: string;
         action: string;
         entityType: string;
         entityId?: string;

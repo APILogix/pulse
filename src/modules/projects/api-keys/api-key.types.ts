@@ -1,7 +1,12 @@
 import { z } from "zod";
-import { normalizeObjectKeys, OptionalDateSchema, Ipv4OrV6 } from "../shared/schema-utils.js";
+import { normalizeObjectKeys, OptionalDateSchema } from "../shared/schema-utils.js";
 import type { EnvironmentReference } from "../environments/environment.types.js";
 
+/**
+ * An API key is only an authentication credential: it answers "which
+ * project/environment is sending this telemetry?". Rate limits, permissions,
+ * network policy, SDK configuration, and analytics live in their own modules.
+ */
 export const ApiKeyStatusSchema = z.enum([
   "active",
   "revoked",
@@ -11,30 +16,16 @@ export const ApiKeyStatusSchema = z.enum([
 ]);
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatusSchema>;
 
-export const ApiKeyTypeSchema = z.enum([
-  "read_write",
-  "read_only",
-  "write_only",
-  "temporary",
-]);
-export type ApiKeyType = z.infer<typeof ApiKeyTypeSchema>;
-
-export const ApiKeyPermissionSchema = z.enum([
-  "ingest:write",
-  "ingest:read",
-  "events:read",
-  "metrics:read",
-  "config:read",
-]);
-export type ApiKeyPermission = z.infer<typeof ApiKeyPermissionSchema>;
-
+/** Rotation workflow state is owned by `project_api_key_rotations`. */
 export const ApiKeyRotationStateSchema = z.enum([
-  "none",
   "rotating",
   "grace_period",
   "completed",
 ]);
 export type ApiKeyRotationState = z.infer<typeof ApiKeyRotationStateSchema>;
+
+export const ApiKeyUsageGranularitySchema = z.enum(["hourly", "daily", "monthly"]);
+export type ApiKeyUsageGranularity = z.infer<typeof ApiKeyUsageGranularitySchema>;
 
 export const ApiKeyParamsSchema = z.object({
   orgId: z.string().uuid(),
@@ -46,14 +37,12 @@ export const ListApiKeysQuerySchema = z.preprocess(
   normalizeObjectKeys,
   z.object({
     environmentId: z.string().uuid().optional(),
-    keyType: ApiKeyTypeSchema.optional(),
     status: ApiKeyStatusSchema.optional(),
-    isActive: z.coerce.boolean().optional(),
     includeInactive: z.coerce.boolean().optional(),
     page: z.coerce.number().int().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(20),
     offset: z.coerce.number().int().min(0).optional(),
-  }),
+  }).strict(),
 );
 export type ListApiKeysQuery = z.infer<typeof ListApiKeysQuerySchema>;
 
@@ -61,22 +50,8 @@ export const CreateApiKeyBodySchema = z.preprocess(
   normalizeObjectKeys,
   z.object({
     environmentId: z.string().uuid(),
-    name: z.string().min(1).max(255).nullable().optional(),
-    description: z.string().max(2000).nullable().optional(),
-    keyType: ApiKeyTypeSchema.default("read_write"),
+    name: z.string().trim().min(1).max(255),
     expiresAt: OptionalDateSchema,
-    autoRotateEnabled: z.coerce.boolean().optional(),
-    autoRotateDays: z.coerce.number().int().min(1).max(365).optional(),
-    permissions: z.array(ApiKeyPermissionSchema).min(1).max(20).optional(),
-    allowedEndpoints: z.array(z.string().min(1).max(255)).max(100).optional(),
-    blockedEndpoints: z.array(z.string().min(1).max(255)).max(100).optional(),
-    allowedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
-    allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
-    allowedIps: z.array(Ipv4OrV6).max(256).optional(),
-    allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-    rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
-    rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
-    rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
   }).strict(),
 );
 export type CreateApiKeyBody = z.infer<typeof CreateApiKeyBodySchema>;
@@ -85,23 +60,10 @@ export const UpdateApiKeyBodySchema = z.preprocess(
   normalizeObjectKeys,
   z
     .object({
-      name: z.string().min(1).max(255).nullable().optional(),
-      description: z.string().max(2000).nullable().optional(),
+      name: z.string().trim().min(1).max(255).optional(),
       expiresAt: OptionalDateSchema,
-      autoRotateEnabled: z.coerce.boolean().optional(),
-      autoRotateDays: z.coerce.number().int().min(1).max(365).optional(),
-      permissions: z.array(ApiKeyPermissionSchema).min(1).max(20).optional(),
-      allowedEndpoints: z.array(z.string().min(1).max(255)).max(100).optional(),
-      blockedEndpoints: z.array(z.string().min(1).max(255)).max(100).optional(),
-      allowedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
-      allowedOrigins: z.array(z.string().min(1).max(255)).max(100).optional(),
-      allowedIps: z.array(Ipv4OrV6).max(256).optional(),
-      allowedDomains: z.array(z.string().min(1).max(255)).max(100).optional(),
-      rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
-      rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
-      rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
-      version: z.number().int().min(1).optional(),
     })
+    .strict()
     .refine((value) => Object.keys(value).length > 0, {
       message: "At least one field is required",
     }),
@@ -111,11 +73,11 @@ export type UpdateApiKeyBody = z.infer<typeof UpdateApiKeyBodySchema>;
 export const RotateApiKeyBodySchema = z.preprocess(
   normalizeObjectKeys,
   z.object({
-    name: z.string().min(1).max(255).nullable().optional(),
+    name: z.string().trim().min(1).max(255).optional(),
     expiresAt: OptionalDateSchema,
     rotationReason: z.string().min(1).max(500).optional(),
     gracePeriodHours: z.coerce.number().int().min(0).max(168).optional(),
-  }),
+  }).strict(),
 );
 export type RotateApiKeyBody = z.infer<typeof RotateApiKeyBodySchema>;
 
@@ -123,7 +85,7 @@ export const RevokeApiKeyBodySchema = z.preprocess(
   normalizeObjectKeys,
   z.object({
     revokedReason: z.string().min(1).max(500).optional(),
-  }),
+  }).strict(),
 );
 export type RevokeApiKeyBody = z.infer<typeof RevokeApiKeyBodySchema>;
 
@@ -133,7 +95,7 @@ export const BulkRotateBodySchema = z.preprocess(
     environmentId: z.string().uuid().optional(),
     rotationReason: z.string().min(1).max(500).optional(),
     gracePeriodHours: z.coerce.number().int().min(0).max(168).optional(),
-  }),
+  }).strict(),
 );
 export type BulkRotateBody = z.infer<typeof BulkRotateBodySchema>;
 
@@ -143,55 +105,41 @@ export const BulkRevokeBodySchema = z.preprocess(
     environmentId: z.string().uuid().optional(),
     apiKeyIds: z.array(z.string().uuid()).min(1).max(100).optional(),
     revokedReason: z.string().min(1).max(500).optional(),
-  }),
+  }).strict(),
 );
 export type BulkRevokeBody = z.infer<typeof BulkRevokeBodySchema>;
 
+export const ApiKeyUsageQuerySchema = z.preprocess(
+  normalizeObjectKeys,
+  z.object({
+    from: z.coerce.date(),
+    to: z.coerce.date(),
+    granularity: ApiKeyUsageGranularitySchema.default("daily"),
+  }).refine((value) => value.to >= value.from, {
+    message: "to must be after from",
+    path: ["to"],
+  }),
+);
+export type ApiKeyUsageQuery = z.infer<typeof ApiKeyUsageQuerySchema>;
+
+/** Canonical minimal credential. */
 export interface ProjectApiKey {
   id: string;
+  organizationId: string;
   projectId: string;
-  orgId: string | null;
-  publicKey: string;
-  keyType: ApiKeyType;
   environmentId: string;
-  environment: EnvironmentReference | null;
-  name: string | null;
-  description: string | null;
-  isActive: boolean;
+  name: string;
+  publicKey: string;
   status: ApiKeyStatus;
-  rotationState: ApiKeyRotationState;
-  rotationVersion: number;
+  expiresAt: Date | null;
+  lastUsedAt: Date | null;
   createdBy: string | null;
   rotatedFromKeyId: string | null;
-  rotatedAt: Date | null;
-  rotatedBy: string | null;
-  rotationReason: string | null;
-  gracePeriodEndsAt: Date | null;
-  revokedAt: Date | null;
-  revokedBy: string | null;
-  revokedReason: string | null;
-  expiresAt: Date | null;
-  autoRotateEnabled: boolean;
-  autoRotateDays: number;
-  lastUsedAt: Date | null;
-  lastUsedIp: string | null;
-  usageCount: number;
-  errorCount: number;
-  rateLimitPerSecond: number | null;
-  rateLimitPerMinute: number | null;
-  rateLimitPerHour: number | null;
-  permissions: string[];
-  allowedEndpoints: string[];
-  blockedEndpoints: string[];
-  allowedEventTypes: string[];
-  allowedOrigins: string[];
-  allowedIps: string[];
-  allowedDomains: string[];
-  allowedSdks: string[];
-  metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
-  version: number;
+  deletedAt: Date | null;
+  /** Derived display data; never stored on the credential. */
+  environment?: EnvironmentReference | null;
 }
 
 export interface ProjectApiKeyRecord extends ProjectApiKey {
@@ -203,39 +151,66 @@ export interface CreateApiKeyResponse {
   fullKey: string;
 }
 
+export interface ApiKeyRotation {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  environmentId: string;
+  oldKeyId: string;
+  newKeyId: string | null;
+  state: ApiKeyRotationState;
+  reason: string | null;
+  initiatedBy: string | null;
+  initiatedAt: Date;
+  graceEndsAt: Date | null;
+  completedAt: Date | null;
+}
+
+/**
+ * Authentication context. Rate limits and ingestion policy are resolved from
+ * organization/platform configuration, not from the credential row.
+ */
 export interface ValidatedApiKey {
   id: string;
   projectId: string;
   orgId: string;
   environmentId: string;
   environmentName: string;
-  keyType: ApiKeyType;
-  permissions: string[];
-  allowedEndpoints: string[];
-  blockedEndpoints: string[];
-  allowedEventTypes: string[];
-  allowedOrigins: string[];
-  allowedIps: string[];
-  allowedDomains: string[];
-  allowedSdks: string[];
-  rateLimitPerSecond: number | null;
-  rateLimitPerMinute: number | null;
-  rateLimitPerHour: number | null;
+  environmentSlug: string;
   samplingRules: Record<string, unknown>;
   featureFlags: Record<string, unknown>;
   sdkConfig: Record<string, unknown>;
 }
 
+export interface ApiKeyUsageSeriesPoint {
+  bucket: string;
+  requests: number;
+  acceptedEvents: number;
+  errorEvents: number;
+  ingestionFailures: number;
+  acceptedBytes: number;
+  rateLimitedRequests: number;
+}
+
+export interface ApiKeyUsageSummary {
+  requests: number;
+  acceptedEvents: number;
+  errorEvents: number;
+  ingestionFailures: number;
+  acceptedBytes: number;
+  rateLimitedRequests: number;
+  errorRate: number;
+}
+
 export interface ApiKeyUsage {
   keyId: string;
   keyPrefix: string;
-  totalRequests: number;
-  totalSuccess: number;
-  totalErrors: number;
-  bytesIngested: number;
-  eventsIngested: number;
   lastUsedAt: Date | null;
-  requestsByDay: Array<{ date: string; count: number }>;
+  granularity: ApiKeyUsageGranularity;
+  from: string;
+  to: string;
+  summary: ApiKeyUsageSummary;
+  series: ApiKeyUsageSeriesPoint[];
 }
 
 export interface BulkOperationResult {
@@ -251,20 +226,6 @@ export interface BulkOperationResult {
 }
 
 export interface ApiKeyUpdateInput {
-  name?: string | null;
-  description?: string | null;
+  name?: string;
   expiresAt?: Date | null;
-  autoRotateEnabled?: boolean;
-  autoRotateDays?: number;
-  permissions?: string[];
-  allowedEndpoints?: string[];
-  blockedEndpoints?: string[];
-  allowedEventTypes?: string[];
-  allowedOrigins?: string[];
-  allowedIps?: string[];
-  allowedDomains?: string[];
-  rateLimitPerSecond?: number | null;
-  rateLimitPerMinute?: number | null;
-  rateLimitPerHour?: number | null;
-  version?: number;
 }

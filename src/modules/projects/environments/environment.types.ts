@@ -1,19 +1,35 @@
 import { z } from "zod";
-import { normalizeObjectKeys, Ipv4OrV6 } from "../shared/schema-utils.js";
+import { normalizeObjectKeys } from "../shared/schema-utils.js";
 
-export const WellKnownEnvironmentSchema = z.enum([
-  "development",
-  "staging",
-  "production",
-  "qa",
-  "testing",
-  "canary",
-  "sandbox",
+export enum EnvironmentType {
+  PRODUCTION = "production",
+  PRE_PRODUCTION = "pre_production",
+  STAGING = "staging",
+  PRE_STAGING = "pre_staging",
+  DEVELOPMENT = "development",
+  TESTING = "testing",
+  PREVIEW = "preview",
+  PRE_DEPLOYMENT = "pre_deployment",
+  CUSTOM = "custom",
+}
+
+export const EnvironmentTypeSchema = z.enum([
+  EnvironmentType.PRODUCTION,
+  EnvironmentType.PRE_PRODUCTION,
+  EnvironmentType.STAGING,
+  EnvironmentType.PRE_STAGING,
+  EnvironmentType.DEVELOPMENT,
+  EnvironmentType.TESTING,
+  EnvironmentType.PREVIEW,
+  EnvironmentType.PRE_DEPLOYMENT,
+  EnvironmentType.CUSTOM,
 ]);
-export type WellKnownEnvironment = z.infer<typeof WellKnownEnvironmentSchema>;
 
-export const EnvironmentNameSchema = z.string().min(1).max(100).regex(/^[a-zA-Z0-9_-]+$/);
-export type EnvironmentName = z.infer<typeof EnvironmentNameSchema>;
+export const EnvironmentNameSchema = z.string().trim().min(1).max(100);
+export const EnvironmentSlugSchema = z.string().trim().min(1).max(100)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and single hyphens only");
+export const EnvironmentColorSchema = z.string()
+  .regex(/^#[0-9A-Fa-f]{6}$/, "Use a six-digit HEX color such as #2563EB");
 
 export const EnvironmentParamsSchema = z.object({
   orgId: z.string().uuid(),
@@ -21,43 +37,43 @@ export const EnvironmentParamsSchema = z.object({
   environmentId: z.string().uuid(),
 });
 
-export const environmentConfigShape = {
+const environmentShape = {
   name: EnvironmentNameSchema,
-  description: z.string().max(2000).nullable().optional(),
-  color: z.string().max(20).nullable().optional(),
-  icon: z.string().max(255).nullable().optional(),
-  isActive: z.coerce.boolean().optional(),
-  isDefault: z.coerce.boolean().optional(),
-  rateLimitPerSecond: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
-  rateLimitPerMinute: z.coerce.number().int().min(1).max(100_000_000).nullable().optional(),
-  rateLimitPerHour: z.coerce.number().int().min(1).max(1_000_000_000).nullable().optional(),
-  burstLimit: z.coerce.number().int().min(1).max(1_000_000).nullable().optional(),
-  allowedEventTypes: z.array(z.string().min(1).max(100)).max(100).optional(),
-  maxEventSizeBytes: z.coerce.number().int().min(1).max(67_108_864).nullable().optional(),
-  maxBatchSize: z.coerce.number().int().min(1).max(10_000).nullable().optional(),
-  requireHttps: z.coerce.boolean().optional(),
-  ipAllowlist: z.array(Ipv4OrV6).max(256).nullable().optional(),
-  ipBlocklist: z.array(Ipv4OrV6).max(256).nullable().optional(),
-  alertEmail: z.string().email().max(255).nullable().optional(),
-  alertWebhookUrl: z.string().url().max(500).nullable().optional(),
+  slug: EnvironmentSlugSchema,
+  type: EnvironmentTypeSchema,
+  description: z.string().trim().max(2000).nullable().optional(),
+  color: EnvironmentColorSchema,
+  isActive: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
 } as const;
-
 export const CreateEnvironmentBodySchema = z.preprocess(
   normalizeObjectKeys,
-  z.object(environmentConfigShape),
+  z.object(environmentShape).strict().refine(
+    (value) => !value.isDefault || value.isActive !== false,
+    { message: "The default environment must be active", path: ["isActive"] },
+  ),
 );
 
 export const UpdateEnvironmentBodySchema = z.preprocess(
   normalizeObjectKeys,
-  z
-    .object(environmentConfigShape)
-    .refine((value) => Object.keys(value).length > 0, {
-      message: "At least one field is required",
-    }),
+  z.object(environmentShape).partial().strict()
+    .refine((value) => Object.keys(value).length > 0, { message: "At least one field is required" })
+    .refine(
+      (value) => !value.isDefault || value.isActive !== false,
+      { message: "The default environment must be active", path: ["isActive"] },
+    ),
 );
+
+export const ListEnvironmentsQuerySchema = z.object({
+  includeDeleted: z.preprocess(
+    (value) => value === true || value === "true",
+    z.boolean(),
+  ).default(false),
+});
 
 export type CreateEnvironmentBody = z.infer<typeof CreateEnvironmentBodySchema>;
 export type UpdateEnvironmentBody = z.infer<typeof UpdateEnvironmentBodySchema>;
+export type ListEnvironmentsQuery = z.infer<typeof ListEnvironmentsQuerySchema>;
 
 export interface ProjectEnvironmentConfig {
   id: string;
@@ -65,25 +81,11 @@ export interface ProjectEnvironmentConfig {
   orgId: string;
   name: string;
   slug: string;
+  type: EnvironmentType;
   description: string | null;
-  color: string | null;
-  icon: string | null;
+  color: string;
   isDefault: boolean;
   isActive: boolean;
-  rateLimitPerSecond: number | null;
-  rateLimitPerMinute: number | null;
-  rateLimitPerHour: number | null;
-  burstLimit: number | null;
-  allowedEventTypes: string[];
-  maxEventSizeBytes: number | null;
-  maxBatchSize: number | null;
-  requireHttps: boolean;
-  ipAllowlist: string[] | null;
-  ipBlocklist: string[] | null;
-  alertEmail: string | null;
-  alertWebhookUrl: string | null;
-  createdByUserId: string | null;
-  createdByApiKeyId: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -93,4 +95,5 @@ export interface EnvironmentReference {
   id: string;
   name: string;
   slug: string;
+  type: EnvironmentType;
 }

@@ -1,150 +1,181 @@
 import { pool } from "../../../config/database.js";
 import { ProjectError } from "../shared/utils.js";
+import { EnvironmentType } from "./environment.types.js";
 const ENV_COLUMNS = `
-  id, project_id, organization_id, name, slug, description, is_default, is_active, color, icon,
-  rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-  allowed_event_types, max_event_size_bytes, max_batch_size,
-  require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-  created_by_user_id, created_by_api_key_id, created_at, updated_at, deleted_at
+  id, project_id, organization_id, name, slug, type, description, color,
+  is_default, is_active, created_at, updated_at, deleted_at
 `;
 export class EnvironmentRepository {
     db;
     constructor(db = pool) {
         this.db = db;
     }
-    async listEnvironments(projectId, client) {
+    async transaction(client, work) {
+        if (client)
+            return work(client);
+        const tx = await this.db.connect();
+        try {
+            await tx.query("BEGIN");
+            const result = await work(tx);
+            await tx.query("COMMIT");
+            return result;
+        }
+        catch (error) {
+            await tx.query("ROLLBACK");
+            throw error;
+        }
+        finally {
+            tx.release();
+        }
+    }
+    translateConflict(error) {
+        if (error.code === "23505") {
+            throw new ProjectError("ENVIRONMENT_EXISTS", "An active environment with this slug already exists in the project", 409);
+        }
+        throw error;
+    }
+    async listEnvironments(projectId, includeDeleted = false, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT ${ENV_COLUMNS} FROM project_environments
-        WHERE project_id = $1 AND deleted_at IS NULL
-        ORDER BY name ASC`, [projectId]);
+        WHERE project_id = $1 ${includeDeleted ? "" : "AND deleted_at IS NULL"}
+        ORDER BY deleted_at NULLS FIRST, is_default DESC, name ASC`, [projectId]);
         return result.rows.map((row) => this.mapEnv(row));
     }
     async findEnvironment(projectId, environmentId, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT ${ENV_COLUMNS} FROM project_environments
-        WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL
-        LIMIT 1`, [projectId, environmentId]);
+        WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL LIMIT 1`, [projectId, environmentId]);
+        return result.rows[0] ? this.mapEnv(result.rows[0]) : null;
+    }
+    async findEnvironmentIncludingDeleted(projectId, environmentId, client, forUpdate = false) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT ${ENV_COLUMNS} FROM project_environments
+        WHERE project_id = $1 AND id = $2 LIMIT 1${forUpdate ? " FOR UPDATE" : ""}`, [projectId, environmentId]);
         return result.rows[0] ? this.mapEnv(result.rows[0]) : null;
     }
     async createEnvironment(input, client) {
-        const db = client ?? this.db;
         try {
-            const result = await db.query(`INSERT INTO project_environments (
-           project_id, organization_id, name, slug, description, is_default, is_active, color, icon,
-           rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour, burst_limit,
-           allowed_event_types, max_event_size_bytes, max_batch_size,
-           require_https, ip_allowlist, ip_blocklist, alert_email, alert_webhook_url,
-           created_by_user_id, created_by_api_key_id
-         ) VALUES (
-           $1, $2, $3, $4, $5, COALESCE($6, FALSE), COALESCE($7, TRUE), $8, $9,
-           $10, $11, $12, $13,
-           COALESCE($14, ARRAY[]::text[]), $15, $16,
-           COALESCE($17, TRUE), $18::inet[], $19::inet[], $20, $21,
-           $22, $23
-         )
-         RETURNING ${ENV_COLUMNS}`, [
-                input.projectId,
-                input.orgId,
-                input.name,
-                input.slug,
-                input.description ?? null,
-                input.isDefault ?? null,
-                input.isActive ?? null,
-                input.color ?? null,
-                input.icon ?? null,
-                input.rateLimitPerSecond ?? null,
-                input.rateLimitPerMinute ?? null,
-                input.rateLimitPerHour ?? null,
-                input.burstLimit ?? null,
-                input.allowedEventTypes ?? null,
-                input.maxEventSizeBytes ?? null,
-                input.maxBatchSize ?? null,
-                input.requireHttps ?? null,
-                input.ipAllowlist ?? null,
-                input.ipBlocklist ?? null,
-                input.alertEmail ?? null,
-                input.alertWebhookUrl ?? null,
-                input.createdByUserId ?? null,
-                input.createdByApiKeyId ?? null,
-            ]);
-            return this.mapEnv(result.rows[0]);
+            return await this.transaction(client, async (tx) => {
+                if (input.isDefault) {
+                    await tx.query(`UPDATE project_environments SET is_default = FALSE
+              WHERE project_id = $1 AND is_default AND deleted_at IS NULL`, [input.projectId]);
+                }
+                const result = await tx.query(`INSERT INTO project_environments (
+             project_id, organization_id, name, slug, type, description, color, is_default, is_active
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,FALSE),COALESCE($9,TRUE))
+           RETURNING ${ENV_COLUMNS}`, [input.projectId, input.orgId, input.name, input.slug, input.type,
+                    input.description ?? null, input.color, input.isDefault ?? null, input.isActive ?? null]);
+                return this.mapEnv(result.rows[0]);
+            });
         }
         catch (error) {
-            if (error.code === "23505") {
-                throw new ProjectError("ENVIRONMENT_EXISTS", "This environment already exists for the project", 409);
-            }
-            throw error;
+            return this.translateConflict(error);
         }
     }
     async updateEnvironment(projectId, environmentId, input, client) {
-        const db = client ?? this.db;
-        const assignments = [];
-        const values = [];
-        let i = 1;
-        const set = (col, val) => {
-            assignments.push(`${col} = $${i++}`);
-            values.push(val);
-        };
-        if (input.name !== undefined)
-            set("name", input.name);
-        if (input.slug !== undefined)
-            set("slug", input.slug);
-        if (input.description !== undefined)
-            set("description", input.description);
-        if (input.color !== undefined)
-            set("color", input.color);
-        if (input.icon !== undefined)
-            set("icon", input.icon);
-        if (input.isDefault !== undefined)
-            set("is_default", input.isDefault);
-        if (input.isActive !== undefined)
-            set("is_active", input.isActive);
-        if (input.rateLimitPerSecond !== undefined)
-            set("rate_limit_per_second", input.rateLimitPerSecond);
-        if (input.rateLimitPerMinute !== undefined)
-            set("rate_limit_per_minute", input.rateLimitPerMinute);
-        if (input.rateLimitPerHour !== undefined)
-            set("rate_limit_per_hour", input.rateLimitPerHour);
-        if (input.burstLimit !== undefined)
-            set("burst_limit", input.burstLimit);
-        if (input.allowedEventTypes !== undefined)
-            set("allowed_event_types", input.allowedEventTypes);
-        if (input.maxEventSizeBytes !== undefined)
-            set("max_event_size_bytes", input.maxEventSizeBytes);
-        if (input.maxBatchSize !== undefined)
-            set("max_batch_size", input.maxBatchSize);
-        if (input.requireHttps !== undefined)
-            set("require_https", input.requireHttps);
-        if (input.ipAllowlist !== undefined)
-            set("ip_allowlist", input.ipAllowlist);
-        if (input.ipBlocklist !== undefined)
-            set("ip_blocklist", input.ipBlocklist);
-        if (input.alertEmail !== undefined)
-            set("alert_email", input.alertEmail);
-        if (input.alertWebhookUrl !== undefined)
-            set("alert_webhook_url", input.alertWebhookUrl);
-        if (assignments.length === 0) {
-            const env = await this.findEnvironment(projectId, environmentId, client);
-            if (!env) {
-                throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+        try {
+            return await this.transaction(client, async (tx) => {
+                const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+                if (!current || current.deletedAt) {
+                    throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+                }
+                if (current.isDefault && input.isDefault === false) {
+                    throw new ProjectError("DEFAULT_ENVIRONMENT_REQUIRED", "Set another environment as default before removing the current default", 409);
+                }
+                const nextActive = input.isActive ?? current.isActive;
+                if (!nextActive && current.isActive) {
+                    await this.assertCanDeactivate(tx, projectId, current);
+                }
+                if (input.isDefault === true) {
+                    if (!nextActive) {
+                        throw new ProjectError("DEFAULT_ENVIRONMENT_INACTIVE", "The default environment must be active", 409);
+                    }
+                    await tx.query(`UPDATE project_environments SET is_default = FALSE
+              WHERE project_id = $1 AND id <> $2 AND is_default AND deleted_at IS NULL`, [projectId, environmentId]);
+                }
+                const assignments = [];
+                const values = [];
+                const set = (column, value) => {
+                    values.push(value);
+                    assignments.push(`${column} = $${values.length}`);
+                };
+                if (input.name !== undefined)
+                    set("name", input.name);
+                if (input.slug !== undefined)
+                    set("slug", input.slug);
+                if (input.type !== undefined)
+                    set("type", input.type);
+                if (input.description !== undefined)
+                    set("description", input.description);
+                if (input.color !== undefined)
+                    set("color", input.color);
+                if (input.isActive !== undefined)
+                    set("is_active", input.isActive);
+                if (input.isDefault !== undefined)
+                    set("is_default", input.isDefault);
+                if (assignments.length === 0)
+                    return current;
+                values.push(projectId, environmentId);
+                const result = await tx.query(`UPDATE project_environments SET ${assignments.join(", ")}
+            WHERE project_id = $${values.length - 1} AND id = $${values.length} AND deleted_at IS NULL
+            RETURNING ${ENV_COLUMNS}`, values);
+                return this.mapEnv(result.rows[0]);
+            });
+        }
+        catch (error) {
+            return this.translateConflict(error);
+        }
+    }
+    async assertCanDeactivate(tx, projectId, environment) {
+        const active = await tx.query(`SELECT id FROM project_environments
+        WHERE project_id = $1 AND is_active AND deleted_at IS NULL
+        FOR UPDATE`, [projectId]);
+        if ((active.rowCount ?? 0) <= 1) {
+            throw new ProjectError("LAST_ACTIVE_ENVIRONMENT", "The last active environment cannot be deactivated or deleted", 409);
+        }
+        if (environment.isDefault) {
+            const replacement = await tx.query(`SELECT 1 FROM project_environments
+          WHERE project_id = $1 AND id <> $2 AND is_default AND is_active AND deleted_at IS NULL LIMIT 1`, [projectId, environment.id]);
+            if (replacement.rowCount === 0) {
+                throw new ProjectError("DEFAULT_ENVIRONMENT_REQUIRED", "Set another active environment as default first", 409);
             }
-            return env;
         }
-        values.push(projectId, environmentId);
-        const result = await db.query(`UPDATE project_environments
-          SET ${assignments.join(", ")}
-        WHERE project_id = $${values.length - 1} AND id = $${values.length} AND deleted_at IS NULL
-        RETURNING ${ENV_COLUMNS}`, values);
-        if (result.rowCount === 0) {
-            throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
-        }
-        return this.mapEnv(result.rows[0]);
+    }
+    async setDefaultEnvironment(projectId, environmentId, client) {
+        return this.updateEnvironment(projectId, environmentId, { isDefault: true, isActive: true }, client);
+    }
+    async deactivateEnvironment(projectId, environmentId, client) {
+        return this.updateEnvironment(projectId, environmentId, { isActive: false }, client);
     }
     async deleteEnvironment(projectId, environmentId, client) {
-        const db = client ?? this.db;
-        const result = await db.query(`UPDATE project_environments SET deleted_at = NOW() WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`, [projectId, environmentId]);
-        if (result.rowCount === 0) {
-            throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+        await this.transaction(client, async (tx) => {
+            const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+            if (!current || current.deletedAt) {
+                throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+            }
+            if (current.isActive)
+                await this.assertCanDeactivate(tx, projectId, current);
+            await tx.query(`UPDATE project_environments
+            SET deleted_at = NOW(), is_active = FALSE, is_default = FALSE
+          WHERE project_id = $1 AND id = $2 AND deleted_at IS NULL`, [projectId, environmentId]);
+        });
+    }
+    async restoreEnvironment(projectId, environmentId, client) {
+        try {
+            return await this.transaction(client, async (tx) => {
+                const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+                if (!current || !current.deletedAt) {
+                    throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Deleted environment not found", 404);
+                }
+                const result = await tx.query(`UPDATE project_environments
+              SET deleted_at = NULL, is_active = TRUE, is_default = FALSE
+            WHERE project_id = $1 AND id = $2 AND deleted_at IS NOT NULL
+            RETURNING ${ENV_COLUMNS}`, [projectId, environmentId]);
+                return this.mapEnv(result.rows[0]);
+            });
+        }
+        catch (error) {
+            return this.translateConflict(error);
         }
     }
     mapEnv(row) {
@@ -154,25 +185,11 @@ export class EnvironmentRepository {
             orgId: row.organization_id,
             name: row.name,
             slug: row.slug,
+            type: row.type,
             description: row.description,
             color: row.color,
-            icon: row.icon,
             isDefault: row.is_default,
             isActive: row.is_active,
-            rateLimitPerSecond: row.rate_limit_per_second,
-            rateLimitPerMinute: row.rate_limit_per_minute,
-            rateLimitPerHour: row.rate_limit_per_hour,
-            burstLimit: row.burst_limit,
-            allowedEventTypes: row.allowed_event_types ?? [],
-            maxEventSizeBytes: row.max_event_size_bytes,
-            maxBatchSize: row.max_batch_size,
-            requireHttps: row.require_https,
-            ipAllowlist: row.ip_allowlist,
-            ipBlocklist: row.ip_blocklist,
-            alertEmail: row.alert_email,
-            alertWebhookUrl: row.alert_webhook_url,
-            createdByUserId: row.created_by_user_id,
-            createdByApiKeyId: row.created_by_api_key_id,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
             deletedAt: row.deleted_at,

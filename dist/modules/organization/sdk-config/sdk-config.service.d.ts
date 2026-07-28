@@ -1,4 +1,4 @@
-import type { FastifyBaseLogger } from "fastify";
+import type { OrganizationAuditService } from "../audit-logs/audit-logs.service.js";
 import type { OrganizationRepository } from "../repository.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
 import { type CursorPaginationQuery, type RequestMeta } from "../types.js";
@@ -11,8 +11,8 @@ export interface UpdateConfigInput {
 export declare class SdkConfigService {
     private readonly repo;
     private readonly orgRepo;
-    private readonly log;
-    constructor(repo: SdkConfigRepository, orgRepo: OrganizationRepository, log: FastifyBaseLogger);
+    private readonly auditService;
+    constructor(repo: SdkConfigRepository, orgRepo: OrganizationRepository, auditService: OrganizationAuditService);
     private requireAdmin;
     private requireMember;
     private audit;

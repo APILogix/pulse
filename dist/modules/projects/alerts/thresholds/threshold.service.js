@@ -57,6 +57,7 @@ export class ThresholdService {
     async audit(meta, orgId, projectId, action, entityId, oldThreshold, newThreshold) {
         await this.projectsService.audit(meta, {
             orgId,
+            projectId,
             action,
             entityType: "project_alert_threshold",
             entityId,

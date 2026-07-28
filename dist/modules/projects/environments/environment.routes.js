@@ -1,6 +1,6 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
-import { CreateEnvironmentBodySchema, EnvironmentParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, UpdateEnvironmentBodySchema, } from "../types.js";
+import { CreateEnvironmentBodySchema, EnvironmentParamsSchema, ListEnvironmentsQuerySchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, UpdateEnvironmentBodySchema, } from "../types.js";
 import { ProjectError } from "../shared/utils.js";
 import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling, } from "../shared/route-utils.js";
 export async function projectEnvironmentRoutes(fastify) {
@@ -59,7 +59,8 @@ export async function projectEnvironmentRoutes(fastify) {
     }));
     fastify.get("/:projectId/environments", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
-        const environments = await service.listEnvironments(orgId, projectId, authenticatedUser(request).id);
+        const query = ListEnvironmentsQuerySchema.parse(request.query ?? {});
+        const environments = await service.listEnvironments(orgId, projectId, authenticatedUser(request).id, query.includeDeleted);
         return reply.send({ success: true, data: environments });
     }));
     fastify.post("/:projectId/environments", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
@@ -77,6 +78,21 @@ export async function projectEnvironmentRoutes(fastify) {
         const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
         const body = UpdateEnvironmentBodySchema.parse(request.body);
         const environment = await service.updateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, body, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/restore", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.restoreEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/set-default", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.setDefaultEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.send({ success: true, data: environment });
+    }));
+    fastify.post("/:projectId/environments/:environmentId/deactivate", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        const environment = await service.deactivateEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
         return reply.send({ success: true, data: environment });
     }));
     fastify.delete("/:projectId/environments/:environmentId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {

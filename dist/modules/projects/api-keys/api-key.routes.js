@@ -1,6 +1,6 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
-import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectActivityQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "../types.js";
+import { ApiKeyParamsSchema, ApiKeyUsageQuerySchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "../types.js";
 import { handleProjectError, ProjectError } from "../shared/utils.js";
 import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling } from "../shared/route-utils.js";
 export async function projectApiKeyRoutes(fastify) {
@@ -94,8 +94,14 @@ export async function projectApiKeyRoutes(fastify) {
     }));
     fastify.get("/:projectId/api-keys/:apiKeyId/usage", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-        const usage = await service.getApiKeyUsage(orgId, projectId, apiKeyId, authenticatedUser(request).id);
+        const query = ApiKeyUsageQuerySchema.parse(request.query ?? {});
+        const usage = await service.getApiKeyUsage(orgId, projectId, apiKeyId, authenticatedUser(request).id, query);
         return reply.send({ success: true, data: usage });
+    }));
+    fastify.get("/:projectId/api-keys/:apiKeyId/rotations", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
+        const rotations = await service.listApiKeyRotations(orgId, projectId, apiKeyId, authenticatedUser(request).id);
+        return reply.send({ success: true, data: rotations });
     }));
 }
 //# sourceMappingURL=api-key.routes.js.map

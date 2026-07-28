@@ -50,8 +50,8 @@ export class ProjectsRepository {
     async createProject(input, client) {
         return this.core.createProject(input, client);
     }
-    async provisionRuntimeDefaults(project, actorUserId, meta, client) {
-        return this.core.provisionRuntimeDefaults(project, actorUserId, meta, client);
+    async provisionRuntimeDefaults(project, client) {
+        return this.core.provisionRuntimeDefaults(project, client);
     }
     async findProjectBySlug(orgId, slug, client) {
         return this.core.findProjectBySlug(orgId, slug, client);

@@ -1,9 +1,7 @@
-import { pool } from "../../../config/database.js";
 import { ProjectMemberRole, } from "../core/project.types.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { MemberRepository } from "./member.repository.js";
 import { ProjectError } from "../shared/utils.js";
@@ -11,7 +9,7 @@ import { BaseProjectService } from "../shared/base.service.js";
 export class ProjectMemberService extends BaseProjectService {
     membersRepository;
     constructor(deps) {
-        super(deps.repository, deps.logger, deps.orgRepo, deps.settingsRepository, deps.apiKeyRepository, deps.environmentRepository, deps.activityRepository, deps.usageRepository);
+        super(deps.repository, deps.logger, deps.orgRepo, deps.auditService, deps.settingsRepository, deps.apiKeyRepository, deps.environmentRepository, deps.usageRepository);
         this.membersRepository = deps.membersRepository;
     }
     async listMembers(orgId, projectId, userId, query) {
@@ -35,7 +33,7 @@ export class ProjectMemberService extends BaseProjectService {
         const added = existing?.status === "removed"
             ? await this.membersRepository.restoreProjectMember(existing.id, body.role, userId)
             : await this.membersRepository.addProjectMember(projectId, orgId, body.userId, body.role, userId);
-        await this.auditAndActivity(meta, orgId, projectId, "member.added", "member", added.id, { userId: added.userId, role: added.role }, `Member added as ${added.role}`);
+        await this.auditMemberChange(meta, orgId, projectId, "member.added", "member", added.id, { userId: added.userId, role: added.role }, `Member added as ${added.role}`);
         return added;
     }
     async removeMember(orgId, projectId, memberId, userId, meta) {
@@ -48,7 +46,7 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_OWNER_REMOVE", "Project owner cannot be removed; transfer ownership first", 403);
         }
         const removed = await this.membersRepository.removeProjectMember(memberId, userId);
-        await this.auditAndActivity(meta, orgId, projectId, "member.removed", "member", removed.id, { userId: removed.userId, role: removed.role }, "Member removed");
+        await this.auditMemberChange(meta, orgId, projectId, "member.removed", "member", removed.id, { userId: removed.userId, role: removed.role }, "Member removed");
         return removed;
     }
     async updateMemberRole(orgId, projectId, memberId, userId, body, meta) {
@@ -61,7 +59,7 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_OWNER_ROLE", "Use the transfer ownership endpoint to change the owner", 403);
         }
         const updated = await this.membersRepository.updateProjectMemberRole(memberId, body.role);
-        await this.auditAndActivity(meta, orgId, projectId, "member.role_changed", "member", updated.id, { userId: updated.userId, oldRole: member.role, newRole: updated.role }, `Member role changed to ${updated.role}`);
+        await this.auditMemberChange(meta, orgId, projectId, "member.role_changed", "member", updated.id, { userId: updated.userId, oldRole: member.role, newRole: updated.role }, `Member role changed to ${updated.role}`);
         return updated;
     }
     async transferOwnership(orgId, projectId, userId, newOwnerUserId, meta) {
@@ -73,32 +71,19 @@ export class ProjectMemberService extends BaseProjectService {
             throw new ProjectError("MEMBER_NOT_ORG", "New owner must be an active organization member", 403);
         }
         const result = await this.membersRepository.transferOwnership(projectId, userId, newOwnerUserId, userId);
-        await this.auditAndActivity(meta, orgId, projectId, "member.role_changed", "member", result.toMember.id, { previousOwnerId: userId, newOwnerId: newOwnerUserId }, "Project ownership transferred");
+        await this.auditMemberChange(meta, orgId, projectId, "member.role_changed", "member", result.toMember.id, { previousOwnerId: userId, newOwnerId: newOwnerUserId }, "Project ownership transferred");
         return result;
     }
-    async auditAndActivity(meta, orgId, projectId, action, entityType, entityId, newValues, summary) {
+    async auditMemberChange(meta, orgId, projectId, action, entityType, entityId, newValues, summary) {
         await this.audit(meta, {
             orgId,
+            projectId,
             action,
             entityType,
             entityId,
-            newValues: { ...newValues, projectId },
+            newValues,
+            metadata: { summary },
         });
-        try {
-            await pool.query(`INSERT INTO project_activity(
-           organization_id,project_id,actor_user_id,activity_type,category,summary,metadata
-         ) VALUES($1,$2,$3,$4,'member',$5,$6)`, [
-                orgId,
-                projectId,
-                meta.actorUserId,
-                action,
-                summary,
-                JSON.stringify({ entityType, entityId, ...newValues }),
-            ]);
-        }
-        catch (error) {
-            this.logger.error({ err: error, action }, "Failed to write project activity");
-        }
     }
 }
 //# sourceMappingURL=member.service.js.map

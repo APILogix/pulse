@@ -11,14 +11,14 @@ export class ActivityRepository {
             "a.org_id = $1",
             `(
         (a.entity_type = 'project' AND a.entity_id = $2)
-        OR a.metadata ->> 'projectId' = $2
-        OR a.new_values ->> 'projectId' = $2
-        OR a.old_values ->> 'projectId' = $2
+        OR a.metadata ->> 'projectId' = $2::text
+        OR a.new_values ->> 'projectId' = $2::text
+        OR a.old_values ->> 'projectId' = $2::text
         OR (a.entity_type = 'api_key' AND EXISTS (
-          SELECT 1 FROM project_api_keys k WHERE k.id::text = a.entity_id AND k.project_id = $2::uuid
+          SELECT 1 FROM project_api_keys k WHERE k.id = a.entity_id AND k.project_id = $2::uuid
         ))
         OR (a.entity_type = 'project_environment' AND EXISTS (
-          SELECT 1 FROM project_environments e WHERE e.id::text = a.entity_id AND e.project_id = $2::uuid
+          SELECT 1 FROM project_environments e WHERE e.id = a.entity_id AND e.project_id = $2::uuid
         ))
       )`,
         ];

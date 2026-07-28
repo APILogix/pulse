@@ -6,7 +6,7 @@
 --             - Redesigned project_api_keys with env_id, rotation, scoping
 --             - Project members + invitations + custom roles
 --             - Project connector subscriptions
---             - Project audit logs + activity feed
+--             - Organization audit integration with nullable project_id
 --             - Project notification preferences
 --             - Project usage analytics time-series tables
 --             - Security/performance indexes and constraints
@@ -34,32 +34,6 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'api_key_rotation_state') THEN
     CREATE TYPE api_key_rotation_state AS ENUM ('none', 'rotating', 'grace_period', 'completed');
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'project_audit_action') THEN
-    CREATE TYPE project_audit_action AS ENUM (
-      'project.created',
-      'project.updated',
-      'project.deleted',
-      'project.restored',
-      'project.archived',
-      'api_key.created',
-      'api_key.rotated',
-      'api_key.revoked',
-      'api_key.expired',
-      'member.added',
-      'member.invited',
-      'member.removed',
-      'member.role_changed',
-      'connector.enabled',
-      'connector.disabled',
-      'alert_rule.changed',
-      'sdk_config.changed',
-      'environment.created',
-      'environment.updated',
-      'environment.deleted',
-      'notification_preference.changed',
-      'settings.changed'
-    );
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'notification_channel') THEN
     CREATE TYPE notification_channel AS ENUM ('slack', 'email', 'webhook', 'push', 'sms');
@@ -478,80 +452,7 @@ ALTER TABLE connector_configs
   DROP COLUMN IF EXISTS project_id;
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- 9. PROJECT AUDIT LOGS
--- ═══════════════════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS project_audit_logs (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  action project_audit_action NOT NULL,
-  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  actor_type VARCHAR(50) NOT NULL DEFAULT 'user',
-  actor_email VARCHAR(255),
-  entity_type VARCHAR(50) NOT NULL,
-  entity_id UUID,
-  entity_name VARCHAR(255),
-  old_values JSONB,
-  new_values JSONB,
-  changed_fields TEXT[],
-  correlation_id VARCHAR(64),
-  request_id VARCHAR(64),
-  ip_address INET,
-  user_agent TEXT,
-  severity INTEGER NOT NULL DEFAULT 0,
-  is_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (id, created_at)
-) PARTITION BY RANGE (created_at);
-
--- Default partition for current month; operational runbooks create future partitions.
-CREATE TABLE IF NOT EXISTS project_audit_logs_default
-  PARTITION OF project_audit_logs DEFAULT;
-
-CREATE INDEX IF NOT EXISTS idx_project_audit_logs_project_time
-  ON project_audit_logs (project_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_project_audit_logs_action
-  ON project_audit_logs (project_id, action, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_project_audit_logs_actor
-  ON project_audit_logs (actor_user_id, created_at DESC)
-  WHERE actor_user_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_project_audit_logs_entity
-  ON project_audit_logs (project_id, entity_type, entity_id)
-  WHERE entity_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_project_audit_logs_request
-  ON project_audit_logs (request_id)
-  WHERE request_id IS NOT NULL;
-
--- ═══════════════════════════════════════════════════════════════════════════
--- 10. PROJECT ACTIVITY FEED
--- ═══════════════════════════════════════════════════════════════════════════
-
-CREATE TABLE IF NOT EXISTS project_activity (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-  actor_email VARCHAR(255),
-  action VARCHAR(100) NOT NULL,
-  entity_type VARCHAR(50) NOT NULL,
-  entity_id UUID,
-  entity_name VARCHAR(255),
-  summary TEXT,
-  metadata JSONB NOT NULL DEFAULT '{}',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_project_activity_project_time
-  ON project_activity (project_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_project_activity_actor
-  ON project_activity (actor_user_id, created_at DESC)
-  WHERE actor_user_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_project_activity_action
-  ON project_activity (project_id, action, created_at DESC);
-
--- ═══════════════════════════════════════════════════════════════════════════
--- 11. PROJECT NOTIFICATION PREFERENCES
+-- 9. PROJECT NOTIFICATION PREFERENCES
 -- ═══════════════════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS project_notification_preferences (
@@ -889,8 +790,6 @@ COMMENT ON TABLE projects IS 'Lightweight application identity. Operational conf
 COMMENT ON TABLE project_environments IS 'First-class environments created/owned by API keys. API keys reference an environment_id.';
 COMMENT ON TABLE project_api_keys IS 'Scoped, rotatable, expirable API keys. Secrets are never returned after creation.';
 COMMENT ON TABLE project_connector_subscriptions IS 'Project-level subscriptions to organization-owned connectors. No connector duplication.';
-COMMENT ON TABLE project_audit_logs IS 'Immutable project-level audit trail, partitioned by created_at.';
-COMMENT ON TABLE project_activity IS 'Project activity timeline for dashboards.';
 COMMENT ON TABLE project_notification_preferences IS 'Project defaults for alert categories.';
 COMMENT ON TABLE project_member_notification_preferences IS 'Member overrides for project notification defaults.';
 

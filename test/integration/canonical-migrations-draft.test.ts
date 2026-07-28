@@ -58,13 +58,13 @@ describe('canonical migrations draft bootstrap', () => {
 
     const requiredTables = [
       'project_settings', 'project_environments', 'project_members', 'project_api_keys',
+      'project_api_key_rotations', 'telemetry_event_types',
       'project_environment_sdk_configs', 'project_environment_sdk_config_revisions',
-      'api_key_usage_minute', 'api_key_usage_hourly', 'api_key_usage_daily',
-      'api_key_usage_monthly',
+      'api_key_usage_minute', 'api_key_usage_daily',
       'project_usage_minute', 'project_usage_hourly', 'project_usage_daily',
       'project_usage_monthly', 'project_usage_current', 'project_alert_thresholds', 'project_alert_channels',
       'project_member_alert_channel_preferences', 'project_notification_preferences',
-      'project_connector_subscriptions', 'project_activity', 'project_audit_logs',
+      'project_connector_subscriptions', 'organization_audit_logs',
     ];
     const tableRows = await client.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
@@ -74,6 +74,25 @@ describe('canonical migrations draft bootstrap', () => {
     expect(tableRows.rows.map((row) => row.table_name).sort()).toEqual(
       [...requiredTables].sort(),
     );
+    const removedHistoryTables = await client.query<{ project_activity: string | null; project_audit_logs: string | null }>(
+      `SELECT to_regclass('public.project_activity')::text AS project_activity,
+              to_regclass('public.project_audit_logs')::text AS project_audit_logs`,
+    );
+    expect(removedHistoryTables.rows[0]).toEqual({ project_activity: null, project_audit_logs: null });
+    const auditProjectColumn = await client.query(
+      `SELECT 1 FROM information_schema.columns
+       WHERE table_schema='public' AND table_name='organization_audit_logs' AND column_name='project_id'`,
+    );
+    expect(auditProjectColumn.rowCount).toBe(1);
+    const usageViews = await client.query<{ table_name: string; is_insertable_into: string }>(
+      `SELECT table_name,is_insertable_into FROM information_schema.views
+       WHERE table_schema='public' AND table_name IN ('api_key_usage_hourly','api_key_usage_monthly')
+       ORDER BY table_name`,
+    );
+    expect(usageViews.rows).toEqual([
+      { table_name: 'api_key_usage_hourly', is_insertable_into: 'NO' },
+      { table_name: 'api_key_usage_monthly', is_insertable_into: 'NO' },
+    ]);
 
     const columns = await client.query<{ table_name: string; columns: string[] }>(
       `SELECT table_name, array_agg(column_name ORDER BY ordinal_position) AS columns
@@ -85,19 +104,25 @@ describe('canonical migrations draft bootstrap', () => {
     const byTable = new Map(columns.rows.map((row) => [row.table_name, row.columns]));
     expect(byTable.get('projects')).not.toContain('default_environment');
     expect(byTable.get('connector_configs')).not.toContain('project_id');
-    expect(byTable.get('project_api_keys')).toEqual(expect.arrayContaining([
-      'organization_id', 'environment_id', 'public_key', 'secret_hash',
-      'rotation_state', 'rotated_at', 'grace_period_ends_at', 'revoked_at', 'version',
-    ]));
-    expect(byTable.get('project_api_keys')).not.toEqual(expect.arrayContaining([
-      'org_id', 'environment', 'key_hash', 'key_prefix',
+    expect(byTable.get('project_api_keys')?.slice().sort()).toEqual([
+      'id', 'organization_id', 'project_id', 'environment_id', 'name', 'public_key',
+      'secret_hash', 'status', 'expires_at', 'last_used_at', 'created_by',
+      'rotated_from_key_id', 'created_at', 'updated_at', 'deleted_at',
+    ].sort());
+    expect(byTable.get('project_api_key_rotations')).toEqual(expect.arrayContaining([
+      'organization_id', 'project_id', 'environment_id', 'old_key_id', 'new_key_id',
+      'state', 'reason', 'initiated_by', 'initiated_at', 'grace_ends_at', 'completed_at',
     ]));
     expect(byTable.get('project_settings')).toEqual(expect.arrayContaining([
       'organization_id', 'data_retention_days', 'sampling_rate', 'allowed_domains',
       'pii_scrubbing_enabled', 'trace_ingestion_enabled', 'version',
     ]));
     expect(byTable.get('project_environments')).toEqual(expect.arrayContaining([
-      'organization_id', 'slug', 'is_default', 'is_active', 'deleted_at', 'version',
+      'organization_id', 'slug', 'type', 'description', 'color', 'is_default',
+      'is_active', 'created_at', 'updated_at', 'deleted_at',
+    ]));
+    expect(byTable.get('project_environments')).not.toEqual(expect.arrayContaining([
+      'icon', 'created_by_user_id', 'created_by_api_key_id', 'version',
       'rate_limit_per_second', 'rate_limit_per_minute', 'rate_limit_per_hour', 'burst_limit',
       'allowed_event_types', 'max_event_size_bytes', 'max_batch_size', 'require_https',
       'ip_allowlist', 'ip_blocklist', 'alert_email', 'alert_webhook_url',
@@ -125,12 +150,21 @@ describe('canonical migrations draft bootstrap', () => {
     expect(byTable.get('project_connector_subscriptions')).toEqual(expect.arrayContaining([
       'connector_id', 'alert_categories', 'member_ids', 'channel_overrides', 'version',
     ]));
-    for (const table of [
-      'api_key_usage_minute', 'api_key_usage_hourly',
-      'api_key_usage_daily', 'api_key_usage_monthly',
-    ]) {
-      expect(byTable.get(table)).toEqual(expect.arrayContaining(['bucket', 'events', 'version']));
-      expect(byTable.get(table)).not.toContain('total_events');
+    for (const table of ['api_key_usage_minute', 'api_key_usage_daily']) {
+      expect(byTable.get(table)).toEqual(expect.arrayContaining([
+        'bucket', 'event_type_id', 'request_count', 'accepted_event_count',
+        'error_event_count', 'ingestion_failure_count', 'accepted_bytes',
+        'rate_limited_request_count',
+      ]));
+      expect(byTable.get(table)).not.toEqual(expect.arrayContaining([
+        'event_type', 'events', 'requests', 'errors', 'bytes_ingested', 'rate_limited',
+        'latency_ms_p50', 'latency_ms_p95', 'latency_ms_p99', 'version',
+      ]));
+    }
+    for (const table of ['project_usage_minute', 'project_usage_hourly', 'project_usage_daily']) {
+      expect(byTable.get(table)).not.toEqual(expect.arrayContaining([
+        'latency_ms_p50', 'latency_ms_p75', 'latency_ms_p90', 'latency_ms_p95', 'latency_ms_p99',
+      ]));
     }
     for (const table of ['project_usage_minute', 'project_usage_hourly', 'project_usage_daily', 'project_usage_monthly']) {
       expect(byTable.get(table)).toEqual(expect.arrayContaining(['bucket', 'total_events', 'total_bytes', 'version']));
@@ -160,7 +194,7 @@ describe('canonical migrations draft bootstrap', () => {
     const provisioned = await client.query<{
       settings: number; environments: number; default_environments: number;
       config_heads: number; config_revisions: number; owners: number; current_usage: number; thresholds: number;
-      notification_defaults: number; activities: number; audits: number;
+      notification_defaults: number;
     }>(
       `SELECT
         (SELECT count(*)::int FROM project_settings WHERE project_id=$1) settings,
@@ -171,18 +205,14 @@ describe('canonical migrations draft bootstrap', () => {
         (SELECT count(*)::int FROM project_members WHERE project_id=$1 AND user_id=$2 AND role='owner' AND status='active') owners,
         (SELECT count(*)::int FROM project_usage_current WHERE project_id=$1) current_usage,
         (SELECT count(*)::int FROM project_alert_thresholds WHERE project_id=$1 AND deleted_at IS NULL) thresholds,
-        (SELECT count(*)::int FROM project_notification_preferences WHERE project_id=$1 AND deleted_at IS NULL) notification_defaults,
-        (SELECT count(*)::int FROM project_activity WHERE project_id=$1) activities,
-        (SELECT count(*)::int FROM project_audit_logs WHERE project_id=$1) audits`,
+        (SELECT count(*)::int FROM project_notification_preferences WHERE project_id=$1 AND deleted_at IS NULL) notification_defaults`,
       [projectId, userId],
     );
     expect(provisioned.rows[0]).toMatchObject({
-      settings: 1, environments: 3, default_environments: 1,
-      config_heads: 3, config_revisions: 3,
+      settings: 1, environments: 5, default_environments: 1,
+      config_heads: 5, config_revisions: 5,
       owners: 1, current_usage: 1, thresholds: 13, notification_defaults: 1,
     });
-    expect(provisioned.rows[0]!.activities).toBeGreaterThan(0);
-    expect(provisioned.rows[0]!.audits).toBeGreaterThan(0);
 
     const defaultEnvironment = await client.query<{ id: string }>(
       `SELECT id FROM project_environments WHERE project_id=$1 AND is_default`,
@@ -232,47 +262,54 @@ describe('canonical migrations draft bootstrap', () => {
     const usageRollup = await client.query<{
       project_minute_events: string; project_hourly_events: string; project_daily_events: string;
       project_monthly_events: string; api_minute_events: string; api_hourly_events: string;
-      api_daily_events: string; api_monthly_events: string; bytes_ingested: string;
+      api_daily_events: string; api_monthly_events: string; accepted_bytes: string;
     }>(
       `SELECT
         (SELECT SUM(total_events)::text FROM project_usage_minute WHERE project_id=$1) project_minute_events,
         (SELECT SUM(total_events)::text FROM project_usage_hourly WHERE project_id=$1) project_hourly_events,
         (SELECT SUM(total_events)::text FROM project_usage_daily WHERE project_id=$1) project_daily_events,
         (SELECT SUM(total_events)::text FROM project_usage_monthly WHERE project_id=$1) project_monthly_events,
-        (SELECT SUM(events)::text FROM api_key_usage_minute WHERE api_key_id=$2) api_minute_events,
-        (SELECT SUM(events)::text FROM api_key_usage_hourly WHERE api_key_id=$2) api_hourly_events,
-        (SELECT SUM(events)::text FROM api_key_usage_daily WHERE api_key_id=$2) api_daily_events,
-        (SELECT SUM(events)::text FROM api_key_usage_monthly WHERE api_key_id=$2) api_monthly_events,
-        (SELECT SUM(bytes_ingested)::text FROM api_key_usage_minute WHERE api_key_id=$2) bytes_ingested`,
+        (SELECT SUM(accepted_event_count)::text FROM api_key_usage_minute WHERE api_key_id=$2) api_minute_events,
+        (SELECT SUM(accepted_event_count)::text FROM api_key_usage_hourly WHERE api_key_id=$2) api_hourly_events,
+        (SELECT SUM(accepted_event_count)::text FROM api_key_usage_daily WHERE api_key_id=$2) api_daily_events,
+        (SELECT SUM(accepted_event_count)::text FROM api_key_usage_monthly WHERE api_key_id=$2) api_monthly_events,
+        (SELECT SUM(accepted_bytes)::text FROM api_key_usage_minute WHERE api_key_id=$2) accepted_bytes`,
       [projectId, apiKey.rows[0]!.id],
     );
     expect(usageRollup.rows[0]).toMatchObject({
       project_minute_events: '3', project_hourly_events: '3', project_daily_events: '3',
       project_monthly_events: '3', api_minute_events: '3', api_hourly_events: '3',
-      api_daily_events: '3', api_monthly_events: '3', bytes_ingested: '512',
+      api_daily_events: '3', api_monthly_events: '3', accepted_bytes: '512',
     });
 
-    await client.query(
+    const rotatedKey = await client.query<{ id: string }>(
       `INSERT INTO project_api_keys(
-         project_id,organization_id,environment_id,public_key,secret_hash,name,created_by,
-         status,is_active,rotated_at,rotation_state,grace_period_ends_at
-       ) VALUES($1,$2,$3,'pulsiv_prod_graceperiodkey123',$4,'Grace key',$5,
-                'rotated',TRUE,NOW(),'grace_period',NOW()+INTERVAL '1 hour')`,
-      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'd'.repeat(64), userId],
+         project_id,organization_id,environment_id,public_key,secret_hash,name,created_by,rotated_from_key_id
+       ) VALUES($1,$2,$3,'pulsiv_prod_rotatedkey12345',$4,'Rotated key',$5,$6) RETURNING id`,
+      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'd'.repeat(64), userId, apiKey.rows[0]!.id],
     );
+    await client.query(`UPDATE project_api_keys SET status='rotated' WHERE id=$1`, [apiKey.rows[0]!.id]);
     await client.query(
-      `UPDATE project_api_keys SET status='rotated',is_active=FALSE,rotated_at=NOW(),
-         rotation_state='completed',grace_period_ends_at=NULL WHERE id=$1`,
-      [apiKey.rows[0]!.id],
+      `INSERT INTO project_api_key_rotations(
+         organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
+         initiated_by,initiated_at,completed_at
+       ) VALUES($1,$2,$3,$4,$5,'completed','routine rotation',$6,NOW(),NOW())`,
+      [organizationId, projectId, defaultEnvironment.rows[0]!.id,
+       apiKey.rows[0]!.id, rotatedKey.rows[0]!.id, userId],
     );
+    const rotation = await client.query<{ rotations: number }>(
+      `SELECT count(*)::int rotations FROM project_api_key_rotations
+       WHERE old_key_id=$1 AND new_key_id=$2 AND state='completed'`,
+      [apiKey.rows[0]!.id, rotatedKey.rows[0]!.id],
+    );
+    expect(rotation.rows[0]).toEqual({ rotations: 1 });
     await expect(client.query(
-      `INSERT INTO project_api_keys(
-         project_id,organization_id,environment_id,public_key,secret_hash,name,created_by,
-         status,is_active,rotated_at,rotation_state
-       ) VALUES($1,$2,$3,'pulsiv_prod_invalidcompleted123',$4,'Invalid lifecycle',$5,
-                'rotated',TRUE,NOW(),'completed')`,
-      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'e'.repeat(64), userId],
-    )).rejects.toThrow();
+      `INSERT INTO project_api_key_rotations(
+         organization_id,project_id,environment_id,old_key_id,new_key_id,state,initiated_at,completed_at
+       ) VALUES($1,$2,$3,$4,$5,'completed',NOW(),NOW())`,
+      [otherOrganization.rows[0]!.id, projectId, defaultEnvironment.rows[0]!.id,
+       apiKey.rows[0]!.id, rotatedKey.rows[0]!.id],
+    )).rejects.toThrow(/foreign key/i);
 
     const channel = await client.query<{ id: string }>(
       `INSERT INTO project_alert_channels(
@@ -301,14 +338,16 @@ describe('canonical migrations draft bootstrap', () => {
     expect(apdex.rows[0]).toMatchObject({ comparison_operator: '<=', category: 'performance' });
 
     await client.query(`UPDATE projects SET description='audited change' WHERE id=$1`, [projectId]);
-    const audit = await client.query<{ id: string }>(
-      `SELECT id FROM project_audit_logs WHERE project_id=$1 AND action='project.updated' ORDER BY created_at DESC LIMIT 1`,
-      [projectId],
+    await client.query(
+      `INSERT INTO organization_audit_logs(org_id,project_id,actor_user_id,action,entity_type,entity_id,new_values)
+       VALUES($1,$2,$3,'project.updated','project',$2,'{"description":"audited change"}'::jsonb)`,
+      [organizationId, projectId, userId],
     );
-    expect(audit.rowCount).toBe(1);
-    await expect(client.query(
-      `UPDATE project_audit_logs SET metadata='{"tampered":true}'::jsonb WHERE id=$1`,
-      [audit.rows[0]!.id],
-    )).rejects.toThrow(/immutable/);
+    const audit = await client.query<{ project_id: string }>(
+      `SELECT project_id FROM organization_audit_logs
+       WHERE org_id=$1 AND project_id=$2 AND action='project.updated'`,
+      [organizationId, projectId],
+    );
+    expect(audit.rows).toEqual([{ project_id: projectId }]);
   });
 });

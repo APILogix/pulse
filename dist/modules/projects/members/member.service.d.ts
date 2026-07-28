@@ -1,12 +1,12 @@
 /** Project member service with direct organization-member adds only. */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { type AddProjectMemberBody, type ListProjectMembersQuery, type ProjectMember, type UpdateProjectMemberBody } from "../core/project.types.js";
 import type { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { MemberRepository } from "./member.repository.js";
 import { BaseProjectService } from "../shared/base.service.js";
@@ -16,10 +16,10 @@ export interface ProjectMemberServiceDeps {
     membersRepository: MemberRepository;
     logger: FastifyBaseLogger;
     orgRepo: OrganizationRepository;
+    auditService: OrganizationAuditService;
     settingsRepository: SettingsRepository;
     apiKeyRepository: ApiKeyRepository;
     environmentRepository: EnvironmentRepository;
-    activityRepository: ActivityRepository;
     usageRepository: UsageRepository;
 }
 export declare class ProjectMemberService extends BaseProjectService {
@@ -38,6 +38,6 @@ export declare class ProjectMemberService extends BaseProjectService {
         fromMember: ProjectMember;
         toMember: ProjectMember;
     }>;
-    private auditAndActivity;
+    private auditMemberChange;
 }
 //# sourceMappingURL=member.service.d.ts.map

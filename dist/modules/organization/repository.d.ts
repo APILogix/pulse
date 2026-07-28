@@ -36,7 +36,6 @@ export declare class OrganizationRepository extends BaseRepository {
     }>;
     getBillingEntitlements(orgId: string): Promise<BillingEntitlementsRow | null>;
     getOrganizationUsageCounts(orgId: string): Promise<OrganizationUsageCounts>;
-    createAuditLog(entry: import("./audit-logs/audit-logs.schema.js").CreateAuditLogRecord): Promise<void>;
     findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null>;
     findUserByEmail(email: string): Promise<{
         id: string;

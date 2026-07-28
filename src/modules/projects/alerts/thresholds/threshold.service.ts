@@ -126,6 +126,7 @@ export class ThresholdService {
   ): Promise<void> {
     await this.projectsService.audit(meta, {
       orgId,
+      projectId,
       action,
       entityType: "project_alert_threshold",
       entityId,

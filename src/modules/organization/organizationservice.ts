@@ -6,7 +6,7 @@ import { ScimTokenService } from "../scim/scim-token.service.js";
 import { SsoRepository } from "./sso/sso.repository.js";
 import { SsoService } from "./sso/sso.service.js";
 import { AuditLogsRepository } from "./audit-logs/audit-logs.repository.js";
-import { AuditLogsService } from "./audit-logs/audit-logs.service.js";
+import { OrganizationAuditService } from "./audit-logs/audit-logs.service.js";
 import { QuotasRepository } from "./quotas/quotas.repository.js";
 import { QuotasService } from "./quotas/quotas.service.js";
 import { MembersService } from "./members/members.service.js";
@@ -86,7 +86,7 @@ export class OrganizationService {
   private log: FastifyBaseLogger;
   private readonly emitEvent: (event: string, payload: Record<string, unknown>) => Promise<void>;
   private readonly sso: SsoService;
-  private readonly auditLogs: AuditLogsService;
+  public readonly auditLogs: OrganizationAuditService;
   public readonly core: CoreService;
   public readonly invitations: InvitationsService;
   public readonly quotas: QuotasService;
@@ -132,7 +132,7 @@ export class OrganizationService {
 
 
 
-    this.auditLogs = new AuditLogsService({
+    this.auditLogs = new OrganizationAuditService({
       repository: new AuditLogsRepository(),
       requireMember: this.requireMember.bind(this),
       log: this.log,
@@ -335,7 +335,7 @@ export class OrganizationService {
     return this.securityEvents.listSecurityEvents(orgId, userId, q, filters);
   }
 
-  async listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: { action?: string; entityType?: string; actorUserId?: string }) {
+  async listAuditLogs(orgId: string, userId: string, q: CursorPaginationQuery, filters?: import("./audit-logs/audit-logs.schema.js").AuditLogFilters) {
     return this.auditLogs.listAuditLogs(orgId, userId, q, filters);
   }
   async createQuotaRequest(meta: RequestMeta, orgId: string, data: { quotaType: string; currentLimit: number; requestedLimit: number; reason: string }) {
@@ -469,7 +469,7 @@ export class OrganizationService {
 
 
   // ── Export Audit Logs ─────────────────────────
-  async exportAuditLogs(orgId: string, userId: string, filters?: { action?: string; entityType?: string; actorUserId?: string; startDate?: string; endDate?: string }) {
+  async exportAuditLogs(orgId: string, userId: string, filters?: import("./audit-logs/audit-logs.schema.js").AuditLogFilters) {
     return this.auditLogs.exportAuditLogs(orgId, userId, filters);
   }
 

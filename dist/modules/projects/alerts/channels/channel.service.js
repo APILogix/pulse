@@ -126,6 +126,7 @@ export class ProjectAlertChannelService {
         const preference = await this.repository.upsertMemberPreference(orgId, projectId, userId, channelId, body);
         await this.projectsService.audit(meta, {
             orgId,
+            projectId,
             action: "alert_channel_preference_updated",
             entityType: "project_member_alert_channel_preference",
             entityId: preference.id,
@@ -138,6 +139,7 @@ export class ProjectAlertChannelService {
         await this.repository.softDeleteMemberPreference(orgId, projectId, userId, channelId, query.category);
         await this.projectsService.audit(meta, {
             orgId,
+            projectId,
             action: "alert_channel_preference_deleted",
             entityType: "project_member_alert_channel_preference",
             entityId: channelId,
@@ -172,6 +174,7 @@ export class ProjectAlertChannelService {
     async audit(meta, orgId, projectId, action, channel, newValues) {
         await this.projectsService.audit(meta, {
             orgId,
+            projectId,
             action,
             entityType: "project_alert_channel",
             entityId: channel.id,

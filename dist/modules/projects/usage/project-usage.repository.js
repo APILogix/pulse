@@ -25,7 +25,7 @@ export class ProjectUsageRepository {
         const db = client ?? this.db;
         const result = await db.query(`SELECT
          (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND deleted_at IS NULL)::text AS api_keys_count,
-         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND is_active = TRUE AND deleted_at IS NULL)::text AS active_keys_count,
+         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND status = 'active' AND deleted_at IS NULL)::text AS active_keys_count,
          (SELECT COUNT(*) FROM project_environments WHERE project_id = $1 AND deleted_at IS NULL)::text AS environment_count,
          COALESCE((SELECT SUM(total_events) FROM project_usage_daily WHERE project_id = $1),0)::text AS total_requests`, [projectId]);
         const row = result.rows[0];
@@ -69,7 +69,7 @@ export class ProjectUsageRepository {
          (SELECT COUNT(*) FROM projects WHERE org_id = $1 AND deleted_at IS NULL)::text AS projects,
          (SELECT COUNT(*) FROM project_environments
            WHERE organization_id = $1 AND deleted_at IS NULL
-             AND slug NOT IN ('production','staging','development'))::text AS environments,
+             AND type = 'custom'::project_environment_type)::text AS environments,
          (SELECT COUNT(*) FROM project_api_keys WHERE organization_id = $1 AND deleted_at IS NULL)::text AS api_keys`, [orgId]);
         const row = result.rows[0];
         return {

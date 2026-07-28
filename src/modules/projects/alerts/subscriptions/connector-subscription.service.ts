@@ -154,6 +154,7 @@ export class ProjectConnectorSubscriptionService {
   ): Promise<void> {
     await this.authService.audit(meta, {
       orgId,
+      projectId,
       action,
       entityType: "project_connector_subscription",
       entityId,

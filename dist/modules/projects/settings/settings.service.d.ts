@@ -14,12 +14,12 @@
  */
 import type { FastifyBaseLogger } from "fastify";
 import type { OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectSettings } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { BaseProjectService } from "../shared/base.service.js";
 export interface RequestMeta {
@@ -34,7 +34,7 @@ export interface RequestMeta {
 }
 export declare function hasProjectRole(userRole: ProjectMemberRole, required: ProjectMemberRole): boolean;
 export declare class SettingsService extends BaseProjectService {
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, activityRepository: ActivityRepository, usageRepository: UsageRepository);
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, usageRepository: UsageRepository);
     getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings>;
     updateProjectSettings(orgId: string, projectId: string, userId: string, updates: Partial<Omit<ProjectSettings, "id" | "projectId" | "organizationId" | "createdAt" | "updatedAt">>, meta: RequestMeta): Promise<ProjectSettings>;
 }

@@ -97,43 +97,19 @@ export class ProjectRepository {
             throw error;
         }
     }
-    async provisionRuntimeDefaults(project, actorUserId, meta, client) {
+    async provisionRuntimeDefaults(project, client) {
         await client.query(`INSERT INTO project_environments (
-         project_id, organization_id, name, slug, description,
-         is_default, is_active, color, created_by_user_id
-       ) VALUES ($1, $2, 'Production', 'production', 'Production telemetry',
-                 TRUE, TRUE, '#16A34A', $3)
-       ON CONFLICT DO NOTHING`, [project.id, project.orgId, actorUserId]);
+         project_id, organization_id, name, slug, type, description, is_default, is_active, color
+       ) VALUES
+         ($1, $2, 'Production', 'production', 'production', 'Production telemetry', TRUE, TRUE, '#16A34A'),
+         ($1, $2, 'Staging', 'staging', 'staging', 'Pre-production telemetry', FALSE, TRUE, '#D97706'),
+         ($1, $2, 'Development', 'development', 'development', 'Development telemetry', FALSE, TRUE, '#2563EB'),
+         ($1, $2, 'Testing', 'testing', 'testing', 'Quality assurance and automated testing telemetry', FALSE, TRUE, '#7C3AED'),
+         ($1, $2, 'Preview', 'preview', 'preview', 'Short-lived preview deployment telemetry', FALSE, TRUE, '#DB2777')
+       ON CONFLICT DO NOTHING`, [project.id, project.orgId]);
         await client.query(`INSERT INTO project_usage_current (project_id, organization_id)
        VALUES ($1, $2)
        ON CONFLICT (project_id) DO NOTHING`, [project.id, project.orgId]);
-        await client.query(`INSERT INTO project_activity (
-         organization_id, project_id, actor_user_id, activity_type, category, summary, metadata
-       )
-       SELECT $1, $2, $3, 'project.created', 'project', 'Project created', $4::jsonb
-       WHERE NOT EXISTS (
-         SELECT 1 FROM project_activity
-         WHERE organization_id = $1 AND project_id = $2 AND activity_type = 'project.created'
-       )`, [project.orgId, project.id, actorUserId, JSON.stringify({ name: project.name, slug: project.slug })]);
-        await client.query(`INSERT INTO project_audit_logs (
-         organization_id, project_id, actor_user_id, action, resource_type, resource_id,
-         new_values, request_id, ip_address, user_agent
-       )
-       SELECT $1, $2, $3, 'project.created', 'project', $2,
-              $4::jsonb, $5, NULLIF($6, '')::inet, $7
-       WHERE NOT EXISTS (
-         SELECT 1 FROM project_audit_logs
-         WHERE organization_id = $1 AND project_id = $2
-           AND action = 'project.created' AND resource_type = 'project' AND resource_id = $2
-       )`, [
-            project.orgId,
-            project.id,
-            actorUserId,
-            JSON.stringify({ name: project.name, slug: project.slug, visibility: project.visibility }),
-            meta.requestId,
-            meta.actorIp,
-            meta.actorUserAgent,
-        ]);
     }
     async findProjectBySlug(orgId, slug, client) {
         const db = client ?? this.db;
@@ -237,7 +213,7 @@ export class ProjectRepository {
             db.query(`SELECT COUNT(*)::text FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, [orgId]),
             db.query(`SELECT COUNT(*)::text FROM project_environments
           WHERE organization_id = $1 AND deleted_at IS NULL
-            AND slug NOT IN ('production','staging','development')`, [orgId]),
+            AND type = 'custom'::project_environment_type`, [orgId]),
             db.query(`SELECT COUNT(*)::text FROM project_api_keys WHERE organization_id = $1 AND deleted_at IS NULL`, [orgId]),
         ]);
         return {

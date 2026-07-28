@@ -21,6 +21,7 @@ import type { RequestMeta as OrganizationRequestMeta } from "../../organization/
 import type { RequestMeta } from "../service.js";
 import {
   ApiKeyParamsSchema,
+  ApiKeyUsageQuerySchema,
   BulkRevokeBodySchema,
   BulkRotateBodySchema,
   CreateApiKeyBodySchema,
@@ -28,7 +29,6 @@ import {
   CreateProjectBodySchema,
   EnvironmentParamsSchema,
   ListApiKeysQuerySchema,
-  ListProjectActivityQuerySchema,
   ListProjectsQuerySchema,
   OrgIdParamsSchema,
   ProjectParamsSchema,
@@ -194,8 +194,23 @@ export async function projectApiKeyRoutes(fastify: FastifyInstance): Promise<voi
     { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
-      const usage = await service.getApiKeyUsage(orgId, projectId, apiKeyId, authenticatedUser(request).id);
+      const query = ApiKeyUsageQuerySchema.parse(request.query ?? {});
+      const usage = await service.getApiKeyUsage(
+        orgId, projectId, apiKeyId, authenticatedUser(request).id, query,
+      );
       return reply.send({ success: true, data: usage });
+    }),
+  );
+
+  fastify.get(
+    "/:projectId/api-keys/:apiKeyId/rotations",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, apiKeyId } = ApiKeyParamsSchema.parse(request.params);
+      const rotations = await service.listApiKeyRotations(
+        orgId, projectId, apiKeyId, authenticatedUser(request).id,
+      );
+      return reply.send({ success: true, data: rotations });
     }),
   );
 }

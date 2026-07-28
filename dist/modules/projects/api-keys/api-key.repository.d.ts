@@ -1,35 +1,33 @@
 /**
  * Project API key repository.
  *
- * Flow:
- * 1. Accept service-level identifiers and already-validated options.
- * 2. Execute parameterized SQL against project_api_keys and project_environments.
- * 3. Map snake_case rows into camelCase domain objects.
- * 4. Translate expected DB conflicts/misses into ProjectError with stable codes.
+ * The credential table holds identity and lifecycle only. Rotation workflow
+ * history lives in `project_api_key_rotations`, and usage analytics live in the
+ * partitioned `api_key_usage_minute` / `api_key_usage_daily` facts (with
+ * read-only hourly/monthly views).
  *
- * Tenant isolation: every API key query is scoped by organization_id (and project_id).
- * Soft delete: API keys use deleted_at; reads filter deleted_at IS NULL.
+ * Tenant isolation: every query is scoped by project (and organization for
+ * writes). Soft delete: reads filter `deleted_at IS NULL`.
  */
 import type { Pool, PoolClient } from "pg";
-import type { ApiKeyType, ListApiKeysQuery, Project, ProjectApiKey, ProjectApiKeyRecord } from "../types.js";
-export interface ApiKeyUpdateInput {
-    name?: string | null;
-    description?: string | null;
-    expiresAt?: Date | null;
-    autoRotateEnabled?: boolean;
-    autoRotateDays?: number;
-    permissions?: string[];
-    allowedEndpoints?: string[];
-    blockedEndpoints?: string[];
-    allowedEventTypes?: string[];
-    allowedOrigins?: string[];
-    allowedIps?: string[];
-    allowedDomains?: string[];
-    rateLimitPerSecond?: number | null;
-    rateLimitPerMinute?: number | null;
-    rateLimitPerHour?: number | null;
-    version?: number;
-}
+import type { ApiKeyRotation, ApiKeyStatus, ApiKeyUpdateInput, ApiKeyUsageGranularity, ApiKeyUsageSeriesPoint, ListApiKeysQuery, Project, ProjectApiKey, ProjectApiKeyRecord } from "../types.js";
+type ApiKeyRow = {
+    id: string;
+    organization_id: string;
+    project_id: string;
+    environment_id: string;
+    name: string;
+    public_key: string;
+    secret_hash: string;
+    status: ApiKeyStatus;
+    expires_at: Date | null;
+    last_used_at: Date | null;
+    created_by: string | null;
+    rotated_from_key_id: string | null;
+    created_at: Date;
+    updated_at: Date;
+    deleted_at: Date | null;
+};
 export declare class ApiKeyRepository {
     private readonly db;
     constructor(db?: Pool);
@@ -40,26 +38,12 @@ export declare class ApiKeyRepository {
     createApiKey(input: {
         projectId: string;
         organizationId: string;
+        environmentId: string;
         publicKey: string;
         secretHash: string;
-        keyType: ApiKeyType;
-        environmentId: string;
-        name: string | null;
-        description: string | null;
+        name: string;
         createdBy: string;
         expiresAt: Date | null;
-        autoRotateEnabled?: boolean | undefined;
-        autoRotateDays?: number | undefined;
-        permissions: string[];
-        allowedEndpoints?: string[] | undefined;
-        blockedEndpoints?: string[] | undefined;
-        allowedEventTypes?: string[] | undefined;
-        allowedOrigins?: string[] | undefined;
-        allowedIps?: string[] | undefined;
-        allowedDomains?: string[] | undefined;
-        rateLimitPerSecond?: number | null | undefined;
-        rateLimitPerMinute?: number | null | undefined;
-        rateLimitPerHour?: number | null | undefined;
         rotatedFromKeyId?: string | null | undefined;
     }, client?: PoolClient): Promise<ProjectApiKeyRecord>;
     countActiveApiKeys(projectId: string, environmentId: string, client?: PoolClient): Promise<number>;
@@ -67,44 +51,53 @@ export declare class ApiKeyRepository {
     findApiKeyRecordById(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ProjectApiKeyRecord | null>;
     listActiveApiKeyRecords(projectId: string, environmentId: string | undefined, client?: PoolClient): Promise<ProjectApiKeyRecord[]>;
     updateApiKey(projectId: string, apiKeyId: string, input: ApiKeyUpdateInput, client?: PoolClient): Promise<ProjectApiKey>;
-    /** Enable/disable the fast ingestion gate and sync the lifecycle status. */
-    setApiKeyActiveState(projectId: string, apiKeyId: string, isActive: boolean, client?: PoolClient): Promise<ProjectApiKey>;
-    /** Revoke a key permanently: deactivate, set status + reason + actor. */
-    revokeApiKey(projectId: string, apiKeyId: string, revokedBy: string, reason: string | null, client?: PoolClient): Promise<ProjectApiKey>;
-    /**
-     * Mark a rotated key. If gracePeriodEndsAt is in the future the key stays
-     * active (is_active stays TRUE) until then; otherwise it is deactivated now.
-     */
-    markApiKeyRotated(projectId: string, apiKeyId: string, rotatedBy: string, reason: string | null, gracePeriodEndsAt: Date | null, client?: PoolClient): Promise<void>;
-    touchApiKeyLastUsed(apiKeyId: string, ip?: string | null, client?: PoolClient): Promise<void>;
+    /** Suspend/resume ingestion. `status` is the only lifecycle source of truth. */
+    setApiKeyStatus(projectId: string, apiKeyId: string, status: Extract<ApiKeyStatus, "active" | "suspended">, client?: PoolClient): Promise<ProjectApiKey>;
+    /** Revoke permanently. Reason/actor are captured by audit and rotation history. */
+    revokeApiKey(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ProjectApiKey>;
+    /** Mark the superseded credential as rotated. Grace lives on the rotation row. */
+    markApiKeyRotated(projectId: string, apiKeyId: string, client?: PoolClient): Promise<void>;
+    recordRotation(input: {
+        organizationId: string;
+        projectId: string;
+        environmentId: string;
+        oldKeyId: string;
+        newKeyId: string;
+        reason: string | null;
+        initiatedBy: string;
+        graceEndsAt: Date | null;
+    }, client?: PoolClient): Promise<ApiKeyRotation>;
+    listRotations(projectId: string, apiKeyId: string, client?: PoolClient): Promise<ApiKeyRotation[]>;
+    /** Finalize grace windows that have elapsed so rotated keys stop authenticating. */
+    completeElapsedRotations(client?: PoolClient): Promise<number>;
+    touchApiKeyLastUsed(apiKeyId: string, client?: PoolClient): Promise<void>;
     /** All key hashes of a project, for cache eviction on pause/archive/delete. */
     listApiKeyHashesByProject(projectId: string, client?: PoolClient): Promise<string[]>;
     /**
-     * Candidate lookup for verification. Narrows by public_key to the small set of
-     * keys that could match, then the service does the constant-time hash compare.
-     * Includes keys that are active OR in a still-valid rotation grace window.
+     * Candidate lookup for verification. Narrows by public_key, then the service
+     * performs the constant-time hash compare. Accepts active keys and rotated
+     * keys whose rotation grace window is still open.
      */
     findActiveApiKeyCandidatesByPrefix(publicKey: string, client?: PoolClient): Promise<Array<{
         apiKey: ProjectApiKeyRecord;
         project: Project;
         environmentName: string;
+        environmentSlug: string;
         publishedConfig: Record<string, unknown>;
     }>>;
-    getApiKeyUsageSummary(keyId: string, client?: PoolClient): Promise<{
-        totalRequests: number;
-        totalSuccess: number;
-        totalErrors: number;
-        bytesIngested: number;
-        eventsIngested: number;
-        requestsByDay: Array<{
-            date: string;
-            count: number;
-        }>;
-    }>;
-    /** Build a ProjectRow from the p_*-prefixed columns of the candidate join. */
+    /**
+     * Graph-ready series for one key. Hourly reads the minute-derived view,
+     * daily reads the physical daily fact, and monthly reads the daily-derived
+     * view, so no grain re-aggregates another grain's percentiles or duplicates.
+     */
+    getApiKeyUsageSeries(apiKeyId: string, from: Date, to: Date, granularity: ApiKeyUsageGranularity, client?: PoolClient): Promise<ApiKeyUsageSeriesPoint[]>;
     private prefixedProjectRow;
     private mapProject;
+    private mapRotation;
+    mapApiKeyRecord(row: ApiKeyRow): ProjectApiKeyRecord;
     private mapApiKey;
-    private mapApiKeyRecord;
+    /** Strip the secret verifier before a credential leaves the repository. */
+    publicShape(record: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey;
 }
+export {};
 //# sourceMappingURL=api-key.repository.d.ts.map

@@ -3,7 +3,6 @@ import { ProjectsRepository } from './repository.js';
 import { SettingsRepository } from './settings/settings.repository.js';
 import { ApiKeyRepository } from './api-keys/api-key.repository.js';
 import { EnvironmentRepository } from './environments/environment.repository.js';
-import { ActivityRepository } from './activity/activity.repository.js';
 import { UsageRepository } from './usage/usage.repository.js';
 import { MemberRepository } from './members/member.repository.js';
 import { projectsRoutes } from './routes.js';
@@ -22,7 +21,6 @@ async function projectsModule(fastify, _options) {
     const settingsRepository = new SettingsRepository();
     const apiKeyRepository = new ApiKeyRepository();
     const environmentRepository = new EnvironmentRepository();
-    const activityRepository = new ActivityRepository();
     const usageRepository = new UsageRepository();
     const membersRepository = new MemberRepository(pool);
     // Caching is in-process LRU only (no Redis dependency). The ingestion module
@@ -30,10 +28,9 @@ async function projectsModule(fastify, _options) {
     // shared apiKeyCache LRU used for API-key resolution.
     //
     // Projects + API keys are organization-owned resources, so their lifecycle
-    // events are written to organization_audit_logs via the organization
-    // repository (decorated by the organization module, registered before this
-    // module in app.ts).
-    const service = new ProjectsService(repository, fastify.log, fastify.organization.repository, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+    // events are written through the shared OrganizationAuditService exposed by
+    // the organization module (registered before this module in app.ts).
+    const service = new ProjectsService(repository, fastify.log, fastify.organization.repository, fastify.organization.auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
     const { AlertRoutesRepository } = await import('./alerts/routes/alert-routes.repository.js');
     const { ProjectAlertRouteService } = await import('./alerts/routes/alert-routes.service.js');
     const { AlertPreferencesRepository } = await import('./alerts/preferences/alert-preferences.repository.js');
@@ -53,7 +50,6 @@ async function projectsModule(fastify, _options) {
         settingsRepository,
         apiKeyRepository,
         environmentRepository,
-        activityRepository,
         usageRepository,
         membersRepository,
         connectorSubscriptionsService: service.connectorSubscriptions,

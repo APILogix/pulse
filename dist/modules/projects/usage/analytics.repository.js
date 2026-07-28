@@ -1,8 +1,14 @@
 import { pool } from "../../../config/database.js";
-const USAGE_TABLES = {
-    minute: "project_usage_minute",
-    hourly: "project_usage_hourly",
-    daily: "project_usage_daily",
+/**
+ * Physical source and bucket expression per requested grain. Monthly reads the
+ * daily rollup and truncates, because `project_usage_monthly` carries a
+ * narrower billing-oriented column set.
+ */
+const USAGE_SOURCES = {
+    minute: { table: "project_usage_minute", bucket: "bucket" },
+    hourly: { table: "project_usage_hourly", bucket: "bucket" },
+    daily: { table: "project_usage_daily", bucket: "bucket" },
+    monthly: { table: "project_usage_daily", bucket: "date_trunc('month', bucket)" },
 };
 const SUMMARY_COLUMNS = [
     "COALESCE(SUM(total_events),0)::text AS total_events",
@@ -24,12 +30,8 @@ const SUMMARY_COLUMNS = [
     "COALESCE(SUM(connector_deliveries),0)::text AS connector_deliveries",
     "COALESCE(SUM(failed_notifications),0)::text AS failed_notifications",
     "COALESCE(SUM(rate_limit_usage),0)::text AS rate_limit_usage",
-    "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms_p50)::text AS latency_ms_p50",
-    "PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms_p95)::text AS latency_ms_p95",
-    "PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms_p99)::text AS latency_ms_p99",
 ].join(", ");
-const TIME_SERIES_COLUMNS = [
-    "bucket",
+const TIME_SERIES_METRIC_COLUMNS = [
     "COALESCE(SUM(total_events),0)::text AS total_events",
     "COALESCE(SUM(errors),0)::text AS errors",
     "COALESCE(SUM(requests),0)::text AS requests",
@@ -49,9 +51,6 @@ const TIME_SERIES_COLUMNS = [
     "COALESCE(SUM(connector_deliveries),0)::text AS connector_deliveries",
     "COALESCE(SUM(failed_notifications),0)::text AS failed_notifications",
     "COALESCE(SUM(rate_limit_usage),0)::text AS rate_limit_usage",
-    "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms_p50)::text AS latency_ms_p50",
-    "PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms_p95)::text AS latency_ms_p95",
-    "PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms_p99)::text AS latency_ms_p99",
 ].join(", ");
 export class UsageAnalyticsRepository {
     db;
@@ -84,7 +83,7 @@ export class UsageAnalyticsRepository {
     }
     async getSummary(projectId, query, client) {
         const db = client ?? this.db;
-        const table = USAGE_TABLES[this.pickGranularity(query)];
+        const { table } = USAGE_SOURCES[this.pickGranularity(query)];
         const { sql, params } = this.whereClause(projectId, query);
         const result = await db.query(`SELECT ${SUMMARY_COLUMNS}
          FROM ${table}
@@ -93,15 +92,17 @@ export class UsageAnalyticsRepository {
     }
     async getTimeSeries(projectId, query, client) {
         const db = client ?? this.db;
-        const table = USAGE_TABLES[this.pickGranularity(query)];
+        const { table, bucket } = USAGE_SOURCES[this.pickGranularity(query)];
         const { sql, params } = this.whereClause(projectId, query);
         const limit = query.limit;
         const offset = query.cursor ? Number.parseInt(Buffer.from(query.cursor, "base64").toString("utf8"), 10) : query.offset;
-        const result = await db.query(`SELECT ${TIME_SERIES_COLUMNS}
+        const result = await db.query(
+        // Charts consume chronological data, so buckets are returned ascending.
+        `SELECT ${bucket} AS bucket, ${TIME_SERIES_METRIC_COLUMNS}
          FROM ${table}
         WHERE ${sql}
-        GROUP BY bucket
-        ORDER BY bucket DESC
+        GROUP BY ${bucket}
+        ORDER BY ${bucket} ASC
         LIMIT $${params.length + 1}
         OFFSET $${params.length + 2}`, [...params, limit + 1, offset]);
         const rows = result.rows;
@@ -219,12 +220,11 @@ export class UsageAnalyticsRepository {
               COALESCE(SUM((value->>'events')::bigint),0)::text AS total_events,
               COALESCE(SUM((value->>'errors')::bigint),0)::text AS errors,
               COALESCE(SUM((value->>'requests')::bigint),0)::text AS requests
-         FROM (
-           SELECT jsonb_each(${field}) AS entry, total_events
-             FROM project_usage_daily
-            WHERE ${conditions.join(" AND ")}
-         ) sub,
-         LATERAL (SELECT entry.key, entry.value) AS kv(key, value)
+         FROM project_usage_daily
+         CROSS JOIN LATERAL jsonb_each(
+           CASE WHEN jsonb_typeof(${field}) = 'object' THEN ${field} ELSE '{}'::jsonb END
+         ) AS kv(key, value)
+        WHERE ${conditions.join(" AND ")}
          GROUP BY key
          ORDER BY total_events DESC
          LIMIT $${params.length + 1}`, [...params, limit]);
@@ -275,9 +275,6 @@ export class UsageAnalyticsRepository {
                 connectorDeliveries: 0,
                 failedNotifications: 0,
                 rateLimitUsage: 0,
-                latencyMsP50: null,
-                latencyMsP95: null,
-                latencyMsP99: null,
             });
             seriesById.set(row.id, series);
         }
@@ -303,13 +300,18 @@ export class UsageAnalyticsRepository {
             usagePercent: null,
         }));
     }
+    /**
+     * The requested granularity is authoritative so the UI control always
+     * changes the response. Minute data is only retained for a short window, so
+     * a minute request over a long range is widened to the next usable grain.
+     */
     pickGranularity(query) {
         const diffMs = query.to.getTime() - query.from.getTime();
-        if (diffMs <= 1000 * 60 * 60)
-            return "minute"; // <= 1 hour
-        if (diffMs <= 1000 * 60 * 60 * 24 * 7)
-            return "hourly"; // <= 7 days
-        return "daily";
+        if (query.granularity === "minute" && diffMs > 1000 * 60 * 60 * 24)
+            return "hourly";
+        if (query.granularity === "hourly" && diffMs > 1000 * 60 * 60 * 24 * 31)
+            return "daily";
+        return query.granularity;
     }
     mapSummaryRow(row) {
         return {
@@ -332,9 +334,6 @@ export class UsageAnalyticsRepository {
             connectorDeliveries: Number.parseInt(row.connector_deliveries, 10),
             failedNotifications: Number.parseInt(row.failed_notifications, 10),
             rateLimitUsage: Number.parseInt(row.rate_limit_usage, 10),
-            latencyMsP50: row.latency_ms_p50 ? Number.parseFloat(row.latency_ms_p50) : null,
-            latencyMsP95: row.latency_ms_p95 ? Number.parseFloat(row.latency_ms_p95) : null,
-            latencyMsP99: row.latency_ms_p99 ? Number.parseFloat(row.latency_ms_p99) : null,
         };
     }
     mapTimeSeriesRow(row) {
@@ -359,9 +358,6 @@ export class UsageAnalyticsRepository {
             connectorDeliveries: Number.parseInt(row.connector_deliveries, 10),
             failedNotifications: Number.parseInt(row.failed_notifications, 10),
             rateLimitUsage: Number.parseInt(row.rate_limit_usage, 10),
-            latencyMsP50: row.latency_ms_p50 ? Number.parseFloat(row.latency_ms_p50) : null,
-            latencyMsP95: row.latency_ms_p95 ? Number.parseFloat(row.latency_ms_p95) : null,
-            latencyMsP99: row.latency_ms_p99 ? Number.parseFloat(row.latency_ms_p99) : null,
         };
     }
 }

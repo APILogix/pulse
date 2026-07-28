@@ -11,14 +11,24 @@ export declare const AuditLogQuerySchema: z.ZodObject<{
     action: z.ZodOptional<z.ZodString>;
     entityType: z.ZodOptional<z.ZodString>;
     actorUserId: z.ZodOptional<z.ZodString>;
+    projectId: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
+export interface AuditLogFilters {
+    action?: string;
+    entityType?: string;
+    actorUserId?: string;
+    projectId?: string;
+    startDate?: string;
+    endDate?: string;
+}
 export interface CreateAuditLogRecord {
     orgId: string;
+    projectId?: string | null;
     actorUserId: string | null;
-    actorEmail?: string;
+    actorEmail?: string | null;
     actorIp?: string;
     actorUserAgent?: string | null;
-    actorSessionId?: string;
+    actorSessionId?: string | null;
     action: string;
     entityType: string;
     entityId?: string;
@@ -38,6 +48,7 @@ export interface CreateAuditLogRecord {
 export interface AuditLogRow {
     id: string;
     org_id: string;
+    project_id: string | null;
     actor_user_id: string | null;
     actor_email: string | null;
     action: string;

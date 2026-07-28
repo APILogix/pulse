@@ -2,30 +2,31 @@
  * API key business service.
  *
  * Flow:
- * 1. Authorize via organization membership before any read/mutation.
- * 2. Enforce API-key limits and key lifecycle.
- * 3. Mint key material in memory; persist only hash + public_key; return the full
- *    key exactly once.
- * 4. Warm/evict the in-process LRU (config/lrucashe.ts, 30-min TTL) so ingestion
- *    resolves keys without a Postgres round trip. NO Redis.
- * 5. Write every sensitive lifecycle event to organization_audit_logs.
+ * 1. Authorize via project membership before any read/mutation.
+ * 2. Enforce credential limits and lifecycle (`status` is authoritative).
+ * 3. Mint key material in memory; persist only the hash + public key; return
+ *    the full key exactly once.
+ * 4. Record rotation workflow rows in `project_api_key_rotations`.
+ * 5. Warm/evict the in-process LRU so ingestion resolves keys without a
+ *    Postgres round trip. NO Redis.
+ * 6. Write every sensitive lifecycle event to organization_audit_logs.
  */
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache } from "../../../config/lrucashe.js";
-import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole } from "../types.js";
-import {
-  ProjectsRepository,
-  type ProjectModuleUsageCounts
-} from "../repository.js";
+import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import type {
+  ApiKeyRotation,
   ApiKeyUpdateInput,
   ApiKeyUsage,
+  ApiKeyUsageQuery,
+  ApiKeyUsageSeriesPoint,
   BulkOperationResult,
   BulkRevokeBody,
   BulkRotateBody,
@@ -41,7 +42,6 @@ import type {
 import {
   constantTimeEqualHex,
   createApiKey,
-  defaultPermissionsForType,
   extractApiKeyPrefix,
   hashApiKey,
   ProjectError,
@@ -62,7 +62,6 @@ export interface RequestMeta {
 const MAX_ACTIVE_KEYS_ON_CREATE = 5;
 const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
 const DEFAULT_GRACE_PERIOD_HOURS = 24;
-const BILLING_MUTABLE_STATUSES = new Set(["trialing", "active"]);
 
 const ROLE_HIERARCHY: Record<ProjectMemberRole, number> = {
   [ProjectMemberRole.OWNER]: 4,
@@ -81,13 +80,14 @@ export class ApiKeyService extends BaseProjectService {
     repository: ProjectsRepository,
     logger: FastifyBaseLogger,
     orgRepo: OrganizationRepository,
+    auditService: OrganizationAuditService,
     settingsRepository: SettingsRepository,
     apiKeyRepository: ApiKeyRepository,
     environmentRepository: EnvironmentRepository,
-    activityRepository: ActivityRepository,
     usageRepository: UsageRepository,
   ) {
-      super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+    super(repository, logger, orgRepo, auditService, settingsRepository,
+      apiKeyRepository, environmentRepository, usageRepository);
   }
 
   public async listApiKeys(
@@ -128,47 +128,38 @@ export class ApiKeyService extends BaseProjectService {
     }
 
     const keyMaterial = createApiKey(env.slug);
-    const permissions = body.permissions ?? defaultPermissionsForType(body.keyType);
-
     const created = await this.apiKeyRepository.createApiKey({
       projectId,
       organizationId: orgId,
+      environmentId: body.environmentId,
       publicKey: keyMaterial.publicKey,
       secretHash: keyMaterial.secretHash,
-      keyType: body.keyType,
-      environmentId: body.environmentId,
-      name: body.name ?? null,
-      description: body.description ?? null,
+      name: body.name,
       createdBy: userId,
       expiresAt: body.expiresAt ?? null,
-      autoRotateEnabled: body.autoRotateEnabled,
-      autoRotateDays: body.autoRotateDays,
-      permissions,
-      allowedEndpoints: body.allowedEndpoints,
-      blockedEndpoints: body.blockedEndpoints,
-      allowedEventTypes: body.allowedEventTypes,
-      allowedOrigins: body.allowedOrigins,
-      allowedIps: body.allowedIps,
-      allowedDomains: body.allowedDomains,
-      rateLimitPerSecond: body.rateLimitPerSecond ?? null,
-      rateLimitPerMinute: body.rateLimitPerMinute ?? null,
-      rateLimitPerHour: body.rateLimitPerHour ?? null,
     });
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_created",
       entityType: "api_key",
       entityId: created.id,
+      entityName: created.name,
       isSensitive: true,
-      newValues: { projectId, environmentId: created.environmentId, keyType: created.keyType, publicKey: created.publicKey },
+      newValues: { projectId, environmentId: created.environmentId, publicKey: created.publicKey },
     });
 
     this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
     return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
   }
 
-  public async getApiKey(orgId: string, projectId: string, apiKeyId: string, userId: string): Promise<ProjectApiKey> {
+  public async getApiKey(
+    orgId: string,
+    projectId: string,
+    apiKeyId: string,
+    userId: string,
+  ): Promise<ProjectApiKey> {
     await this.requireProjectAccess(orgId, projectId, userId, "member");
     const apiKey = await this.apiKeyRepository.findApiKeyById(projectId, apiKeyId);
     if (!apiKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
@@ -188,40 +179,27 @@ export class ApiKeyService extends BaseProjectService {
 
     const updates: ApiKeyUpdateInput = {};
     if (body.name !== undefined) updates.name = body.name;
-    if (body.description !== undefined) updates.description = body.description;
     if (body.expiresAt !== undefined) updates.expiresAt = body.expiresAt;
-    if (body.autoRotateEnabled !== undefined) updates.autoRotateEnabled = body.autoRotateEnabled;
-    if (body.autoRotateDays !== undefined) updates.autoRotateDays = body.autoRotateDays;
-    if (body.permissions !== undefined) updates.permissions = body.permissions;
-    if (body.allowedEndpoints !== undefined) updates.allowedEndpoints = body.allowedEndpoints;
-    if (body.blockedEndpoints !== undefined) updates.blockedEndpoints = body.blockedEndpoints;
-    if (body.allowedEventTypes !== undefined) updates.allowedEventTypes = body.allowedEventTypes;
-    if (body.allowedOrigins !== undefined) updates.allowedOrigins = body.allowedOrigins;
-    if (body.allowedIps !== undefined) updates.allowedIps = body.allowedIps;
-    if (body.allowedDomains !== undefined) updates.allowedDomains = body.allowedDomains;
-    if (body.rateLimitPerSecond !== undefined) updates.rateLimitPerSecond = body.rateLimitPerSecond;
-    if (body.rateLimitPerMinute !== undefined) updates.rateLimitPerMinute = body.rateLimitPerMinute;
-    if (body.rateLimitPerHour !== undefined) updates.rateLimitPerHour = body.rateLimitPerHour;
-    if (body.version !== undefined) updates.version = body.version;
 
     const updated = await this.apiKeyRepository.updateApiKey(projectId, apiKeyId, updates);
 
-    // Permission/rate-limit/scoping changes affect the cached config; evict so
-    // the next ingestion request re-resolves the fresh row.
+    // Expiry affects authentication, so evict the cached credential.
     const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (record) this.evictApiKeyConfig(record.secretHash);
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_updated",
       entityType: "api_key",
       entityId: apiKeyId,
+      entityName: updated.name,
       changedFields: Object.keys(body),
     });
     return updated;
   }
 
-  /** Revoke (delete) a key with a reason. Soft state change, not row removal. */
+  /** Revoke a key with a reason. Soft state change, not row removal. */
   public async deleteApiKey(
     orgId: string,
     projectId: string,
@@ -234,14 +212,16 @@ export class ApiKeyService extends BaseProjectService {
     const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (!record) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
 
-    const revoked = await this.apiKeyRepository.revokeApiKey(projectId, apiKeyId, userId, reason ?? null);
+    const revoked = await this.apiKeyRepository.revokeApiKey(projectId, apiKeyId);
     this.evictApiKeyConfig(record.secretHash);
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_revoked",
       entityType: "api_key",
       entityId: apiKeyId,
+      entityName: record.name,
       isSensitive: true,
       newValues: { reason: reason ?? null },
     });
@@ -261,7 +241,7 @@ export class ApiKeyService extends BaseProjectService {
 
     const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (!currentKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    if (!currentKey.isActive || currentKey.status !== "active") {
+    if (currentKey.status !== "active") {
       throw new ProjectError("API_KEY_REVOKED", "Cannot rotate an inactive API key", 400);
     }
 
@@ -275,61 +255,60 @@ export class ApiKeyService extends BaseProjectService {
     const keyMaterial = createApiKey(env.slug);
 
     const rotated = await this.repository.withTransaction(async (client) => {
-      await this.apiKeyRepository.markApiKeyRotated(
-        projectId,
-        apiKeyId,
-        userId,
-        body.rotationReason ?? "manual_rotation",
-        graceEndsAt,
-        client,
-      );
-      return this.apiKeyRepository.createApiKey(
+      await this.apiKeyRepository.markApiKeyRotated(projectId, apiKeyId, client);
+      const created = await this.apiKeyRepository.createApiKey(
         {
           projectId,
           organizationId: orgId,
+          environmentId: currentKey.environmentId,
           publicKey: keyMaterial.publicKey,
           secretHash: keyMaterial.secretHash,
-          keyType: currentKey.keyType,
-          environmentId: currentKey.environmentId,
-          name: body.name !== undefined ? body.name : currentKey.name,
-          description: currentKey.description,
+          name: body.name ?? currentKey.name,
           createdBy: userId,
           expiresAt: body.expiresAt !== undefined ? body.expiresAt : currentKey.expiresAt,
-          autoRotateEnabled: currentKey.autoRotateEnabled,
-          autoRotateDays: currentKey.autoRotateDays,
-          permissions: currentKey.permissions,
-          allowedEndpoints: currentKey.allowedEndpoints,
-          blockedEndpoints: currentKey.blockedEndpoints,
-          allowedEventTypes: currentKey.allowedEventTypes,
-          allowedOrigins: currentKey.allowedOrigins,
-          allowedIps: currentKey.allowedIps,
-          allowedDomains: currentKey.allowedDomains,
-          rateLimitPerSecond: currentKey.rateLimitPerSecond,
-          rateLimitPerMinute: currentKey.rateLimitPerMinute,
-          rateLimitPerHour: currentKey.rateLimitPerHour,
           rotatedFromKeyId: apiKeyId,
         },
         client,
       );
+      await this.apiKeyRepository.recordRotation(
+        {
+          organizationId: orgId,
+          projectId,
+          environmentId: currentKey.environmentId,
+          oldKeyId: apiKeyId,
+          newKeyId: created.id,
+          reason: body.rotationReason ?? "manual_rotation",
+          initiatedBy: userId,
+          graceEndsAt,
+        },
+        client,
+      );
+      return created;
     });
 
-    // If there is no grace window, evict the old key now. With a grace window
-    // the old key stays valid (and cached) until grace ends.
+    // Without a grace window the old credential dies now; with one it stays
+    // valid (and cached) until the rotation row completes.
     if (!graceEndsAt) this.evictApiKeyConfig(currentKey.secretHash);
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_rotated",
       entityType: "api_key",
       entityId: apiKeyId,
+      entityName: currentKey.name,
       isSensitive: true,
-      newValues: { newKeyId: rotated.id, gracePeriodHours: graceHours, reason: body.rotationReason ?? null },
+      newValues: {
+        newKeyId: rotated.id,
+        gracePeriodHours: graceHours,
+        reason: body.rotationReason ?? null,
+      },
     });
 
     return { apiKey: this.publicApiKey(rotated), fullKey: keyMaterial.fullKey };
   }
 
-  /** Emergency regenerate: rotate with no grace window (old key dies instantly). */
+  /** Emergency regenerate: rotate with no grace window. */
   public async regenerateApiKey(
     orgId: string,
     projectId: string,
@@ -347,6 +326,16 @@ export class ApiKeyService extends BaseProjectService {
     );
   }
 
+  public async listApiKeyRotations(
+    orgId: string,
+    projectId: string,
+    apiKeyId: string,
+    userId: string,
+  ): Promise<ApiKeyRotation[]> {
+    await this.requireProjectAccess(orgId, projectId, userId, "member");
+    return this.apiKeyRepository.listRotations(projectId, apiKeyId);
+  }
+
   public async enableApiKey(
     orgId: string,
     projectId: string,
@@ -357,10 +346,14 @@ export class ApiKeyService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const currentKey = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (!currentKey) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
-    if (currentKey.isActive) return this.publicApiKey(currentKey);
+    if (currentKey.status === "active") return this.publicApiKey(currentKey);
 
-    if (currentKey.status === "revoked") {
-      throw new ProjectError("API_KEY_REVOKED", "Revoked API keys cannot be re-enabled", 400);
+    if (currentKey.status !== "suspended") {
+      throw new ProjectError(
+        "API_KEY_NOT_RESUMABLE",
+        `API keys with status '${currentKey.status}' cannot be re-enabled`,
+        400,
+      );
     }
     if (currentKey.expiresAt && currentKey.expiresAt <= new Date()) {
       throw new ProjectError("API_KEY_EXPIRED", "Expired API keys cannot be re-enabled", 400);
@@ -376,13 +369,14 @@ export class ApiKeyService extends BaseProjectService {
       );
     }
 
-    const updated = await this.apiKeyRepository.setApiKeyActiveState(projectId, apiKeyId, true);
-
+    const updated = await this.apiKeyRepository.setApiKeyStatus(projectId, apiKeyId, "active");
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_enabled",
       entityType: "api_key",
       entityId: apiKeyId,
+      entityName: currentKey.name,
     });
     return updated;
   }
@@ -398,14 +392,16 @@ export class ApiKeyService extends BaseProjectService {
     const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
     if (!record) throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
 
-    const updated = await this.apiKeyRepository.setApiKeyActiveState(projectId, apiKeyId, false);
+    const updated = await this.apiKeyRepository.setApiKeyStatus(projectId, apiKeyId, "suspended");
     this.evictApiKeyConfig(record.secretHash);
 
     await this.audit(meta, {
       orgId,
+      projectId,
       action: "project.api_key_disabled",
       entityType: "api_key",
       entityId: apiKeyId,
+      entityName: record.name,
     });
     return updated;
   }
@@ -428,7 +424,10 @@ export class ApiKeyService extends BaseProjectService {
           projectId,
           key.id,
           userId,
-          { gracePeriodHours: body.gracePeriodHours, rotationReason: body.rotationReason ?? "bulk_rotation" },
+          {
+            ...(body.gracePeriodHours !== undefined ? { gracePeriodHours: body.gracePeriodHours } : {}),
+            rotationReason: body.rotationReason ?? "bulk_rotation",
+          },
           meta,
         );
         results.push({ apiKeyId: key.id, status: "ok", newKeyId: rotated.apiKey.id });
@@ -450,7 +449,8 @@ export class ApiKeyService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "owner");
     const keys = body.apiKeyIds
       ? body.apiKeyIds.map((id) => ({ id }))
-      : (await this.apiKeyRepository.listActiveApiKeyRecords(projectId, body.environmentId)).map((k) => ({ id: k.id }));
+      : (await this.apiKeyRepository.listActiveApiKeyRecords(projectId, body.environmentId))
+          .map((key) => ({ id: key.id }));
 
     const results: BulkOperationResult["results"] = [];
     for (const key of keys) {
@@ -465,33 +465,40 @@ export class ApiKeyService extends BaseProjectService {
     return this.summarizeBulk(results);
   }
 
+  /** Graph-ready per-key usage for the requested grain and window. */
   public async getApiKeyUsage(
     orgId: string,
     projectId: string,
     apiKeyId: string,
     userId: string,
+    query: ApiKeyUsageQuery,
   ): Promise<ApiKeyUsage> {
     const apiKey = await this.getApiKey(orgId, projectId, apiKeyId, userId);
-    const summary = await this.apiKeyRepository.getApiKeyUsageSummary(apiKeyId);
+    const series = await this.apiKeyRepository.getApiKeyUsageSeries(
+      apiKeyId,
+      query.from,
+      query.to,
+      query.granularity,
+    );
+
     return {
       keyId: apiKey.id,
       keyPrefix: apiKey.publicKey,
-      totalRequests: summary.totalRequests || apiKey.usageCount,
-      totalSuccess: summary.totalSuccess,
-      totalErrors: summary.totalErrors || apiKey.errorCount,
-      bytesIngested: summary.bytesIngested,
-      eventsIngested: summary.eventsIngested,
       lastUsedAt: apiKey.lastUsedAt,
-      requestsByDay: summary.requestsByDay,
+      granularity: query.granularity,
+      from: query.from.toISOString(),
+      to: query.to.toISOString(),
+      summary: this.summarizeUsage(series),
+      series,
     };
   }
 
   // ── Verification (ingestion-facing) ─────────────────────────────────────────
 
   /**
-   * Resolve a raw key to its validated context. Public key narrows the candidate
-   * set, then a constant-time hash compare prevents timing leaks. Enforces
-   * project status, expiry, and rotation grace. Touches last_used_at async.
+   * Resolve a raw key to its validated context. The public key narrows the
+   * candidate set, then a constant-time hash compare prevents timing leaks.
+   * Enforces project status, expiry, and rotation grace.
    */
   public async validateApiKey(rawKey: string): Promise<ValidatedApiKey | null> {
     const publicKey = extractApiKeyPrefix(rawKey);
@@ -508,7 +515,7 @@ export class ApiKeyService extends BaseProjectService {
         // Fire-and-forget usage touch; never block verification on the write.
         this.apiKeyRepository
           .touchApiKeyLastUsed(candidate.apiKey.id)
-          .catch((err: any) => this.logger.debug({ err }, "touchApiKeyLastUsed failed"));
+          .catch((err: unknown) => this.logger.debug({ err }, "touchApiKeyLastUsed failed"));
 
         return {
           id: candidate.apiKey.id,
@@ -516,18 +523,7 @@ export class ApiKeyService extends BaseProjectService {
           orgId: candidate.project.orgId,
           environmentId: candidate.apiKey.environmentId,
           environmentName: candidate.environmentName,
-          keyType: candidate.apiKey.keyType,
-          permissions: candidate.apiKey.permissions,
-          allowedEndpoints: candidate.apiKey.allowedEndpoints,
-          blockedEndpoints: candidate.apiKey.blockedEndpoints,
-          allowedEventTypes: candidate.apiKey.allowedEventTypes,
-          allowedOrigins: candidate.apiKey.allowedOrigins,
-          allowedIps: candidate.apiKey.allowedIps,
-          allowedDomains: candidate.apiKey.allowedDomains,
-          allowedSdks: candidate.apiKey.allowedSdks,
-          rateLimitPerSecond: candidate.apiKey.rateLimitPerSecond,
-          rateLimitPerMinute: candidate.apiKey.rateLimitPerMinute,
-          rateLimitPerHour: candidate.apiKey.rateLimitPerHour,
+          environmentSlug: candidate.environmentSlug,
           samplingRules: this.configObject(candidate.publishedConfig.samplingRules),
           featureFlags: this.configObject(candidate.publishedConfig.featureFlags),
           sdkConfig: candidate.publishedConfig,
@@ -546,14 +542,41 @@ export class ApiKeyService extends BaseProjectService {
     }
   }
 
+  /** Never let the secret verifier leave the service boundary. */
   public publicApiKey(apiKey: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey {
-    const rest = { ...apiKey };
-    delete (rest as Partial<ProjectApiKeyRecord>).secretHash;
-    return rest as ProjectApiKey;
+    const shape = { ...apiKey };
+    delete (shape as Partial<ProjectApiKeyRecord>).secretHash;
+    return shape as ProjectApiKey;
+  }
+
+  public summarizeUsage(series: ApiKeyUsageSeriesPoint[]): ApiKeyUsage["summary"] {
+    const totals = series.reduce(
+      (accumulator, point) => ({
+        requests: accumulator.requests + point.requests,
+        acceptedEvents: accumulator.acceptedEvents + point.acceptedEvents,
+        errorEvents: accumulator.errorEvents + point.errorEvents,
+        ingestionFailures: accumulator.ingestionFailures + point.ingestionFailures,
+        acceptedBytes: accumulator.acceptedBytes + point.acceptedBytes,
+        rateLimitedRequests: accumulator.rateLimitedRequests + point.rateLimitedRequests,
+      }),
+      {
+        requests: 0,
+        acceptedEvents: 0,
+        errorEvents: 0,
+        ingestionFailures: 0,
+        acceptedBytes: 0,
+        rateLimitedRequests: 0,
+      },
+    );
+    const denominator = totals.acceptedEvents + totals.errorEvents;
+    return {
+      ...totals,
+      errorRate: denominator > 0 ? (totals.errorEvents / denominator) * 100 : 0,
+    };
   }
 
   public summarizeBulk(results: BulkOperationResult["results"]): BulkOperationResult {
-    const succeeded = results.filter((r) => r.status === "ok").length;
+    const succeeded = results.filter((result) => result.status === "ok").length;
     return {
       total: results.length,
       succeeded,

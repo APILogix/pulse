@@ -1,32 +1,5 @@
 BEGIN;
 
-CREATE TABLE IF NOT EXISTS project_activity (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
- project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL, actor_api_key_id UUID REFERENCES project_api_keys(id) ON DELETE SET NULL,
- activity_type VARCHAR(100) NOT NULL, category VARCHAR(100) NOT NULL DEFAULT 'project', summary TEXT NOT NULL,
- metadata JSONB NOT NULL DEFAULT '{}'::jsonb, occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_project_activity_timeline ON project_activity(organization_id,project_id,occurred_at DESC,id DESC);
-
-CREATE TABLE IF NOT EXISTS project_audit_logs (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
- project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- actor_user_id UUID REFERENCES users(id) ON DELETE SET NULL, actor_api_key_id UUID REFERENCES project_api_keys(id) ON DELETE SET NULL,
- action VARCHAR(100) NOT NULL, resource_type VARCHAR(100) NOT NULL, resource_id UUID,
- old_values JSONB, new_values JSONB, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
- request_id VARCHAR(128), ip_address INET, user_agent TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_project_audit_timeline ON project_audit_logs(organization_id,project_id,created_at DESC,id DESC);
-CREATE INDEX IF NOT EXISTS idx_project_audit_resource ON project_audit_logs(project_id,resource_type,resource_id,created_at DESC);
-
-CREATE OR REPLACE FUNCTION reject_project_history_mutation() RETURNS trigger AS $$
-BEGIN RAISE EXCEPTION '% is immutable',TG_TABLE_NAME USING ERRCODE='55000'; END; $$ LANGUAGE plpgsql;
-DROP TRIGGER IF EXISTS trg_project_activity_immutable ON project_activity;
-CREATE TRIGGER trg_project_activity_immutable BEFORE UPDATE OR DELETE ON project_activity FOR EACH ROW EXECUTE FUNCTION reject_project_history_mutation();
-DROP TRIGGER IF EXISTS trg_project_audit_logs_immutable ON project_audit_logs;
-CREATE TRIGGER trg_project_audit_logs_immutable BEFORE UPDATE OR DELETE ON project_audit_logs FOR EACH ROW EXECUTE FUNCTION reject_project_history_mutation();
-
 CREATE OR REPLACE FUNCTION enforce_project_tenant_integrity() RETURNS trigger AS $$
 DECLARE expected_org UUID; value_id UUID;
 BEGIN
@@ -81,7 +54,7 @@ BEGIN
   'project_settings','project_environments','project_releases','project_api_keys',
   'api_key_usage_minute','api_key_usage_hourly','api_key_usage_daily','api_key_usage_monthly','project_usage_minute','project_usage_hourly','project_usage_daily',
   'project_usage_monthly','project_usage_current','project_alert_thresholds','project_alert_channels',
-  'project_member_alert_channel_preferences','project_notification_preferences','project_connector_subscriptions','project_activity','project_audit_logs'
+  'project_member_alert_channel_preferences','project_notification_preferences','project_connector_subscriptions'
  ] LOOP
   EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I','trg_'||table_name||'_tenant',table_name);
   EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION enforce_project_tenant_integrity()','trg_'||table_name||'_tenant',table_name);
@@ -100,11 +73,13 @@ END $$;
 CREATE OR REPLACE FUNCTION provision_project_schema_defaults() RETURNS trigger AS $$
 BEGIN
  INSERT INTO project_settings(project_id,organization_id) VALUES(NEW.id,NEW.org_id) ON CONFLICT(project_id) DO NOTHING;
- INSERT INTO project_environments(project_id,organization_id,name,slug,description,is_default,color,created_by_user_id)
+ INSERT INTO project_environments(project_id,organization_id,name,slug,type,description,is_default,color)
  VALUES
-  (NEW.id,NEW.org_id,'Production','production','Production telemetry',true,'#16A34A',NEW.created_by),
-  (NEW.id,NEW.org_id,'Staging','staging','Pre-production telemetry',false,'#D97706',NEW.created_by),
-  (NEW.id,NEW.org_id,'Development','development','Development telemetry',false,'#2563EB',NEW.created_by)
+  (NEW.id,NEW.org_id,'Production','production','production','Production telemetry',true,'#16A34A'),
+  (NEW.id,NEW.org_id,'Staging','staging','staging','Pre-production telemetry',false,'#D97706'),
+  (NEW.id,NEW.org_id,'Development','development','development','Development telemetry',false,'#2563EB'),
+  (NEW.id,NEW.org_id,'Testing','testing','testing','Quality assurance and automated testing telemetry',false,'#7C3AED'),
+  (NEW.id,NEW.org_id,'Preview','preview','preview','Short-lived preview deployment telemetry',false,'#DB2777')
  ON CONFLICT DO NOTHING;
  IF NEW.created_by IS NOT NULL THEN
   INSERT INTO project_members(
@@ -133,13 +108,9 @@ BEGIN
   ('ai_usage_cost','ai_cost','ai','warning','>=',100::numeric,'currency',60,60,1)
  ) AS t(threshold_key,metric_name,category,severity,comparison_operator,threshold_value,threshold_unit,evaluation_window_minutes,cooldown_minutes,consecutive_breaches)
  ON CONFLICT DO NOTHING;
- INSERT INTO project_activity(organization_id,project_id,actor_user_id,activity_type,summary) VALUES(NEW.org_id,NEW.id,NEW.created_by,'project.created','Project created');
- INSERT INTO project_audit_logs(organization_id,project_id,actor_user_id,action,resource_type,resource_id,new_values)
- VALUES(NEW.org_id,NEW.id,NEW.created_by,'project.created','project',NEW.id,jsonb_build_object('name',NEW.name,'slug',NEW.slug));
  RETURN NEW;
 END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects;
 CREATE TRIGGER trg_projects_provision_defaults AFTER INSERT ON projects FOR EACH ROW EXECUTE FUNCTION provision_project_schema_defaults();
 COMMENT ON FUNCTION provision_project_schema_defaults() IS 'Schema safety net for atomic dependent-row provisioning; application transactions may pre-provision with ON CONFLICT semantics.';
-COMMENT ON TABLE project_audit_logs IS 'Append-only project compliance history; update and delete are rejected.';
 COMMIT;

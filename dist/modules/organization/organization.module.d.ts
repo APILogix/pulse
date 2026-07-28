@@ -16,6 +16,7 @@ declare module 'fastify' {
         organization: {
             repository: OrganizationRepository;
             service: OrganizationService;
+            auditService: import('./audit-logs/audit-logs.service.js').OrganizationAuditService;
             sdkConfigService: SdkConfigService;
         };
     }

@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { normalizeObjectKeys } from "../shared/schema-utils.js";
 import { UuidSchema } from "../../alerting/types.js";
-export const UsageGranularitySchema = z.enum(["minute", "hourly", "daily"]);
+export const UsageGranularitySchema = z.enum(["minute", "hourly", "daily", "monthly"]);
 export const UsageAnalyticsQuerySchema = z.preprocess(normalizeObjectKeys, z.object({
     from: z.coerce.date(),
     to: z.coerce.date(),

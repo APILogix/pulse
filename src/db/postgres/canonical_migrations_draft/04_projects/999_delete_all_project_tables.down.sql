@@ -4,14 +4,15 @@
 BEGIN;
 
 DROP VIEW IF EXISTS project_usage_realtime CASCADE;
+DROP VIEW IF EXISTS api_key_usage_monthly CASCADE;
+DROP VIEW IF EXISTS api_key_usage_hourly CASCADE;
 DROP FUNCTION IF EXISTS rollup_project_usage() CASCADE;
 DROP FUNCTION IF EXISTS flush_usage_counters() CASCADE;
+DROP FUNCTION IF EXISTS enforce_api_key_usage_tenant_dimensions() CASCADE;
 DROP FUNCTION IF EXISTS provision_environment_sdk_config() CASCADE;
 DROP FUNCTION IF EXISTS reject_sdk_config_revision_update() CASCADE;
 DROP FUNCTION IF EXISTS provision_project_schema_defaults() CASCADE;
-DROP FUNCTION IF EXISTS record_project_change_history() CASCADE;
 DROP FUNCTION IF EXISTS enforce_project_tenant_integrity() CASCADE;
-DROP FUNCTION IF EXISTS reject_project_history_mutation() CASCADE;
 
 DROP TABLE IF EXISTS project_environment_sdk_config_revisions CASCADE;
 DROP TABLE IF EXISTS project_environment_sdk_configs CASCADE;
@@ -20,12 +21,10 @@ DROP TABLE IF EXISTS project_notification_preferences CASCADE;
 DROP TABLE IF EXISTS project_connector_subscriptions CASCADE;
 DROP TABLE IF EXISTS project_alert_channels CASCADE;
 DROP TABLE IF EXISTS project_alert_thresholds CASCADE;
-DROP TABLE IF EXISTS project_audit_logs CASCADE;
-DROP TABLE IF EXISTS project_activity CASCADE;
-DROP TABLE IF EXISTS api_key_usage_monthly CASCADE;
 DROP TABLE IF EXISTS api_key_usage_daily CASCADE;
-DROP TABLE IF EXISTS api_key_usage_hourly CASCADE;
 DROP TABLE IF EXISTS api_key_usage_minute CASCADE;
+DROP TABLE IF EXISTS telemetry_event_types CASCADE;
+DROP TABLE IF EXISTS project_api_key_rotations CASCADE;
 DROP TABLE IF EXISTS project_usage_current CASCADE;
 DROP TABLE IF EXISTS project_usage_monthly CASCADE;
 DROP TABLE IF EXISTS project_usage_daily CASCADE;
@@ -38,6 +37,7 @@ DROP TABLE IF EXISTS project_members CASCADE;
 DROP TABLE IF EXISTS project_settings CASCADE;
 DROP TABLE IF EXISTS projects CASCADE;
 
+DROP TYPE IF EXISTS project_environment_type CASCADE;
 DROP TYPE IF EXISTS api_key_rotation_state CASCADE;
 DROP TYPE IF EXISTS api_key_type CASCADE;
 DROP TYPE IF EXISTS api_key_status CASCADE;

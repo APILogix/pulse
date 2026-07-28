@@ -34,7 +34,8 @@ export class ProjectAlertRouteService {
     });
 
     await this.projectsService.audit(meta, {
-      orgId: orgId,
+      orgId,
+      projectId,
       action: "route_created",
       entityType: "project_alert_route",
       entityId: created.id,
@@ -81,7 +82,8 @@ export class ProjectAlertRouteService {
     const updated = await this.repository.updateRoute(routeId, orgId, projectId, dto);
 
     await this.projectsService.audit(meta, {
-      orgId: orgId,
+      orgId,
+      projectId,
       action: "route_updated",
       entityType: "project_alert_route",
       entityId: routeId,
@@ -116,7 +118,8 @@ export class ProjectAlertRouteService {
     await this.repository.deleteRoute(routeId, orgId, projectId);
 
     await this.projectsService.audit(meta, {
-      orgId: orgId,
+      orgId,
+      projectId,
       action: "route_deleted",
       entityType: "project_alert_route",
       entityId: routeId,

@@ -73,10 +73,14 @@ export class CoreRepository extends BaseRepository {
             // Cascade: revoke all project API keys and pause projects so a deleted
             // org cannot keep ingesting or be operated on. Tables FK ON DELETE
             // CASCADE only fires on hard delete, which we never do (soft delete only).
-            await client.query(`UPDATE project_api_keys k
-         SET is_active=FALSE, revoked_at=NOW(), revoked_reason='org_deleted'
+            await client.query(
+            // `status` is the only credential lifecycle state; the revocation
+            // reason is captured by the organization audit trail.
+            `UPDATE project_api_keys k
+         SET status='revoked', deleted_at=COALESCE(k.deleted_at, NOW())
          FROM projects p
-         WHERE k.project_id=p.id AND p.org_id=$1 AND k.is_active=TRUE`, [id]);
+         WHERE k.project_id=p.id AND p.org_id=$1
+           AND k.status<>'revoked' AND k.deleted_at IS NULL`, [id]);
             await client.query(`UPDATE projects SET status='archived', is_active=FALSE
          WHERE org_id=$1 AND deleted_at IS NULL AND status<>'archived'`, [id]);
         });

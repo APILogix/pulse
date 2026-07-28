@@ -21,6 +21,8 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).toContain('04_projects/005_create_project_api_keys.up.sql');
     expect(files).toContain('04_projects/015_create_environment_sdk_configuration.up.sql');
     expect(files).toContain('04_projects/016_add_environment_runtime_configuration.up.sql');
+    expect(files).toContain('04_projects/017_simplify_project_environments.up.sql');
+    expect(files).toContain('04_projects/018_normalize_project_api_keys_and_usage.up.sql');
     expect(files.some((file) => file.startsWith('05_project_credentials/'))).toBe(false);
     expect(files.some((file) => file.startsWith('20_project_module_refactor/'))).toBe(false);
     expect(files).not.toContain('04_projects/999_delete_all_project_tables.down.sql');
@@ -240,6 +242,32 @@ describe('canonical_migrations_draft discovery', () => {
   });
 });
 
+describe('project environment simplification migration', () => {
+  it('adds the canonical type enum and removes obsolete environment controls', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/017_simplify_project_environments.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+    for (const value of [
+      'production', 'pre_production', 'staging', 'pre_staging', 'development',
+      'testing', 'preview', 'pre_deployment', 'custom',
+    ]) {
+      expect(sql).toContain(`'${value}'`);
+    }
+    for (const column of [
+      'icon', 'created_by_user_id', 'created_by_api_key_id', 'version',
+      'rate_limit_per_second', 'rate_limit_per_minute', 'rate_limit_per_hour',
+      'burst_limit', 'allowed_event_types', 'max_event_size_bytes', 'max_batch_size',
+      'require_https', 'ip_allowlist', 'ip_blocklist', 'alert_email', 'alert_webhook_url',
+    ]) {
+      expect(sql).toContain(`DROP COLUMN IF EXISTS ${column}`);
+    }
+    expect(sql).toContain("slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'");
+    expect(sql).toContain("color ~ '^#[0-9A-Fa-f]{6}$'");
+    expect(sql).toContain('WHERE is_default AND is_active AND deleted_at IS NULL');
+  });
+});
+
 
 describe('enterprise AI runtime migration', () => {
   it('hardens async idempotency, refund bounds, RAG access metadata, and function privileges', async () => {
@@ -348,7 +376,7 @@ describe('automation module migrations', () => {
       DRAFT_MIGRATIONS_DIR,
     );
 
-    expect(sql).toContain('CREATE OR REPLACE VIEW v_automation_workflow_summaries');
+    expect(sql).toContain('CREATE VIEW v_automation_workflow_summaries');
     expect(sql).toContain('CREATE OR REPLACE VIEW v_automation_run_summaries');
     expect(sql).toContain('CREATE OR REPLACE VIEW v_automation_pending_approvals');
 
@@ -643,5 +671,48 @@ describe('automation module migrations', () => {
     // Template version uniqueness
     expect(automationSql).toContain('uq_template_versions');
     expect(automationSql).toContain('uq_automation_tv_one_current');
+  });
+});
+
+
+describe('API-key normalization migration', () => {
+  it('declares the minimal credential, partitioned facts, views, and additive measures', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/018_normalize_project_api_keys_and_usage.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+    expect(sql.trim().toUpperCase().startsWith('BEGIN;')).toBe(true);
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS project_api_key_rotations');
+    expect(sql).toContain('CREATE TABLE api_key_usage_minute');
+    expect(sql).toContain('CREATE TABLE api_key_usage_daily');
+    expect(sql).toContain('PARTITION BY RANGE(bucket)');
+    expect(sql).toContain('CREATE VIEW api_key_usage_hourly');
+    expect(sql).toContain('CREATE VIEW api_key_usage_monthly');
+    expect(sql).toContain('CREATE TABLE telemetry_event_types');
+    expect(sql).toContain('event_type_id SMALLINT');
+    expect(sql).toContain('enforce_api_key_usage_tenant_dimensions');
+    expect(sql).toContain('ON CONFLICT(api_key_id,bucket,event_type_id) DO UPDATE SET');
+    for (const measure of [
+      'request_count', 'accepted_event_count', 'error_event_count',
+      'ingestion_failure_count', 'accepted_bytes', 'rate_limited_request_count',
+    ]) {
+      expect(sql).toContain(measure);
+    }
+    const keepList = sql.match(/column_name <> ALL\(ARRAY\[([\s\S]*?)\]\)/)?.[1] ?? '';
+    for (const column of [
+      'id', 'organization_id', 'project_id', 'environment_id', 'name', 'public_key',
+      'secret_hash', 'status', 'expires_at', 'last_used_at', 'created_by',
+      'rotated_from_key_id', 'created_at', 'updated_at', 'deleted_at',
+    ]) {
+      expect(keepList).toContain(`'${column}'`);
+    }
+    for (const obsolete of [
+      'key_type', 'description', 'is_active', 'revoked_at', 'revoked_by',
+      'revoked_reason', 'auto_rotate_enabled', 'usage_count', 'metadata', 'version',
+    ]) {
+      expect(keepList).not.toContain(`'${obsolete}'`);
+    }
+    expect(sql).toContain("ARRAY['project_usage_minute','project_usage_hourly','project_usage_daily']");
+    expect(sql).toContain('DROP COLUMN IF EXISTS latency_ms_p99');
   });
 });

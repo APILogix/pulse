@@ -19,7 +19,8 @@ export class ProjectAlertRouteService {
             return this.repository.createRoute(orgId, projectId, dto, client);
         });
         await this.projectsService.audit(meta, {
-            orgId: orgId,
+            orgId,
+            projectId,
             action: "route_created",
             entityType: "project_alert_route",
             entityId: created.id,
@@ -49,7 +50,8 @@ export class ProjectAlertRouteService {
             throw new ProjectError("ROUTE_NOT_FOUND", "Route not found", 404);
         const updated = await this.repository.updateRoute(routeId, orgId, projectId, dto);
         await this.projectsService.audit(meta, {
-            orgId: orgId,
+            orgId,
+            projectId,
             action: "route_updated",
             entityType: "project_alert_route",
             entityId: routeId,
@@ -67,7 +69,8 @@ export class ProjectAlertRouteService {
             throw new ProjectError("ROUTE_NOT_FOUND", "Route not found", 404);
         await this.repository.deleteRoute(routeId, orgId, projectId);
         await this.projectsService.audit(meta, {
-            orgId: orgId,
+            orgId,
+            projectId,
             action: "route_deleted",
             entityType: "project_alert_route",
             entityId: routeId,

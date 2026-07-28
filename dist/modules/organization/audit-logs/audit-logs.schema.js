@@ -4,5 +4,6 @@ export const AuditLogQuerySchema = CursorPaginationSchema.extend({
     action: z.string().max(100).optional(),
     entityType: z.string().max(100).optional(),
     actorUserId: UuidSchema.optional(),
+    projectId: UuidSchema.optional(),
 });
 //# sourceMappingURL=audit-logs.schema.js.map

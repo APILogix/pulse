@@ -28,16 +28,19 @@ const meta = {
 };
 
 describe('project core runtime provisioning', () => {
-  it('provisions environment, usage, activity, and audit through the transaction client', async () => {
+  it('provisions environments and usage through the transaction client', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     const repo = new ProjectRepository({} as Pool);
-    await repo.provisionRuntimeDefaults(project as any, meta.actorUserId, meta, { query } as any);
+    await repo.provisionRuntimeDefaults(project as any, { query } as any);
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
     expect(sql).toContain('project_environments');
     expect(sql).toContain("'production'");
+    expect(sql).toContain("'testing'");
+    expect(sql).toContain("'preview'");
+    expect(sql).toContain('type');
+    expect(sql).not.toContain('created_by_user_id');
     expect(sql).toContain('project_usage_current');
-    expect(sql).toContain('project_activity');
-    expect(sql).toContain('project_audit_logs');
+    expect(sql).not.toContain('organization_audit_logs');
     expect(sql).not.toContain('project_alert_thresholds');
     expect(sql).not.toContain('project_alert_channels');
   });
@@ -66,37 +69,88 @@ describe('project core runtime provisioning', () => {
     const settings = { createDefault: vi.fn().mockResolvedValue({}) };
     const orgRepo = {
       getBillingEntitlements: vi.fn().mockResolvedValue({ subscription_status: 'active', feature_config: {} }),
-      createAuditLog: vi.fn().mockResolvedValue(undefined),
     };
+    const auditService = { audit: vi.fn().mockResolvedValue(undefined) };
     const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     const service = new ProjectService(
-      repository as any, logger as any, orgRepo as any, settings as any,
-      {} as any, {} as any, {} as any, {} as any,
+      repository as any, logger as any, orgRepo as any, auditService as any,
+      settings as any, {} as any, {} as any, {} as any,
     );
 
     await service.createProject(project.orgId, meta.actorUserId, { name: project.name } as any, meta);
     expect(repository.ensureProjectOwner).toHaveBeenCalledWith(project.id, project.orgId, meta.actorUserId, client);
     expect(settings.createDefault).toHaveBeenCalledWith(project.id, project.orgId, client);
-    expect(repository.provisionRuntimeDefaults).toHaveBeenCalledWith(project, meta.actorUserId, meta, client);
+    expect(repository.provisionRuntimeDefaults).toHaveBeenCalledWith(project, client);
+    expect(auditService.audit).toHaveBeenCalledWith(meta, expect.objectContaining({
+      orgId: project.orgId,
+      projectId: project.id,
+      action: 'project.created',
+    }));
     expect((client.query as any).mock.calls[0][0]).toContain('project_notification_preferences');
   });
 });
 
 describe('canonical project API key runtime', () => {
-  it('reads usage only from canonical daily and minute rollups', async () => {
-    const query = vi.fn()
-      .mockResolvedValueOnce({ rows: [{ total_requests: '10', total_success: '8', total_errors: '2', bytes_ingested: '30', events_ingested: '9' }] })
-      .mockResolvedValueOnce({ rows: [{ d: '2026-01-01', c: '10' }] });
+  it.each([
+    ['hourly', 'api_key_usage_hourly'],
+    ['daily', 'api_key_usage_daily'],
+    ['monthly', 'api_key_usage_monthly'],
+  ] as const)('reads %s usage from the normalized %s source in ascending order', async (granularity, source) => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [{
+        bucket: new Date('2026-01-01T00:00:00Z'),
+        request_count: '10', accepted_event_count: '9', error_event_count: '1',
+        ingestion_failure_count: '0', accepted_bytes: '30', rate_limited_request_count: '2',
+      }],
+    });
     const repo = new ApiKeyRepository({ query } as unknown as Pool);
-    const result = await repo.getApiKeyUsageSummary('key-id');
-    const sql = query.mock.calls.map(([statement]) => statement).join('\n');
-    expect(sql).toContain('api_key_usage_daily');
-    expect(sql).toContain('api_key_usage_minute');
-    expect(sql).not.toContain('project_api_key_usage');
+    const series = await repo.getApiKeyUsageSeries(
+      'key-id', new Date('2026-01-01T00:00:00Z'), new Date('2026-01-02T00:00:00Z'), granularity,
+    );
+    const sql = query.mock.calls[0]![0] as string;
+    expect(sql).toContain(source);
     expect(sql).toContain('api_key_id = $1');
-    expect(sql).toMatch(/SELECT requests, errors, bytes_ingested, events/);
-    expect(sql).not.toMatch(/api_key_usage_[\s\S]*total_events/);
-    expect(result.totalSuccess).toBe(8);
+    expect(sql).toContain('ORDER BY bucket ASC');
+    expect(sql).not.toMatch(/latency|percentile/i);
+    expect(series[0]).toMatchObject({ requests: 10, acceptedEvents: 9, errorEvents: 1, rateLimitedRequests: 2 });
+  });
+
+  it('accepts rotated credentials only while a rotation grace window is open', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const repo = new ApiKeyRepository({ query } as unknown as Pool);
+    await repo.findActiveApiKeyCandidatesByPrefix('pulsiv_production_public');
+    const sql = query.mock.calls[0]![0] as string;
+    expect(sql).toContain('project_api_key_rotations');
+    expect(sql).toContain("r.state = 'grace_period'");
+    expect(sql).not.toContain('grace_period_ends_at');
+    expect(sql).not.toContain('k.is_active');
+  });
+
+  it('persists rotation workflow history instead of credential rotation columns', async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [{
+        id: 'rotation-1', organization_id: project.orgId, project_id: project.id,
+        environment_id: '55555555-5555-4555-8555-555555555555',
+        old_key_id: 'old', new_key_id: 'new', state: 'grace_period', reason: 'manual_rotation',
+        initiated_by: meta.actorUserId, initiated_at: new Date(),
+        grace_ends_at: new Date(Date.now() + 3_600_000), completed_at: null,
+      }],
+    });
+    const repo = new ApiKeyRepository({ query } as unknown as Pool);
+    const rotation = await repo.recordRotation({
+      organizationId: project.orgId,
+      projectId: project.id,
+      environmentId: '55555555-5555-4555-8555-555555555555',
+      oldKeyId: 'old',
+      newKeyId: 'new',
+      reason: 'manual_rotation',
+      initiatedBy: meta.actorUserId,
+      graceEndsAt: new Date(Date.now() + 3_600_000),
+    });
+    const sql = query.mock.calls[0]![0] as string;
+    expect(sql).toContain('INSERT INTO project_api_key_rotations');
+    expect(query.mock.calls[0]![1]).toContain('grace_period');
+    expect(rotation.state).toBe('grace_period');
   });
 
   it('requires an active nondeleted tenant-matched environment during validation lookup', async () => {
@@ -123,11 +177,13 @@ describe('canonical project API key runtime', () => {
       id: '55555555-5555-4555-8555-555555555555', slug: 'production', name: 'Production',
       isActive: true, deletedAt: null,
     }) };
-    const service = new ApiKeyService({} as any, { info: vi.fn() } as any, {} as any, {} as any, apiKeys as any, environments as any, {} as any, {} as any);
+    const service = new ApiKeyService(
+      {} as any, { info: vi.fn() } as any, {} as any, {} as any,
+      {} as any, apiKeys as any, environments as any, {} as any,
+    );
     vi.spyOn(service, 'requireProjectAccess').mockResolvedValue(project as any);
     vi.spyOn(service, 'enforceProjectModuleLimit').mockResolvedValue({} as any);
     vi.spyOn(service, 'audit').mockResolvedValue(undefined);
-    vi.spyOn(service, 'warmApiKeyCache').mockImplementation(() => undefined);
 
     const result = await service.createApiKey(project.orgId, project.id, meta.actorUserId, {
       environmentId: environments.findEnvironment.mock.results[0]?.value?.id ?? '55555555-5555-4555-8555-555555555555',
@@ -144,7 +200,10 @@ describe('canonical project API key runtime', () => {
   it('rejects key creation for an inactive environment before persistence', async () => {
     const apiKeys = { createApiKey: vi.fn(), countActiveApiKeys: vi.fn() };
     const environments = { findEnvironment: vi.fn().mockResolvedValue({ isActive: false, deletedAt: null }) };
-    const service = new ApiKeyService({} as any, { warn: vi.fn() } as any, {} as any, {} as any, apiKeys as any, environments as any, {} as any, {} as any);
+    const service = new ApiKeyService(
+      {} as any, { warn: vi.fn() } as any, {} as any, {} as any,
+      {} as any, apiKeys as any, environments as any, {} as any,
+    );
     vi.spyOn(service, 'requireProjectAccess').mockResolvedValue(project as any);
     vi.spyOn(service, 'enforceProjectModuleLimit').mockResolvedValue({} as any);
     await expect(service.createApiKey(project.orgId, project.id, meta.actorUserId, {

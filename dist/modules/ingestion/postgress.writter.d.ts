@@ -13,6 +13,11 @@ export interface ProjectAuthResult {
     environmentName: string;
     environmentSlug: string;
     apiKeyId: string;
+    /**
+     * Ingestion-side policy defaults. These are NOT credential columns: the API
+     * key only selects a project/environment, so authorization, endpoint/event
+     * scoping, and rate limits resolve from organization/platform configuration.
+     */
     keyType: string;
     rotationVersion: number;
     isActive: boolean;

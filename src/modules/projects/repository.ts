@@ -146,13 +146,8 @@ export class ProjectsRepository {
     return this.core.createProject(input as any, client);
   }
 
-  async provisionRuntimeDefaults(
-    project: Project,
-    actorUserId: string,
-    meta: { requestId: string; actorIp: string; actorUserAgent: string | null },
-    client: PoolClient,
-  ): Promise<void> {
-    return this.core.provisionRuntimeDefaults(project, actorUserId, meta, client);
+  async provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void> {
+    return this.core.provisionRuntimeDefaults(project, client);
   }
 
   async findProjectBySlug(

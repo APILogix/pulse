@@ -178,19 +178,13 @@ export function constantTimeEqualHex(left, right) {
     }
     return timingSafeEqual(leftBuffer, rightBuffer);
 }
-/** Default permission set for a freshly minted key of a given type. */
-export function defaultPermissionsForType(keyType) {
-    switch (keyType) {
-        case "read_only":
-            return ["ingest:read", "events:read", "metrics:read"];
-        case "write_only":
-            return ["ingest:write"];
-        case "temporary":
-            return ["ingest:write", "ingest:read"];
-        case "read_write":
-        default:
-            return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
-    }
+/**
+ * Ingestion permissions granted to an authenticated credential. API keys are
+ * not a permission engine: every valid key may ingest telemetry for its
+ * environment, and finer authorization belongs to the policy modules.
+ */
+export function defaultIngestionPermissions() {
+    return ["ingest:write"];
 }
 /**
  * Reserved project slugs that are blocked at the application layer to prevent

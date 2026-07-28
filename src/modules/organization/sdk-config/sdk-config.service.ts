@@ -1,6 +1,6 @@
 /** Business logic for environment-owned published SDK configuration. */
 import { createHash } from "crypto";
-import type { FastifyBaseLogger } from "fastify";
+import type { OrganizationAuditService } from "../audit-logs/audit-logs.service.js";
 import { evictSdkConfigCache, sdkConfigCache, sdkConfigCacheKey } from "../../../config/lrucashe.js";
 import type { OrganizationRepository } from "../repository.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
@@ -77,7 +77,7 @@ export class SdkConfigService {
   constructor(
     private readonly repo: SdkConfigRepository,
     private readonly orgRepo: OrganizationRepository,
-    private readonly log: FastifyBaseLogger,
+    private readonly auditService: OrganizationAuditService,
   ) {}
 
   private async requireAdmin(orgId: string, userId: string): Promise<void> {
@@ -96,29 +96,19 @@ export class SdkConfigService {
   private async audit(
     meta: RequestMeta,
     orgId: string,
+    projectId: string | null,
     action: string,
     entityId: string,
     newValues: Record<string, unknown>,
   ): Promise<void> {
-    try {
-      await this.orgRepo.createAuditLog({
-        orgId,
-        action,
-        entityType: "environment_sdk_config",
-        entityId,
-        actorUserId: meta.actorUserId,
-        actorEmail: meta.actorEmail,
-        actorIp: meta.actorIp,
-        actorUserAgent: meta.actorUserAgent,
-        actorSessionId: meta.actorSessionId,
-        requestId: meta.requestId,
-        httpMethod: meta.httpMethod,
-        endpoint: meta.endpoint,
-        newValues,
-      });
-    } catch (error) {
-      this.log.error({ err: error }, "SDK config audit write failed");
-    }
+    await this.auditService.audit(meta, {
+      orgId,
+      projectId,
+      action,
+      entityType: "environment_sdk_config",
+      entityId,
+      newValues,
+    });
   }
 
   async listConfigs(
@@ -182,7 +172,7 @@ export class SdkConfigService {
       publishedBy: meta.actorUserId,
     });
     evictSdkConfigCache(row.environment_id);
-    await this.audit(meta, orgId, "sdk_config.published", configId, {
+    await this.audit(meta, orgId, row.project_id, "sdk_config.published", configId, {
       environmentId: row.environment_id,
       revision: row.current_revision,
       revisionHash: row.current_hash,
@@ -215,7 +205,7 @@ export class SdkConfigService {
       publishedBy: meta.actorUserId,
     });
     evictSdkConfigCache(row.environment_id);
-    await this.audit(meta, orgId, "sdk_config.rolled_back", configId, {
+    await this.audit(meta, orgId, row.project_id, "sdk_config.rolled_back", configId, {
       environmentId: row.environment_id,
       revision: row.current_revision,
       rolledBackToRevision: toRevision,

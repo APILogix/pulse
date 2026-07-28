@@ -1,5 +1,5 @@
 import type { FastifyReply } from "fastify";
-import type { ApiKeyType, OrgRole, ProjectStatus } from "../types.js";
+import type { OrgRole, ProjectStatus } from "../types.js";
 export declare const ProjectErrorCodes: {
     readonly PROJECT_NOT_FOUND: 404;
     readonly PROJECT_SLUG_EXISTS: 409;
@@ -48,7 +48,11 @@ export declare function createApiKey(environment: string): {
 };
 export declare function extractApiKeyPrefix(rawKey: string): string | null;
 export declare function constantTimeEqualHex(left: string, right: string): boolean;
-/** Default permission set for a freshly minted key of a given type. */
-export declare function defaultPermissionsForType(keyType: ApiKeyType): string[];
+/**
+ * Ingestion permissions granted to an authenticated credential. API keys are
+ * not a permission engine: every valid key may ingest telemetry for its
+ * environment, and finer authorization belongs to the policy modules.
+ */
+export declare function defaultIngestionPermissions(): string[];
 export declare function isReservedProjectSlug(slug: string): boolean;
 //# sourceMappingURL=utils.d.ts.map

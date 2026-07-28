@@ -22,6 +22,11 @@ export declare class UsageAnalyticsRepository {
     getTopList(projectId: string, dimension: string, from: Date, to: Date, environmentId?: string, apiKeyId?: string, limit?: number, client?: DbClient): Promise<TopListItem[]>;
     getComparison(projectId: string, dimension: "environment" | "apiKey", from: Date, to: Date, limit?: number, client?: DbClient): Promise<ComparisonSeries[]>;
     getMonthlyUsageVsPlan(projectId: string, client?: DbClient): Promise<MonthlyUsageVsPlan[]>;
+    /**
+     * The requested granularity is authoritative so the UI control always
+     * changes the response. Minute data is only retained for a short window, so
+     * a minute request over a long range is widened to the next usable grain.
+     */
     private pickGranularity;
     private mapSummaryRow;
     private mapTimeSeriesRow;

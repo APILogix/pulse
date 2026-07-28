@@ -5,7 +5,6 @@ import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
@@ -13,8 +12,8 @@ export class ProjectService extends BaseProjectService {
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
-    orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository) {
-        super(repository, logger, orgRepo, settingsRepository, apiKeyRepository, environmentRepository, activityRepository, usageRepository);
+    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository) {
+        super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, userId, query) {
@@ -46,12 +45,13 @@ export class ProjectService extends BaseProjectService {
             // All application-side provisioning shares the project transaction. The
             // canonical trigger remains an idempotent schema-level safety net.
             await this.settingsRepository.createDefault(created.id, orgId, client);
-            await this.repository.provisionRuntimeDefaults(created, userId, meta, client);
+            await this.repository.provisionRuntimeDefaults(created, client);
             await this.seedDefaultNotificationPreferences(created.id, orgId, client);
             return created;
         });
         await this.audit(meta, {
             orgId,
+            projectId: project.id,
             action: "project.created",
             entityType: "project",
             entityId: project.id,
@@ -144,6 +144,7 @@ export class ProjectService extends BaseProjectService {
         }
         await this.audit(meta, {
             orgId,
+            projectId,
             action: "project.updated",
             entityType: "project",
             entityId: updated.id,
@@ -161,12 +162,13 @@ export class ProjectService extends BaseProjectService {
         await this.repository.withTransaction(async (client) => {
             const keys = await this.apiKeyRepository.listActiveApiKeyRecords(projectId, undefined, client);
             for (const key of keys) {
-                await this.apiKeyRepository.revokeApiKey(projectId, key.id, userId, "project_deleted", client);
+                await this.apiKeyRepository.revokeApiKey(projectId, key.id, client);
             }
             await this.repository.softDeleteProject(orgId, projectId, userId, client);
         });
         await this.audit(meta, {
             orgId,
+            projectId,
             action: "project.deleted",
             entityType: "project",
             entityId: projectId,
@@ -185,6 +187,7 @@ export class ProjectService extends BaseProjectService {
         const restored = await this.repository.restoreProject(orgId, projectId);
         await this.audit(meta, {
             orgId,
+            projectId,
             action: "project.restored",
             entityType: "project",
             entityId: restored.id,

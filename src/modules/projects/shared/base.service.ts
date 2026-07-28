@@ -15,6 +15,7 @@
 import type { FastifyBaseLogger } from "fastify";
 import { apiKeyCache, type CachedProjectConfig } from "../../../config/lrucashe.js";
 import type { BillingEntitlementsRow, OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectMemberRole, type ProjectOverviewDto, type ProjectSettings } from "../types.js";
 import {
   ProjectsRepository,
@@ -23,7 +24,6 @@ import {
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import type {
   ApiKeyUsage,
@@ -35,11 +35,9 @@ import type {
   CreateEnvironmentBody,
   CreateProjectBody,
   ListApiKeysQuery,
-  ListProjectActivityQuery,
   ListProjectsQuery,
   OrgRole,
   Project,
-  ProjectActivityResult,
   ProjectApiKey,
   ProjectApiKeyRecord,
   ProjectEnvironmentConfig,
@@ -105,10 +103,10 @@ export class BaseProjectService {
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
     public readonly orgRepo: OrganizationRepository,
+    public readonly auditService: OrganizationAuditService,
     public readonly settingsRepository: SettingsRepository,
     public readonly apiKeyRepository: ApiKeyRepository,
     public readonly environmentRepository: EnvironmentRepository,
-    public readonly activityRepository: ActivityRepository,
     public readonly usageRepository: UsageRepository,
   ) {}
 
@@ -312,6 +310,7 @@ export class BaseProjectService {
     meta: RequestMeta,
     data: {
       orgId: string;
+      projectId: string;
       action: string;
       entityType: string;
       entityId?: string;
@@ -323,35 +322,7 @@ export class BaseProjectService {
       metadata?: Record<string, unknown>;
     },
   ): Promise<void> {
-    try {
-      const record: Parameters<OrganizationRepository["createAuditLog"]>[0] = {
-        orgId: data.orgId,
-        action: data.action,
-        entityType: data.entityType,
-        actorUserId: meta.actorUserId,
-        actorIp: meta.actorIp,
-        actorUserAgent: meta.actorUserAgent,
-        requestId: meta.requestId,
-        httpMethod: meta.httpMethod,
-        endpoint: meta.endpoint,
-        status: "success",
-      };
-      // Only attach optional fields when present so exactOptionalPropertyTypes
-      // is satisfied (no explicit `undefined` values).
-      if (meta.actorEmail) record.actorEmail = meta.actorEmail;
-      if (meta.actorSessionId) record.actorSessionId = meta.actorSessionId;
-      if (data.entityId !== undefined) record.entityId = data.entityId;
-      if (data.entityName !== undefined) record.entityName = data.entityName;
-      if (data.oldValues !== undefined) record.oldValues = data.oldValues;
-      if (data.newValues !== undefined) record.newValues = data.newValues;
-      if (data.changedFields !== undefined) record.changedFields = data.changedFields;
-      if (data.isSensitive !== undefined) record.isSensitive = data.isSensitive;
-      if (data.metadata !== undefined) record.metadata = data.metadata;
-
-      await this.orgRepo.createAuditLog(record);
-    } catch (err) {
-      this.logger.error({ err, action: data.action }, "Failed to write project audit log");
-    }
+    await this.auditService.audit(meta, data);
   }
 
     public async evictProjectApiKeys(projectId: string): Promise<void> {

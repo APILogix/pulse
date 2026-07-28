@@ -111,7 +111,7 @@ export declare const SecurityEventsQuerySchema: z.ZodObject<{
     }>>;
     eventType: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
-export type { CreateAuditLogRecord } from "./audit-logs/audit-logs.schema.js";
+export type { CreateAuditLogRecord, AuditLogFilters } from "./audit-logs/audit-logs.schema.js";
 export type { OrgMemberRow } from "./members/members.schema.js";
 export type { OrgSsoProviderRow } from "./sso/sso.schema.js";
 export interface OrgScimTokenRow {

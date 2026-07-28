@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { ProjectSettings } from "../settings/settings.types.js";
-import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../activity/activity.types.js";
+import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../usage/usage.types.js";
 export declare const ProjectVisibilitySchema: z.ZodEnum<{
     public: "public";
     private: "private";

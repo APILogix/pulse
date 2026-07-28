@@ -43,7 +43,8 @@ export class ProjectMemberAlertPreferenceService {
     const updated = await this.repository.updateMemberPreference(prefId, orgId, projectId, userId, dto);
 
     await this.projectsService.audit(meta, {
-      orgId: orgId,
+      orgId,
+      projectId,
       action: "notification_preference_updated",
       entityType: "project_member_notification_preference",
       entityId: prefId,
@@ -66,7 +67,8 @@ export class ProjectMemberAlertPreferenceService {
     await this.repository.bulkSubscribe(orgId, projectId, channel, category, userIds);
 
     await this.projectsService.audit(meta, {
-      orgId: orgId,
+      orgId,
+      projectId,
       action: "notification_bulk_subscribe",
       entityType: "project_notification_preference",
       entityId: projectId,

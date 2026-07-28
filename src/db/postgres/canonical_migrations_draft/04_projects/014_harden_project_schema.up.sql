@@ -272,101 +272,6 @@ BEGIN
   END LOOP;
 END $$;
 
--- Immutable history uses restrictive references; SET NULL/CASCADE actions
--- would otherwise invoke the mutation-rejection triggers.
-ALTER TABLE project_activity
-  DROP CONSTRAINT IF EXISTS project_activity_organization_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_activity_project_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_activity_actor_user_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_activity_actor_api_key_id_fkey,
-  DROP CONSTRAINT IF EXISTS fk_project_activity_organization,
-  DROP CONSTRAINT IF EXISTS fk_project_activity_project_tenant,
-  DROP CONSTRAINT IF EXISTS fk_project_activity_actor_user,
-  DROP CONSTRAINT IF EXISTS fk_project_activity_actor_key_tenant;
-ALTER TABLE project_activity
-  ADD CONSTRAINT fk_project_activity_organization FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_activity_project_tenant FOREIGN KEY(project_id,organization_id) REFERENCES projects(id,org_id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_activity_actor_user FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_activity_actor_key_tenant FOREIGN KEY(actor_api_key_id,project_id,organization_id)
-    REFERENCES project_api_keys(id,project_id,organization_id) ON DELETE RESTRICT;
-ALTER TABLE project_audit_logs
-  DROP CONSTRAINT IF EXISTS project_audit_logs_organization_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_audit_logs_project_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_audit_logs_actor_user_id_fkey,
-  DROP CONSTRAINT IF EXISTS project_audit_logs_actor_api_key_id_fkey,
-  DROP CONSTRAINT IF EXISTS fk_project_audit_organization,
-  DROP CONSTRAINT IF EXISTS fk_project_audit_project_tenant,
-  DROP CONSTRAINT IF EXISTS fk_project_audit_actor_user,
-  DROP CONSTRAINT IF EXISTS fk_project_audit_actor_key_tenant;
-ALTER TABLE project_audit_logs
-  ADD CONSTRAINT fk_project_audit_organization FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_audit_project_tenant FOREIGN KEY(project_id,organization_id) REFERENCES projects(id,org_id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_audit_actor_user FOREIGN KEY(actor_user_id) REFERENCES users(id) ON DELETE RESTRICT,
-  ADD CONSTRAINT fk_project_audit_actor_key_tenant FOREIGN KEY(actor_api_key_id,project_id,organization_id)
-    REFERENCES project_api_keys(id,project_id,organization_id) ON DELETE RESTRICT;
-
--- Project history is append-only and records every mutable control-plane change.
-CREATE OR REPLACE FUNCTION record_project_change_history() RETURNS trigger AS $$
-DECLARE
-  row_new JSONB := to_jsonb(NEW);
-  row_old JSONB := CASE WHEN TG_OP='UPDATE' THEN to_jsonb(OLD) ELSE NULL END;
-  safe_new JSONB;
-  safe_old JSONB;
-  history_project_id UUID;
-  history_org_id UUID;
-  history_actor_user_id UUID;
-  history_actor_api_key_id UUID;
-  actor_value TEXT;
-  history_action TEXT;
-BEGIN
-  -- project.created is already written atomically by the provisioning trigger.
-  IF TG_TABLE_NAME='projects' AND TG_OP='INSERT' THEN RETURN NEW; END IF;
-  IF TG_OP='UPDATE' AND row_new = row_old THEN RETURN NEW; END IF;
-
-  history_project_id := CASE WHEN TG_TABLE_NAME='projects' THEN (row_new->>'id')::uuid ELSE (row_new->>'project_id')::uuid END;
-  history_org_id := CASE WHEN TG_TABLE_NAME='projects' THEN (row_new->>'org_id')::uuid ELSE (row_new->>'organization_id')::uuid END;
-  actor_value := COALESCE(NULLIF(row_new->>'updated_by',''), NULLIF(row_new->>'created_by',''),
-                          NULLIF(row_new->>'updated_by_user_id',''), NULLIF(row_new->>'created_by_user_id',''),
-                          NULLIF(row_new->>'added_by_user_id',''), NULLIF(row_new->>'invited_by_user_id',''),
-                          NULLIF(current_setting('app.user_id', true),''));
-  IF actor_value IS NOT NULL THEN history_actor_user_id := actor_value::uuid; END IF;
-  actor_value := COALESCE(NULLIF(row_new->>'created_by_api_key_id',''), NULLIF(current_setting('app.api_key_id', true),''));
-  IF actor_value IS NOT NULL THEN history_actor_api_key_id := actor_value::uuid; END IF;
-
-  safe_new := row_new - ARRAY['secret_hash','token_hash'];
-  safe_old := CASE WHEN row_old IS NULL THEN NULL ELSE row_old - ARRAY['secret_hash','token_hash'] END;
-  history_action := CASE WHEN TG_TABLE_NAME='projects' THEN 'project.updated'
-                         ELSE TG_TABLE_NAME || CASE WHEN TG_OP='INSERT' THEN '.created' ELSE '.updated' END END;
-
-  INSERT INTO project_audit_logs(
-    organization_id,project_id,actor_user_id,actor_api_key_id,action,resource_type,resource_id,old_values,new_values
-  ) VALUES (
-    history_org_id,history_project_id,history_actor_user_id,history_actor_api_key_id,history_action,TG_TABLE_NAME,
-    NULLIF(row_new->>'id','')::uuid,safe_old,safe_new
-  );
-  INSERT INTO project_activity(organization_id,project_id,actor_user_id,actor_api_key_id,activity_type,category,summary,metadata)
-  VALUES(history_org_id,history_project_id,history_actor_user_id,history_actor_api_key_id,history_action,
-         split_part(TG_TABLE_NAME,'_',2),replace(history_action,'.',' '),
-         jsonb_build_object('resource_type',TG_TABLE_NAME,'resource_id',row_new->>'id'));
-  RETURN NEW;
-END; $$ LANGUAGE plpgsql;
-
-DO $$
-DECLARE v_table TEXT;
-BEGIN
-  FOREACH v_table IN ARRAY ARRAY[
-    'projects','project_settings','project_environments',
-    'project_releases','project_api_keys','project_alert_thresholds','project_alert_channels',
-    'project_member_alert_channel_preferences','project_notification_preferences','project_connector_subscriptions'
-  ] LOOP
-    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I', 'trg_' || v_table || '_change_history', v_table);
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE ON %I FOR EACH ROW EXECUTE FUNCTION record_project_change_history()',
-                   'trg_' || v_table || '_change_history', v_table);
-  END LOOP;
-END $$;
-
-COMMENT ON FUNCTION record_project_change_history() IS
-  'Writes redacted, append-only project activity and audit history for control-plane mutations.';
 COMMENT ON COLUMN project_api_keys.public_key IS
   'Server-generated Pulsiv lookup key; database format enforcement rejects user-controlled prefixes.';
 COMMENT ON COLUMN project_api_keys.secret_hash IS
@@ -376,10 +281,6 @@ COMMENT ON TABLE api_key_usage_minute IS
 COMMENT ON COLUMN api_key_usage_minute.events IS 'Accepted events attributed to this API key and minute bucket.';
 COMMENT ON COLUMN project_usage_monthly.bucket IS 'UTC first day of the calendar month; canonical monthly bucket.';
 COMMENT ON COLUMN project_usage_monthly.total_events IS 'Canonical monthly event total.';
-COMMENT ON TABLE project_audit_logs IS
-  'Append-only, redacted compliance history populated by project control-plane triggers.';
-COMMENT ON TABLE project_activity IS
-  'Append-only project timeline populated alongside the dedicated project audit history.';
 
 COMMIT;
 

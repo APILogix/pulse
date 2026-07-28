@@ -1,7 +1,7 @@
 /** Project member service with direct organization-member adds only. */
 import type { FastifyBaseLogger } from "fastify";
-import { pool } from "../../../config/database.js";
 import type { OrganizationRepository } from "../../organization/repository.js";
+import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import {
   ProjectMemberRole,
   type AddProjectMemberBody,
@@ -13,7 +13,6 @@ import type { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
-import { ActivityRepository } from "../activity/activity.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
 import { MemberRepository } from "./member.repository.js";
 import { ProjectError } from "../shared/utils.js";
@@ -25,10 +24,10 @@ export interface ProjectMemberServiceDeps {
   membersRepository: MemberRepository;
   logger: FastifyBaseLogger;
   orgRepo: OrganizationRepository;
+  auditService: OrganizationAuditService;
   settingsRepository: SettingsRepository;
   apiKeyRepository: ApiKeyRepository;
   environmentRepository: EnvironmentRepository;
-  activityRepository: ActivityRepository;
   usageRepository: UsageRepository;
 }
 
@@ -40,10 +39,10 @@ export class ProjectMemberService extends BaseProjectService {
       deps.repository,
       deps.logger,
       deps.orgRepo,
+      deps.auditService,
       deps.settingsRepository,
       deps.apiKeyRepository,
       deps.environmentRepository,
-      deps.activityRepository,
       deps.usageRepository,
     );
     this.membersRepository = deps.membersRepository;
@@ -89,7 +88,7 @@ export class ProjectMemberService extends BaseProjectService {
       ? await this.membersRepository.restoreProjectMember(existing.id, body.role, userId)
       : await this.membersRepository.addProjectMember(projectId, orgId, body.userId, body.role, userId);
 
-    await this.auditAndActivity(
+    await this.auditMemberChange(
       meta, orgId, projectId, "member.added", "member", added.id,
       { userId: added.userId, role: added.role },
       `Member added as ${added.role}`,
@@ -116,7 +115,7 @@ export class ProjectMemberService extends BaseProjectService {
       );
     }
     const removed = await this.membersRepository.removeProjectMember(memberId, userId);
-    await this.auditAndActivity(
+    await this.auditMemberChange(
       meta, orgId, projectId, "member.removed", "member", removed.id,
       { userId: removed.userId, role: removed.role }, "Member removed",
     );
@@ -144,7 +143,7 @@ export class ProjectMemberService extends BaseProjectService {
       );
     }
     const updated = await this.membersRepository.updateProjectMemberRole(memberId, body.role);
-    await this.auditAndActivity(
+    await this.auditMemberChange(
       meta, orgId, projectId, "member.role_changed", "member", updated.id,
       { userId: updated.userId, oldRole: member.role, newRole: updated.role },
       `Member role changed to ${updated.role}`,
@@ -169,14 +168,14 @@ export class ProjectMemberService extends BaseProjectService {
     const result = await this.membersRepository.transferOwnership(
       projectId, userId, newOwnerUserId, userId,
     );
-    await this.auditAndActivity(
+    await this.auditMemberChange(
       meta, orgId, projectId, "member.role_changed", "member", result.toMember.id,
       { previousOwnerId: userId, newOwnerId: newOwnerUserId },
       "Project ownership transferred",
     );
     return result;
   }
-  private async auditAndActivity(
+  private async auditMemberChange(
     meta: RequestMeta,
     orgId: string,
     projectId: string,
@@ -188,28 +187,12 @@ export class ProjectMemberService extends BaseProjectService {
   ): Promise<void> {
     await this.audit(meta, {
       orgId,
+      projectId,
       action,
       entityType,
       entityId,
-      newValues: { ...newValues, projectId },
+      newValues,
+      metadata: { summary },
     });
-
-    try {
-      await pool.query(
-        `INSERT INTO project_activity(
-           organization_id,project_id,actor_user_id,activity_type,category,summary,metadata
-         ) VALUES($1,$2,$3,$4,'member',$5,$6)`,
-        [
-          orgId,
-          projectId,
-          meta.actorUserId,
-          action,
-          summary,
-          JSON.stringify({ entityType, entityId, ...newValues }),
-        ],
-      );
-    } catch (error) {
-      this.logger.error({ err: error, action }, "Failed to write project activity");
-    }
   }
 }

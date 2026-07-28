@@ -1,4 +1,4 @@
-export class AuditLogsService {
+export class OrganizationAuditService {
     deps;
     constructor(deps) {
         this.deps = deps;
@@ -27,13 +27,17 @@ export class AuditLogsService {
         return {
             data: result.data.map(a => ({
                 id: a.id,
+                projectId: a.project_id,
                 actorUserId: a.actor_user_id,
                 actorEmail: a.actor_email,
                 action: a.action,
                 entityType: a.entity_type,
                 entityId: a.entity_id,
                 entityName: a.entity_name,
+                changedFields: a.changed_fields,
                 status: a.status,
+                isSensitive: a.is_sensitive,
+                metadata: a.metadata,
                 createdAt: a.created_at,
             })),
             meta: result.meta,
@@ -44,6 +48,7 @@ export class AuditLogsService {
         const rows = await this.deps.repository.exportAuditLogs(orgId, filters);
         return rows.map(a => ({
             id: a.id,
+            projectId: a.project_id,
             actorUserId: a.actor_user_id,
             actorEmail: a.actor_email,
             action: a.action,
@@ -54,6 +59,8 @@ export class AuditLogsService {
             newValues: a.new_values,
             changedFields: a.changed_fields,
             status: a.status,
+            isSensitive: a.is_sensitive,
+            metadata: a.metadata,
             createdAt: a.created_at,
         }));
     }

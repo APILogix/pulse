@@ -28,7 +28,6 @@ import {
   CreateProjectBodySchema,
   EnvironmentParamsSchema,
   ListApiKeysQuerySchema,
-  ListProjectActivityQuerySchema,
   ListProjectsQuerySchema,
   OrgIdParamsSchema,
   ProjectParamsSchema,
@@ -43,7 +42,6 @@ import {
 import { handleProjectError, ProjectError } from "./shared/utils.js";
 import { projectCoreRoutes } from "./core/project.routes.js";
 import { projectSettingsRoutes } from "./settings/settings.routes.js";
-import { projectActivityRoutes } from "./activity/activity.routes.js";
 import { projectEnvironmentRoutes } from "./environments/environment.routes.js";
 import { projectApiKeyRoutes } from "./api-keys/api-key.routes.js";
 
@@ -68,7 +66,6 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(thresholdRoutes, { prefix: "/:projectId/alert-thresholds" });
   await fastify.register(projectAlertChannelRoutes, { prefix: "/:projectId/alert-channels" });
   await fastify.register(projectSettingsRoutes);
-  await fastify.register(projectActivityRoutes);
   await fastify.register(projectEnvironmentRoutes);
   await fastify.register(projectApiKeyRoutes);
 }

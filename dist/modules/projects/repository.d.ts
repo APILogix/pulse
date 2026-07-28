@@ -47,11 +47,7 @@ export declare class ProjectsRepository {
         metadata?: Record<string, unknown> | undefined;
         createdBy?: string | null | undefined;
     }, client?: PoolClient): Promise<Project>;
-    provisionRuntimeDefaults(project: Project, actorUserId: string, meta: {
-        requestId: string;
-        actorIp: string;
-        actorUserAgent: string | null;
-    }, client: PoolClient): Promise<void>;
+    provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;

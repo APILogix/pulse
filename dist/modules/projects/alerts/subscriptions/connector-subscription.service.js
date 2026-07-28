@@ -88,6 +88,7 @@ export class ProjectConnectorSubscriptionService {
     async audit(meta, orgId, projectId, action, entityId, newValues) {
         await this.authService.audit(meta, {
             orgId,
+            projectId,
             action,
             entityType: "project_connector_subscription",
             entityId,

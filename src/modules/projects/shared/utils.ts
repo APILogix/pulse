@@ -17,7 +17,6 @@ import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import type {
-  ApiKeyType,
   OrgRole,
   ProjectStatus,
 } from "../types.js";
@@ -222,19 +221,13 @@ export function constantTimeEqualHex(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-/** Default permission set for a freshly minted key of a given type. */
-export function defaultPermissionsForType(keyType: ApiKeyType): string[] {
-  switch (keyType) {
-    case "read_only":
-      return ["ingest:read", "events:read", "metrics:read"];
-    case "write_only":
-      return ["ingest:write"];
-    case "temporary":
-      return ["ingest:write", "ingest:read"];
-    case "read_write":
-    default:
-      return ["ingest:write", "ingest:read", "events:read", "metrics:read", "config:read"];
-  }
+/**
+ * Ingestion permissions granted to an authenticated credential. API keys are
+ * not a permission engine: every valid key may ingest telemetry for its
+ * environment, and finer authorization belongs to the policy modules.
+ */
+export function defaultIngestionPermissions(): string[] {
+  return ["ingest:write"];
 }
 
 /**
