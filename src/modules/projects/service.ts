@@ -62,9 +62,10 @@ import {
   slugifyProjectName,
   validateStatusTransition,
 } from "./shared/utils.js";
-import { ProjectService } from "./core/project.service.js";
+import { ProjectService, type CreateProjectResult } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
+import { SdkConfigProvisioner } from "./sdk-config/sdk-config.provisioner.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
 import { MemberRepository } from "./members/member.repository.js";
@@ -136,9 +137,13 @@ export class ProjectsService {
     private readonly usageRepository: UsageRepository,
   ) {
 
-          this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+          // Single provisioner shared by project + environment creation so SDK
+          // configurations are seeded explicitly inside the service transaction
+          // (no PostgreSQL trigger).
+          const sdkConfigProvisioner = new SdkConfigProvisioner();
+          this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
           this.settings = new SettingsService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
-          this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+          this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
           this.apiKeys = new ApiKeyService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
           this.base = new BaseProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
           this.members = new ProjectMemberService({
@@ -184,8 +189,8 @@ export class ProjectsService {
     userId: string,
     body: CreateProjectBody,
     meta: RequestMeta,
-  ): Promise<Project> {
-      return this.core.createProject(orgId, userId, body, meta) as any;
+  ): Promise<CreateProjectResult> {
+      return this.core.createProject(orgId, userId, body, meta);
   }
 
   async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {

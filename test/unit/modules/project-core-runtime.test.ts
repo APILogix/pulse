@@ -28,21 +28,19 @@ const meta = {
 };
 
 describe('project core runtime provisioning', () => {
-  it('provisions environments and usage through the transaction client', async () => {
+  it('seeds only the usage counter (no environments) through the transaction client', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
     const repo = new ProjectRepository({} as Pool);
-    await repo.provisionRuntimeDefaults(project as any, { query } as any);
+    await repo.provisionUsageCounter(project as any, { query } as any);
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
-    expect(sql).toContain('project_environments');
-    expect(sql).toContain("'production'");
-    expect(sql).toContain("'testing'");
-    expect(sql).toContain("'preview'");
-    expect(sql).toContain('type');
-    expect(sql).not.toContain('created_by_user_id');
+    // Environments are provisioned explicitly by the service layer now — the
+    // repository default provisioning only seeds the usage counter.
     expect(sql).toContain('project_usage_current');
+    expect(sql).not.toContain('project_environments');
+    expect(sql).not.toContain("'staging'");
+    expect(sql).not.toContain("'testing'");
+    expect(sql).not.toContain("'preview'");
     expect(sql).not.toContain('organization_audit_logs');
-    expect(sql).not.toContain('project_alert_thresholds');
-    expect(sql).not.toContain('project_alert_channels');
   });
 
   it('rolls back the project transaction when provisioning fails', async () => {
@@ -55,8 +53,12 @@ describe('project core runtime provisioning', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 
-  it('invokes every required application seed inside createProject transaction', async () => {
+  it('provisions Production environment, SDK config, and initial API key inside createProject transaction', async () => {
     const client = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) } as unknown as PoolClient;
+    const environment = {
+      id: '55555555-5555-4555-8555-555555555555', slug: 'production', name: 'Production',
+      type: 'production', isDefault: true, isActive: true, deletedAt: null,
+    };
     const repository = {
       findOrganizationMembership: vi.fn().mockResolvedValue({ role: 'owner', isActive: true }),
       getProjectModuleUsageCounts: vi.fn().mockResolvedValue({ projects: 0, environments: 0, apiKeys: 0 }),
@@ -64,9 +66,15 @@ describe('project core runtime provisioning', () => {
       withTransaction: vi.fn(async (work: (client: PoolClient) => Promise<unknown>) => work(client)),
       createProject: vi.fn().mockResolvedValue(project),
       ensureProjectOwner: vi.fn().mockResolvedValue({}),
-      provisionRuntimeDefaults: vi.fn().mockResolvedValue(undefined),
+      provisionUsageCounter: vi.fn().mockResolvedValue(undefined),
     };
     const settings = { createDefault: vi.fn().mockResolvedValue({}) };
+    const environmentRepository = { createEnvironment: vi.fn().mockResolvedValue(environment) };
+    const apiKeyRepository = {
+      createApiKey: vi.fn(async (input: any) => ({ ...input, id: 'key-id', status: 'active' })),
+      publicShape: vi.fn((record: any) => { const shape = { ...record }; delete shape.secretHash; return shape; }),
+    };
+    const sdkConfigProvisioner = { provisionInitial: vi.fn().mockResolvedValue({ headId: 'h', revisionId: 'r', configHash: 'x' }) };
     const orgRepo = {
       getBillingEntitlements: vi.fn().mockResolvedValue({ subscription_status: 'active', feature_config: {} }),
     };
@@ -74,19 +82,49 @@ describe('project core runtime provisioning', () => {
     const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     const service = new ProjectService(
       repository as any, logger as any, orgRepo as any, auditService as any,
-      settings as any, {} as any, {} as any, {} as any,
+      settings as any, apiKeyRepository as any, environmentRepository as any, {} as any,
+      sdkConfigProvisioner as any,
     );
 
-    await service.createProject(project.orgId, meta.actorUserId, { name: project.name } as any, meta);
+    const result = await service.createProject(project.orgId, meta.actorUserId, { name: project.name } as any, meta);
+
     expect(repository.ensureProjectOwner).toHaveBeenCalledWith(project.id, project.orgId, meta.actorUserId, client);
     expect(settings.createDefault).toHaveBeenCalledWith(project.id, project.orgId, client);
-    expect(repository.provisionRuntimeDefaults).toHaveBeenCalledWith(project, client);
+
+    // Exactly one Production environment is created (default + active).
+    expect(environmentRepository.createEnvironment).toHaveBeenCalledTimes(1);
+    expect(environmentRepository.createEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'production', type: 'production', isDefault: true, isActive: true }),
+      client,
+    );
+
+    // SDK config head + revision #1 provisioned in the same transaction.
+    expect(sdkConfigProvisioner.provisionInitial).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({ environmentId: environment.id, environmentKey: 'production' }),
+      meta.actorUserId,
+    );
+
+    // Exactly one initial Production API key, bound to the environment.
+    expect(apiKeyRepository.createApiKey).toHaveBeenCalledTimes(1);
+    expect(apiKeyRepository.createApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: environment.id }),
+      client,
+    );
+
+    expect(repository.provisionUsageCounter).toHaveBeenCalledWith(project, client);
     expect(auditService.audit).toHaveBeenCalledWith(meta, expect.objectContaining({
       orgId: project.orgId,
       projectId: project.id,
       action: 'project.created',
     }));
     expect((client.query as any).mock.calls[0][0]).toContain('project_notification_preferences');
+
+    // The result surfaces project, environment, and the one-time raw key.
+    expect(result.project.id).toBe(project.id);
+    expect(result.environment.id).toBe(environment.id);
+    expect(result.apiKey).not.toHaveProperty('secretHash');
+    expect(result.fullKey.startsWith(`${result.apiKey.publicKey}.`)).toBe(true);
   });
 });
 

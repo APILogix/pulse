@@ -50,6 +50,7 @@ import { projectConnectorSubscriptionRoutes } from "./alerts/subscriptions/conne
 import { thresholdRoutes } from "./alerts/thresholds/threshold.routes.js";
 import { projectAlertChannelRoutes } from "./alerts/channels/channel.routes.js";
 import { projectAnalyticsRoutes } from "./usage/analytics.routes.js";
+import { projectDeliveryLogRoutes } from "./alerts/deliveries/delivery-log.routes.js";
 
 export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   // ── Project CRUD ──────────────────────────────────────────────────────────
@@ -60,6 +61,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   // "bulk-rotate"/"bulk-revoke" are never captured as an apiKeyId.
 
   await fastify.register(projectAnalyticsRoutes);
+  await fastify.register(projectDeliveryLogRoutes);
   await fastify.register(projectCoreRoutes);
   await fastify.register(projectMemberRoutes);
   await fastify.register(projectConnectorSubscriptionRoutes);

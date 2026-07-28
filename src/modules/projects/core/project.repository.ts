@@ -168,23 +168,16 @@ export class ProjectRepository {
     }
   }
 
-  async provisionRuntimeDefaults(
+  /**
+   * Seed the per-project usage counter row. Environment + SDK-configuration
+   * provisioning is orchestrated explicitly by the service layer (a single
+   * Production environment at project creation), so this no longer seeds any
+   * environments.
+   */
+  async provisionUsageCounter(
     project: Project,
     client: PoolClient,
   ): Promise<void> {
-    await client.query(
-      `INSERT INTO project_environments (
-         project_id, organization_id, name, slug, type, description, is_default, is_active, color
-       ) VALUES
-         ($1, $2, 'Production', 'production', 'production', 'Production telemetry', TRUE, TRUE, '#16A34A'),
-         ($1, $2, 'Staging', 'staging', 'staging', 'Pre-production telemetry', FALSE, TRUE, '#D97706'),
-         ($1, $2, 'Development', 'development', 'development', 'Development telemetry', FALSE, TRUE, '#2563EB'),
-         ($1, $2, 'Testing', 'testing', 'testing', 'Quality assurance and automated testing telemetry', FALSE, TRUE, '#7C3AED'),
-         ($1, $2, 'Preview', 'preview', 'preview', 'Short-lived preview deployment telemetry', FALSE, TRUE, '#DB2777')
-       ON CONFLICT DO NOTHING`,
-      [project.id, project.orgId],
-    );
-
     await client.query(
       `INSERT INTO project_usage_current (project_id, organization_id)
        VALUES ($1, $2)

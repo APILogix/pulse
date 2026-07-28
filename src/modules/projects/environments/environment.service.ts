@@ -15,6 +15,7 @@ import {
 } from "./environment.types.js";
 import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService, type RequestMeta } from "../shared/base.service.js";
+import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
 
 export class EnvironmentService extends BaseProjectService {
   constructor(
@@ -26,6 +27,7 @@ export class EnvironmentService extends BaseProjectService {
     apiKeyRepository: ApiKeyRepository,
     environmentRepository: EnvironmentRepository,
     usageRepository: UsageRepository,
+    private readonly sdkConfigProvisioner: SdkConfigProvisioner = new SdkConfigProvisioner(),
   ) {
     super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository,
       environmentRepository, usageRepository);
@@ -64,17 +66,39 @@ export class EnvironmentService extends BaseProjectService {
     if (body.type === EnvironmentType.CUSTOM) {
       await this.enforceProjectModuleLimit(orgId, "environment");
     }
-    const environment = await this.environmentRepository.createEnvironment({
-      projectId,
-      orgId,
-      name: body.name,
-      slug: body.slug,
-      type: body.type,
-      description: body.description ?? null,
-      color: body.color,
-      isDefault: body.isDefault,
-      isActive: body.isActive,
+
+    // Every environment creation atomically provisions its SDK configuration
+    // head + published revision #1 in the same transaction. This applies to
+    // ALL environment types with no exceptions. No API keys are created here —
+    // additional environments only receive keys when the user requests them.
+    const environment = await this.repository.withTransaction(async (client) => {
+      const created = await this.environmentRepository.createEnvironment(
+        {
+          projectId,
+          orgId,
+          name: body.name,
+          slug: body.slug,
+          type: body.type,
+          description: body.description ?? null,
+          color: body.color,
+          isDefault: body.isDefault,
+          isActive: body.isActive,
+        },
+        client,
+      );
+      await this.sdkConfigProvisioner.provisionInitial(
+        client,
+        {
+          organizationId: orgId,
+          projectId,
+          environmentId: created.id,
+          environmentKey: created.slug,
+        },
+        userId,
+      );
+      return created;
     });
+
     await this.writeAudit(meta, orgId, "environment.created", environment, {
       name: environment.name,
       slug: environment.slug,

@@ -146,8 +146,8 @@ export class ProjectsRepository {
     return this.core.createProject(input as any, client);
   }
 
-  async provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void> {
-    return this.core.provisionRuntimeDefaults(project, client);
+  async provisionUsageCounter(project: Project, client: PoolClient): Promise<void> {
+    return this.core.provisionUsageCounter(project, client);
   }
 
   async findProjectBySlug(

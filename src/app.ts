@@ -27,6 +27,7 @@ import { registerUserAccountModule } from './modules/user-account/user-account.m
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
+import { registerSdkConfigDeliveryModule } from './modules/projects/sdk-config/sdk-config.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
@@ -208,6 +209,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerBillingModule);
   await app.register(ingestionModule);          // Must be before projects
   await app.register(registerProjectsModule);   // Depends on ingestion.redisCache
+  await app.register(registerSdkConfigDeliveryModule); // API-key SDK delivery: POST /v1/sdk-config
   await app.register(registerAnalyticsModule);
   await app.register(registerConnectorsModule);
   await app.register(registerAlertingModule);

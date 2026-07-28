@@ -147,22 +147,34 @@ describe("environment service permissions and billing", () => {
     requestId: "55555555-5555-4555-8555-555555555555", httpMethod: "POST", endpoint: "/environments",
   };
 
+  // Every environment creation now runs inside the project transaction and
+  // provisions its SDK configuration via the injected provisioner.
+  function serviceWith(environments: any) {
+    const client = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) };
+    const repository = { withTransaction: vi.fn(async (work: any) => work(client)) };
+    const sdkConfigProvisioner = { provisionInitial: vi.fn().mockResolvedValue({ headId: "h", revisionId: "r", configHash: "x" }) };
+    const service = new EnvironmentService(repository as any, { error: vi.fn() } as any, {} as any,
+      {} as any, {} as any, {} as any, environments as any, {} as any, sdkConfigProvisioner as any);
+    return { service, client, repository, sdkConfigProvisioner };
+  }
+
   it("authorizes admin access and does not bill predefined environment types as custom", async () => {
     const environments = { createEnvironment: vi.fn().mockResolvedValue({ ...row(), type: body.type }) };
-    const service = new EnvironmentService({} as any, { error: vi.fn() } as any, {} as any,
-      {} as any, {} as any, {} as any, environments as any, {} as any);
+    const { service, client, sdkConfigProvisioner } = serviceWith(environments);
     vi.spyOn(service, "requireProjectAccess").mockResolvedValue({} as any);
     const limit = vi.spyOn(service, "enforceProjectModuleLimit").mockResolvedValue({} as any);
     vi.spyOn(service, "audit").mockResolvedValue(undefined);
     await service.createEnvironment(orgId, projectId, meta.actorUserId, body, meta);
     expect(service.requireProjectAccess).toHaveBeenCalledWith(orgId, projectId, meta.actorUserId, "admin");
     expect(limit).not.toHaveBeenCalled();
+    // SDK config is provisioned in the same transaction as the environment.
+    expect(environments.createEnvironment).toHaveBeenCalledWith(expect.any(Object), client);
+    expect(sdkConfigProvisioner.provisionInitial).toHaveBeenCalledTimes(1);
   });
 
   it("applies the environment entitlement only to custom types", async () => {
     const environments = { createEnvironment: vi.fn().mockResolvedValue({ ...row(), type: EnvironmentType.CUSTOM }) };
-    const service = new EnvironmentService({} as any, { error: vi.fn() } as any, {} as any,
-      {} as any, {} as any, {} as any, environments as any, {} as any);
+    const { service } = serviceWith(environments);
     vi.spyOn(service, "requireProjectAccess").mockResolvedValue({} as any);
     const limit = vi.spyOn(service, "enforceProjectModuleLimit").mockResolvedValue({} as any);
     vi.spyOn(service, "audit").mockResolvedValue(undefined);
@@ -174,13 +186,13 @@ describe("environment service permissions and billing", () => {
 
   it("does not persist when project-admin authorization fails", async () => {
     const environments = { createEnvironment: vi.fn() };
-    const service = new EnvironmentService({} as any, { error: vi.fn() } as any, {} as any,
-      {} as any, {} as any, {} as any, environments as any, {} as any);
+    const { service, sdkConfigProvisioner } = serviceWith(environments);
     vi.spyOn(service, "requireProjectAccess").mockRejectedValue(
       Object.assign(new Error("Insufficient project role"), { code: "INSUFFICIENT_PERMISSIONS" }),
     );
     await expect(service.createEnvironment(orgId, projectId, meta.actorUserId, body, meta))
       .rejects.toMatchObject({ code: "INSUFFICIENT_PERMISSIONS" });
     expect(environments.createEnvironment).not.toHaveBeenCalled();
+    expect(sdkConfigProvisioner.provisionInitial).not.toHaveBeenCalled();
   });
 });
