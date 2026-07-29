@@ -560,15 +560,16 @@ export class ApiKeyRepository {
 
   // ── Mapping helpers ─────────────────────────────────────────────────────────
 
-  private prefixedProjectRow(row: Record<string, unknown>): ProjectRow {
+  private prefixedProjectRow(row: Record<string, unknown>): import("../core/project.repository.js").ProjectRow {
     return {
       id: row.p_id as string,
+      public_id: row.p_public_id as string,
       org_id: row.p_org_id as string,
       name: row.p_name as string,
       slug: row.p_slug as string,
       description: row.p_description as string | null,
       status: row.p_status as ProjectStatus,
-      visibility: row.p_visibility as string,
+      visibility: row.p_visibility as "public" | "private" | "organization",
       timezone: row.p_timezone as string,
       tags: row.p_tags as string[],
       icon: row.p_icon as string | null,
@@ -583,9 +584,10 @@ export class ApiKeyRepository {
     };
   }
 
-  private mapProject(row: ProjectRow): Project {
+  private mapProject(row: import("../core/project.repository.js").ProjectRow): Project {
     return {
       id: row.id,
+      publicId: row.public_id,
       orgId: row.org_id,
       name: row.name,
       slug: row.slug,

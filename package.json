@@ -31,6 +31,7 @@
     "test:integration": "vitest --config vitest.integration.config.ts",
     "db:migrate": "tsx scripts/setup-db.ts",
     "db:migrate:draft": "tsx scripts/setup-db.ts --migrations-profile draft",
+    "db:migrate:logdb": "tsx scripts/migrate-logdb.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:indexes": "tsx scripts/add-indexes.ts"
   },

@@ -4,12 +4,14 @@ import { cursorPage } from "../shared/base.repository.js";
 const CONFIG_COLS = `
   h.id,h.organization_id,h.project_id,h.environment_id,h.published_revision_id,
   h.current_revision,h.current_hash,h.schema_version,h.created_by,h.updated_by,
-  h.created_at,h.updated_at,h.version,r.config_value,r.published_at
+  h.created_at,h.updated_at,h.version,r.config_value,r.published_at,
+  e.name AS environment_name,e.slug AS environment_slug
 `;
 const VERSION_COLS = `
-  id,config_id,organization_id,project_id,environment_id,revision_number,
-  config_value,config_hash,schema_version,change_type,change_summary,
-  rolled_back_to_revision,published_by,published_at
+  r.id,r.config_id,r.organization_id,r.project_id,r.environment_id,
+  e.name AS environment_name,e.slug AS environment_slug,
+  r.revision_number,r.config_value,r.config_hash,r.schema_version,r.change_type,
+  r.change_summary,r.rolled_back_to_revision,r.published_by,r.published_at
 `;
 export class SdkConfigRepository {
     db = pool;
@@ -33,6 +35,7 @@ export class SdkConfigRepository {
         const result = await this.db.query(`SELECT ${CONFIG_COLS}
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+         JOIN project_environments e ON e.id=h.environment_id
         WHERE h.organization_id=$1 AND h.id=$2`, [orgId, configId]);
         return result.rows[0] ?? null;
     }
@@ -56,6 +59,7 @@ export class SdkConfigRepository {
         const rows = await this.db.query(`SELECT ${CONFIG_COLS}
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+         JOIN project_environments e ON e.id=h.environment_id
         WHERE ${where.join(" AND ")}
         ORDER BY h.created_at DESC LIMIT $${params.length}`, params);
         return cursorPage(rows.rows, query.limit, Number(count.rows[0]?.count ?? 0));
@@ -95,24 +99,28 @@ export class SdkConfigRepository {
             const result = await client.query(`SELECT ${CONFIG_COLS}
            FROM project_environment_sdk_configs h
            JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+           JOIN project_environments e ON e.id=h.environment_id
           WHERE h.organization_id=$1 AND h.id=$2`, [orgId, configId]);
             return result.rows[0];
         });
     }
     async listVersions(configId) {
         const result = await this.db.query(`SELECT ${VERSION_COLS}
-         FROM project_environment_sdk_config_revisions
-        WHERE config_id=$1 ORDER BY revision_number DESC`, [configId]);
+         FROM project_environment_sdk_config_revisions r
+         JOIN project_environments e ON e.id=r.environment_id
+        WHERE r.config_id=$1 ORDER BY r.revision_number DESC`, [configId]);
         return result.rows;
     }
     async getVersion(configId, revision) {
         const result = await this.db.query(`SELECT ${VERSION_COLS}
-         FROM project_environment_sdk_config_revisions
-        WHERE config_id=$1 AND revision_number=$2`, [configId, revision]);
+         FROM project_environment_sdk_config_revisions r
+         JOIN project_environments e ON e.id=r.environment_id
+        WHERE r.config_id=$1 AND r.revision_number=$2`, [configId, revision]);
         return result.rows[0] ?? null;
     }
     async resolveForEnvironment(orgId, environmentId) {
-        const result = await this.db.query(`SELECT h.environment_id,h.current_revision,h.current_hash,h.schema_version,
+        const result = await this.db.query(`SELECT h.environment_id,e.name AS environment_name,e.slug AS environment_slug,
+              h.current_revision,h.current_hash,h.schema_version,
               r.config_value,r.published_at
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
@@ -125,6 +133,8 @@ export class SdkConfigRepository {
         return row
             ? {
                 environmentId: row.environment_id,
+                environmentName: row.environment_name,
+                environmentSlug: row.environment_slug,
                 revision: row.current_revision,
                 revisionHash: row.current_hash,
                 schemaVersion: row.schema_version,

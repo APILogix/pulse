@@ -7,6 +7,7 @@ import { EnvironmentRepository } from "../environments/environment.repository.js
 import { UsageRepository } from "../usage/usage.repository.js";
 import { constantTimeEqualHex, createApiKey, extractApiKeyPrefix, hashApiKey, ProjectError, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { syncApiKeyLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 const MAX_ACTIVE_KEYS_ON_CREATE = 5;
 const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
 const DEFAULT_GRACE_PERIOD_HOURS = 24;
@@ -64,6 +65,7 @@ export class ApiKeyService extends BaseProjectService {
             newValues: { projectId, environmentId: created.environmentId, publicKey: created.publicKey },
         });
         this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
+        syncApiKeyLookupToLogDbBestEffort(created.id, "api_key.created");
         return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
     }
     async getApiKey(orgId, projectId, apiKeyId, userId) {
@@ -95,6 +97,7 @@ export class ApiKeyService extends BaseProjectService {
             entityName: updated.name,
             changedFields: Object.keys(body),
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.updated");
         return updated;
     }
     /** Revoke a key with a reason. Soft state change, not row removal. */
@@ -115,6 +118,7 @@ export class ApiKeyService extends BaseProjectService {
             isSensitive: true,
             newValues: { reason: reason ?? null },
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.revoked");
         return revoked;
     }
     async rotateApiKey(orgId, projectId, apiKeyId, userId, body, meta) {
@@ -176,6 +180,9 @@ export class ApiKeyService extends BaseProjectService {
                 reason: body.rotationReason ?? null,
             },
         });
+        // Old key transitioned to 'rotated'; the new key is a fresh row. Snapshot both.
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.rotated");
+        syncApiKeyLookupToLogDbBestEffort(rotated.id, "api_key.created");
         return { apiKey: this.publicApiKey(rotated), fullKey: keyMaterial.fullKey };
     }
     /** Emergency regenerate: rotate with no grace window. */
@@ -213,6 +220,7 @@ export class ApiKeyService extends BaseProjectService {
             entityId: apiKeyId,
             entityName: currentKey.name,
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.enabled");
         return updated;
     }
     async disableApiKey(orgId, projectId, apiKeyId, userId, meta) {
@@ -230,6 +238,7 @@ export class ApiKeyService extends BaseProjectService {
             entityId: apiKeyId,
             entityName: record.name,
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.disabled");
         return updated;
     }
     async bulkRotateKeys(orgId, projectId, userId, body, meta) {

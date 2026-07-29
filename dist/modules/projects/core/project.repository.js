@@ -1,7 +1,7 @@
 import { pool } from "../../../config/database.js";
 import { ProjectError } from "../shared/utils.js";
 const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
+  id, public_id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
   archived_at, deleted_at, deleted_by, created_at, updated_at, version
 `;
 export class ProjectRepository {
@@ -71,9 +71,11 @@ export class ProjectRepository {
         const db = client ?? this.db;
         try {
             const result = await db.query(`INSERT INTO projects (
-           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by
+           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by,
+           public_id
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+           'prj_' || upper(substring(replace(gen_random_uuid()::text, '-', ''), 1, 8))
          )
          RETURNING ${PROJECT_COLUMNS}`, [
                 input.orgId,
@@ -97,16 +99,13 @@ export class ProjectRepository {
             throw error;
         }
     }
-    async provisionRuntimeDefaults(project, client) {
-        await client.query(`INSERT INTO project_environments (
-         project_id, organization_id, name, slug, type, description, is_default, is_active, color
-       ) VALUES
-         ($1, $2, 'Production', 'production', 'production', 'Production telemetry', TRUE, TRUE, '#16A34A'),
-         ($1, $2, 'Staging', 'staging', 'staging', 'Pre-production telemetry', FALSE, TRUE, '#D97706'),
-         ($1, $2, 'Development', 'development', 'development', 'Development telemetry', FALSE, TRUE, '#2563EB'),
-         ($1, $2, 'Testing', 'testing', 'testing', 'Quality assurance and automated testing telemetry', FALSE, TRUE, '#7C3AED'),
-         ($1, $2, 'Preview', 'preview', 'preview', 'Short-lived preview deployment telemetry', FALSE, TRUE, '#DB2777')
-       ON CONFLICT DO NOTHING`, [project.id, project.orgId]);
+    /**
+     * Seed the per-project usage counter row. Environment + SDK-configuration
+     * provisioning is orchestrated explicitly by the service layer (a single
+     * Production environment at project creation), so this no longer seeds any
+     * environments.
+     */
+    async provisionUsageCounter(project, client) {
         await client.query(`INSERT INTO project_usage_current (project_id, organization_id)
        VALUES ($1, $2)
        ON CONFLICT (project_id) DO NOTHING`, [project.id, project.orgId]);
@@ -123,6 +122,13 @@ export class ProjectRepository {
         const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
         WHERE org_id = $1 AND id = $2 AND deleted_at IS NULL
         LIMIT 1`, [orgId, projectId]);
+        return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+    }
+    async findProjectByPublicId(orgId, publicId, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT ${PROJECT_COLUMNS} FROM projects
+        WHERE org_id = $1 AND public_id = $2 AND deleted_at IS NULL
+        LIMIT 1`, [orgId, publicId]);
         return result.rows[0] ? this.mapProject(result.rows[0]) : null;
     }
     async findProjectByIdIncludingDeleted(orgId, projectId, client) {
@@ -300,6 +306,7 @@ export class ProjectRepository {
     mapProject(row) {
         return {
             id: row.id,
+            publicId: row.public_id,
             orgId: row.org_id,
             name: row.name,
             slug: row.slug,

@@ -4,6 +4,7 @@ import type { RequestMeta, CursorPaginationQuery, OrgRole } from "../shared/type
 import type { CoreRepository } from "./core.repository.js";
 import { BillingProvisioningService } from "../../billing/provisioning/service.js";
 import type { OrganizationRow, OrgSettingsRow, OrganizationDto, OrgSettingsDto, UserOrganizationDto } from "./core.schema.js";
+import { syncOrganizationLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 
 // Helper function to map to DTO
 export function toOrgDto(row: OrganizationRow): OrganizationDto {
@@ -111,6 +112,7 @@ export class CoreService {
         this.deps.log.warn({ err: error, orgId: provisioned.id }, "Failed to seed default alert presets for organization");
       }
     }
+    syncOrganizationLookupToLogDbBestEffort(provisioned.id, "organization.created");
     return toOrgDto(provisioned);
   }
 
@@ -151,6 +153,7 @@ export class CoreService {
     const updated = await this.deps.repository.updateOrg(orgId, data);
     const changed = Object.keys(data).filter(k => data[k] !== undefined);
     await this.deps.audit(meta, { orgId, action: "org.updated", entityType: "organization", entityId: orgId, entityName: updated.name, oldValues: { name: oldOrg.name }, newValues: { name: updated.name }, changedFields: changed });
+    syncOrganizationLookupToLogDbBestEffort(orgId, "organization.updated");
     return toOrgDto(updated);
   }
 
@@ -176,18 +179,21 @@ export class CoreService {
       }
     }
     await this.deps.audit(meta, { orgId, action: "org.deleted", entityType: "organization", entityId: orgId, isSensitive: true });
+    syncOrganizationLookupToLogDbBestEffort(orgId, "organization.deleted");
   }
 
   async archiveOrganization(meta: RequestMeta, orgId: string) {
     await this.deps.requireMember(orgId, meta.actorUserId, "owner");
     await this.deps.repository.archiveOrg(orgId);
     await this.deps.audit(meta, { orgId, action: "org.archived", entityType: "organization", entityId: orgId });
+    syncOrganizationLookupToLogDbBestEffort(orgId, "organization.archived");
   }
 
   async restoreOrganization(meta: RequestMeta, orgId: string) {
     await this.deps.requireMember(orgId, meta.actorUserId, "owner");
     const org = await this.deps.repository.restoreOrg(orgId);
     await this.deps.audit(meta, { orgId, action: "org.restored", entityType: "organization", entityId: orgId });
+    syncOrganizationLookupToLogDbBestEffort(orgId, "organization.restored");
     return toOrgDto(org);
   }
 

@@ -61,6 +61,31 @@ export class IngestionController {
         }
     }
     /**
+     * Factory that builds a typed-ingestion route handler for one SDK event
+     * family. The data-driven route table (route-table.ts) calls this once per
+     * family, so route registration never hand-writes a near-identical handler
+     * per type. The returned handler stays thin: it shapes HTTP input and resolves
+     * the API key, then delegates ALL policy (auth, quota, rate limits,
+     * backpressure, event-type enforcement, queue priority) to the service. The
+     * arrow closure captures `this`, so Fastify can invoke the handler without the
+     * controller instance context and no explicit `.bind()` is required.
+     */
+    ingestTyped(type) {
+        return async (request, reply) => {
+            try {
+                const body = request.body;
+                const apiKey = resolveApiKey(request, body);
+                if (!apiKey)
+                    throw new Error('INVALID_API_KEY');
+                const result = await this.service.ingestTyped(body, apiKey, type);
+                return reply.status(202).send(result);
+            }
+            catch (err) {
+                return this.handleError(err, request, reply);
+            }
+        };
+    }
+    /**
      * Typed request-event endpoint. The service rejects any event whose type does
      * not match this route, which protects downstream request_events inserts.
      */

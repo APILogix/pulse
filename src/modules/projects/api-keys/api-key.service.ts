@@ -47,6 +47,7 @@ import {
   ProjectError,
 } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { syncApiKeyLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 
 export interface RequestMeta {
   actorUserId: string;
@@ -151,6 +152,7 @@ export class ApiKeyService extends BaseProjectService {
     });
 
     this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
+    syncApiKeyLookupToLogDbBestEffort(created.id, "api_key.created");
     return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
   }
 
@@ -196,6 +198,7 @@ export class ApiKeyService extends BaseProjectService {
       entityName: updated.name,
       changedFields: Object.keys(body),
     });
+    syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.updated");
     return updated;
   }
 
@@ -225,6 +228,7 @@ export class ApiKeyService extends BaseProjectService {
       isSensitive: true,
       newValues: { reason: reason ?? null },
     });
+    syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.revoked");
     return revoked;
   }
 
@@ -305,6 +309,9 @@ export class ApiKeyService extends BaseProjectService {
       },
     });
 
+    // Old key transitioned to 'rotated'; the new key is a fresh row. Snapshot both.
+    syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.rotated");
+    syncApiKeyLookupToLogDbBestEffort(rotated.id, "api_key.created");
     return { apiKey: this.publicApiKey(rotated), fullKey: keyMaterial.fullKey };
   }
 
@@ -378,6 +385,7 @@ export class ApiKeyService extends BaseProjectService {
       entityId: apiKeyId,
       entityName: currentKey.name,
     });
+    syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.enabled");
     return updated;
   }
 
@@ -403,6 +411,7 @@ export class ApiKeyService extends BaseProjectService {
       entityId: apiKeyId,
       entityName: record.name,
     });
+    syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.disabled");
     return updated;
   }
 

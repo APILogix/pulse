@@ -224,9 +224,13 @@ export class PgConfigStore implements ConfigStore {
   async loadCompiledByEnvironment(
     organizationId: string,
     environmentId: string,
-  ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config } | null> {
-    const result = await this.db.query<{ revision_number: number; compiled_snapshot: SchemaV1Config }>(
-      `SELECT r.revision_number, r.compiled_snapshot
+  ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config; environmentName: string } | null> {
+    const result = await this.db.query<{
+      revision_number: number;
+      compiled_snapshot: SchemaV1Config;
+      environment_name: string;
+    }>(
+      `SELECT r.revision_number, r.compiled_snapshot, e.name AS environment_name
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
          JOIN project_environments e
@@ -236,6 +240,12 @@ export class PgConfigStore implements ConfigStore {
       [organizationId, environmentId],
     );
     const row = result.rows[0];
-    return row ? { revisionNo: row.revision_number, compiledSnapshot: row.compiled_snapshot } : null;
+    return row
+      ? {
+          revisionNo: row.revision_number,
+          compiledSnapshot: row.compiled_snapshot,
+          environmentName: row.environment_name,
+        }
+      : null;
   }
 }

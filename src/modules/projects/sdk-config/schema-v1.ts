@@ -272,6 +272,7 @@ export interface Runtime {
 export interface ConfigMeta {
   generatedAt: string;
   generatedBy: string;
+  environmentName?: string;
   configHash?: string;
 }
 

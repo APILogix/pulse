@@ -87,6 +87,8 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
 export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 export interface Project {
     id: string;
+    /** Immutable public routing identifier, format: prj_XXXXXXXX */
+    publicId: string;
     orgId: string;
     name: string;
     slug: string;
@@ -109,6 +111,11 @@ export interface ProjectListItem extends Project {
     apiKeysCount: number;
     activeApiKeysCount: number;
 }
+export declare const ProjectByPublicIdParamsSchema: z.ZodObject<{
+    orgId: z.ZodString;
+    publicId: z.ZodString;
+}, z.core.$strip>;
+export type ProjectByPublicIdParams = z.infer<typeof ProjectByPublicIdParamsSchema>;
 export interface ProjectStats {
     totalRequests: number;
     apiKeysCount: number;

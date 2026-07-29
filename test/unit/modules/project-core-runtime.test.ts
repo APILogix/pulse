@@ -5,6 +5,13 @@ vi.mock('../../../src/config/database.js', () => ({
   pool: { query: vi.fn(), connect: vi.fn() },
 }));
 
+// The project/api-key services now sync best-effort Log DB lookup snapshots,
+// which transitively imports the Log DB manager. Keep this unit test hermetic
+// by stubbing it so no real pg pool is constructed.
+vi.mock('../../../src/config/log-database.js', () => ({
+  logDB: { queryWithRetry: vi.fn() },
+}));
+
 import { ProjectRepository } from '../../../src/modules/projects/core/project.repository.js';
 import { ProjectService } from '../../../src/modules/projects/core/project.service.js';
 import { ApiKeyRepository } from '../../../src/modules/projects/api-keys/api-key.repository.js';

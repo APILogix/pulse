@@ -27,7 +27,7 @@ export class OrganizationAuditService {
         return {
             data: result.data.map(a => ({
                 id: a.id,
-                projectId: a.project_id,
+                projectId: null,
                 actorUserId: a.actor_user_id,
                 actorEmail: a.actor_email,
                 action: a.action,
@@ -48,7 +48,7 @@ export class OrganizationAuditService {
         const rows = await this.deps.repository.exportAuditLogs(orgId, filters);
         return rows.map(a => ({
             id: a.id,
-            projectId: a.project_id,
+            projectId: null,
             actorUserId: a.actor_user_id,
             actorEmail: a.actor_email,
             action: a.action,

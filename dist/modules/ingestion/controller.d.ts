@@ -20,6 +20,7 @@
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { IngestionService } from './service.js';
+import type { SdkEventType } from './pipeline/event-normalizer.js';
 export declare class IngestionController {
     private readonly service;
     constructor(service: IngestionService);
@@ -35,6 +36,17 @@ export declare class IngestionController {
      * events -> return 202 because persistence happens asynchronously.
      */
     ingest(request: FastifyRequest, reply: FastifyReply): Promise<never>;
+    /**
+     * Factory that builds a typed-ingestion route handler for one SDK event
+     * family. The data-driven route table (route-table.ts) calls this once per
+     * family, so route registration never hand-writes a near-identical handler
+     * per type. The returned handler stays thin: it shapes HTTP input and resolves
+     * the API key, then delegates ALL policy (auth, quota, rate limits,
+     * backpressure, event-type enforcement, queue priority) to the service. The
+     * arrow closure captures `this`, so Fastify can invoke the handler without the
+     * controller instance context and no explicit `.bind()` is required.
+     */
+    ingestTyped(type: SdkEventType): (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
     /**
      * Typed request-event endpoint. The service rejects any event whose type does
      * not match this route, which protects downstream request_events inserts.

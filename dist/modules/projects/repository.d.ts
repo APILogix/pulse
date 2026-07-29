@@ -47,9 +47,10 @@ export declare class ProjectsRepository {
         metadata?: Record<string, unknown> | undefined;
         createdBy?: string | null | undefined;
     }, client?: PoolClient): Promise<Project>;
-    provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void>;
+    provisionUsageCounter(project: Project, client: PoolClient): Promise<void>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
+    findProjectByPublicId(orgId: string, publicId: string, client?: PoolClient): Promise<Project | null>;
     findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     updateProject(orgId: string, projectId: string, input: ProjectUpdateInput, client?: PoolClient): Promise<Project>;
     /** Soft-delete: stamp deleted_at + deleted_by; row is retained for audit. */

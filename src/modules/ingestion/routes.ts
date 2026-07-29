@@ -39,12 +39,14 @@ import {
   InitSchema,
   ReplaySchema,
 } from "./types.js";
+import { TYPED_INGEST_ROUTES } from "./route-table.js";
 
 type FastifyDecoratorName = "postgresWriter";
 
 type ControllerMethodName =
   | "init"
   | "ingest"
+  | "ingestTyped"
   | "ingestRequests"
   | "ingestErrors"
   | "ingestLogs"
@@ -84,6 +86,7 @@ function assertControllerMethods(controller: IngestionController): void {
   const methods: ControllerMethodName[] = [
     "init",
     "ingest",
+    "ingestTyped",
     "ingestRequests",
     "ingestErrors",
     "ingestLogs",
@@ -182,21 +185,43 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ── SDK ingestion endpoints ─────────────────────────────────────────────
   // All ingestion endpoints validate their bodies via JSON Schema. The schema
-  // is the only line of defense against malformed input reaching handlers,
-  // so we deliberately apply it everywhere, including the previously-unguarded
-  // /v1/init and /v1/ingest routes.
+  // is the only line of defense against malformed input reaching handlers, so
+  // we deliberately apply it everywhere, including /v1/init and every typed
+  // write endpoint.
   fastify.post(
     "/v1/init",
     { schema: InitSchema },
     controller.init.bind(controller),
   );
 
+  // Per-signal typed write endpoints — the PRIMARY SDK transport. Registration
+  // is DATA-DRIVEN from TYPED_INGEST_ROUTES so there is exactly one dedicated
+  // POST route per SDK event family and no hand-written handler per type. Each
+  // handler enforces its declared event type inside the service; a foreign
+  // event fails the batch with INVALID_EVENT_TYPE. These path suffixes are kept
+  // in lockstep with the advertised SDK config paths (ROUTE_INGEST_PATHS), so
+  // the SDK never receives a URL that the backend does not serve. POST here
+  // coexists safely with the GET read routes (e.g. GET /v1/errors) by method.
+  for (const route of TYPED_INGEST_ROUTES) {
+    fastify.post(
+      route.path,
+      { schema: IngestSchema },
+      controller.ingestTyped(route.type),
+    );
+  }
+
+  // Legacy compatibility batch endpoint. NOT the primary SDK transport: it
+  // accepts MIXED event types in one request and is retained only so older SDK
+  // builds keep working. New SDKs POST to the typed routes above.
   fastify.post(
     "/v1/ingest",
     { schema: IngestSchema },
     controller.ingest.bind(controller),
   );
 
+  // Legacy typed sub-paths (compatibility only). Superseded by the top-level
+  // typed routes above; retained so previously-issued SDK configs keep
+  // resolving. They share the same strict single-type enforcement.
   fastify.post(
     "/v1/ingest/requests",
     { schema: IngestSchema },

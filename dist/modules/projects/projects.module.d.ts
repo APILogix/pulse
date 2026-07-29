@@ -19,6 +19,8 @@ import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js
 import { ThresholdService } from './alerts/thresholds/threshold.service.js';
 import { AlertChannelRepository } from './alerts/channels/channel.repository.js';
 import { ProjectAlertChannelService } from './alerts/channels/channel.service.js';
+import { DeliveryLogRepository } from './alerts/deliveries/delivery-log.repository.js';
+import { DeliveryLogService } from './alerts/deliveries/delivery-log.service.js';
 import { ProjectsService } from './service.js';
 declare module 'fastify' {
     interface FastifyInstance {
@@ -39,6 +41,8 @@ declare module 'fastify' {
             alertThresholdsService: ThresholdService;
             alertChannelsRepository: AlertChannelRepository;
             alertChannelsService: ProjectAlertChannelService;
+            deliveryLogRepository: DeliveryLogRepository;
+            deliveryLogService: DeliveryLogService;
         };
     }
 }

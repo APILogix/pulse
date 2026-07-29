@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { PostgresWriter } from './postgress.writter.js';
+import { type SdkEventType } from './pipeline/event-normalizer.js';
 import { type PlanTier } from './queue/ingest-queues.js';
 import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus, SDKInitResponse } from './types.js';
 interface BackpressureConfig {
@@ -49,7 +50,21 @@ export declare class IngestionService {
      */
     private assertQuotaAvailable;
     initializeSdk(apiKey: string): Promise<SDKInitResponse>;
+    /**
+     * Legacy mixed-batch entrypoint (POST /v1/ingest). Accepts any combination of
+     * SDK event types in a single request. Retained for backward compatibility;
+     * new SDK transports use the per-signal typed routes via ingestTyped().
+     */
     ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
+    /**
+     * Public typed-ingestion entrypoint used by the data-driven route table
+     * (route-table.ts). It is a thin pass-through to the single policy boundary
+     * `processIngest`, so API-key validation, quota checks, rate limits,
+     * backpressure, per-event type enforcement, and queue-priority math are never
+     * duplicated per endpoint. A typed route accepts ONLY its declared event
+     * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
+     */
+    ingestTyped(req: IngestRequest, apiKey: string, type: SdkEventType): Promise<IngestResponse>;
     ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
     ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse>;
     ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse>;

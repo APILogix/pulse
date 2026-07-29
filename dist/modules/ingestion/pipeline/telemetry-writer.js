@@ -34,6 +34,7 @@
  */
 import { randomUUID } from 'crypto';
 import { resolveTimestamp } from './event-normalizer.js';
+import { RequestEnricher } from './request-enrichment.js';
 function iso(ms) {
     return new Date(ms).toISOString();
 }
@@ -127,6 +128,7 @@ function buildInsert(table, cols, rows, returning = 'id') {
 }
 export class TelemetryWriter {
     pool;
+    enricher = RequestEnricher.get();
     constructor(pool) {
         this.pool = pool;
     }
@@ -210,6 +212,7 @@ export class TelemetryWriter {
                 str(r.stackHash, 64), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(r.source, 100) ?? 'capture', str(r.mechanism, 50), str(r.service, 100),
                 str(r.environment, 50), str(r.release, 100), str(r.serverName, 100),
+                str(r.applicationName, 100), str(r.applicationVersion, 50),
                 JSON.stringify(e.stack ?? []), r.sourceContext != null ? JSON.stringify(r.sourceContext) : null,
                 str(r.userId, 255), str(r.userEmail, 255), inet(r.userIp),
                 JSON.stringify(e.breadcrumbs ?? []),
@@ -220,6 +223,7 @@ export class TelemetryWriter {
         const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'event_id', 'fingerprint', 'message',
             'error_name', 'severity', 'stack_hash', 'trace_id', 'span_id', 'request_id', 'session_id',
             'source', 'mechanism', 'service', 'environment', 'release', 'server_name',
+            'application_name', 'application_version',
             'stack_frames', 'source_context', 'user_id', 'user_email', 'user_ip',
             'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'], rows, 'event_id');
         const res = await this.pool.query(text, values);
@@ -252,6 +256,7 @@ export class TelemetryWriter {
                 orgId, projectId, this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+                str(r.serverName, 100), str(r.applicationName, 100), str(r.applicationVersion, 50),
                 str(r.userId, 255), inet(r.userIp),
                 JSON.stringify(r.tags ?? {}), JSON.stringify(e.context ?? {}), JSON.stringify(e.breadcrumbs ?? []),
                 str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
@@ -259,19 +264,26 @@ export class TelemetryWriter {
         });
         const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'event_id', 'message', 'severity',
             'trace_id', 'span_id', 'request_id', 'session_id',
-            'service', 'environment', 'release', 'user_id', 'user_ip',
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+            'user_id', 'user_ip',
             'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_requests ─────────────────────────────────────────────────────────
     async writeRequests(list) {
+        // Open the GeoIP databases once (no-op after first call; never throws).
+        await this.enricher.init();
         const rows = list.map(({ projectId, orgId, event }) => {
             const e = event;
             const r = rec(event);
+            // Enrich clientIp -> geo, userAgent -> browser/os/device. Populates the
+            // 14_observability/015 columns; missing data resolves to null ("Unknown").
+            const g = this.enricher.enrich(r.clientIp, r.userAgent);
             return [
                 orgId, projectId, this.eventId(event), e.requestId, e.url, e.method,
-                e.statusCode, Math.round(e.latency), str(r.route, 500), str(r.framework, 50),
+                // latency_ms is NUMERIC(12,3) — preserve fractional milliseconds.
+                e.statusCode, num(e.latency), str(r.route, 500), str(r.framework, 50),
                 JSON.stringify(e.headers ?? {}), JSON.stringify(e.query ?? {}),
                 e.body != null ? JSON.stringify(e.body) : null,
                 num(e.bodySize), num(r.responseSize),
@@ -279,7 +291,12 @@ export class TelemetryWriter {
                 inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
                 e.traceId ?? null, e.spanId ?? null,
                 str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+                str(r.serverName, 100), str(r.applicationName, 100), str(r.applicationVersion, 50),
                 str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                // Enrichment columns.
+                g.geoCountryCode, g.geoRegion, g.geoAsn, g.clientIpHash,
+                g.browserFamily, g.browserVersionMajor, g.osName, g.osVersionMajor,
+                g.deviceType, g.isBot,
             ];
         });
         // is_slow / is_error are GENERATED columns — do NOT insert them.
@@ -287,7 +304,11 @@ export class TelemetryWriter {
             'status_code', 'latency_ms', 'route', 'framework', 'headers', 'query_params',
             'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
             'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
-            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+            'sdk_name', 'sdk_version', 'timestamp',
+            'geo_country_code', 'geo_region', 'geo_asn', 'client_ip_hash',
+            'browser_family', 'browser_version_major', 'os_name', 'os_version_major',
+            'device_type', 'is_bot'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }

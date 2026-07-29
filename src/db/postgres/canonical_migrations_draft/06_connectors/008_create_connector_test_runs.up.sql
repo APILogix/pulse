@@ -1,13 +1,7 @@
-BEGIN;
+﻿BEGIN;
 
-CREATE TABLE IF NOT EXISTS connector_test_runs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    connector_id UUID NOT NULL REFERENCES connector_configs(id) ON DELETE CASCADE,
-    triggered_by UUID REFERENCES users(id),
-    status VARCHAR(30) NOT NULL,
-    response JSONB,
-    duration_ms INTEGER,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Log DB schema moved to database/migrations/logdb. This primary DB migration is intentionally a no-op to prevent duplicate runtime table definitions.
+-- Original file: src/db/postgres/canonical_migrations_draft/06_connectors/008_create_connector_test_runs.up.sql
 
 COMMIT;
+

@@ -197,6 +197,10 @@ export class ProjectsService {
       return this.core.getProject(orgId, projectId, userId) as any;
   }
 
+  async getProjectByPublicId(orgId: string, publicId: string, userId: string): Promise<Project> {
+      return this.core.getProjectByPublicId(orgId, publicId, userId) as any;
+  }
+
   async getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings> {
       return this.settings.getProjectSettings(orgId, projectId, userId) as any;
   }

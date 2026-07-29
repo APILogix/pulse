@@ -9,6 +9,7 @@ import { buildApiPrefixes, constantTimeEqualHex, createApiKey, extractApiKeyPref
 import { ProjectService } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
+import { SdkConfigProvisioner } from "./sdk-config/sdk-config.provisioner.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
 import { BaseProjectService } from "./shared/base.service.js";
 import { MemberRepository } from "./members/member.repository.js";
@@ -68,9 +69,13 @@ export class ProjectsService {
         this.apiKeyRepository = apiKeyRepository;
         this.environmentRepository = environmentRepository;
         this.usageRepository = usageRepository;
-        this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        // Single provisioner shared by project + environment creation so SDK
+        // configurations are seeded explicitly inside the service transaction
+        // (no PostgreSQL trigger).
+        const sdkConfigProvisioner = new SdkConfigProvisioner();
+        this.core = new ProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
         this.settings = new SettingsService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
-        this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.environments = new EnvironmentService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner);
         this.apiKeys = new ApiKeyService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
         this.base = new BaseProjectService(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
         this.members = new ProjectMemberService({
@@ -96,6 +101,9 @@ export class ProjectsService {
     }
     async getProject(orgId, projectId, userId) {
         return this.core.getProject(orgId, projectId, userId);
+    }
+    async getProjectByPublicId(orgId, publicId, userId) {
+        return this.core.getProjectByPublicId(orgId, publicId, userId);
     }
     async getProjectSettings(orgId, projectId, userId) {
         return this.settings.getProjectSettings(orgId, projectId, userId);

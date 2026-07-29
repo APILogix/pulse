@@ -16,6 +16,7 @@ import {
 import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService, type RequestMeta } from "../shared/base.service.js";
 import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+import { syncEnvironmentLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 
 export class EnvironmentService extends BaseProjectService {
   constructor(
@@ -104,6 +105,7 @@ export class EnvironmentService extends BaseProjectService {
       slug: environment.slug,
       type: environment.type,
     });
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.created");
     return environment;
   }
 
@@ -133,6 +135,7 @@ export class EnvironmentService extends BaseProjectService {
       newValues: { ...updated },
       changedFields: Object.keys(body),
     });
+    syncEnvironmentLookupToLogDbBestEffort(updated.id, "environment.updated");
     return updated;
   }
 
@@ -153,6 +156,7 @@ export class EnvironmentService extends BaseProjectService {
       entityId: environmentId,
       isSensitive: true,
     });
+    syncEnvironmentLookupToLogDbBestEffort(environmentId, "environment.deleted");
   }
 
   async restoreEnvironment(
@@ -165,6 +169,7 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const restored = await this.environmentRepository.restoreEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.restored", restored);
+    syncEnvironmentLookupToLogDbBestEffort(restored.id, "environment.restored");
     return restored;
   }
 
@@ -178,6 +183,7 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const environment = await this.environmentRepository.setDefaultEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.default_set", environment);
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.default_set");
     return environment;
   }
 
@@ -191,6 +197,7 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const environment = await this.environmentRepository.deactivateEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.deactivated", environment);
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.deactivated");
     return environment;
   }
 

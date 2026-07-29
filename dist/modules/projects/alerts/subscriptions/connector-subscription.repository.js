@@ -93,8 +93,8 @@ export class ConnectorSubscriptionRepository {
                 body.severityThreshold,
                 body.memberIds,
                 body.channelOverrides,
-                body.quietHours ?? null,
-                body.digestMode ?? null,
+                body.quietHours ?? '{}',
+                body.digestMode ?? 'immediate',
                 createdByUserId,
                 createdByUserId,
             ]);

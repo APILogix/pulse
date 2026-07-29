@@ -6,14 +6,27 @@ import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import { ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
+import { createApiKey, ProjectError, slugifyProjectName, validateStatusTransition, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { EnvironmentType } from "../environments/environment.types.js";
+import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+import { syncProjectLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffort, syncApiKeyLookupToLogDbBestEffort, } from "../../../shared/logdb/lookup-sync.js";
+/** Fixed identity of the single default environment created with every project. */
+const DEFAULT_PRODUCTION_ENVIRONMENT = {
+    name: "Production",
+    slug: "production",
+    type: EnvironmentType.PRODUCTION,
+    description: "Production telemetry",
+    color: "#16A34A",
+};
 export class ProjectService extends BaseProjectService {
+    sdkConfigProvisioner;
     constructor(repository, logger, 
     // Org-owned audit trail. Projects/keys are organization resources, so their
     // lifecycle events live in organization_audit_logs.
-    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository) {
+    orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository, sdkConfigProvisioner = new SdkConfigProvisioner()) {
         super(repository, logger, orgRepo, auditService, settingsRepository, apiKeyRepository, environmentRepository, usageRepository);
+        this.sdkConfigProvisioner = sdkConfigProvisioner;
     }
     // ── Projects ────────────────────────────────────────────────────────────────
     async listProjects(orgId, userId, query) {
@@ -22,12 +35,28 @@ export class ProjectService extends BaseProjectService {
         const offset = query.offset ?? ((query.page ?? 1) - 1) * query.limit;
         return { ...result, limit: query.limit, offset };
     }
+    /**
+     * Create a project and provision a complete, production-ready runtime in a
+     * single database transaction:
+     *   1. Project row
+     *   2. Owner membership
+     *   3. Project settings
+     *   4. Exactly ONE Production environment (default, active)
+     *   5. SDK configuration head + published revision #1 for that environment
+     *   6. One initial Production API key (shown once)
+     *   7. Usage counters
+     *   8. Notification preferences
+     *
+     * No additional environments (Staging/Development/Testing/Preview/...) are
+     * created here — those exist only when the user explicitly creates them.
+     */
     async createProject(orgId, userId, body, meta) {
         await this.requireOrganizationAccess(orgId, userId, "admin");
         await this.enforceProjectModuleLimit(orgId, "project");
         const slug = await this.generateUniqueSlug(orgId, body.name);
-        const project = await this.repository.withTransaction(async (client) => {
-            const created = await this.repository.createProject({
+        const keyMaterial = createApiKey(DEFAULT_PRODUCTION_ENVIRONMENT.slug);
+        const result = await this.repository.withTransaction(async (client) => {
+            const project = await this.repository.createProject({
                 orgId,
                 name: body.name,
                 slug,
@@ -41,25 +70,71 @@ export class ProjectService extends BaseProjectService {
                 metadata: body.metadata ?? {},
                 createdBy: userId,
             }, client);
-            await this.repository.ensureProjectOwner(created.id, orgId, userId, client);
-            // All application-side provisioning shares the project transaction. The
-            // canonical trigger remains an idempotent schema-level safety net.
-            await this.settingsRepository.createDefault(created.id, orgId, client);
-            await this.repository.provisionRuntimeDefaults(created, client);
-            await this.seedDefaultNotificationPreferences(created.id, orgId, client);
-            return created;
+            await this.repository.ensureProjectOwner(project.id, orgId, userId, client);
+            await this.settingsRepository.createDefault(project.id, orgId, client);
+            // Exactly one Production environment. All runtime resources below are
+            // provisioned explicitly in this same transaction (no DB trigger).
+            const environment = await this.environmentRepository.createEnvironment({
+                projectId: project.id,
+                orgId,
+                name: DEFAULT_PRODUCTION_ENVIRONMENT.name,
+                slug: DEFAULT_PRODUCTION_ENVIRONMENT.slug,
+                type: DEFAULT_PRODUCTION_ENVIRONMENT.type,
+                description: DEFAULT_PRODUCTION_ENVIRONMENT.description,
+                color: DEFAULT_PRODUCTION_ENVIRONMENT.color,
+                isDefault: true,
+                isActive: true,
+            }, client);
+            // SDK configuration head + published revision #1 for the environment.
+            await this.sdkConfigProvisioner.provisionInitial(client, {
+                organizationId: orgId,
+                projectId: project.id,
+                environmentId: environment.id,
+                environmentKey: environment.slug,
+            }, userId);
+            // One initial Production API key (subsequent environments do NOT get keys).
+            const apiKey = await this.apiKeyRepository.createApiKey({
+                projectId: project.id,
+                organizationId: orgId,
+                environmentId: environment.id,
+                publicKey: keyMaterial.publicKey,
+                secretHash: keyMaterial.secretHash,
+                name: "Production Default Key",
+                createdBy: userId,
+                expiresAt: null,
+            }, client);
+            await this.repository.provisionUsageCounter(project, client);
+            await this.seedDefaultNotificationPreferences(project.id, orgId, client);
+            return { project, environment, apiKey };
         });
         await this.audit(meta, {
             orgId,
-            projectId: project.id,
+            projectId: result.project.id,
             action: "project.created",
             entityType: "project",
-            entityId: project.id,
-            entityName: project.name,
-            newValues: { name: project.name, slug: project.slug, visibility: project.visibility },
+            entityId: result.project.id,
+            entityName: result.project.name,
+            newValues: {
+                name: result.project.name,
+                slug: result.project.slug,
+                visibility: result.project.visibility,
+                environmentId: result.environment.id,
+                apiKeyId: result.apiKey.id,
+            },
         });
-        this.logger.info({ orgId, projectId: project.id, userId }, "Project created");
-        return project;
+        this.logger.info({ orgId, projectId: result.project.id, environmentId: result.environment.id, userId }, "Project created with Production environment, SDK configuration, and initial API key");
+        // Best-effort Log DB lookup snapshots (analytics attribution). Never blocks
+        // or rolls back the committed primary-DB create; the primary DB is the
+        // source of truth. See docs/distributed-ingestion-routing-master-prompt.md.
+        syncProjectLookupToLogDbBestEffort(result.project.id, "project.created");
+        syncEnvironmentLookupToLogDbBestEffort(result.environment.id, "environment.created");
+        syncApiKeyLookupToLogDbBestEffort(result.apiKey.id, "api_key.created");
+        return {
+            project: result.project,
+            environment: result.environment,
+            apiKey: this.apiKeyRepository.publicShape(result.apiKey),
+            fullKey: keyMaterial.fullKey,
+        };
     }
     async seedDefaultNotificationPreferences(projectId, orgId, client) {
         const categories = AlertCategorySchema.options;
@@ -79,6 +154,14 @@ export class ProjectService extends BaseProjectService {
     }
     async getProject(orgId, projectId, userId) {
         return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
+    }
+    async getProjectByPublicId(orgId, publicId, userId) {
+        await this.requireOrganizationAccess(orgId, userId);
+        const project = await this.repository.findProjectByPublicId(orgId, publicId);
+        if (!project)
+            throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+        // Now do the standard access check using the resolved UUID.
+        return this.requireProjectAccess(orgId, project.id, userId, ProjectMemberRole.VIEWER);
     }
     async getProjectOverview(orgId, projectId, userId) {
         const project = await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
@@ -152,6 +235,7 @@ export class ProjectService extends BaseProjectService {
             changedFields: Object.keys(body),
             newValues: { status: updated.status },
         });
+        syncProjectLookupToLogDbBestEffort(projectId, "project.updated");
         return updated;
     }
     async deleteProject(orgId, projectId, userId, meta) {
@@ -175,6 +259,7 @@ export class ProjectService extends BaseProjectService {
             isSensitive: true,
         });
         this.logger.warn({ orgId, projectId, userId }, "Project soft-deleted");
+        syncProjectLookupToLogDbBestEffort(projectId, "project.deleted");
     }
     async restoreProject(orgId, projectId, userId, meta) {
         await this.requireOrganizationAccess(orgId, userId, "owner");
@@ -194,6 +279,7 @@ export class ProjectService extends BaseProjectService {
             entityName: restored.name,
             newValues: { status: restored.status },
         });
+        syncProjectLookupToLogDbBestEffort(projectId, "project.restored");
         return restored;
     }
     async archiveProject(orgId, projectId, userId, meta) {

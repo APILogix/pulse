@@ -50,14 +50,17 @@ export class ProjectsRepository {
     async createProject(input, client) {
         return this.core.createProject(input, client);
     }
-    async provisionRuntimeDefaults(project, client) {
-        return this.core.provisionRuntimeDefaults(project, client);
+    async provisionUsageCounter(project, client) {
+        return this.core.provisionUsageCounter(project, client);
     }
     async findProjectBySlug(orgId, slug, client) {
         return this.core.findProjectBySlug(orgId, slug, client);
     }
     async findProjectById(orgId, projectId, client) {
         return this.core.findProjectById(orgId, projectId, client);
+    }
+    async findProjectByPublicId(orgId, publicId, client) {
+        return this.core.findProjectByPublicId(orgId, publicId, client);
     }
     async findProjectByIdIncludingDeleted(orgId, projectId, client) {
         return this.core.findProjectByIdIncludingDeleted(orgId, projectId, client);

@@ -1,13 +1,11 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { rateLimit } from "../../../shared/middleware/rate-limit.js";
 import { idempotency, cacheIdempotencyResponse } from "../../../shared/middleware/idempotency.js";
-import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
-import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "../types.js";
+import { CreateProjectBodySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectByPublicIdParamsSchema, ProjectParamsSchema, UpdateProjectBodySchema, } from "../types.js";
 import { handleProjectError, ProjectError } from "../shared/utils.js";
-import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling } from "../shared/route-utils.js";
+import { requestMeta, authenticatedUser, withErrorHandling } from "../shared/route-utils.js";
 export async function projectCoreRoutes(fastify) {
     const service = fastify.projects.service;
-    const sdkConfigService = fastify.organization.sdkConfigService;
     const readRateLimit = rateLimit({ max: 120, window: 60 });
     const writeRateLimit = rateLimit({ max: 30, window: 60 });
     const idempotencyKey = idempotency();
@@ -28,8 +26,28 @@ export async function projectCoreRoutes(fastify) {
     fastify.post("/", { preHandler: [authenticate, writeRateLimit, idempotencyKey] }, withErrorHandling(async (request, reply) => {
         const { orgId } = OrgIdParamsSchema.parse(request.params);
         const body = CreateProjectBodySchema.parse(request.body);
-        const project = await service.createProject(orgId, authenticatedUser(request).id, body, requestMeta(request));
-        return reply.code(201).send({ success: true, data: project });
+        const result = await service.createProject(orgId, authenticatedUser(request).id, body, requestMeta(request));
+        // The Production environment, its SDK configuration, and the initial API
+        // key are all provisioned with the project. `fullKey` is shown exactly once.
+        return reply.code(201).send({
+            success: true,
+            data: {
+                id: result.project.id,
+                projectId: result.project.id,
+                project: result.project,
+                environment: result.environment,
+                apiKey: result.apiKey,
+                fullKey: result.fullKey,
+            },
+        });
+    }));
+    // ── Resolve by public ID (for frontend routing) ───────────────────────────
+    // IMPORTANT: This route must be registered BEFORE /:projectId to prevent
+    // "by-public-id" from being captured as a projectId param.
+    fastify.get("/by-public-id/:publicId", { preHandler: [authenticate, readRateLimit] }, withErrorHandling(async (request, reply) => {
+        const { orgId, publicId } = ProjectByPublicIdParamsSchema.parse(request.params);
+        const project = await service.getProjectByPublicId(orgId, publicId, authenticatedUser(request).id);
+        return reply.send({ success: true, data: project });
     }));
     fastify.get("/:projectId", { preHandler: [authenticate, readRateLimit] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId } = ProjectParamsSchema.parse(request.params);

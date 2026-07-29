@@ -70,7 +70,7 @@ export interface ConfigStore {
   loadCompiledByEnvironment(
     organizationId: string,
     environmentId: string,
-  ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config } | null>;
+  ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config; environmentName: string } | null>;
 }
 
 export interface ServiceOptions {
@@ -239,8 +239,19 @@ export class RemoteSdkConfigService {
       // No safe committed representation -> 503 so the SDK keeps LKG/defaults.
       throw new SdkConfigError("not_found", "No committed configuration available", 503);
     }
+    const compiledForDelivery: SchemaV1Config = {
+      ...loaded.compiledSnapshot,
+      sdk: {
+        ...loaded.compiledSnapshot.sdk,
+        environment: loaded.environmentName,
+      },
+      meta: {
+        ...loaded.compiledSnapshot.meta,
+        environmentName: loaded.environmentName,
+      },
+    };
     const snapshot = buildDeliverySnapshot({
-      compiled: loaded.compiledSnapshot,
+      compiled: compiledForDelivery,
       ...(hints.capabilities !== undefined ? { capabilities: hints.capabilities } : {}),
       ...(override !== undefined ? { override } : {}),
     });

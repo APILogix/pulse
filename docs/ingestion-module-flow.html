@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pulse — Ingestion Module: Routes &amp; Flow</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+    --txt:#e6edf3; --muted:#9aa7b4; --accent:#58a6ff; --accent2:#7ee787;
+    --warn:#f0a35e; --danger:#ff7b72; --violet:#bc8cff; --pink:#f778ba;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono)}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px 120px}
+  header.hero{padding:52px 22px 30px;background:
+    radial-gradient(1200px 400px at 20% -10%,rgba(88,166,255,.16),transparent),
+    radial-gradient(900px 380px at 90% 0%,rgba(188,140,255,.12),transparent);
+    border-bottom:1px solid var(--border)}
+  header.hero .wrap{padding-bottom:0}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:.2px}
+  .sub{color:var(--muted);max-width:820px}
+  .tag{display:inline-block;font-size:12px;color:var(--accent2);border:1px solid #2a3b2f;
+    background:#132018;padding:2px 9px;border-radius:999px;margin-right:6px}
+  h2{font-size:23px;margin:46px 0 6px;padding-top:14px;border-top:1px solid var(--border)}
+  h3{font-size:18px;margin:26px 0 6px;color:#cdd6e0}
+  h2 .n{color:var(--muted);font-size:15px;font-weight:400;margin-left:8px}
+  p.lead{color:var(--muted);margin:4px 0 14px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:820px){.g2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cdd6e0;font-weight:600}
+  tr:nth-child(even) td{background:#12161d}
+  .method{font-family:var(--mono);font-weight:700;font-size:12px;padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .m-post{background:#12251c;color:#7ee787;border:1px solid #2a4a37}
+  .m-get{background:#0f2036;color:#79c0ff;border:1px solid #234a72}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+  .pill.pub{color:#7ee787;border-color:#2a4a37}
+  .pill.auth{color:#79c0ff;border-color:#234a72}
+  .pill.admin{color:#ff7b72;border-color:#5a2a2a}
+  .pill.key{color:#f0a35e;border-color:#5a4326}
+  .svgbox{background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px;margin:14px 0;overflow-x:auto}
+  .svgbox svg{display:block;margin:0 auto;min-width:640px}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--muted);margin:10px 0}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+  .sw{width:16px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(255,255,255,.15)}
+  .toc{columns:2;column-gap:26px;font-size:14px}
+  @media(max-width:640px){.toc{columns:1}}
+  .toc a{display:block;padding:3px 0;color:#c9d3de}
+  .kbd{font-family:var(--mono);background:#0b0f14;border:1px solid var(--border);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px}
+  .note{border-left:3px solid var(--accent);background:#101722;padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;color:#c4d0dc}
+  .warnbox{border-left:3px solid var(--warn);background:#1c1710}
+  .footer{color:var(--muted);font-size:12.5px;border-top:1px solid var(--border);margin-top:60px;padding-top:18px}
+  ul.tight{margin:6px 0 6px 18px;padding:0}
+  ul.tight li{margin:3px 0}
+  .anchor{scroll-margin-top:16px}
+  /* SVG helpers */
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div style="margin-bottom:12px">
+      <span class="tag">Pulse Backend</span>
+      <span class="tag">src/modules/ingestion</span>
+      <span class="tag">pg-boss gateway</span>
+    </div>
+    <h1>Ingestion Module — Routes &amp; End-to-End Flow</h1>
+    <p class="sub">A visual reference for every HTTP route the ingestion module exposes and how a
+      request travels from the SDK, through the accept-and-enqueue gateway, into per-type pg-boss
+      queues, and finally into the Log DB by the worker fleet. Diagrams are inline SVG; the page is
+      fully self-contained (no external assets).</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ============================ LEGEND ============================ -->
+  <div class="legend" style="margin-top:22px">
+    <span><i class="sw" style="background:#1f6feb"></i> HTTP / gateway (API process)</span>
+    <span><i class="sw" style="background:#8957e5"></i> Policy / validation</span>
+    <span><i class="sw" style="background:#2ea043"></i> Postgres / pg-boss (durable)</span>
+    <span><i class="sw" style="background:#bb8009"></i> Worker process</span>
+    <span><i class="sw" style="background:#b62324"></i> Failure / DLQ path</span>
+    <span><i class="sw" style="background:#30363d"></i> Log DB (telemetry store)</span>
+  </div>
+
+  <!-- ============================ TOC ============================ -->
+  <div class="card">
+    <h3 style="margin-top:2px">Contents</h3>
+    <div class="toc">
+      <a href="#arch">1. High-level architecture</a>
+      <a href="#pipeline">2. The shared ingest pipeline</a>
+      <a href="#typed">3. Typed write routes (POST /v1/&lt;signal&gt;)</a>
+      <a href="#ingest">4. Legacy batch &amp; typed sub-paths</a>
+      <a href="#init">5. POST /v1/init</a>
+      <a href="#reads">6. Read routes (limits, usage, errors, debug)</a>
+      <a href="#health">7. Health routes</a>
+      <a href="#dlq">8. DLQ admin routes</a>
+      <a href="#replay">9. POST /v1/replay</a>
+      <a href="#workers">10. Worker fleet &amp; queues</a>
+      <a href="#rollup">11. Usage rollup &amp; billing</a>
+      <a href="#ref">12. Reference tables</a>
+    </div>
+  </div>
+
+  <!-- ============================ 1. ARCHITECTURE ============================ -->
+  <h2 id="arch" class="anchor">1. High-level architecture <span class="n">SDK → gateway → queues → workers → Log DB</span></h2>
+  <p class="lead">The gateway is a thin <b>accept-and-enqueue</b> HTTP layer. It never persists telemetry
+    itself: the only durable work on the request path is writing a pg-boss job row. Normalization and
+    storage happen asynchronously in a separate worker process, so a flood of events can be absorbed
+    without blocking or losing data.</p>
+
+  <div class="svgbox">
+    <svg width="1080" height="470" viewBox="0 0 1080 470" role="img" aria-label="High level ingestion architecture">
+      <defs>
+        <marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#8b98a5"/>
+        </marker>
+        <marker id="arg" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#2ea043"/>
+        </marker>
+        <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+          <path d="M0,0 L8,3 L0,6 Z" fill="#b62324"/>
+        </marker>
+      </defs>
+      <style>
+        .box{rx:9;stroke-width:1.5}
+        .t{fill:#e6edf3;font-size:13px}
+        .tb{fill:#e6edf3;font-size:13.5px;font-weight:700}
+        .ts{fill:#9aa7b4;font-size:11px}
+        .edge{stroke:#8b98a5;stroke-width:1.6;fill:none}
+        .edgeg{stroke:#2ea043;stroke-width:1.8;fill:none}
+        .edger{stroke:#b62324;stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+        .el{fill:#8b98a5;font-size:11px}
+      </style>
+
+      <!-- SDK -->
+      <rect x="24" y="180" width="120" height="90" rx="9" fill="#0f2036" stroke="#234a72"/>
+      <text class="tb" x="84" y="212" text-anchor="middle">SDK</text>
+      <text class="ts" x="84" y="232" text-anchor="middle">batches events</text>
+      <text class="ts" x="84" y="248" text-anchor="middle">gzip optional</text>
+
+      <!-- Gateway (API) -->
+      <rect x="200" y="70" width="250" height="320" rx="11" fill="#10192b" stroke="#1f6feb"/>
+      <text class="tb" x="325" y="96" text-anchor="middle">API process — Fastify gateway</text>
+      <rect x="220" y="112" width="210" height="46" rx="7" fill="#161b22" stroke="#30363d"/>
+      <text class="t" x="325" y="132" text-anchor="middle">preParsing: gunzip +</text>
+      <text class="ts" x="325" y="148" text-anchor="middle">decompressed-size guard</text>
+      <rect x="220" y="166" width="210" height="46" rx="7" fill="#161b22" stroke="#30363d"/>
+      <text class="t" x="325" y="186" text-anchor="middle">JSON-Schema validation</text>
+      <text class="ts" x="325" y="202" text-anchor="middle">(per-route, framework edge)</text>
+      <rect x="220" y="220" width="210" height="62" rx="7" fill="#1a1330" stroke="#8957e5"/>
+      <text class="t" x="325" y="240" text-anchor="middle">Controller → Service</text>
+      <text class="ts" x="325" y="256" text-anchor="middle">processIngest() policy</text>
+      <text class="ts" x="325" y="270" text-anchor="middle">auth · limits · quota · shed</text>
+      <rect x="220" y="290" width="210" height="44" rx="7" fill="#132018" stroke="#2a4a37"/>
+      <text class="t" x="325" y="310" text-anchor="middle">enqueueIngestJobs()</text>
+      <text class="ts" x="325" y="325" text-anchor="middle">1 job / (type, chunk)</text>
+      <text class="ts" x="325" y="360" text-anchor="middle">responds 202 Accepted</text>
+      <text class="ts" x="325" y="376" text-anchor="middle">(no telemetry persisted here)</text>
+
+      <!-- pg-boss queues -->
+      <rect x="500" y="120" width="200" height="230" rx="11" fill="#0f2015" stroke="#2ea043"/>
+      <text class="tb" x="600" y="146" text-anchor="middle">pg-boss (Postgres)</text>
+      <text class="ts" x="600" y="163" text-anchor="middle">durable job rows</text>
+      <rect x="520" y="176" width="160" height="26" rx="6" fill="#12251c" stroke="#2a4a37"/>
+      <text class="t" x="600" y="194" text-anchor="middle">ingest.error / .request</text>
+      <rect x="520" y="206" width="160" height="26" rx="6" fill="#12251c" stroke="#2a4a37"/>
+      <text class="t" x="600" y="224" text-anchor="middle">ingest.trace / .span …</text>
+      <rect x="520" y="236" width="160" height="26" rx="6" fill="#12251c" stroke="#2a4a37"/>
+      <text class="t" x="600" y="254" text-anchor="middle">10 per-type queues</text>
+      <rect x="520" y="270" width="160" height="26" rx="6" fill="#251515" stroke="#5a2a2a"/>
+      <text class="t" x="600" y="288" text-anchor="middle" fill="#ff9d95">ingest.dlq-intake</text>
+      <rect x="520" y="300" width="160" height="26" rx="6" fill="#1d1a10" stroke="#5a4326"/>
+      <text class="t" x="600" y="318" text-anchor="middle" fill="#f0a35e">ingest.usage-rollup</text>
+
+      <!-- Worker -->
+      <rect x="752" y="70" width="230" height="230" rx="11" fill="#1a1608" stroke="#bb8009"/>
+      <text class="tb" x="867" y="96" text-anchor="middle">Ingestion worker</text>
+      <text class="ts" x="867" y="113" text-anchor="middle">one pool per event type</text>
+      <rect x="772" y="126" width="190" height="40" rx="7" fill="#161b22" stroke="#30363d"/>
+      <text class="t" x="867" y="146" text-anchor="middle">fairness gate</text>
+      <text class="ts" x="867" y="160" text-anchor="middle">per-org in-flight budget</text>
+      <rect x="772" y="172" width="190" height="42" rx="7" fill="#161b22" stroke="#30363d"/>
+      <text class="t" x="867" y="192" text-anchor="middle">normalize (Zod) + id</text>
+      <text class="ts" x="867" y="206" text-anchor="middle">deterministic event_id</text>
+      <rect x="772" y="220" width="190" height="42" rx="7" fill="#161b22" stroke="#30363d"/>
+      <text class="t" x="867" y="240" text-anchor="middle">idempotent insert</text>
+      <text class="ts" x="867" y="254" text-anchor="middle">ON CONFLICT DO NOTHING</text>
+      <rect x="772" y="268" width="190" height="24" rx="6" fill="#12251c" stroke="#2a4a37"/>
+      <text class="ts" x="867" y="285" text-anchor="middle" fill="#7ee787">usage staged (inserted only)</text>
+
+      <!-- Log DB -->
+      <rect x="820" y="330" width="150" height="96" rx="11" fill="#161b22" stroke="#30363d"/>
+      <text class="tb" x="895" y="360" text-anchor="middle">Log DB</text>
+      <text class="ts" x="895" y="380" text-anchor="middle">events_* tables</text>
+      <text class="ts" x="895" y="396" text-anchor="middle">error groups</text>
+      <text class="ts" x="895" y="412" text-anchor="middle">lookup snapshots</text>
+
+      <!-- edges -->
+      <path class="edge" d="M144,225 L198,225" marker-end="url(#ar)"/>
+      <text class="el" x="150" y="217">HTTPS</text>
+      <path class="edgeg" d="M452,290 C476,290 486,235 498,235" marker-end="url(#arg)"/>
+      <text class="el" x="452" y="270" fill="#2ea043">enqueue</text>
+      <path class="edgeg" d="M702,200 C726,200 730,180 750,180" marker-end="url(#arg)"/>
+      <text class="el" x="705" y="176" fill="#2ea043">consume</text>
+      <path class="edgeg" d="M895,300 L895,328" marker-end="url(#arg)"/>
+      <text class="el" x="900" y="318" fill="#2ea043">persist</text>
+      <!-- failure back to dlq -->
+      <path class="edger" d="M772,246 C726,246 726,283 682,283" marker-end="url(#arr)"/>
+      <text class="el" x="690" y="262" fill="#ff9d95">on failure</text>
+      <!-- response back -->
+      <path class="edge" d="M240,352 C180,352 168,300 144,262" marker-end="url(#ar)" stroke-dasharray="4 4"/>
+      <text class="el" x="150" y="300">202</text>
+    </svg>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:2px">Why accept-and-enqueue?</h3>
+      <ul class="tight">
+        <li><b>Durability</b> is the pg-boss job row. Once <code>enqueueIngestJobs()</code> resolves, events survive a crash of any process.</li>
+        <li><b>No in-memory buffering, no Redis</b> on this path — the gateway stays cheap enough to absorb floods.</li>
+        <li><b>Full Zod normalization is worker-side.</b> The gateway does only basic envelope checks (type known, size cap).</li>
+        <li><b>Backpressure</b> sheds low-priority traffic when queue depth is high, protecting business/enterprise tenants.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px">Module wiring <span class="n mono">ingestion.module.ts</span></h3>
+      <ul class="tight">
+        <li>Reuses the shared Postgres <code>pool</code> and builds a <code>PostgresWriter</code>.</li>
+        <li>Decorates Fastify with <code>postgresWriter</code>; routes construct one <code>IngestionService</code> per scope.</li>
+        <li>All routes are registered under the <code>/api</code> prefix (so <code>/v1/errors</code> is served at <code>/api/v1/errors</code>).</li>
+        <li><code>onClose</code> disposes rate-limit buckets &amp; usage buffers.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============================ ROUTE INVENTORY ============================ -->
+  <h3>Route inventory <span class="n">27 routes · all paths shown relative to the <code>/api</code> mount</span></h3>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Guard</th><th>Handler → purpose</th></tr></thead>
+    <tbody>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/init</td><td><span class="pill key">API key</span></td><td>init → SDK bootstrap config</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/errors</td><td><span class="pill key">API key</span></td><td>ingestTyped('error')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/requests</td><td><span class="pill key">API key</span></td><td>ingestTyped('request')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/traces</td><td><span class="pill key">API key</span></td><td>ingestTyped('trace')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/spans</td><td><span class="pill key">API key</span></td><td>ingestTyped('span')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/metrics</td><td><span class="pill key">API key</span></td><td>ingestTyped('metric')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/logs</td><td><span class="pill key">API key</span></td><td>ingestTyped('log')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/profiles</td><td><span class="pill key">API key</span></td><td>ingestTyped('profile')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/events</td><td><span class="pill key">API key</span></td><td>ingestTyped('message')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/checkins</td><td><span class="pill key">API key</span></td><td>ingestTyped('cron_checkin')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/replays</td><td><span class="pill key">API key</span></td><td>ingestTyped('replay')</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/ingest</td><td><span class="pill key">API key</span></td><td>ingest → legacy MIXED batch</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/ingest/requests</td><td><span class="pill key">API key</span></td><td>ingestRequests (legacy alias)</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/ingest/errors</td><td><span class="pill key">API key</span></td><td>ingestErrors (legacy alias)</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/ingest/logs</td><td><span class="pill key">API key</span></td><td>ingestLogs (legacy alias)</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/ingest/metrics</td><td><span class="pill key">API key</span></td><td>ingestMetrics (legacy alias)</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/health</td><td><span class="pill pub">public</span></td><td>getHealth → DB+queue liveness</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/ingest/health</td><td><span class="pill auth">auth</span></td><td>getIngestionHealth → queue depth</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/limits</td><td><span class="pill key">API key (header)</span></td><td>getLimits → rate/quota limits</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/usage</td><td><span class="pill auth">auth</span> <span class="pill">member</span></td><td>getUsage → realtime usage</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/errors</td><td><span class="pill auth">auth</span> <span class="pill">member</span></td><td>listErrors → error list</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/errors/:errorId</td><td><span class="pill auth">auth</span> <span class="pill">member</span></td><td>getErrorById → one error</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/dlq</td><td><span class="pill admin">admin</span></td><td>getDLQ → dead-letter list</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/dlq/reprocess/:jobId</td><td><span class="pill admin">admin</span></td><td>reprocessDLQ → requeue one</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/dlq/reprocess-all</td><td><span class="pill admin">admin</span></td><td>reprocessAllDLQ → bulk requeue</td></tr>
+      <tr><td><span class="method m-post">POST</span></td><td class="mono">/v1/replay</td><td><span class="pill admin">admin</span> <span class="pill">member</span></td><td>replay → re-enqueue history</td></tr>
+      <tr><td><span class="method m-get">GET</span></td><td class="mono">/v1/debug/events/:id</td><td><span class="pill auth">auth</span> <span class="pill">member</span></td><td>debugEvent → raw event lookup</td></tr>
+    </tbody>
+  </table>
+  <div class="note">Write routes authenticate by <b>resolving the API key inside the service</b> (LRU cache → Postgres),
+    not via the <code>authenticate</code> JWT middleware. Read/admin routes use JWT <code>authenticate</code> plus
+    tenant membership or platform-admin guards.</div>
+
+  <!-- ============================ 2. PIPELINE ============================ -->
+  <h2 id="pipeline" class="anchor">2. The shared ingest pipeline <span class="n mono">service.processIngest()</span></h2>
+  <p class="lead">Every write route funnels into one private method — the single policy boundary. Typed
+    routes pass their <code>expectedType</code>; the legacy batch passes <code>null</code>. Auth, quota,
+    rate limits, backpressure and queue-priority math are never duplicated per endpoint.</p>
+
+  <div class="svgbox">
+    <svg width="1040" height="760" viewBox="0 0 1040 760" role="img" aria-label="processIngest pipeline flowchart">
+      <defs>
+        <marker id="p_ar" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#8b98a5"/></marker>
+        <marker id="p_arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b62324"/></marker>
+        <marker id="p_arg" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2ea043"/></marker>
+      </defs>
+      <style>
+        .step{fill:#161b22;stroke:#8957e5;stroke-width:1.5}
+        .stept{fill:#e6edf3;font-size:13px;font-weight:600}
+        .steps{fill:#9aa7b4;font-size:11px}
+        .flow{stroke:#8b98a5;stroke-width:1.8;fill:none}
+        .flowr{stroke:#b62324;stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+        .exit{fill:#251515;stroke:#5a2a2a}
+        .exitt{fill:#ff9d95;font-size:11px;font-weight:600}
+        .lbl{fill:#8b98a5;font-size:10.5px}
+      </style>
+
+      <!-- main column x=90..430 ; exits at x=560 -->
+      <!-- 1 envelope -->
+      <rect class="step" x="90" y="20" width="340" height="46" rx="8"/>
+      <text class="stept" x="110" y="40">1 · Envelope checks</text>
+      <text class="steps" x="110" y="57">object? apiKey? events non-empty? ≤ maxBatchSize?</text>
+      <rect class="exit" x="560" y="22" width="420" height="42" rx="7"/>
+      <text class="exitt" x="575" y="40">INVALID_REQUEST 400 · INVALID_API_KEY 401</text>
+      <text class="exitt" x="575" y="56">EMPTY_BATCH 400 · BATCH_TOO_LARGE 413</text>
+      <path class="flowr" d="M430,44 L558,44" marker-end="url(#p_arr)"/>
+
+      <!-- 2 resolveProject -->
+      <rect class="step" x="90" y="92" width="340" height="52" rx="8"/>
+      <text class="stept" x="110" y="112">2 · resolveProject(apiKey)</text>
+      <text class="steps" x="110" y="129">LRU apiKeyCache → PostgresWriter.resolveApiKey</text>
+      <text class="steps" x="110" y="141">→ project, org, env, apiKeyId, planTier, limits</text>
+      <rect class="exit" x="560" y="98" width="420" height="40" rx="7"/>
+      <text class="exitt" x="575" y="116">INVALID_API_KEY 401 (no row)</text>
+      <text class="exitt" x="575" y="132">PROJECT_INACTIVE 403 (project not active)</text>
+      <path class="flow" d="M260,66 L260,90" marker-end="url(#p_ar)"/>
+      <path class="flowr" d="M430,118 L558,118" marker-end="url(#p_arr)"/>
+
+      <!-- 3 key perms -->
+      <rect class="step" x="90" y="170" width="340" height="46" rx="8"/>
+      <text class="stept" x="110" y="190">3 · assertKeyCanUseEndpoint</text>
+      <text class="steps" x="110" y="207">permission ingest:write · allowed/blocked endpoint</text>
+      <rect class="exit" x="560" y="172" width="420" height="42" rx="7"/>
+      <text class="exitt" x="575" y="190">API_KEY_PERMISSION_DENIED 403</text>
+      <text class="exitt" x="575" y="206">API_KEY_ENDPOINT_DENIED 403</text>
+      <path class="flow" d="M260,144 L260,168" marker-end="url(#p_ar)"/>
+      <path class="flowr" d="M430,193 L558,193" marker-end="url(#p_arr)"/>
+
+      <!-- 4 rate limits -->
+      <rect class="step" x="90" y="242" width="340" height="46" rx="8"/>
+      <text class="stept" x="110" y="262">4 · Rate limits (token buckets)</text>
+      <text class="steps" x="110" y="279">project-scoped AND org-wide (noisy-neighbor)</text>
+      <rect class="exit" x="560" y="248" width="420" height="34" rx="7"/>
+      <text class="exitt" x="575" y="269">RATE_LIMIT_EXCEEDED 429</text>
+      <path class="flow" d="M260,216 L260,240" marker-end="url(#p_ar)"/>
+      <path class="flowr" d="M430,265 L558,265" marker-end="url(#p_arr)"/>
+
+      <!-- 5 quota -->
+      <rect class="step" x="90" y="314" width="340" height="46" rx="8"/>
+      <text class="stept" x="110" y="334">5 · Quota pre-check (cached)</text>
+      <text class="steps" x="110" y="351">organization_usage_current_period · fail-open</text>
+      <rect class="exit" x="560" y="320" width="420" height="34" rx="7"/>
+      <text class="exitt" x="575" y="341">QUOTA_EXCEEDED 429 (+ Retry-After)</text>
+      <path class="flow" d="M260,288 L260,312" marker-end="url(#p_ar)"/>
+      <path class="flowr" d="M430,337 L558,337" marker-end="url(#p_arr)"/>
+
+      <!-- 6 provision + depth -->
+      <rect class="step" x="90" y="386" width="340" height="46" rx="8"/>
+      <text class="stept" x="110" y="406">6 · Ensure queues · read queue depth</text>
+      <text class="steps" x="110" y="423">provisionIngestQueues (once) · depth cached ~1s</text>
+      <path class="flow" d="M260,360 L260,384" marker-end="url(#p_ar)"/>
+
+      <!-- 7 per-event loop -->
+      <rect class="step" x="90" y="458" width="340" height="118" rx="8" stroke="#bb8009"/>
+      <text class="stept" x="110" y="478">7 · Per-event loop (basic checks only)</text>
+      <text class="steps" x="110" y="497">• type in the 10 SDK types? else reject-event</text>
+      <text class="steps" x="110" y="512">• typed route &amp; type ≠ expectedType → THROW</text>
+      <text class="steps" x="110" y="527">• JSON size ≤ 256 KB? else reject-event</text>
+      <text class="steps" x="110" y="542">• backpressure shed? (plan weight + urgency)</text>
+      <text class="steps" x="110" y="557">• event type allowed by key? else reject-event</text>
+      <text class="steps" x="110" y="570" fill="#c8b06a">accepted events grouped by type →</text>
+      <rect class="exit" x="560" y="470" width="420" height="34" rx="7"/>
+      <text class="exitt" x="575" y="491">INVALID_EVENT_TYPE 400 (whole batch)</text>
+      <rect x="560" y="516" width="420" height="52" rx="7" fill="#1d1a10" stroke="#5a4326"/>
+      <text style="fill:#f0a35e;font-size:11px;font-weight:600" x="575" y="536">per-event rejects are COUNTED, not fatal:</text>
+      <text style="fill:#c8b06a;font-size:10.5px" x="575" y="552">event_not_object · unknown event type ·</text>
+      <text style="fill:#c8b06a;font-size:10.5px" x="575" y="564">event_too_large · shed_backpressure · event_type_not_allowed</text>
+      <path class="flow" d="M260,432 L260,456" marker-end="url(#p_ar)"/>
+      <path class="flowr" d="M430,487 L558,487" marker-end="url(#p_arr)"/>
+
+      <!-- 8 build+enqueue -->
+      <rect x="90" y="602" width="340" height="52" rx="8" fill="#132018" stroke="#2ea043"/>
+      <text class="stept" x="110" y="622">8 · buildJobs → enqueueIngestJobs</text>
+      <text class="steps" x="110" y="639">chunk per type (≤ jobChunkSize) · priority =</text>
+      <text class="steps" x="110" y="651">plan weight + type urgency · bulk insert</text>
+      <path class="flow" d="M260,576 L260,600" marker-end="url(#p_ar)"/>
+
+      <!-- 9 usage + response -->
+      <rect x="90" y="680" width="340" height="60" rx="8" fill="#10192b" stroke="#1f6feb"/>
+      <text class="stept" x="110" y="700">9 · Stage gateway usage · respond</text>
+      <text class="steps" x="110" y="717">usage: requests, bytes, errors, rate_limited</text>
+      <text class="steps" x="110" y="731">→ 202 { accepted, rejected, batchId, limits }</text>
+      <path class="flow" d="M260,654 L260,678" marker-end="url(#p_ar)" stroke="#2ea043"/>
+      <!-- to queue arrow -->
+      <path d="M430,628 C500,628 500,700 560,700" fill="none" stroke="#2ea043" stroke-width="1.8" marker-end="url(#p_arg)"/>
+      <rect x="560" y="676" width="420" height="48" rx="7" fill="#0f2015" stroke="#2ea043"/>
+      <text style="fill:#7ee787;font-size:11px;font-weight:600" x="575" y="696">jobs now durable in pg-boss →</text>
+      <text style="fill:#8fce9c;font-size:10.5px" x="575" y="712">worker fleet consumes them asynchronously</text>
+    </svg>
+  </div>
+
+  <div class="grid g2">
+    <div class="card warnbox" style="border-left:3px solid var(--warn)">
+      <h3 style="margin-top:2px">Typed-route enforcement</h3>
+      <p style="margin:4px 0;color:#c4d0dc">On a dedicated endpoint (e.g. <code>POST /v1/errors</code>) any event whose
+        <code>type</code> is not the route's family fails the <b>entire</b> batch with
+        <code>INVALID_EVENT_TYPE</code> (400). That is a client-misconfiguration signal — mixed batches must use
+        <code>POST /v1/ingest</code> (<code>expectedType === null</code>), which never sets the constraint.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px">Partial success vs. hard failure</h3>
+      <ul class="tight">
+        <li><b>Hard failures</b> (steps 1–5, and INVALID_EVENT_TYPE) throw → mapped to an HTTP error, nothing enqueued.</li>
+        <li><b>Per-event rejects</b> (unknown type, too large, shed, not-allowed) are collected in <code>errors[]</code>; valid events still enqueue → <code>202</code> with <code>rejected &gt; 0</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============================ 3. TYPED ROUTES ============================ -->
+  <h2 id="typed" class="anchor">3. Typed write routes <span class="n">POST /v1/&lt;signal&gt; — the primary SDK transport</span></h2>
+  <p class="lead">Registration is <b>data-driven</b> from <code>TYPED_INGEST_ROUTES</code> (route-table.ts): a single
+    loop registers one dedicated <code>POST</code> per SDK event family. The controller exposes one
+    factory — <code>ingestTyped(type)</code> — that returns a thin handler capturing the type, so there is no
+    hand-written handler per signal. Each handler calls <code>service.ingestTyped(body, apiKey, type)</code>
+    → <code>processIngest(req, type, apiKey)</code>.</p>
+
+  <div class="svgbox">
+    <svg width="1040" height="520" viewBox="0 0 1040 520" role="img" aria-label="Per-signal route to queue to table mapping">
+      <defs><marker id="t_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b7681"/></marker></defs>
+      <style>
+        .col{fill:#9aa7b4;font-size:12px;font-weight:700}
+        .r{fill:#0f2036;stroke:#234a72}.q{fill:#0f2015;stroke:#2ea043}.tb2{fill:#161b22;stroke:#30363d}
+        .rt{fill:#cfe3ff;font-size:11.5px;font-family:var(--mono)}
+        .qt{fill:#9ff0b5;font-size:11.5px;font-family:var(--mono)}
+        .tt{fill:#c9d3de;font-size:11px;font-family:var(--mono)}
+        .u{font-size:10px;font-weight:700}
+        .ln{stroke:#3a4450;stroke-width:1.2;fill:none}
+      </style>
+      <text class="col" x="70" y="20">POST route</text>
+      <text class="col" x="330" y="20">SdkEventType</text>
+      <text class="col" x="520" y="20">ingest queue</text>
+      <text class="col" x="770" y="20">Log DB table</text>
+      <text class="col" x="960" y="20">urgency</text>
+
+      <g>
+        <rect class="r" x="40" y="34" width="150" height="30" rx="6"/><text class="rt" x="52" y="53">/v1/errors</text>
+        <text class="tt" x="300" y="53" fill="#e6edf3">error</text>
+        <rect class="q" x="500" y="34" width="150" height="30" rx="6"/><text class="qt" x="512" y="53">ingest.error</text>
+        <rect class="tb2" x="700" y="34" width="180" height="30" rx="6"/><text class="tt" x="712" y="53">events_errors</text>
+        <text class="u" x="955" y="53" fill="#7ee787">100</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="80" width="150" height="30" rx="6"/><text class="rt" x="52" y="99">/v1/events</text>
+        <text class="tt" x="300" y="99" fill="#e6edf3">message</text>
+        <rect class="q" x="500" y="80" width="150" height="30" rx="6"/><text class="qt" x="512" y="99">ingest.message</text>
+        <rect class="tb2" x="700" y="80" width="180" height="30" rx="6"/><text class="tt" x="712" y="99">events_messages</text>
+        <text class="u" x="955" y="99" fill="#7ee787">100</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="126" width="150" height="30" rx="6"/><text class="rt" x="52" y="145">/v1/checkins</text>
+        <text class="tt" x="300" y="145" fill="#e6edf3">cron_checkin</text>
+        <rect class="q" x="500" y="126" width="150" height="30" rx="6"/><text class="qt" x="510" y="145" font-size="10.5">ingest.cron_checkin</text>
+        <rect class="tb2" x="700" y="126" width="180" height="30" rx="6"/><text class="tt" x="712" y="145" font-size="10.5">events_cron_checkins</text>
+        <text class="u" x="955" y="145" fill="#7ee787">100</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="172" width="150" height="30" rx="6"/><text class="rt" x="52" y="191">/v1/requests</text>
+        <text class="tt" x="300" y="191" fill="#e6edf3">request</text>
+        <rect class="q" x="500" y="172" width="150" height="30" rx="6"/><text class="qt" x="512" y="191">ingest.request</text>
+        <rect class="tb2" x="700" y="172" width="180" height="30" rx="6"/><text class="tt" x="712" y="191">events_requests</text>
+        <text class="u" x="955" y="191" fill="#79c0ff">50</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="218" width="150" height="30" rx="6"/><text class="rt" x="52" y="237">/v1/spans</text>
+        <text class="tt" x="300" y="237" fill="#e6edf3">span</text>
+        <rect class="q" x="500" y="218" width="150" height="30" rx="6"/><text class="qt" x="512" y="237">ingest.span</text>
+        <rect class="tb2" x="700" y="218" width="180" height="30" rx="6"/><text class="tt" x="712" y="237">events_spans</text>
+        <text class="u" x="955" y="237" fill="#79c0ff">50</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="264" width="150" height="30" rx="6"/><text class="rt" x="52" y="283">/v1/traces</text>
+        <text class="tt" x="300" y="283" fill="#e6edf3">trace</text>
+        <rect class="q" x="500" y="264" width="150" height="30" rx="6"/><text class="qt" x="512" y="283">ingest.trace</text>
+        <rect class="tb2" x="700" y="264" width="180" height="30" rx="6"/><text class="tt" x="712" y="283">events_traces</text>
+        <text class="u" x="955" y="283" fill="#79c0ff">50</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="310" width="150" height="30" rx="6"/><text class="rt" x="52" y="329">/v1/logs</text>
+        <text class="tt" x="300" y="329" fill="#e6edf3">log</text>
+        <rect class="q" x="500" y="310" width="150" height="30" rx="6"/><text class="qt" x="512" y="329">ingest.log</text>
+        <rect class="tb2" x="700" y="310" width="180" height="30" rx="6"/><text class="tt" x="712" y="329">events_logs</text>
+        <text class="u" x="955" y="329" fill="#d2a8ff">30</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="356" width="150" height="30" rx="6"/><text class="rt" x="52" y="375">/v1/metrics</text>
+        <text class="tt" x="300" y="375" fill="#e6edf3">metric</text>
+        <rect class="q" x="500" y="356" width="150" height="30" rx="6"/><text class="qt" x="512" y="375">ingest.metric</text>
+        <rect class="tb2" x="700" y="356" width="180" height="30" rx="6"/><text class="tt" x="712" y="375">events_metrics</text>
+        <text class="u" x="955" y="375" fill="#d2a8ff">20</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="402" width="150" height="30" rx="6"/><text class="rt" x="52" y="421">/v1/profiles</text>
+        <text class="tt" x="300" y="421" fill="#e6edf3">profile</text>
+        <rect class="q" x="500" y="402" width="150" height="30" rx="6"/><text class="qt" x="512" y="421">ingest.profile</text>
+        <rect class="tb2" x="700" y="402" width="180" height="30" rx="6"/><text class="tt" x="712" y="421">events_profiles</text>
+        <text class="u" x="955" y="421" fill="#f0a35e">10</text>
+      </g>
+      <g>
+        <rect class="r" x="40" y="448" width="150" height="30" rx="6"/><text class="rt" x="52" y="467">/v1/replays</text>
+        <text class="tt" x="300" y="467" fill="#e6edf3">replay</text>
+        <rect class="q" x="500" y="448" width="150" height="30" rx="6"/><text class="qt" x="512" y="467">ingest.replay</text>
+        <rect class="tb2" x="700" y="448" width="180" height="30" rx="6"/><text class="tt" x="712" y="467">events_replays</text>
+        <text class="u" x="955" y="467" fill="#f0a35e">10</text>
+      </g>
+      <path class="ln" d="M190,49 L296,49" marker-end="url(#t_ar)"/>
+      <path class="ln" d="M360,49 L498,49" marker-end="url(#t_ar)"/>
+      <path class="ln" d="M650,49 L698,49" marker-end="url(#t_ar)"/>
+      <text x="470" y="502" style="fill:#6b7681;font-size:11px">Higher urgency wins ties within a plan tier · error / message / cron_checkin are most urgent.</text>
+    </svg>
+  </div>
+
+  <div class="note"><b>Design note — <code>/v1/events</code> → <code>message</code>:</b> the SDK's general
+    "events" transport carries custom/captured messages, so it maps to the <code>message</code> family and is a
+    <em>typed</em> route (not a mixed batch). <code>/v1/spans</code> is exposed for direct span streaming even
+    though the SDK config normally advertises spans inside a trace envelope — keeping "each event type has a
+    dedicated POST route" true.</div>
+
+  <h3>Example — typed write <span class="n mono">POST /api/v1/errors</span></h3>
+  <div class="grid g2">
+    <div class="card">
+      <div style="color:#9aa7b4;font-size:12px;margin-bottom:6px">Request (API key via header; body <code>apiKey</code> also accepted)</div>
+      <pre style="margin:0;padding:12px;background:#0b0f14;border:1px solid var(--border);border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:12px;color:#cdd6e0;line-height:1.5">POST /api/v1/errors
+Authorization: Bearer &lt;api_key&gt;
+Content-Type: application/json
+Content-Encoding: gzip   <span style="color:#6b7681">(optional)</span>
+
+{
+  "events": [
+    {
+      "type": "error",
+      "eventId": "e-2f9c8a10",
+      "message": "Cannot read 'id' of undefined",
+      "name": "TypeError",
+      "fingerprint": "auto:TypeError:Cannot read 'id'",
+      "stack": ["at handler (app.js:42)"],
+      "timestamp": 1753800000000,
+      "context": { "route": "/checkout" }
+    }
+  ],
+  "metadata": { "sdkVersion": "3.1.0" }
+}</pre>
+    </div>
+    <div class="card">
+      <div style="color:#7ee787;font-size:12px;margin-bottom:6px">202 Accepted</div>
+      <pre style="margin:0;padding:12px;background:#0b0f14;border:1px solid var(--border);border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:12px;color:#cdd6e0;line-height:1.5">{
+  "success": true,
+  "accepted": 1,
+  "rejected": 0,
+  "batchId": "b-7d3a1f22",
+  "limits": { "remaining": 998, "resetAt": 1753800060000 }
+}</pre>
+      <div style="color:#ff9d95;font-size:12px;margin:14px 0 6px">400 — wrong signal posted to a typed route</div>
+      <pre style="margin:0;padding:12px;background:#0b0f14;border:1px solid var(--border);border-radius:8px;overflow-x:auto;font-family:var(--mono);font-size:12px;color:#cdd6e0;line-height:1.5">{
+  "error": "Invalid event type for endpoint",
+  "code": "INVALID_EVENT_TYPE"
+}</pre>
+    </div>
+  </div>
+  <p style="color:#6b7681;font-size:12.5px;margin:6px 0 0">Shapes match <code>IngestRequest</code> / <code>IngestResponse</code> (types.ts) and the controller's
+    <code>ERROR_MAP</code>. A partial batch returns <code>202</code> with <code>rejected&gt;0</code> and an
+    <code>errors:[{eventId,reason}]</code> array.</p>
+
+  <!-- ============================ 4. LEGACY ============================ -->
+  <h2 id="ingest" class="anchor">4. Legacy batch &amp; typed sub-paths <span class="n">compatibility only</span></h2>
+  <p class="lead">Older SDK builds keep working through these. New SDKs use the typed routes in §3.</p>
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:2px"><span class="method m-post">POST</span> <span class="mono">/v1/ingest</span></h3>
+      <p style="margin:4px 0;color:#c4d0dc">The only endpoint that accepts a <b>mixed</b> batch (any combination of
+        the 10 event types in one request). Handler <code>controller.ingest</code> →
+        <code>service.ingestBatch</code> → <code>processIngest(req, <b>null</b>, apiKey)</code>. Because
+        <code>expectedType</code> is <code>null</code>, the typed-route constraint is never applied — foreign
+        types are simply grouped and enqueued to their own queues.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px">Typed sub-paths</h3>
+      <p style="margin:4px 0;color:#c4d0dc"><code>/v1/ingest/requests</code>, <code>/errors</code>,
+        <code>/logs</code>, <code>/metrics</code> map to <code>ingestRequests / ingestErrors / ingestLogs /
+        ingestMetrics</code>, each a one-line alias that calls <code>ingestTyped(type)</code>. Same strict
+        single-type enforcement as the top-level typed routes; retained so previously-issued SDK configs keep
+        resolving.</p>
+    </div>
+  </div>
+  <div class="svgbox">
+    <svg width="1000" height="150" viewBox="0 0 1000 150" role="img" aria-label="Legacy routes converge on processIngest">
+      <defs><marker id="l_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b7681"/></marker></defs>
+      <rect x="30" y="20" width="220" height="30" rx="6" fill="#0f2036" stroke="#234a72"/><text x="42" y="39" style="fill:#cfe3ff;font-size:12px;font-family:var(--mono)">POST /v1/ingest (mixed)</text>
+      <rect x="30" y="60" width="220" height="30" rx="6" fill="#0f2036" stroke="#234a72"/><text x="42" y="79" style="fill:#cfe3ff;font-size:12px;font-family:var(--mono)">POST /v1/ingest/&lt;type&gt;</text>
+      <rect x="30" y="100" width="220" height="30" rx="6" fill="#0f2036" stroke="#234a72"/><text x="42" y="119" style="fill:#cfe3ff;font-size:12px;font-family:var(--mono)">POST /v1/&lt;signal&gt; (typed)</text>
+      <rect x="420" y="55" width="230" height="40" rx="8" fill="#1a1330" stroke="#8957e5"/><text x="535" y="80" text-anchor="middle" style="fill:#e6edf3;font-size:13px;font-weight:700;font-family:var(--mono)">processIngest()</text>
+      <rect x="760" y="55" width="210" height="40" rx="8" fill="#132018" stroke="#2ea043"/><text x="865" y="80" text-anchor="middle" style="fill:#9ff0b5;font-size:12.5px">per-type pg-boss jobs</text>
+      <path d="M250,35 C340,35 340,72 418,72" fill="none" stroke="#6b7681" stroke-width="1.4" marker-end="url(#l_ar)"/>
+      <path d="M250,75 L418,75" fill="none" stroke="#6b7681" stroke-width="1.4" marker-end="url(#l_ar)"/>
+      <path d="M250,115 C340,115 340,80 418,80" fill="none" stroke="#6b7681" stroke-width="1.4" marker-end="url(#l_ar)"/>
+      <path d="M650,75 L758,75" fill="none" stroke="#2ea043" stroke-width="1.6" marker-end="url(#l_ar)"/>
+      <text x="300" y="15" style="fill:#6b7681;font-size:11px">all write routes →</text>
+    </svg>
+  </div>
+
+  <!-- ============================ 5. INIT ============================ -->
+  <h2 id="init" class="anchor">5. <span class="mono">POST /v1/init</span> <span class="n">SDK bootstrap handshake</span></h2>
+  <p class="lead">Called once at SDK startup to fetch runtime config. It does <b>not</b> ingest events.</p>
+  <div class="svgbox">
+    <svg width="1000" height="140" viewBox="0 0 1000 140" role="img" aria-label="init flow">
+      <defs><marker id="i_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b7681"/></marker></defs>
+      <rect x="24" y="46" width="120" height="48" rx="8" fill="#0f2036" stroke="#234a72"/><text x="84" y="68" text-anchor="middle" style="fill:#e6edf3;font-size:12px">SDK</text><text x="84" y="84" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">apiKey</text>
+      <rect x="200" y="46" width="180" height="48" rx="8" fill="#1a1330" stroke="#8957e5"/><text x="290" y="66" text-anchor="middle" style="fill:#e6edf3;font-size:12px">resolveApiKey</text><text x="290" y="82" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">active project?</text>
+      <rect x="440" y="46" width="200" height="48" rx="8" fill="#161b22" stroke="#30363d"/><text x="540" y="66" text-anchor="middle" style="fill:#e6edf3;font-size:12px">initializeSdk()</text><text x="540" y="82" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">build runtime config</text>
+      <rect x="700" y="46" width="270" height="48" rx="8" fill="#0f2015" stroke="#2ea043"/><text x="835" y="66" text-anchor="middle" style="fill:#9ff0b5;font-size:12px">200 { projectId, config,</text><text x="835" y="82" text-anchor="middle" style="fill:#9ff0b5;font-size:12px">ingestion endpoint }</text>
+      <path d="M144,70 L198,70" stroke="#6b7681" stroke-width="1.4" fill="none" marker-end="url(#i_ar)"/>
+      <path d="M380,70 L438,70" stroke="#6b7681" stroke-width="1.4" fill="none" marker-end="url(#i_ar)"/>
+      <path d="M640,70 L698,70" stroke="#2ea043" stroke-width="1.6" fill="none" marker-end="url(#i_ar)"/>
+      <text x="210" y="120" style="fill:#ff9d95;font-size:11px">invalid key → INVALID_API_KEY 401 · inactive project → PROJECT_INACTIVE 403</text>
+    </svg>
+  </div>
+
+  <!-- ============================ 6. READS ============================ -->
+  <h2 id="reads" class="anchor">6. Read routes <span class="n">limits · usage · errors · debug</span></h2>
+  <p class="lead">These serve dashboards and SDK limit lookups. All except <code>/v1/limits</code> use JWT
+    <code>authenticate</code> + a tenant guard so one user cannot read another tenant's telemetry by guessing a
+    project UUID (cross-tenant IDOR defense).</p>
+
+  <div class="svgbox">
+    <svg width="1000" height="230" viewBox="0 0 1000 230" role="img" aria-label="read route flow">
+      <defs><marker id="rd_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6b7681"/></marker></defs>
+      <rect x="24" y="90" width="130" height="46" rx="8" fill="#0f2036" stroke="#234a72"/><text x="89" y="112" text-anchor="middle" style="fill:#e6edf3;font-size:12px">client</text><text x="89" y="128" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">Bearer JWT</text>
+      <rect x="200" y="60" width="150" height="46" rx="8" fill="#10192b" stroke="#1f6feb"/><text x="275" y="80" text-anchor="middle" style="fill:#e6edf3;font-size:12px">authenticate</text><text x="275" y="96" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">session valid?</text>
+      <rect x="200" y="120" width="150" height="46" rx="8" fill="#10192b" stroke="#1f6feb"/><text x="275" y="140" text-anchor="middle" style="fill:#e6edf3;font-size:12px">member guard</text><text x="275" y="156" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">project→org→member</text>
+      <rect x="410" y="90" width="180" height="46" rx="8" fill="#161b22" stroke="#30363d"/><text x="500" y="110" text-anchor="middle" style="fill:#e6edf3;font-size:12px">controller → service</text><text x="500" y="126" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">normalize query</text>
+      <rect x="650" y="66" width="150" height="42" rx="8" fill="#161b22" stroke="#30363d"/><text x="725" y="91" text-anchor="middle" style="fill:#e6edf3;font-size:12px">TelemetryReader</text>
+      <rect x="650" y="120" width="150" height="42" rx="8" fill="#161b22" stroke="#30363d"/><text x="725" y="145" text-anchor="middle" style="fill:#e6edf3;font-size:12px">usage tables</text>
+      <rect x="850" y="90" width="130" height="46" rx="8" fill="#0f2015" stroke="#2ea043"/><text x="915" y="116" text-anchor="middle" style="fill:#9ff0b5;font-size:12px">JSON result</text>
+      <path d="M154,110 C176,110 178,83 198,83" stroke="#6b7681" stroke-width="1.3" fill="none" marker-end="url(#rd_ar)"/>
+      <path d="M275,106 L275,118" stroke="#6b7681" stroke-width="1.3" fill="none" marker-end="url(#rd_ar)"/>
+      <path d="M350,143 C380,143 384,113 408,113" stroke="#6b7681" stroke-width="1.3" fill="none" marker-end="url(#rd_ar)"/>
+      <path d="M590,105 C616,105 622,87 648,87" stroke="#6b7681" stroke-width="1.3" fill="none" marker-end="url(#rd_ar)"/>
+      <path d="M590,118 C616,118 622,140 648,140" stroke="#6b7681" stroke-width="1.3" fill="none" marker-end="url(#rd_ar)"/>
+      <path d="M800,110 L848,110" stroke="#2ea043" stroke-width="1.5" fill="none" marker-end="url(#rd_ar)"/>
+      <text x="24" y="30" style="fill:#9aa7b4;font-size:12px;font-weight:700">Read path (authenticated + tenant-scoped)</text>
+    </svg>
+  </div>
+
+  <table>
+    <thead><tr><th>Route</th><th>Reads from</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">GET /v1/limits</td><td>API key resolution</td><td>API key from <b>Authorization/X-API-Key header</b> (never query string, to keep the secret out of logs). Returns per-second/minute + org limits, max batch size, plan tier.</td></tr>
+      <tr><td class="mono">GET /v1/usage</td><td><code>project_usage_realtime</code></td><td>Realtime per-project counters (durable hourly buckets + un-flushed staging tail). Optional <code>counterType</code> filter. Requires project membership.</td></tr>
+      <tr><td class="mono">GET /v1/errors</td><td><code>events_errors</code> (reader)</td><td>Paginated error list; filters: from/to, fingerprint, errorType. The schema also accepts <code>resolved</code>, but the reader <b>ignores</b> it — per-event resolution doesn't exist; it's tracked at group level in <code>analytics_error_groups.status</code>. Bad date range → <code>INVALID_DATE_RANGE</code> 400.</td></tr>
+      <tr><td class="mono">GET /v1/errors/:errorId</td><td><code>events_errors</code></td><td>One error by <code>events_errors.id</code> (project-scoped); 404 if absent.</td></tr>
+      <tr><td class="mono">GET /v1/debug/events/:id</td><td><code>events_*</code> (all 10)</td><td>Scans each <code>events_*</code> table for <code>id</code>+<code>projectId</code> and returns the matched row as JSON via <code>to_jsonb(e)</code>; project-scoped.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============================ 7. HEALTH ============================ -->
+  <h2 id="health" class="anchor">7. Health routes</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:2px"><span class="method m-get">GET</span> <span class="mono">/v1/health</span> <span class="pill pub">public</span></h3>
+      <p style="margin:4px 0;color:#c4d0dc">Liveness for load balancers. Returns <code>200</code> only when
+        Postgres and the pg-boss job table are reachable, else <code>503 degraded</code>. Honestly reports
+        <code>redis:false</code> — the module is Postgres-only.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px"><span class="method m-get">GET</span> <span class="mono">/v1/ingest/health</span> <span class="pill auth">auth</span></h3>
+      <p style="margin:4px 0;color:#c4d0dc">Operational depth: waiting/active/failed jobs, dead-letter backlog,
+        per-queue snapshot, rate-limiter &amp; quota-cache sizes, backpressure water marks.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 8. DLQ ============================ -->
+  <h2 id="dlq" class="anchor">8. DLQ admin routes <span class="n">platform-admin only</span></h2>
+  <p class="lead">A job that exhausts retries (or is rejected by validation) lands in
+    <code>ingestion_dead_letter_jobs</code>. These endpoints let operators inspect and requeue it. They require
+    <code>requireAdmin</code> because replay can push arbitrary historical traffic back onto the live queues.</p>
+
+  <div class="svgbox">
+    <svg width="1020" height="250" viewBox="0 0 1020 250" role="img" aria-label="DLQ lifecycle">
+      <defs><marker id="d_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b98a5"/></marker>
+      <marker id="d_arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#b62324"/></marker></defs>
+      <rect x="30" y="100" width="150" height="50" rx="8" fill="#132018" stroke="#2ea043"/><text x="105" y="122" text-anchor="middle" style="fill:#9ff0b5;font-size:12px">ingest.&lt;type&gt;</text><text x="105" y="138" text-anchor="middle" style="fill:#8fce9c;font-size:10.5px">retry w/ backoff</text>
+      <rect x="250" y="100" width="170" height="50" rx="8" fill="#1a1608" stroke="#bb8009"/><text x="335" y="122" text-anchor="middle" style="fill:#f0c274;font-size:12px">worker fails N times</text><text x="335" y="138" text-anchor="middle" style="fill:#c8b06a;font-size:10.5px">or validation reject</text>
+      <rect x="490" y="100" width="170" height="50" rx="8" fill="#251515" stroke="#5a2a2a"/><text x="575" y="122" text-anchor="middle" style="fill:#ff9d95;font-size:12px">ingest.dlq-intake</text><text x="575" y="138" text-anchor="middle" style="fill:#e59a92;font-size:10.5px">intake worker</text>
+      <rect x="720" y="100" width="270" height="50" rx="8" fill="#161b22" stroke="#30363d"/><text x="855" y="122" text-anchor="middle" style="fill:#e6edf3;font-size:12px">ingestion_dead_letter_jobs</text><text x="855" y="138" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">dedupe_key · payload · attempts</text>
+      <path d="M180,125 L248,125" stroke="#8b98a5" stroke-width="1.5" fill="none" marker-end="url(#d_ar)"/>
+      <path d="M420,125 L488,125" stroke="#b62324" stroke-width="1.5" fill="none" marker-end="url(#d_arr)"/>
+      <path d="M660,125 L718,125" stroke="#b62324" stroke-width="1.5" fill="none" marker-end="url(#d_arr)"/>
+      <!-- reprocess loop -->
+      <rect x="300" y="200" width="420" height="34" rx="8" fill="#10192b" stroke="#1f6feb"/><text x="510" y="222" text-anchor="middle" style="fill:#cfe3ff;font-size:12px">POST /v1/dlq/reprocess/:jobId · /reprocess-all → re-enqueue (metadata.replay=true)</text>
+      <path d="M855,150 C855,185 720,200 620,204" stroke="#1f6feb" stroke-width="1.4" fill="none" marker-end="url(#d_ar)"/>
+      <path d="M300,217 C150,217 105,175 105,152" stroke="#1f6feb" stroke-width="1.4" fill="none" marker-end="url(#d_ar)"/>
+      <text x="30" y="40" style="fill:#9aa7b4;font-size:12px;font-weight:700">Dead-letter lifecycle &amp; operator replay</text>
+      <text x="30" y="62" style="fill:#6b7681;font-size:11px">GET /v1/dlq lists rows where replayed_at IS NULL · reprocess reconstructs the original IngestJobPayload and re-enqueues with the same plan-aware priority.</text>
+    </svg>
+  </div>
+  <table>
+    <thead><tr><th>Route</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">GET /v1/dlq</td><td>Paginated list of un-replayed dead-letter jobs (bounded offset/limit).</td></tr>
+      <tr><td class="mono">POST /v1/dlq/reprocess/:jobId</td><td>Reconstruct one job's <code>IngestJobPayload</code>, re-enqueue it, stamp <code>replayed_at/replayed_by</code>. Missing → <code>JOB_NOT_FOUND</code> 404.</td></tr>
+      <tr><td class="mono">POST /v1/dlq/reprocess-all</td><td>Drain a bounded batch (default 100, max 1000) oldest-first; one bad row is logged and skipped, not fatal.</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ============================ 9. REPLAY ============================ -->
+  <h2 id="replay" class="anchor">9. <span class="mono">POST /v1/replay</span> <span class="n">admin + project member</span></h2>
+  <p class="lead">Re-enqueues <em>historical, already-stored</em> telemetry through the standard pipeline with
+    replay metadata — e.g. to rebuild a downstream projection.</p>
+  <ul class="tight">
+    <li>Guards: <code>authenticate</code> + <code>requireAdmin</code> + <code>requireProjectMembershipFromBody</code>.</li>
+    <li>Loads events from the Log DB for <code>[startTime, endTime]</code> (optionally filtered by type), capped by <code>INGESTION_REPLAY_MAX_EVENTS</code> so an operator typo can't flood the queue.</li>
+    <li>Resolves the org's plan tier via <code>getProjectPlanContext</code> (admin path has no API key), groups by type, and enqueues with <code>metadata.replay=true</code>.</li>
+    <li>Idempotent inserts downstream mean re-processed events are de-duplicated and never double-billed.</li>
+  </ul>
+
+  <!-- ============================ 10. WORKERS ============================ -->
+  <h2 id="workers" class="anchor">10. Worker fleet &amp; queues <span class="n mono">worker-registry.ts · event-processor.ts</span></h2>
+  <p class="lead">A separate worker process registers one pg-boss worker pool per SDK event type. Each delivered
+    job passes a tenant-fairness gate, then the shared <code>EventProcessor</code> validates, de-duplicates,
+    persists, groups errors, and stages billing usage.</p>
+
+  <div class="svgbox">
+    <svg width="1040" height="560" viewBox="0 0 1040 560" role="img" aria-label="worker per-job flow">
+      <defs>
+        <marker id="w_ar" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#8b98a5"/></marker>
+        <marker id="w_arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#b62324"/></marker>
+        <marker id="w_arg" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2ea043"/></marker>
+      </defs>
+      <style>.ws{fill:#161b22;stroke:#bb8009;stroke-width:1.4}.wt{fill:#e6edf3;font-size:13px;font-weight:600}.wsm{fill:#9aa7b4;font-size:11px}.wf{stroke:#8b98a5;stroke-width:1.7;fill:none}</style>
+
+      <!-- queue -->
+      <rect x="40" y="250" width="150" height="60" rx="9" fill="#132018" stroke="#2ea043"/>
+      <text x="115" y="276" text-anchor="middle" style="fill:#9ff0b5;font-size:12.5px">ingest.&lt;type&gt;</text>
+      <text x="115" y="294" text-anchor="middle" style="fill:#8fce9c;font-size:10.5px">priority-ordered</text>
+
+      <!-- fairness gate -->
+      <rect class="ws" x="240" y="240" width="200" height="80" rx="9"/>
+      <text class="wt" x="340" y="264" text-anchor="middle">Fairness gate</text>
+      <text class="wsm" x="340" y="282" text-anchor="middle">per-org in-flight budget</text>
+      <text class="wsm" x="340" y="297" text-anchor="middle">TENANT_INFLIGHT_LIMIT[plan]</text>
+      <text class="wsm" x="340" y="312" text-anchor="middle">over budget → defer (aged)</text>
+
+      <!-- defer loop -->
+      <rect x="240" y="360" width="200" height="40" rx="8" fill="#1d1a10" stroke="#5a4326"/>
+      <text x="340" y="379" text-anchor="middle" style="fill:#f0c274;font-size:11.5px">re-enqueue copy</text>
+      <text x="340" y="393" text-anchor="middle" style="fill:#c8b06a;font-size:10px">deferCount+1, +FAIRNESS_AGE_BOOST</text>
+      <path class="wf" d="M300,320 L300,358" marker-end="url(#w_ar)"/>
+      <path d="M400,360 C430,344 430,300 190,286 L145,286" fill="none" stroke="#f0a35e" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#w_ar)"/>
+      <text x="360" y="345" style="fill:#c8b06a;font-size:10px">until MAX_DEFERS</text>
+
+      <!-- process box -->
+      <rect x="500" y="40" width="360" height="470" rx="11" fill="#120f06" stroke="#bb8009"/>
+      <text class="wt" x="680" y="66" text-anchor="middle">EventProcessor.process()</text>
+
+      <rect x="522" y="86" width="316" height="60" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text class="wt" x="680" y="108" text-anchor="middle">1 · normalizeEvent (Zod)</text>
+      <text class="wsm" x="680" y="125" text-anchor="middle">strict discriminated union · size/cardinality caps</text>
+      <text class="wsm" x="680" y="139" text-anchor="middle">invalid → routed to DLQ intake</text>
+
+      <rect x="522" y="156" width="316" height="52" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text class="wt" x="680" y="176" text-anchor="middle">2 · deterministic event_id</text>
+      <text class="wsm" x="680" y="193" text-anchor="middle">sha256(projectId:type:event) if missing</text>
+
+      <rect x="522" y="218" width="316" height="60" rx="8" fill="#12251c" stroke="#2a4a37"/>
+      <text class="wt" x="680" y="240" text-anchor="middle">3 · writeBatchDetailed()</text>
+      <text class="wsm" x="680" y="257" text-anchor="middle">INSERT … ON CONFLICT DO NOTHING RETURNING</text>
+      <text class="wsm" x="680" y="271" text-anchor="middle">→ totalInserted = rows ACTUALLY written</text>
+
+      <rect x="522" y="288" width="316" height="52" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text class="wt" x="680" y="308" text-anchor="middle">4 · error grouping (errors only)</text>
+      <text class="wsm" x="680" y="325" text-anchor="middle">upsert analytics_error_groups · regression flip</text>
+
+      <rect x="522" y="350" width="316" height="60" rx="8" fill="#12251c" stroke="#2a4a37"/>
+      <text class="wt" x="680" y="372" text-anchor="middle">5 · stage billing usage</text>
+      <text class="wsm" x="680" y="389" text-anchor="middle">only if totalInserted &gt; 0 →</text>
+      <text class="wsm" x="680" y="403" text-anchor="middle">billing:events:&lt;type&gt; (never double-billed)</text>
+
+      <rect x="522" y="420" width="316" height="46" rx="8" fill="#161b22" stroke="#30363d"/>
+      <text class="wt" x="680" y="440" text-anchor="middle">6 · metrics</text>
+      <text class="wsm" x="680" y="456" text-anchor="middle">processing latency · e2e (now − receivedAt)</text>
+
+      <!-- Log DB -->
+      <rect x="522" y="476" width="316" height="24" rx="6" fill="#0f2015" stroke="#2ea043"/>
+      <text x="680" y="493" text-anchor="middle" style="fill:#9ff0b5;font-size:11px">→ Log DB events_* (durable)</text>
+
+      <!-- edges -->
+      <path class="wf" d="M190,280 L238,280" marker-end="url(#w_ar)"/>
+      <path d="M440,270 C470,270 480,116 520,116" fill="none" stroke="#2ea043" stroke-width="1.8" marker-end="url(#w_arg)"/>
+      <text x="452" y="200" style="fill:#2ea043;font-size:10.5px">admitted</text>
+
+      <!-- DLQ branch -->
+      <rect x="880" y="86" width="140" height="60" rx="8" fill="#251515" stroke="#5a2a2a"/>
+      <text x="950" y="110" text-anchor="middle" style="fill:#ff9d95;font-size:11.5px">ingest.dlq-intake</text>
+      <text x="950" y="126" text-anchor="middle" style="fill:#e59a92;font-size:10px">validation rejects</text>
+      <path d="M838,116 L878,116" stroke="#b62324" stroke-width="1.5" fill="none" marker-end="url(#w_arr)"/>
+      <rect x="880" y="230" width="140" height="56" rx="8" fill="#251515" stroke="#5a2a2a"/>
+      <text x="950" y="252" text-anchor="middle" style="fill:#ff9d95;font-size:11px">throw → retry</text>
+      <text x="950" y="268" text-anchor="middle" style="fill:#e59a92;font-size:10px">then dead-letter</text>
+      <path d="M838,248 L878,252" stroke="#b62324" stroke-width="1.5" fill="none" marker-end="url(#w_arr)"/>
+    </svg>
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:2px">Per-job isolation (pg-boss v12)</h3>
+      <p style="margin:4px 0;color:#c4d0dc">Handlers receive an <b>array</b> of jobs. Each is processed in its own
+        wrapper and settled individually via <code>perJobResults</code>, so one poisoned job never drags its
+        batch-mates into retry. If every job in the batch fails, the handler throws (whole batch retried).</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px">Fairness &amp; starvation guard</h3>
+      <p style="margin:4px 0;color:#c4d0dc">Deferred jobs re-enqueue a copy with <code>deferCount+1</code> and an
+        aged priority boost; the original completes without processing (nothing lost). After
+        <code>INGESTION_FAIRNESS_MAX_DEFERS</code> the job is processed regardless — no tenant can be starved.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:2px">Worker observability endpoints <span class="n">separate node:http server · <code>INGESTION_WORKER_METRICS_PORT</code> (default 9465)</span></h3>
+    <p style="margin:4px 0;color:#c4d0dc">The worker process runs a tiny, dependency-free HTTP server — <b>distinct from
+      the Fastify <code>/api</code> gateway</b> — for scraping and liveness. Best-effort: a bind failure logs a
+      warning and the worker keeps running without metrics.</p>
+    <table>
+      <thead><tr><th>Method · path</th><th>Returns</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">GET /metrics</td><td>Prometheus text (v0.0.4): per-queue <code>ingest_jobs_processed/failed_total</code>, <code>ingest_events_received/inserted/rejected/deferred_total</code>; <code>ingest_fairness_*</code>, <code>ingest_dlq_intake_total</code>; <code>ingest_org_inflight_jobs</code> gauge; <code>ingest_processing_latency_ms_*</code> &amp; <code>ingest_e2e_latency_ms_*</code>; <code>ingest_rollup_*</code>; live <code>ingest_queue_depth_*</code> (cached ~5s).</td></tr>
+        <tr><td class="mono">GET /healthz</td><td><code>{ status:"ok", uptime, queues }</code> JSON for liveness probes.</td></tr>
+      </tbody>
+    </table>
+    <p style="color:#6b7681;font-size:12.5px;margin:6px 0 0">Distinct from the gateway's <code>GET /v1/health</code> (public) and <code>GET /v1/ingest/health</code> (authenticated) in §7.</p>
+  </div>
+
+  <!-- ============================ 11. ROLLUP ============================ -->
+  <h2 id="rollup" class="anchor">11. Usage rollup &amp; billing <span class="n mono">usage-rollup.ts (singleton cron)</span></h2>
+  <p class="lead">Every UsageCounter in the fleet only drains memory into an UNLOGGED staging table. Exactly one
+    cron job rolls staging forward into the durable billing counters, so many worker/API processes don't
+    contend on the billing tables.</p>
+  <div class="svgbox">
+    <svg width="1020" height="200" viewBox="0 0 1020 200" role="img" aria-label="usage rollup flow">
+      <defs><marker id="u_ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#8b98a5"/></marker></defs>
+      <rect x="24" y="70" width="170" height="60" rx="8" fill="#161b22" stroke="#30363d"/><text x="109" y="94" text-anchor="middle" style="fill:#e6edf3;font-size:12px">gateway + workers</text><text x="109" y="111" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">usage.increment(...)</text>
+      <rect x="250" y="70" width="190" height="60" rx="8" fill="#1d1a10" stroke="#5a4326"/><text x="345" y="94" text-anchor="middle" style="fill:#f0c274;font-size:12px">usage_counter_staging</text><text x="345" y="111" text-anchor="middle" style="fill:#c8b06a;font-size:10.5px">UNLOGGED · billing:%</text>
+      <rect x="500" y="55" width="220" height="90" rx="8" fill="#10192b" stroke="#1f6feb"/><text x="610" y="78" text-anchor="middle" style="fill:#cfe3ff;font-size:12px;font-weight:700">UsageRollup cron</text><text x="610" y="96" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">DELETE … RETURNING (atomic)</text><text x="610" y="111" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">aggregate per org / project</text><text x="610" y="126" text-anchor="middle" style="fill:#9aa7b4;font-size:10.5px">one transaction</text>
+      <rect x="780" y="42" width="220" height="44" rx="8" fill="#0f2015" stroke="#2ea043"/><text x="890" y="61" text-anchor="middle" style="fill:#9ff0b5;font-size:11.5px">increment_event_usage()</text><text x="890" y="77" text-anchor="middle" style="fill:#8fce9c;font-size:10px">org entitlement counter</text>
+      <rect x="780" y="96" width="220" height="44" rx="8" fill="#0f2015" stroke="#2ea043"/><text x="890" y="115" text-anchor="middle" style="fill:#9ff0b5;font-size:11.5px">usage_daily_counters</text><text x="890" y="131" text-anchor="middle" style="fill:#8fce9c;font-size:10px">per (org,project,day) upsert</text>
+      <path d="M194,100 L248,100" stroke="#8b98a5" stroke-width="1.5" fill="none" marker-end="url(#u_ar)"/>
+      <path d="M440,100 L498,100" stroke="#8b98a5" stroke-width="1.5" fill="none" marker-end="url(#u_ar)"/>
+      <path d="M720,90 C750,90 752,64 778,64" stroke="#2ea043" stroke-width="1.5" fill="none" marker-end="url(#u_ar)"/>
+      <path d="M720,110 C750,110 752,118 778,118" stroke="#2ea043" stroke-width="1.5" fill="none" marker-end="url(#u_ar)"/>
+      <text x="24" y="175" style="fill:#6b7681;font-size:11px">On failure the whole transaction rolls back — staging rows are preserved and retried next tick (at-least-once, no loss, no double-apply). Non-billing counters then flush into project_usage.</text>
+    </svg>
+  </div>
+
+  <!-- ============================ 12. REFERENCE ============================ -->
+  <h2 id="ref" class="anchor">12. Reference tables</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="margin-top:2px">Queue priority = plan weight + type urgency</h3>
+      <table>
+        <thead><tr><th>Plan tier</th><th>Weight</th><th>In-flight limit</th></tr></thead>
+        <tbody>
+          <tr><td>enterprise</td><td>1000</td><td>24</td></tr>
+          <tr><td>business</td><td>800</td><td>16</td></tr>
+          <tr><td>growth</td><td>600</td><td>8</td></tr>
+          <tr><td>starter</td><td>400</td><td>4</td></tr>
+          <tr><td>free</td><td>200</td><td>2</td></tr>
+        </tbody>
+      </table>
+      <p style="margin:8px 0 0;color:#9aa7b4;font-size:12.5px">Type urgency: error/message/cron_checkin = 100 · request/span/trace = 50 · log = 30 · metric = 20 · profile/replay = 10. Priority also adds <code>deferCount × 25</code>.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:2px">Error codes → HTTP status</h3>
+      <table>
+        <thead><tr><th>Code</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>INVALID_REQUEST · EMPTY_BATCH · INVALID_EVENT_TYPE · INVALID_DATE_RANGE</td><td>400</td></tr>
+          <tr><td>INVALID_API_KEY</td><td>401</td></tr>
+          <tr><td>PROJECT_INACTIVE · API_KEY_PERMISSION_DENIED · API_KEY_ENDPOINT_DENIED</td><td>403</td></tr>
+          <tr><td>JOB_NOT_FOUND · (ERROR_NOT_FOUND)</td><td>404</td></tr>
+          <tr><td>BATCH_TOO_LARGE</td><td>413</td></tr>
+          <tr><td>RATE_LIMIT_EXCEEDED · QUOTA_EXCEEDED (+Retry-After)</td><td>429</td></tr>
+          <tr><td>CIRCUIT_OPEN</td><td>503</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:2px">Backpressure shedding</h3>
+    <ul class="tight">
+      <li><b>High water</b> (<code>INGESTION_BACKPRESSURE_HIGH_WATER</code>): shed anything below the business-tier floor — free/starter/growth traffic sheds first.</li>
+      <li><b>Critical water</b> (<code>INGESTION_BACKPRESSURE_CRITICAL_WATER</code>): only business/enterprise batches of top-urgency types (error/message/cron_checkin) pass.</li>
+      <li>Depth is read from <code>pgboss.job</code> and cached ~1s so the request path stays O(1). Shed events are counted in the response's <code>rejected</code> with reason <code>shed_backpressure</code>.</li>
+    </ul>
+  </div>
+
+  <div class="footer">
+    <p><b>Source of truth:</b> <code>src/modules/ingestion/</code> — <code>routes.ts</code>, <code>controller.ts</code>,
+      <code>service.ts</code>, <code>route-table.ts</code>, <code>queue/ingest-queues.ts</code>,
+      <code>workers/worker-registry.ts</code>, <code>workers/event-processor.ts</code>,
+      <code>workers/usage-rollup.ts</code>, <code>pipeline/telemetry-writer.ts</code>,
+      <code>pipeline/event-normalizer.ts</code>. Generated as a static, dependency-free reference; open directly in any browser.</p>
+  </div>
+
+</div>
+</body>
+</html>

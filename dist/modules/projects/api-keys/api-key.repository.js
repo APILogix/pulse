@@ -305,6 +305,7 @@ export class ApiKeyRepository {
     prefixedProjectRow(row) {
         return {
             id: row.p_id,
+            public_id: row.p_public_id,
             org_id: row.p_org_id,
             name: row.p_name,
             slug: row.p_slug,
@@ -327,6 +328,7 @@ export class ApiKeyRepository {
     mapProject(row) {
         return {
             id: row.id,
+            publicId: row.public_id,
             orgId: row.org_id,
             name: row.name,
             slug: row.slug,

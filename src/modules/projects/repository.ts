@@ -166,6 +166,14 @@ export class ProjectsRepository {
     return this.core.findProjectById(orgId, projectId, client);
   }
 
+  async findProjectByPublicId(
+    orgId: string,
+    publicId: string,
+    client?: PoolClient,
+  ): Promise<Project | null> {
+    return this.core.findProjectByPublicId(orgId, publicId, client);
+  }
+
   async findProjectByIdIncludingDeleted(
     orgId: string,
     projectId: string,

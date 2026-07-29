@@ -36,6 +36,7 @@ export interface DetailedWriteResult {
 }
 export declare class TelemetryWriter {
     private readonly pool;
+    private readonly enricher;
     constructor(pool: Pool);
     /**
      * Route a batch of scoped events to the correct events_* table(s). Mixed

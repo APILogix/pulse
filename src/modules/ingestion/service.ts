@@ -417,21 +417,43 @@ export class IngestionService {
   }
 
   // ── Ingestion entrypoints ─────────────────────────────────────────────────
+  /**
+   * Legacy mixed-batch entrypoint (POST /v1/ingest). Accepts any combination of
+   * SDK event types in a single request. Retained for backward compatibility;
+   * new SDK transports use the per-signal typed routes via ingestTyped().
+   */
   async ingestBatch(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
     return this.processIngest(req, null, apiKey);
   }
 
+  /**
+   * Public typed-ingestion entrypoint used by the data-driven route table
+   * (route-table.ts). It is a thin pass-through to the single policy boundary
+   * `processIngest`, so API-key validation, quota checks, rate limits,
+   * backpressure, per-event type enforcement, and queue-priority math are never
+   * duplicated per endpoint. A typed route accepts ONLY its declared event
+   * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
+   */
+  async ingestTyped(
+    req: IngestRequest,
+    apiKey: string,
+    type: SdkEventType,
+  ): Promise<IngestResponse> {
+    return this.processIngest(req, type, apiKey);
+  }
+
+  // Named aliases retained for the legacy `POST /v1/ingest/<type>` routes.
   async ingestRequests(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, 'request', apiKey);
+    return this.ingestTyped(req, apiKey, 'request');
   }
   async ingestErrors(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, 'error', apiKey);
+    return this.ingestTyped(req, apiKey, 'error');
   }
   async ingestLogs(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, 'log', apiKey);
+    return this.ingestTyped(req, apiKey, 'log');
   }
   async ingestMetrics(req: IngestRequest, apiKey: string): Promise<IngestResponse> {
-    return this.processIngest(req, 'metric', apiKey);
+    return this.ingestTyped(req, apiKey, 'metric');
   }
 
   /**
@@ -509,8 +531,13 @@ export class IngestionService {
       const eventType = type as SdkEventType;
 
       if (expectedType && eventType !== expectedType) {
-        errors.push({ eventId, reason: `expected '${expectedType}', got '${eventType}'` });
-        continue;
+        // Typed-route contract: a dedicated endpoint (e.g. POST /v1/errors)
+        // accepts ONLY its declared event family. A foreign event means the SDK
+        // targeted the wrong route — a client misconfiguration — so we fail the
+        // whole batch fast with INVALID_EVENT_TYPE (400) rather than silently
+        // dropping events. Mixed batches must use the legacy POST /v1/ingest
+        // path (expectedType === null), which never sets this constraint.
+        throw new Error('INVALID_EVENT_TYPE');
       }
 
       let serialized: string;

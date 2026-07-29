@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { ListProjectsQuery, Project, ProjectListItem, ProjectStatus, ProjectUpdateInput, ProjectVisibility } from "../types.js";
 type ProjectRow = {
     id: string;
+    public_id: string;
     org_id: string;
     name: string;
     slug: string;
@@ -43,9 +44,16 @@ export declare class ProjectRepository {
         metadata?: Record<string, unknown>;
         createdBy?: string | null;
     }, client?: PoolClient): Promise<Project>;
-    provisionRuntimeDefaults(project: Project, client: PoolClient): Promise<void>;
+    /**
+     * Seed the per-project usage counter row. Environment + SDK-configuration
+     * provisioning is orchestrated explicitly by the service layer (a single
+     * Production environment at project creation), so this no longer seeds any
+     * environments.
+     */
+    provisionUsageCounter(project: Project, client: PoolClient): Promise<void>;
     findProjectBySlug(orgId: string, slug: string, client?: PoolClient): Promise<Project | null>;
     findProjectById(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
+    findProjectByPublicId(orgId: string, publicId: string, client?: PoolClient): Promise<Project | null>;
     findProjectByIdIncludingDeleted(orgId: string, projectId: string, client?: PoolClient): Promise<Project | null>;
     updateProject(orgId: string, projectId: string, input: ProjectUpdateInput, client?: PoolClient): Promise<Project>;
     softDeleteProject(orgId: string, projectId: string, deletedBy: string, client?: PoolClient): Promise<void>;

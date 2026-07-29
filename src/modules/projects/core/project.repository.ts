@@ -11,12 +11,13 @@ import type {
 import { ProjectError } from "../shared/utils.js";
 
 const PROJECT_COLUMNS = `
-  id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
+  id, public_id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
   archived_at, deleted_at, deleted_by, created_at, updated_at, version
 `;
 
 type ProjectRow = {
   id: string;
+  public_id: string;
   org_id: string;
   name: string;
   slug: string;
@@ -136,9 +137,11 @@ export class ProjectRepository {
     try {
       const result = await db.query<ProjectRow>(
         `INSERT INTO projects (
-           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by
+           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by,
+           public_id
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+           'prj_' || upper(substring(replace(gen_random_uuid()::text, '-', ''), 1, 8))
          )
          RETURNING ${PROJECT_COLUMNS}`,
         [
@@ -212,6 +215,21 @@ export class ProjectRepository {
         WHERE org_id = $1 AND id = $2 AND deleted_at IS NULL
         LIMIT 1`,
       [orgId, projectId],
+    );
+    return result.rows[0] ? this.mapProject(result.rows[0]) : null;
+  }
+
+  async findProjectByPublicId(
+    orgId: string,
+    publicId: string,
+    client?: PoolClient,
+  ): Promise<Project | null> {
+    const db = client ?? this.db;
+    const result = await db.query<ProjectRow>(
+      `SELECT ${PROJECT_COLUMNS} FROM projects
+        WHERE org_id = $1 AND public_id = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [orgId, publicId],
     );
     return result.rows[0] ? this.mapProject(result.rows[0]) : null;
   }
@@ -476,6 +494,7 @@ export class ProjectRepository {
   private mapProject(row: ProjectRow): Project {
     return {
       id: row.id,
+      publicId: row.public_id,
       orgId: row.org_id,
       name: row.name,
       slug: row.slug,

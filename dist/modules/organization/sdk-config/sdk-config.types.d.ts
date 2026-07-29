@@ -39,6 +39,8 @@ export interface SdkConfigRow {
     organization_id: string;
     project_id: string;
     environment_id: string;
+    environment_name: string;
+    environment_slug: string;
     published_revision_id: string;
     current_revision: number;
     current_hash: string;
@@ -57,6 +59,8 @@ export interface SdkConfigVersionRow {
     organization_id: string;
     project_id: string;
     environment_id: string;
+    environment_name: string;
+    environment_slug: string;
     revision_number: number;
     config_value: Record<string, unknown>;
     config_hash: string;
@@ -72,6 +76,8 @@ export interface SdkConfigDto {
     orgId: string;
     projectId: string;
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     publishedRevisionId: string;
     revision: number;
     revisionHash: string;
@@ -88,6 +94,8 @@ export interface SdkConfigVersionDto {
     orgId: string;
     projectId: string;
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     revision: number;
     revisionHash: string;
     configValue: Record<string, unknown>;
@@ -101,6 +109,8 @@ export interface SdkConfigVersionDto {
 /** Exact published document returned to every SDK in one environment. */
 export interface SdkConfigResolvedDto {
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     revision: number;
     revisionHash: string;
     schemaVersion: string | null;

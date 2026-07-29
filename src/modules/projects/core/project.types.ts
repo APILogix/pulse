@@ -72,6 +72,8 @@ export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
 
 export interface Project {
   id: string;
+  /** Immutable public routing identifier, format: prj_XXXXXXXX */
+  publicId: string;
   orgId: string;
   name: string;
   slug: string;
@@ -95,6 +97,12 @@ export interface ProjectListItem extends Project {
   apiKeysCount: number;
   activeApiKeysCount: number;
 }
+
+export const ProjectByPublicIdParamsSchema = z.object({
+  orgId: z.string().uuid(),
+  publicId: z.string().regex(/^prj_[A-Z0-9]{8}$/, "Invalid public project ID format"),
+});
+export type ProjectByPublicIdParams = z.infer<typeof ProjectByPublicIdParamsSchema>;
 
 export interface ProjectStats {
   totalRequests: number;
