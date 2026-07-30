@@ -42,6 +42,8 @@ export interface ProjectAuthResult {
   samplingRules: Record<string, unknown>;
   featureFlags: Record<string, unknown>;
   sdkConfig: Record<string, unknown>;
+  sdkConfigRevision: number | null;
+  sdkConfigHash: string | null;
   rateLimitPerSecond: number | null;
   rateLimitPerMinute: number | null;
   rateLimitPerHour: number | null;
@@ -100,6 +102,8 @@ export class PostgresWriter {
         k.expires_at,
         k.secret_hash,
         cr.config_value AS sdk_config,
+        cr.revision_number AS sdk_config_revision,
+        cr.config_hash AS sdk_config_hash,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
@@ -171,6 +175,8 @@ export class PostgresWriter {
         samplingRules: this.configObject((row.sdk_config as Record<string, unknown> | null)?.samplingRules),
         featureFlags: this.configObject((row.sdk_config as Record<string, unknown> | null)?.featureFlags),
         sdkConfig: (row.sdk_config as Record<string, unknown> | null) ?? {},
+        sdkConfigRevision: Number(row.sdk_config_revision ?? 0) || null,
+        sdkConfigHash: (row.sdk_config_hash as string | null) ?? null,
         rateLimitPerSecond: null,
         rateLimitPerMinute: null,
         rateLimitPerHour: null,

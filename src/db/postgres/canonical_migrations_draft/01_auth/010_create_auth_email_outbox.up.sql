@@ -1,6 +1,6 @@
 BEGIN;
 
-CREATE TABLE auth_email_outbox (
+CREATE TABLE IF NOT EXISTS auth_email_outbox (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     to_email VARCHAR(255) NOT NULL,
@@ -52,16 +52,16 @@ CREATE TABLE auth_email_outbox (
 );
 
 COMMIT;
-CREATE INDEX idx_email_pending
+CREATE INDEX IF NOT EXISTS idx_email_pending
 ON auth_email_outbox(next_attempt_at, created_at)
 WHERE status='pending';
-CREATE INDEX idx_email_processing
+CREATE INDEX IF NOT EXISTS idx_email_processing
 ON auth_email_outbox(processing_started_at)
 WHERE status='processing';
-CREATE INDEX idx_email_sent
+CREATE INDEX IF NOT EXISTS idx_email_sent
 ON auth_email_outbox(sent_at)
 WHERE status='sent';
-CREATE UNIQUE INDEX idx_email_dedupe
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_dedupe
 ON auth_email_outbox(dedupe_key)
 WHERE dedupe_key IS NOT NULL
 AND status IN ('pending','processing');

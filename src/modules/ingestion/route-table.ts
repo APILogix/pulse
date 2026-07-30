@@ -15,16 +15,26 @@
  *   - `/v1/events` is the transport route the SDK uses for custom/captured
  *     messages, so it maps to the `message` family. It is a typed route, not a
  *     mixed batch endpoint — mixed batches use the legacy `POST /v1/ingest`.
- *   - `/v1/spans` is exposed even though the schema-v1 `ROUTE_INGEST_PATHS`
- *     set does not advertise a spans transport (spans normally travel inside a
- *     trace envelope); the dedicated route lets SDKs stream spans directly and
- *     keeps "each event type has a dedicated POST route" true.
+ *   - `/v1/spans` is advertised as its own transport route because the SDK can
+ *     emit raw span events before a trace aggregate is ready.
  *
  * This module imports `SdkEventType` as a TYPE ONLY, so it has zero runtime
  * dependencies and can be imported by lightweight unit tests without pulling in
  * env parsing, the queue layer, or a database pool.
  */
 import type { SdkEventType } from "./pipeline/event-normalizer.js";
+
+export type TransportRouteKey =
+  | "errors"
+  | "requests"
+  | "traces"
+  | "spans"
+  | "metrics"
+  | "logs"
+  | "profiles"
+  | "events"
+  | "crons"
+  | "replays";
 
 export interface TypedIngestRoute {
   /**
@@ -34,6 +44,8 @@ export interface TypedIngestRoute {
   readonly path: string;
   /** The single SDK event family this endpoint accepts. */
   readonly type: SdkEventType;
+  /** Route key used in schema-v1 transport.routes. */
+  readonly routeKey: TransportRouteKey;
 }
 
 /**
@@ -41,16 +53,16 @@ export interface TypedIngestRoute {
  * is only significant for deterministic registration/iteration.
  */
 export const TYPED_INGEST_ROUTES: readonly TypedIngestRoute[] = [
-  { path: "/v1/errors", type: "error" },
-  { path: "/v1/requests", type: "request" },
-  { path: "/v1/traces", type: "trace" },
-  { path: "/v1/spans", type: "span" },
-  { path: "/v1/metrics", type: "metric" },
-  { path: "/v1/logs", type: "log" },
-  { path: "/v1/profiles", type: "profile" },
-  { path: "/v1/events", type: "message" },
-  { path: "/v1/checkins", type: "cron_checkin" },
-  { path: "/v1/replays", type: "replay" },
+  { path: "/v1/errors", type: "error", routeKey: "errors" },
+  { path: "/v1/requests", type: "request", routeKey: "requests" },
+  { path: "/v1/traces", type: "trace", routeKey: "traces" },
+  { path: "/v1/spans", type: "span", routeKey: "spans" },
+  { path: "/v1/metrics", type: "metric", routeKey: "metrics" },
+  { path: "/v1/logs", type: "log", routeKey: "logs" },
+  { path: "/v1/profiles", type: "profile", routeKey: "profiles" },
+  { path: "/v1/events", type: "message", routeKey: "events" },
+  { path: "/v1/checkins", type: "cron_checkin", routeKey: "crons" },
+  { path: "/v1/replays", type: "replay", routeKey: "replays" },
 ] as const;
 
 /** Fast reverse lookup: public path suffix -> accepted SDK event type. */
@@ -61,4 +73,9 @@ export const TYPED_INGEST_ROUTE_BY_PATH: ReadonlyMap<string, SdkEventType> = new
 /** All public path suffixes exposed as typed ingestion endpoints. */
 export const TYPED_INGEST_PATHS: readonly string[] = TYPED_INGEST_ROUTES.map(
   (route) => route.path,
+);
+
+/** Transport route keys in the same deterministic order as route registration. */
+export const TYPED_INGEST_ROUTE_KEYS: readonly TransportRouteKey[] = TYPED_INGEST_ROUTES.map(
+  (route) => route.routeKey,
 );

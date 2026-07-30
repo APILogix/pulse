@@ -3,7 +3,7 @@
  *
  * Precedence (implementation.md "Compiler Precedence", design.md §4.2):
  *   1. Schema defaults        — a complete, valid baseline document.
- *   2. Platform safety        — derived sdk identity, nine protected route URLs,
+ *   2. Platform safety        — derived sdk identity, protected route URLs,
  *                               mandatory scrubbing, platform killswitches, meta.
  *   3. Organization policy    — narrows the envelope (caps, forced off/on).
  *   4. Project/env intent     — applies allowlisted values within the envelope.
@@ -162,7 +162,7 @@ function dedupe(values) {
 }
 /**
  * Compile a complete schema-v1 document. The output is deterministic for a given
- * input and always contains all ten sections and exactly nine routes.
+ * input and always contains all ten sections and the fixed transport routes.
  */
 export function compile(input) {
     const config = schemaDefaults();

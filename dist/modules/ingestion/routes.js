@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { createGunzip } from "zlib";
 import { Transform } from "stream";
 import { authenticate, requireAdmin } from "../../shared/middleware/auth.js";
@@ -8,6 +9,9 @@ import { IngestionController } from "./controller.js";
 import { IngestionService } from "./service.js";
 import { ErrorByIdSchema, ErrorListSchema, IngestSchema, InitSchema, ReplaySchema, } from "./types.js";
 import { TYPED_INGEST_ROUTES } from "./route-table.js";
+const require = createRequire(import.meta.url);
+const AjvCtor = require("ajv");
+const addFormats = require("ajv-formats");
 function requireFastifyDecorator(fastify, name) {
     // Route registration should fail fast if boot plugins did not wire the
     // required dependency. This prevents handlers from accepting traffic with a
@@ -76,6 +80,14 @@ class DecompressedSizeGuard extends Transform {
     }
 }
 export async function ingestionRoutes(fastify) {
+    const ajv = new AjvCtor({
+        coerceTypes: true,
+        useDefaults: true,
+        removeAdditional: false,
+        allErrors: true,
+    });
+    addFormats(ajv);
+    fastify.setValidatorCompiler(({ schema }) => ajv.compile(schema));
     const postgresWriter = requireFastifyDecorator(fastify, "postgresWriter");
     const service = new IngestionService(postgresWriter.pool, postgresWriter, {
         maxBatchSize: env.INGESTION_MAX_BATCH_SIZE,
@@ -100,10 +112,9 @@ export async function ingestionRoutes(fastify) {
         done(null, payload);
     });
     // ── SDK ingestion endpoints ─────────────────────────────────────────────
-    // All ingestion endpoints validate their bodies via JSON Schema. The schema
-    // is the only line of defense against malformed input reaching handlers, so
-    // we deliberately apply it everywhere, including /v1/init and every typed
-    // write endpoint.
+    // Typed ingestion endpoints validate their bodies via JSON Schema. This
+    // plugin installs its own encapsulated AJV compiler because the rest of the
+    // app uses a Zod validator compiler.
     fastify.post("/v1/init", { schema: InitSchema }, controller.init.bind(controller));
     // Per-signal typed write endpoints — the PRIMARY SDK transport. Registration
     // is DATA-DRIVEN from TYPED_INGEST_ROUTES so there is exactly one dedicated

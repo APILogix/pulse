@@ -29,7 +29,11 @@ export declare class ProjectError extends Error {
 export declare function handleProjectError(error: unknown, reply: FastifyReply): FastifyReply;
 export declare function hasRequiredRole(role: OrgRole, requiredRole: OrgRole): boolean;
 export declare function slugifyProjectName(name: string): string;
-/** Public prefix for keys minted in a given environment slug. */
+export declare const API_KEY_PREFIXES: {
+    readonly live: "pv_live_";
+    readonly test: "pv_test_";
+};
+/** Public prefix for keys minted in a given environment. */
 export declare function environmentKeyPrefix(environment: string): string;
 export declare function buildApiPrefixes(): never;
 export declare function validateStatusTransition(current: ProjectStatus, next: ProjectStatus): boolean;
@@ -37,9 +41,11 @@ export declare function hashApiKey(rawKey: string): string;
 /**
  * Mint a new API key.
  *
- * Format: `pk_{env_slug}_{8 hex}.{32 hex}` (>= 20 bytes of entropy). The
+ * Format: `pv_live_{24 hex}.{32 hex}` for Production and
+ * `pv_test_{24 hex}.{32 hex}` for every non-production environment. The
  * segment before the dot is the public identifier; the full string is hashed
- * for persistence.
+ * for persistence. Environment identity is stored in
+ * project_api_keys.environment_id, not leaked into the public credential prefix.
  */
 export declare function createApiKey(environment: string): {
     fullKey: string;

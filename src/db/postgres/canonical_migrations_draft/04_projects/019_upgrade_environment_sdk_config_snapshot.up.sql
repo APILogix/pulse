@@ -63,15 +63,16 @@ DECLARE
   v_route jsonb;
   v_routes jsonb := '{}'::jsonb;
   v_spec jsonb := jsonb_build_object(
-    'traces',   jsonb_build_object('path','/v1/traces','priority',2),
-    'requests', jsonb_build_object('path','/v1/requests','priority',3),
-    'errors',   jsonb_build_object('path','/v1/errors','priority',1),
-    'metrics',  jsonb_build_object('path','/v1/metrics','priority',5),
-    'logs',     jsonb_build_object('path','/v1/logs','priority',4),
-    'profiles', jsonb_build_object('path','/v1/profiles','priority',8),
-    'events',   jsonb_build_object('path','/v1/events','priority',6),
-    'crons',    jsonb_build_object('path','/v1/checkins','priority',7),
-    'replays',  jsonb_build_object('path','/v1/replays','priority',9)
+    'traces',   jsonb_build_object('path','/api/v1/traces','priority',4),
+    'requests', jsonb_build_object('path','/api/v1/requests','priority',6),
+    'spans',    jsonb_build_object('path','/api/v1/spans','priority',5),
+    'errors',   jsonb_build_object('path','/api/v1/errors','priority',1),
+    'metrics',  jsonb_build_object('path','/api/v1/metrics','priority',8),
+    'logs',     jsonb_build_object('path','/api/v1/logs','priority',7),
+    'profiles', jsonb_build_object('path','/api/v1/profiles','priority',9),
+    'events',   jsonb_build_object('path','/api/v1/events','priority',2),
+    'crons',    jsonb_build_object('path','/api/v1/checkins','priority',3),
+    'replays',  jsonb_build_object('path','/api/v1/replays','priority',10)
   );
   v_key text;
 BEGIN

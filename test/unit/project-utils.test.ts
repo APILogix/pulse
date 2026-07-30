@@ -4,6 +4,8 @@ import {
   ProjectError,
   ProjectErrorCodes,
   createApiKey,
+  environmentKeyPrefix,
+  extractApiKeyPrefix,
   hashApiKey,
   isReservedProjectSlug,
   slugifyProjectName,
@@ -88,12 +90,28 @@ describe('project status transitions', () => {
 });
 
 describe('api key generation', () => {
-  it('mints a key with a platform-owned public prefix and secret suffix', () => {
+  it('mints production keys with the live prefix and no environment name', () => {
     const result = createApiKey('Production');
     expect(result.fullKey).toContain(result.publicKey);
-    expect(result.publicKey.startsWith('pulsiv_production_')).toBe(true);
+    expect(result.publicKey.startsWith('pv_live_')).toBe(true);
+    expect(result.publicKey).not.toContain('production');
     expect(result.fullKey.split('.').length).toBe(2);
     expect(result.fullKey.split('.')[1]).toHaveLength(64);
+  });
+
+  it('mints every non-production environment with the test prefix', () => {
+    for (const environment of ['Development', 'local', 'staging', 'pre-staging', 'qa', 'preview', 'uat', 'sandbox']) {
+      const result = createApiKey(environment);
+      expect(result.publicKey.startsWith('pv_test_')).toBe(true);
+      expect(result.publicKey).not.toContain(environment.toLowerCase());
+    }
+  });
+
+  it('centralizes public prefix selection', () => {
+    expect(environmentKeyPrefix('production')).toBe('pv_live_');
+    expect(environmentKeyPrefix('prod')).toBe('pv_live_');
+    expect(environmentKeyPrefix('staging')).toBe('pv_test_');
+    expect(environmentKeyPrefix('qa')).toBe('pv_test_');
   });
 
   it('rejects user-controlled API key prefixes', () => {
@@ -108,6 +126,14 @@ describe('api key generation', () => {
   it('returns a deterministic sha256 hash of the full key', () => {
     const result = createApiKey('Development');
     expect(result.secretHash).toBe(hashApiKey(result.fullKey));
+  });
+
+  it('extracts current prefixes and keeps legacy prefixes authenticatable until rotation', () => {
+    expect(extractApiKeyPrefix('pv_live_abcdefghijklmnopqrstuvwx.0123')).toBe('pv_live_abcdefghijklmnopqrstuvwx');
+    expect(extractApiKeyPrefix('pv_test_abcdefghijklmnopqrstuvwx.0123')).toBe('pv_test_abcdefghijklmnopqrstuvwx');
+    expect(extractApiKeyPrefix('pulsiv_pre-staging_legacy123.0123')).toBe('pulsiv_pre-staging_legacy123');
+    expect(extractApiKeyPrefix('pv_qa_abcdefghijklmnopqrstuvwx.0123')).toBeNull();
+    expect(extractApiKeyPrefix('pv_staging_abcdefghijklmnopqrstuvwx.0123')).toBeNull();
   });
 
   it('never returns the same key twice', () => {

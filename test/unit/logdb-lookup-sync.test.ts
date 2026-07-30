@@ -36,6 +36,7 @@ import {
   syncProjectLookupToLogDbBestEffort,
   syncEnvironmentLookupToLogDb,
   syncApiKeyLookupToLogDb,
+  syncEnvironmentSdkConfigLookupToLogDb,
 } from '../../src/shared/logdb/lookup-sync.js';
 
 const PROJECT_ROW = {
@@ -67,6 +68,20 @@ const API_KEY_ROW = {
   key_prefix: 'pk_live_abc',
   name: 'Production Default Key',
   status: 'active',
+};
+
+const SDK_CONFIG_ROW = {
+  organization_id: PROJECT_ROW.organization_id,
+  project_id: PROJECT_ROW.project_id,
+  environment_id: ENVIRONMENT_ROW.environment_id,
+  revision_number: 7,
+  config_hash: 'abc123',
+  compiled_snapshot: {
+    schemaVersion: 1,
+    sdk: { projectId: PROJECT_ROW.project_id, environment: 'production' },
+  },
+  environment_name: 'Production',
+  environment_slug: 'production',
 };
 
 beforeEach(() => {
@@ -175,6 +190,36 @@ describe('syncApiKeyLookupToLogDb', () => {
       API_KEY_ROW.name,
       API_KEY_ROW.status,
     ]);
+    expect(options).toEqual({ operation: 'write' });
+  });
+});
+
+describe('syncEnvironmentSdkConfigLookupToLogDb', () => {
+  it('upserts the published SDK config snapshot for the environment', async () => {
+    poolQuery.mockResolvedValue({ rows: [SDK_CONFIG_ROW], rowCount: 1 });
+
+    const ok = await syncEnvironmentSdkConfigLookupToLogDb(
+      SDK_CONFIG_ROW.environment_id,
+      'sdk.init',
+    );
+
+    expect(ok).toBe(true);
+    expect(poolQuery.mock.calls[0][0]).toContain('FROM project_environment_sdk_configs');
+    const [sql, params, options] = logQuery.mock.calls[0];
+    expect(sql).toContain('INSERT INTO environment_sdk_config_lookup');
+    expect(params.slice(0, 5)).toEqual([
+      SDK_CONFIG_ROW.environment_id,
+      SDK_CONFIG_ROW.organization_id,
+      SDK_CONFIG_ROW.project_id,
+      SDK_CONFIG_ROW.revision_number,
+      SDK_CONFIG_ROW.config_hash,
+    ]);
+    expect(JSON.parse(params[5])).toEqual(SDK_CONFIG_ROW.compiled_snapshot);
+    expect(JSON.parse(params[6])).toMatchObject({
+      source: 'primary_db',
+      reason: 'sdk.init',
+      environment: { name: 'Production', slug: 'production' },
+    });
     expect(options).toEqual({ operation: 'write' });
   });
 });

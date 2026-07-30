@@ -69,10 +69,10 @@ describe("schema-v1 contract constants (R13)", () => {
   it("fixes schemaVersion at 1", () => {
     expect(SCHEMA_VERSION).toBe(1);
   });
-  it("declares exactly nine transport routes", () => {
-    expect(ROUTE_KEYS).toHaveLength(9);
+  it("declares exactly ten transport routes", () => {
+    expect(ROUTE_KEYS).toHaveLength(10);
     expect([...ROUTE_KEYS].sort()).toEqual(
-      ["traces", "requests", "errors", "metrics", "logs", "profiles", "events", "crons", "replays"].sort(),
+      ["traces", "requests", "spans", "errors", "metrics", "logs", "profiles", "events", "crons", "replays"].sort(),
     );
   });
   it("declares the required sections and key sets", () => {
@@ -95,13 +95,14 @@ describe("atomic initial compile (R1, R2, R13)", () => {
     expect(config.sdk.projectId).toBe("proj_123");
     expect(config.sdk.environment).toBe("production");
   });
-  it("emits all nine routes with derived trusted https URLs", () => {
-    expect(Object.keys(config.transport.routes)).toHaveLength(9);
+  it("emits all ten routes with derived trusted https URLs", () => {
+    expect(Object.keys(config.transport.routes)).toHaveLength(10);
     for (const route of ROUTE_KEYS) {
       const url = config.transport.routes[route].url;
       expect(url.startsWith("https://ingest.pulse.test/")).toBe(true);
     }
-    expect(config.transport.routes.crons.url).toBe("https://ingest.pulse.test/v1/checkins");
+    expect(config.transport.routes.crons.url).toBe("https://ingest.pulse.test/api/v1/checkins");
+    expect(config.transport.routes.spans.url).toBe("https://ingest.pulse.test/api/v1/spans");
   });
   it("freezes meta and includes a 64-hex configHash", () => {
     expect(config.meta.generatedAt).toBe(AT);
@@ -304,7 +305,7 @@ describe("full-document validation & cross-field invariants (R12, R13)", () => {
     const error = expectSdkError(() => validateSchemaV1(config));
     expect(error.details.some((d) => d.path === "/runtime")).toBe(true);
   });
-  it("rejects fewer than nine routes", () => {
+  it("rejects fewer than the fixed route set", () => {
     const config = deepClone(compileInitial(IDENTITY, TOPOLOGY, AT));
     delete (config.transport.routes as Record<string, unknown>)["replays"];
     const error = expectSdkError(() => validateSchemaV1(config));

@@ -32,6 +32,7 @@ import { createHash, randomUUID } from 'crypto';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { apiKeyCache } from '../../config/lrucashe.js';
+import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffort, syncEnvironmentSdkConfigLookupToLogDbBestEffort, syncProjectLookupToLogDbBestEffort, } from '../../shared/logdb/lookup-sync.js';
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionRateLimiter } from './rate-limiter.js';
 import { UsageCounter } from './usage/usage-counter.js';
@@ -147,6 +148,8 @@ export class IngestionService {
                 samplingRules: cached.samplingRules ?? {},
                 featureFlags: cached.featureFlags ?? {},
                 sdkConfig: cached.sdkConfig ?? {},
+                sdkConfigRevision: cached.sdkConfigRevision ?? null,
+                sdkConfigHash: cached.sdkConfigHash ?? null,
                 planTier: normalizePlanTier(cached.planTier),
                 orgRateLimitPerSecond: cached.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
                 orgRateLimitPerMinute: cached.orgRateLimitPerMinute ?? env.INGESTION_ORG_RATE_LIMIT_PER_MINUTE,
@@ -179,6 +182,8 @@ export class IngestionService {
             samplingRules: auth.samplingRules,
             featureFlags: auth.featureFlags,
             sdkConfig: auth.sdkConfig,
+            sdkConfigRevision: auth.sdkConfigRevision,
+            sdkConfigHash: auth.sdkConfigHash,
             planTier: normalizePlanTier(auth.planTier),
             orgRateLimitPerSecond: auth.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
             orgRateLimitPerMinute: auth.orgRateLimitPerMinute ?? env.INGESTION_ORG_RATE_LIMIT_PER_MINUTE,
@@ -204,6 +209,8 @@ export class IngestionService {
             samplingRules: resolved.samplingRules,
             featureFlags: resolved.featureFlags,
             sdkConfig: resolved.sdkConfig,
+            sdkConfigRevision: resolved.sdkConfigRevision,
+            sdkConfigHash: resolved.sdkConfigHash,
             isActive: resolved.isActive,
             apiKeyId: resolved.apiKeyId,
             planTier: resolved.planTier,
@@ -290,17 +297,21 @@ export class IngestionService {
             throw new Error('INVALID_API_KEY');
         if (!project.isActive)
             throw new Error('PROJECT_INACTIVE');
+        this.syncInitLookupsBestEffort(project);
         return {
             success: true,
             projectId: project.id,
-            config: { samplingRate: 1, enableErrors: true, enablePerformance: true },
-            ingestion: {
-                endpoint: env.INGESTION_ENDPOINT ?? 'http://127.0.0.1:3000/api/v1/ingest',
-                batchSize: 50,
-                flushInterval: 5000,
-                maxQueueSize: 20000,
-            },
+            environment: project.environmentSlug,
+            configRevision: project.sdkConfigRevision,
+            configHash: project.sdkConfigHash,
+            config: project.sdkConfig ?? {},
         };
+    }
+    syncInitLookupsBestEffort(project) {
+        syncProjectLookupToLogDbBestEffort(project.id, 'sdk.init');
+        syncEnvironmentLookupToLogDbBestEffort(project.environmentId, 'sdk.init');
+        syncApiKeyLookupToLogDbBestEffort(project.apiKeyId, 'sdk.init');
+        syncEnvironmentSdkConfigLookupToLogDbBestEffort(project.environmentId, 'sdk.init');
     }
     // ── Ingestion entrypoints ─────────────────────────────────────────────────
     /**

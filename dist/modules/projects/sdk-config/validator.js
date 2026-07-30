@@ -7,7 +7,7 @@
  *   - validateEditableLeaf(): per-leaf type + bounds check used during PUT/PATCH
  *     traversal so a single bad value is reported at its exact pointer.
  *   - validateSchemaV1(): full structural + bounds + cross-field validation of a
- *     compiled snapshot / delivery document (all sections, exactly nine routes).
+ *     compiled snapshot / delivery document (all sections, fixed routes).
  */
 import { SdkConfigError, SdkConfigErrorCollector } from "./errors.js";
 import { toJsonPointer, INSTRUMENTATION_OPTION_ALLOWLIST_V1 } from "./editable-allowlist.js";
@@ -400,7 +400,7 @@ function validateRoutes(cfg, out) {
         return;
     }
     const presentKeys = Object.keys(routes);
-    // Exactly the nine fixed routes — no more, no fewer.
+    // Exactly the fixed routes — no more, no fewer.
     for (const key of ROUTE_KEYS) {
         if (!isPlainObject(routes[key])) {
             out.push({ path: `/transport/routes/${key}`, rule: "required", message: `Missing required route '${key}'` });

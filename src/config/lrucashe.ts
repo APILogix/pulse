@@ -24,6 +24,8 @@ export interface CachedProjectConfig {
   samplingRules: Record<string, unknown>;
   featureFlags: Record<string, unknown>;
   sdkConfig: Record<string, unknown>;
+  sdkConfigRevision?: number | null;
+  sdkConfigHash?: string | null;
   isActive: boolean;
   apiKeyId: string;
   /** Billing plan tier resolved at key-lookup time; drives queue priority. */

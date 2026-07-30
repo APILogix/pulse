@@ -261,4 +261,77 @@ export function syncApiKeyLookupToLogDbBestEffort(apiKeyId, reason) {
         lookupLogger.warn({ err, apiKeyId, reason }, 'API key lookup sync failed; primary transaction remains committed');
     });
 }
+const ENVIRONMENT_SDK_CONFIG_LOOKUP_SOURCE_SQL = `
+  SELECT
+    h.organization_id,
+    h.project_id,
+    h.environment_id,
+    r.revision_number,
+    r.config_hash,
+    r.compiled_snapshot,
+    e.name AS environment_name,
+    e.slug AS environment_slug
+  FROM project_environment_sdk_configs h
+  INNER JOIN project_environment_sdk_config_revisions r
+    ON r.id = h.published_revision_id
+  INNER JOIN project_environments e
+    ON e.id = h.environment_id
+   AND e.project_id = h.project_id
+   AND e.organization_id = h.organization_id
+  WHERE h.environment_id = $1
+    AND e.is_active = TRUE
+    AND e.deleted_at IS NULL
+  LIMIT 1`;
+const ENVIRONMENT_SDK_CONFIG_LOOKUP_UPSERT_SQL = `
+  INSERT INTO environment_sdk_config_lookup (
+    environment_id,
+    organization_id,
+    project_id,
+    revision_number,
+    config_hash,
+    compiled_snapshot,
+    metadata,
+    synced_at
+  )
+  VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW())
+  ON CONFLICT (environment_id) DO UPDATE SET
+    organization_id = EXCLUDED.organization_id,
+    project_id = EXCLUDED.project_id,
+    revision_number = EXCLUDED.revision_number,
+    config_hash = EXCLUDED.config_hash,
+    compiled_snapshot = EXCLUDED.compiled_snapshot,
+    metadata = environment_sdk_config_lookup.metadata || EXCLUDED.metadata,
+    synced_at = NOW()`;
+export async function syncEnvironmentSdkConfigLookupToLogDb(environmentId, reason) {
+    const source = await pool.query(ENVIRONMENT_SDK_CONFIG_LOOKUP_SOURCE_SQL, [environmentId]);
+    const row = source.rows[0];
+    if (!row) {
+        lookupLogger.warn({ environmentId, reason }, 'Environment SDK config lookup sync skipped: source row not found');
+        return false;
+    }
+    const metadata = {
+        source: 'primary_db',
+        reason,
+        environment: {
+            name: row.environment_name,
+            slug: row.environment_slug,
+        },
+    };
+    await logDB.queryWithRetry(ENVIRONMENT_SDK_CONFIG_LOOKUP_UPSERT_SQL, [
+        row.environment_id,
+        row.organization_id,
+        row.project_id,
+        row.revision_number,
+        row.config_hash,
+        JSON.stringify(row.compiled_snapshot ?? {}),
+        JSON.stringify(metadata),
+    ], { operation: 'write' });
+    lookupLogger.info({ environmentId, reason, revision: row.revision_number, configHash: row.config_hash }, 'Environment SDK config lookup synced to Log DB');
+    return true;
+}
+export function syncEnvironmentSdkConfigLookupToLogDbBestEffort(environmentId, reason) {
+    void syncEnvironmentSdkConfigLookupToLogDb(environmentId, reason).catch((err) => {
+        lookupLogger.warn({ err, environmentId, reason }, 'Environment SDK config lookup sync failed; primary transaction remains committed');
+    });
+}
 //# sourceMappingURL=lookup-sync.js.map

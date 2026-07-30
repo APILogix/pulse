@@ -21,9 +21,11 @@ import {
 import { ROUTE_INGEST_PATHS } from '../../src/modules/projects/sdk-config/schema-v1.js';
 import { SDK_EVENT_TYPES } from '../../src/modules/ingestion/pipeline/event-normalizer.js';
 
+const INGESTION_ROUTE_PREFIX = '/api';
+
 describe('distributed ingestion route contract', () => {
   it('exposes a backend POST route for every advertised SDK config route', () => {
-    const backendPaths = new Set(TYPED_INGEST_PATHS);
+    const backendPaths = new Set(TYPED_INGEST_PATHS.map((path) => `${INGESTION_ROUTE_PREFIX}${path}`));
     for (const [routeKey, advertisedPath] of Object.entries(ROUTE_INGEST_PATHS)) {
       expect(
         backendPaths.has(advertisedPath),

@@ -6,4 +6,6 @@ export declare function syncEnvironmentLookupToLogDb(environmentId: string, reas
 export declare function syncEnvironmentLookupToLogDbBestEffort(environmentId: string, reason: string): void;
 export declare function syncApiKeyLookupToLogDb(apiKeyId: string, reason: string): Promise<boolean>;
 export declare function syncApiKeyLookupToLogDbBestEffort(apiKeyId: string, reason: string): void;
+export declare function syncEnvironmentSdkConfigLookupToLogDb(environmentId: string, reason: string): Promise<boolean>;
+export declare function syncEnvironmentSdkConfigLookupToLogDbBestEffort(environmentId: string, reason: string): void;
 //# sourceMappingURL=lookup-sync.d.ts.map

@@ -34,6 +34,8 @@ export interface ProjectAuthResult {
     samplingRules: Record<string, unknown>;
     featureFlags: Record<string, unknown>;
     sdkConfig: Record<string, unknown>;
+    sdkConfigRevision: number | null;
+    sdkConfigHash: string | null;
     rateLimitPerSecond: number | null;
     rateLimitPerMinute: number | null;
     rateLimitPerHour: number | null;

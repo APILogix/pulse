@@ -36,7 +36,7 @@ export declare const PLATFORM_MANDATORY_SCRUB_HEADERS: readonly ["authorization"
 export declare const PLATFORM_MANDATORY_SCRUB_FIELDS: readonly ["password", "secret", "token", "apiKey", "authorization"];
 /**
  * Compile a complete schema-v1 document. The output is deterministic for a given
- * input and always contains all ten sections and exactly nine routes.
+ * input and always contains all ten sections and the fixed transport routes.
  */
 export declare function compile(input: CompileInput): SchemaV1Config;
 /** Convenience for atomic environment initialization: compile with empty intent. */

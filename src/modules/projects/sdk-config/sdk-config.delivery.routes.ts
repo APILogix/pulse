@@ -13,6 +13,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { pool } from "../../../config/database.js";
+import { extractApiKeyPrefix } from "../shared/utils.js";
 import { SdkConfigError } from "./errors.js";
 import type { ApiKeyMapping, DeliveryRequestHints } from "./delivery.js";
 import type { RemoteSdkConfigService } from "./sdk-config.service.js";
@@ -65,7 +66,8 @@ interface ApiKeyRow {
  * granted environment.
  */
 async function resolveApiKeyMapping(rawKey: string): Promise<ApiKeyMapping | null> {
-  const publicKey = rawKey.includes(".") ? rawKey.slice(0, rawKey.lastIndexOf(".")) : rawKey;
+  const publicKey = extractApiKeyPrefix(rawKey);
+  if (!publicKey) return null;
   const result = await pool.query<ApiKeyRow>(
     `SELECT organization_id, project_id, environment_id, secret_hash
        FROM project_api_keys

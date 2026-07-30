@@ -137,15 +137,23 @@ export function slugifyProjectName(name: string): string {
   return slug || `project-${randomBytes(3).toString("hex")}`;
 }
 
-/** Public prefix for keys minted in a given environment slug. */
+export const API_KEY_PREFIXES = {
+  live: "pv_live_",
+  test: "pv_test_",
+} as const;
+
+const LEGACY_API_KEY_PREFIXES = [
+  "pulsiv_",
+] as const;
+
+function isProductionEnvironment(environment: string): boolean {
+  const normalized = environment.toLowerCase().trim();
+  return normalized === "production" || normalized === "prod" || normalized === "live";
+}
+
+/** Public prefix for keys minted in a given environment. */
 export function environmentKeyPrefix(environment: string): string {
-  const slug = environment
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 20);
-  return `pk_${slug}_`;
+  return isProductionEnvironment(environment) ? API_KEY_PREFIXES.live : API_KEY_PREFIXES.test;
 }
 
 export function buildApiPrefixes(): never {
@@ -172,22 +180,18 @@ export function hashApiKey(rawKey: string): string {
 /**
  * Mint a new API key.
  *
- * Format: `pk_{env_slug}_{8 hex}.{32 hex}` (>= 20 bytes of entropy). The
+ * Format: `pv_live_{24 hex}.{32 hex}` for Production and
+ * `pv_test_{24 hex}.{32 hex}` for every non-production environment. The
  * segment before the dot is the public identifier; the full string is hashed
- * for persistence.
+ * for persistence. Environment identity is stored in
+ * project_api_keys.environment_id, not leaked into the public credential prefix.
  */
 export function createApiKey(environment: string): {
   fullKey: string;
   publicKey: string;
   secretHash: string;
 } {
-  const envSlug = environment
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 20);
-  const publicKey = `pulsiv_${envSlug}_${randomBytes(8).toString("hex")}`;
+  const publicKey = `${environmentKeyPrefix(environment)}${randomBytes(12).toString("hex")}`;
   const secretSuffix = randomBytes(32).toString("hex");
   const fullKey = `${publicKey}.${secretSuffix}`;
 
@@ -203,11 +207,18 @@ export function extractApiKeyPrefix(rawKey: string): string | null {
   const dotIndex = value.indexOf(".");
   const prefix = dotIndex >= 0 ? value.slice(0, dotIndex) : value;
 
-  if (!prefix.startsWith("pulsiv_")) {
+  const isCurrentPrefix =
+    prefix.startsWith(API_KEY_PREFIXES.live) ||
+    prefix.startsWith(API_KEY_PREFIXES.test);
+  const isLegacyPrefix = LEGACY_API_KEY_PREFIXES.some((legacyPrefix) =>
+    prefix.startsWith(legacyPrefix),
+  );
+
+  if (!isCurrentPrefix && !isLegacyPrefix) {
     return null;
   }
 
-  return prefix.length >= 12 ? prefix : null;
+  return prefix.length >= 16 ? prefix : null;
 }
 
 export function constantTimeEqualHex(left: string, right: string): boolean {

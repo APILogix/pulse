@@ -122,21 +122,14 @@ export interface ErrorEventListResult {
   hasMore: boolean;
 }
 
-/** SDK Init Response — Matches your SDK expectation exactly */
+/** SDK Init Response delivered to the SDK after API-key lookup. */
 export interface SDKInitResponse {
   success: boolean;
   projectId: string;
-  config: {
-    samplingRate: number;
-    enableErrors: boolean;
-    enablePerformance: boolean;
-  };
-  ingestion: {
-    endpoint: string;
-    batchSize: number;
-    flushInterval: number;
-    maxQueueSize: number;
-  };
+  environment: string;
+  configRevision: number | null;
+  configHash: string | null;
+  config: Record<string, unknown>;
 }
 
 /** Internal Enriched Event (after API processing) */

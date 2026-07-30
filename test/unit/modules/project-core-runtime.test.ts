@@ -163,7 +163,7 @@ describe('canonical project API key runtime', () => {
   it('accepts rotated credentials only while a rotation grace window is open', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const repo = new ApiKeyRepository({ query } as unknown as Pool);
-    await repo.findActiveApiKeyCandidatesByPrefix('pulsiv_production_public');
+    await repo.findActiveApiKeyCandidatesByPrefix('pv_live_public');
     const sql = query.mock.calls[0]![0] as string;
     expect(sql).toContain('project_api_key_rotations');
     expect(sql).toContain("r.state = 'grace_period'");
@@ -201,7 +201,7 @@ describe('canonical project API key runtime', () => {
   it('requires an active nondeleted tenant-matched environment during validation lookup', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const repo = new ApiKeyRepository({ query } as unknown as Pool);
-    await repo.findActiveApiKeyCandidatesByPrefix('pulsiv_production_public');
+    await repo.findActiveApiKeyCandidatesByPrefix('pv_live_public');
     const sql = query.mock.calls[0]![0] as string;
     expect(sql).toContain('p.org_id = k.organization_id');
     expect(sql).toContain('e.organization_id = k.organization_id');

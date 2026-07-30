@@ -50,6 +50,7 @@ export declare class IngestionService {
      */
     private assertQuotaAvailable;
     initializeSdk(apiKey: string): Promise<SDKInitResponse>;
+    private syncInitLookupsBestEffort;
     /**
      * Legacy mixed-batch entrypoint (POST /v1/ingest). Accepts any combination of
      * SDK event types in a single request. Retained for backward compatibility;

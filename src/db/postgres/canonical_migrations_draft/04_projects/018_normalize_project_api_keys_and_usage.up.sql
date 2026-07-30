@@ -23,36 +23,53 @@ CREATE TABLE IF NOT EXISTS project_api_key_rotations (
   )
 );
 
-INSERT INTO project_api_key_rotations(
-  organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
-  initiated_by,initiated_at,grace_ends_at,completed_at
-)
-SELECT n.organization_id,n.project_id,n.environment_id,n.rotated_from_key_id,n.id,
-       COALESCE(NULLIF(n.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state),n.rotation_reason,
-       COALESCE(n.rotated_by,n.created_by),COALESCE(n.rotated_at,n.created_at),
-       n.grace_period_ends_at,
-       CASE WHEN COALESCE(NULLIF(n.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state)='completed'
-            THEN COALESCE(n.rotated_at,n.updated_at,n.created_at) END
-FROM project_api_keys n
-JOIN project_api_keys o
-  ON o.id=n.rotated_from_key_id
- AND o.project_id=n.project_id
- AND o.organization_id=n.organization_id
- AND o.environment_id=n.environment_id
-WHERE n.rotated_from_key_id IS NOT NULL;
-INSERT INTO project_api_key_rotations(
-  organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
-  initiated_by,initiated_at,grace_ends_at,completed_at
-)
-SELECT k.organization_id,k.project_id,k.environment_id,k.id,NULL,
-       COALESCE(NULLIF(k.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state),
-       k.rotation_reason,k.rotated_by,COALESCE(k.rotated_at,k.updated_at,k.created_at),
-       k.grace_period_ends_at,
-       CASE WHEN COALESCE(NULLIF(k.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state)='completed'
-            THEN COALESCE(k.rotated_at,k.updated_at,k.created_at) END
-FROM project_api_keys k
-WHERE (k.rotation_state <> 'none' OR k.status='rotated')
-  AND NOT EXISTS (SELECT 1 FROM project_api_key_rotations r WHERE r.old_key_id=k.id);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='project_api_keys' AND column_name='rotation_state'
+  ) THEN
+    EXECUTE $sql$
+      INSERT INTO project_api_key_rotations(
+        organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
+        initiated_by,initiated_at,grace_ends_at,completed_at
+      )
+      SELECT n.organization_id,n.project_id,n.environment_id,n.rotated_from_key_id,n.id,
+             COALESCE(NULLIF(n.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state),n.rotation_reason,
+             COALESCE(n.rotated_by,n.created_by),COALESCE(n.rotated_at,n.created_at),
+             n.grace_period_ends_at,
+             CASE WHEN COALESCE(NULLIF(n.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state)='completed'
+                  THEN COALESCE(n.rotated_at,n.updated_at,n.created_at) END
+      FROM project_api_keys n
+      JOIN project_api_keys o
+        ON o.id=n.rotated_from_key_id
+       AND o.project_id=n.project_id
+       AND o.organization_id=n.organization_id
+       AND o.environment_id=n.environment_id
+      WHERE n.rotated_from_key_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM project_api_key_rotations r
+          WHERE r.old_key_id=n.rotated_from_key_id AND r.new_key_id=n.id
+        )
+    $sql$;
+
+    EXECUTE $sql$
+      INSERT INTO project_api_key_rotations(
+        organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
+        initiated_by,initiated_at,grace_ends_at,completed_at
+      )
+      SELECT k.organization_id,k.project_id,k.environment_id,k.id,NULL,
+             COALESCE(NULLIF(k.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state),
+             k.rotation_reason,k.rotated_by,COALESCE(k.rotated_at,k.updated_at,k.created_at),
+             k.grace_period_ends_at,
+             CASE WHEN COALESCE(NULLIF(k.rotation_state,'none'::api_key_rotation_state),'completed'::api_key_rotation_state)='completed'
+                  THEN COALESCE(k.rotated_at,k.updated_at,k.created_at) END
+      FROM project_api_keys k
+      WHERE (k.rotation_state <> 'none' OR k.status='rotated')
+        AND NOT EXISTS (SELECT 1 FROM project_api_key_rotations r WHERE r.old_key_id=k.id)
+    $sql$;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_tenant_time
   ON project_api_key_rotations(organization_id,project_id,environment_id,initiated_at DESC);
@@ -60,6 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_old_key
   ON project_api_key_rotations(old_key_id,initiated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_new_key
   ON project_api_key_rotations(new_key_id) WHERE new_key_id IS NOT NULL;
+
+ALTER TABLE project_api_key_rotations
+  DROP CONSTRAINT IF EXISTS fk_project_api_key_rotations_old_key_tenant,
+  DROP CONSTRAINT IF EXISTS fk_project_api_key_rotations_new_key_tenant;
 
 ALTER TABLE project_api_key_rotations
   ADD CONSTRAINT fk_project_api_key_rotations_old_key_tenant
@@ -96,6 +117,11 @@ ALTER TABLE project_api_keys DROP CONSTRAINT IF EXISTS project_api_keys_lifecycl
 ALTER TABLE project_api_keys ADD CONSTRAINT project_api_keys_lifecycle_check CHECK (
   (rotated_from_key_id IS NULL OR rotated_from_key_id <> id)
   AND (expires_at IS NULL OR expires_at > created_at)
+);
+ALTER TABLE project_api_keys DROP CONSTRAINT IF EXISTS project_api_keys_public_key_format_check;
+ALTER TABLE project_api_keys ADD CONSTRAINT project_api_keys_public_key_format_check CHECK (
+  public_key ~ '^(pv_live_|pv_test_)[0-9a-f]{24}$'
+  OR public_key ~ '^pulsiv_[A-Za-z0-9_-]+$'
 );
 DROP TYPE IF EXISTS api_key_type;
 

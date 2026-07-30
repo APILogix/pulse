@@ -9,7 +9,7 @@
  *
  * Design references:
  * - design.md §4.1 (schema-v1 contract) — required sections, feature/killswitch
- *   keys, sampling signals, integrations, and the nine fixed transport routes.
+ *   keys, sampling signals, integrations, and the ten fixed transport routes.
  * - implementation.md "SDK Acceptance Check" — the exact acceptance rules the
  *   current Node SDK enforces.
  *
@@ -83,50 +83,38 @@ export const INTEGRATION_KEYS = [
 export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
 
 /**
- * The nine fixed transport routes. The SDK rejects a document that is missing
- * any of these keys, so the compiler always emits exactly these nine.
+ * The fixed transport routes. They are derived from the ingestion route table,
+ * so the SDK config never advertises a write endpoint the backend does not
+ * register.
  */
-export const ROUTE_KEYS = [
-  "traces",
-  "requests",
-  "errors",
-  "metrics",
-  "logs",
-  "profiles",
-  "events",
-  "crons",
-  "replays",
-] as const;
-export type RouteKey = (typeof ROUTE_KEYS)[number];
+import { TYPED_INGEST_ROUTES, TYPED_INGEST_ROUTE_KEYS, type TransportRouteKey } from "../../ingestion/route-table.js";
+
+export const ROUTE_KEYS = TYPED_INGEST_ROUTE_KEYS;
+export type RouteKey = TransportRouteKey;
 
 /**
- * Ingest path templates per route. These are platform-owned topology and are
- * never user-editable. The compiler joins the trusted origin with these paths
- * to derive `transport.routes.*.url`.
+ * Public ingest path templates per route. These include the Fastify module
+ * mount prefix (`/api`) because SDKs call the externally exposed backend paths,
+ * not the ingestion module's internal route suffixes. They are platform-owned
+ * topology and are never user-editable. The compiler joins the trusted origin
+ * with these paths to derive `transport.routes.*.url`.
  */
 export const ROUTE_INGEST_PATHS: Readonly<Record<RouteKey, string>> = {
-  traces: "/v1/traces",
-  requests: "/v1/requests",
-  errors: "/v1/errors",
-  metrics: "/v1/metrics",
-  logs: "/v1/logs",
-  profiles: "/v1/profiles",
-  events: "/v1/events",
-  crons: "/v1/checkins",
-  replays: "/v1/replays",
-};
+  ...Object.fromEntries(TYPED_INGEST_ROUTES.map((route) => [route.routeKey, `/api${route.path}`])),
+} as Readonly<Record<RouteKey, string>>;
 
 /** Deterministic scheduler priority per route. Platform-owned, protected. */
 export const ROUTE_PRIORITY: Readonly<Record<RouteKey, number>> = {
   errors: 1,
-  traces: 2,
-  requests: 3,
-  logs: 4,
-  metrics: 5,
-  events: 6,
-  crons: 7,
-  profiles: 8,
-  replays: 9,
+  events: 2,
+  crons: 3,
+  traces: 4,
+  spans: 5,
+  requests: 6,
+  logs: 7,
+  metrics: 8,
+  profiles: 9,
+  replays: 10,
 };
 
 /** Allowed transport compression modes in schema-v1. */

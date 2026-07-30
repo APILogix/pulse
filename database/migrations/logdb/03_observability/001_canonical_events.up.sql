@@ -28,7 +28,7 @@ BEGIN
         span_id TEXT,
         parent_span_id TEXT,
         session_id TEXT,
-        user_id TEXT,
+        user_id TEXT,/kiro
         service TEXT,
         endpoint TEXT,
         release TEXT,

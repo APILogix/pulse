@@ -120,6 +120,11 @@ ALTER TABLE project_api_keys DROP CONSTRAINT IF EXISTS project_api_keys_rate_lim
 ALTER TABLE project_api_keys ADD CONSTRAINT project_api_keys_rate_limits_check CHECK (rate_limit_per_second > 0 AND rate_limit_per_minute > 0 AND rate_limit_per_hour > 0);
 ALTER TABLE project_api_keys DROP CONSTRAINT IF EXISTS project_api_keys_auto_rotate_days_check;
 ALTER TABLE project_api_keys ADD CONSTRAINT project_api_keys_auto_rotate_days_check CHECK (auto_rotate_days IS NULL OR auto_rotate_days > 0);
+ALTER TABLE project_api_keys DROP CONSTRAINT IF EXISTS project_api_keys_public_key_format_check;
+ALTER TABLE project_api_keys ADD CONSTRAINT project_api_keys_public_key_format_check CHECK (
+  public_key ~ '^(pv_live_|pv_test_)[0-9a-f]{24}$'
+  OR public_key ~ '^pulsiv_[A-Za-z0-9_-]+$'
+);
 DROP INDEX IF EXISTS idx_api_keys_prefix;
 DROP INDEX IF EXISTS idx_api_keys_project_env;
 ALTER TABLE project_api_keys DROP COLUMN IF EXISTS environment, DROP COLUMN IF EXISTS key_hash, DROP COLUMN IF EXISTS key_prefix, DROP COLUMN IF EXISTS scopes;

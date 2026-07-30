@@ -9,7 +9,7 @@
  *
  * Design references:
  * - design.md §4.1 (schema-v1 contract) — required sections, feature/killswitch
- *   keys, sampling signals, integrations, and the nine fixed transport routes.
+ *   keys, sampling signals, integrations, and the ten fixed transport routes.
  * - implementation.md "SDK Acceptance Check" — the exact acceptance rules the
  *   current Node SDK enforces.
  *
@@ -37,15 +37,19 @@ export type SamplingSignal = (typeof SAMPLING_SIGNALS)[number];
 export declare const INTEGRATION_KEYS: readonly ["http", "https", "fetch", "axios", "fastify", "express", "graphql", "prisma", "mongodb", "redis", "bullmq"];
 export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
 /**
- * The nine fixed transport routes. The SDK rejects a document that is missing
- * any of these keys, so the compiler always emits exactly these nine.
+ * The fixed transport routes. They are derived from the ingestion route table,
+ * so the SDK config never advertises a write endpoint the backend does not
+ * register.
  */
-export declare const ROUTE_KEYS: readonly ["traces", "requests", "errors", "metrics", "logs", "profiles", "events", "crons", "replays"];
-export type RouteKey = (typeof ROUTE_KEYS)[number];
+import { type TransportRouteKey } from "../../ingestion/route-table.js";
+export declare const ROUTE_KEYS: readonly TransportRouteKey[];
+export type RouteKey = TransportRouteKey;
 /**
- * Ingest path templates per route. These are platform-owned topology and are
- * never user-editable. The compiler joins the trusted origin with these paths
- * to derive `transport.routes.*.url`.
+ * Public ingest path templates per route. These include the Fastify module
+ * mount prefix (`/api`) because SDKs call the externally exposed backend paths,
+ * not the ingestion module's internal route suffixes. They are platform-owned
+ * topology and are never user-editable. The compiler joins the trusted origin
+ * with these paths to derive `transport.routes.*.url`.
  */
 export declare const ROUTE_INGEST_PATHS: Readonly<Record<RouteKey, string>>;
 /** Deterministic scheduler priority per route. Platform-owned, protected. */

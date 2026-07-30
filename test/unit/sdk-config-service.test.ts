@@ -107,7 +107,7 @@ describe("initialize (R1 atomic + idempotent)", () => {
     const rev = await store.loadRevision(SCOPE, 1);
     expect(rev?.changeType).toBe("initial");
     expect(rev?.compiledSnapshot.schemaVersion).toBe(1);
-    expect(Object.keys(rev?.compiledSnapshot.transport.routes ?? {})).toHaveLength(9);
+    expect(Object.keys(rev?.compiledSnapshot.transport.routes ?? {})).toHaveLength(10);
     expect(rev?.canonicalSha256).toMatch(/^[0-9a-f]{64}$/);
   });
   it("is idempotent (second init does not create a second revision)", async () => {

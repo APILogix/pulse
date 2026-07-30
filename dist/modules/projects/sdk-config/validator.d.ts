@@ -7,7 +7,7 @@
  *   - validateEditableLeaf(): per-leaf type + bounds check used during PUT/PATCH
  *     traversal so a single bad value is reported at its exact pointer.
  *   - validateSchemaV1(): full structural + bounds + cross-field validation of a
- *     compiled snapshot / delivery document (all sections, exactly nine routes).
+ *     compiled snapshot / delivery document (all sections, fixed routes).
  */
 import { type SdkConfigErrorDetail } from "./errors.js";
 import { type SchemaV1Config } from "./schema-v1.js";

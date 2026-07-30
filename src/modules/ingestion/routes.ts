@@ -21,6 +21,8 @@
  *     compromised user account cannot retrigger every failed job in the system.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { createRequire } from "node:module";
+import type { Ajv as AjvInstance } from "ajv";
 import { createGunzip } from "zlib";
 import { Transform, type TransformCallback } from "stream";
 import { authenticate, requireAdmin } from "../../shared/middleware/auth.js";
@@ -40,6 +42,10 @@ import {
   ReplaySchema,
 } from "./types.js";
 import { TYPED_INGEST_ROUTES } from "./route-table.js";
+
+const require = createRequire(import.meta.url);
+const AjvCtor = require("ajv") as { new (options?: Record<string, unknown>): AjvInstance };
+const addFormats = require("ajv-formats") as (ajv: AjvInstance) => AjvInstance;
 
 type FastifyDecoratorName = "postgresWriter";
 
@@ -146,6 +152,15 @@ class DecompressedSizeGuard extends Transform {
 }
 
 export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
+  const ajv = new AjvCtor({
+    coerceTypes: true,
+    useDefaults: true,
+    removeAdditional: false,
+    allErrors: true,
+  });
+  addFormats(ajv);
+  fastify.setValidatorCompiler(({ schema }) => ajv.compile(schema));
+
   const postgresWriter = requireFastifyDecorator<
     FastifyInstance["postgresWriter"]
   >(fastify, "postgresWriter");
@@ -184,10 +199,9 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   );
 
   // ── SDK ingestion endpoints ─────────────────────────────────────────────
-  // All ingestion endpoints validate their bodies via JSON Schema. The schema
-  // is the only line of defense against malformed input reaching handlers, so
-  // we deliberately apply it everywhere, including /v1/init and every typed
-  // write endpoint.
+  // Typed ingestion endpoints validate their bodies via JSON Schema. This
+  // plugin installs its own encapsulated AJV compiler because the rest of the
+  // app uses a Zod validator compiler.
   fastify.post(
     "/v1/init",
     { schema: InitSchema },

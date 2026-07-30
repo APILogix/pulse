@@ -42,6 +42,13 @@ vi.mock('../../src/lib/pgboss.js', () => {
   };
 });
 
+vi.mock('../../src/shared/logdb/lookup-sync.js', () => ({
+  syncApiKeyLookupToLogDbBestEffort: vi.fn(),
+  syncEnvironmentLookupToLogDbBestEffort: vi.fn(),
+  syncEnvironmentSdkConfigLookupToLogDbBestEffort: vi.fn(),
+  syncProjectLookupToLogDbBestEffort: vi.fn(),
+}));
+
 import { IngestionService } from '../../src/modules/ingestion/service.js';
 import { apiKeyCache, type CachedProjectConfig } from '../../src/config/lrucashe.js';
 
@@ -69,7 +76,17 @@ function seedApiKeyCache(): void {
     allowedSdks: [],
     samplingRules: {},
     featureFlags: {},
-    sdkConfig: {},
+    sdkConfig: {
+      sampling: { requests: 0.25, traces: 0.5 },
+      features: { errors: true, requestCapture: true },
+      limits: { maxPayloadSize: 12345 },
+      transport: {
+        retry: { maxRetries: 4 },
+        routes: {
+          events: { url: 'http://localhost:5000/api/v1/events' },
+        },
+      },
+    },
     isActive: true,
     apiKeyId: '44444444-4444-4444-4444-444444444444',
     planTier: 'free',
@@ -150,6 +167,21 @@ describe('IngestionService typed routing', () => {
     expect(result.success).toBe(true);
     expect(result.accepted).toBe(1);
     expect(result.rejected).toBe(0);
+  });
+
+  it('returns the schema-v1 SDK config without duplicate legacy init fields', async () => {
+    service = buildService();
+    const result = await service.initializeSdk(TEST_API_KEY);
+
+    expect(result.success).toBe(true);
+    expect(result.projectId).toBe('11111111-1111-1111-1111-111111111111');
+    expect(result.environment).toBe('production');
+    expect(result.config.transport).toBeDefined();
+    expect((result.config.transport as any).routes.events.url).toBe('http://localhost:5000/api/v1/events');
+    expect(result.config).not.toHaveProperty('ingestUrl');
+    expect(result.config).not.toHaveProperty('apiEndpoint');
+    expect(result).not.toHaveProperty('ingestion');
+    expect(result).not.toHaveProperty('plan');
   });
 
   it('rejects when ANY event in a typed batch is a foreign type', async () => {

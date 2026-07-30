@@ -12,6 +12,7 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { pool } from "../../../config/database.js";
+import { extractApiKeyPrefix } from "../shared/utils.js";
 import { SdkConfigError } from "./errors.js";
 /** Extract the raw API key from `Authorization: Bearer` or `X-API-Key`. */
 function extractApiKey(request) {
@@ -44,7 +45,9 @@ function constantTimeHexEqual(a, b) {
  * granted environment.
  */
 async function resolveApiKeyMapping(rawKey) {
-    const publicKey = rawKey.includes(".") ? rawKey.slice(0, rawKey.lastIndexOf(".")) : rawKey;
+    const publicKey = extractApiKeyPrefix(rawKey);
+    if (!publicKey)
+        return null;
     const result = await pool.query(`SELECT organization_id, project_id, environment_id, secret_hash
        FROM project_api_keys
       WHERE public_key = $1 AND status = 'active' AND deleted_at IS NULL
