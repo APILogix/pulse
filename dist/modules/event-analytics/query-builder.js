@@ -55,6 +55,13 @@ export class AnalyticsQueryBuilder {
         this.params.push(projectId);
         return this;
     }
+    whereEnvironment(environment) {
+        if (!environment)
+            return this;
+        this.conditions.push(`environment = ${this.next()}`);
+        this.params.push(environment);
+        return this;
+    }
     whereEq(column, value) {
         if (value === undefined || value === null)
             return this;

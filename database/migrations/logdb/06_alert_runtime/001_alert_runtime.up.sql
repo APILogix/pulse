@@ -20,7 +20,7 @@ BEGIN
         id UUID NOT NULL DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL,
         project_id UUID,
-        environment_id UUID,
+        environment TEXT,
         rule_id UUID,
         event_id UUID,
         batch_id UUID,
@@ -34,11 +34,18 @@ BEGIN
         error_message TEXT,
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (id, occurred_at)
+        PRIMARY KEY (id, occurred_at),
+        CHECK (
+          environment IS NULL OR (
+            char_length(environment) BETWEEN 1 AND 64
+            AND environment ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          )
+        )
       ) PARTITION BY RANGE (occurred_at)
     $sql$, table_name);
     EXECUTE format('CREATE TABLE IF NOT EXISTS %I_default PARTITION OF %I DEFAULT', table_name, table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (organization_id, rule_id, occurred_at DESC)', 'idx_' || table_name || '_rule_time', table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (project_id, environment, occurred_at DESC)', 'idx_' || table_name || '_environment_time', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (status, occurred_at DESC) WHERE status IS NOT NULL', 'idx_' || table_name || '_status_time', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (payload)', 'idx_' || table_name || '_payload_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING BRIN (occurred_at)', 'idx_' || table_name || '_occurred_brin', table_name);

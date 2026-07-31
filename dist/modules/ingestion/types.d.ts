@@ -22,7 +22,7 @@ export interface SDKErrorEvent {
     requestId: string;
     message: string;
     name: string | Record<string, any>;
-    stack: string[];
+    stack: unknown[];
     fingerprint: string;
     timestamp: number;
     context: Record<string, any>;
@@ -50,9 +50,10 @@ export interface SDKMetricEvent {
 export type SDKEvent = SDKRequestEvent | SDKErrorEvent | SDKLogEvent | SDKMetricEvent;
 /** API Request Body */
 export interface IngestRequest {
-    apiKey: string;
+    apiKey?: string;
     events: SDKEvent[];
     metadata?: {
+        environment: string;
         sdkVersion?: string;
         compression?: 'gzip' | 'none';
         batchId?: string;
@@ -75,6 +76,7 @@ export interface IngestResponse {
 }
 export interface ErrorEventListQuery {
     projectId: string;
+    environment?: string;
     limit?: number;
     offset?: number;
     from?: string;
@@ -91,13 +93,16 @@ export interface ErrorEventRecord {
     id: string;
     eventId: string;
     projectId: string;
+    environment: string;
     requestId: string | null;
     message: string;
     errorType: string;
     fingerprint: string;
     stack: unknown;
     context: unknown;
-    metadata: unknown;
+    metadata: {
+        environment: string;
+    };
     timestamp: string;
     createdAt: string;
     resolvedAt: string | null;
@@ -112,21 +117,13 @@ export interface ErrorEventListResult {
     offset: number;
     hasMore: boolean;
 }
-/** SDK Init Response delivered to the SDK after API-key lookup. */
-export interface SDKInitResponse {
-    success: boolean;
-    projectId: string;
-    environment: string;
-    configRevision: number | null;
-    configHash: string | null;
-    config: Record<string, unknown>;
-}
 /** Internal Enriched Event (after API processing) */
 export interface EnrichedEvent {
     id: string;
     type: EventType;
     projectId: string;
     orgId: string;
+    environment: string;
     requestId?: string;
     receivedAt: number;
     ingestedAt?: string;
@@ -138,6 +135,7 @@ export interface ReplayRequest {
     projectId: string;
     startTime: string;
     endTime: string;
+    environment?: string;
     eventTypes?: EventType[];
     targetQueue?: string;
 }
@@ -158,7 +156,6 @@ export interface HealthStatus {
     timestamp: string;
 }
 export declare const IngestSchema: FastifySchema;
-export declare const InitSchema: FastifySchema;
 export declare const ReplaySchema: FastifySchema;
 export declare const ErrorListSchema: FastifySchema;
 export declare const ErrorByIdSchema: FastifySchema;

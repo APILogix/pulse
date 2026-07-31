@@ -16,6 +16,7 @@ declare const envSchema: z.ZodObject<{
     SHUTDOWN_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     APP_NAME: z.ZodDefault<z.ZodString>;
     APP_URL: z.ZodDefault<z.ZodString>;
+    BACKEND_URL: z.ZodDefault<z.ZodString>;
     API_PUBLIC_URL: z.ZodOptional<z.ZodString>;
     DATABASE_URL: z.ZodString;
     DB_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -42,6 +43,7 @@ declare const envSchema: z.ZodObject<{
     LOG_DB_CHUNK_INTERVAL: z.ZodDefault<z.ZodString>;
     LOG_DB_COMPRESS_AFTER: z.ZodDefault<z.ZodString>;
     LOG_DB_RETENTION: z.ZodDefault<z.ZodString>;
+    LOG_DB_AUTO_MIGRATE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     CLICKHOUSE_URL: z.ZodOptional<z.ZodString>;
     REDIS_URL: z.ZodString;
     JWT_SECRET: z.ZodString;
@@ -175,6 +177,7 @@ export declare const env: {
     SHUTDOWN_TIMEOUT_MS: number;
     APP_NAME: string;
     APP_URL: string;
+    BACKEND_URL: string;
     DATABASE_URL: string;
     DB_POOL_MAX: number;
     DB_POOL_MIN: number;
@@ -198,6 +201,7 @@ export declare const env: {
     LOG_DB_CHUNK_INTERVAL: string;
     LOG_DB_COMPRESS_AFTER: string;
     LOG_DB_RETENTION: string;
+    LOG_DB_AUTO_MIGRATE: boolean;
     REDIS_URL: string;
     JWT_SECRET: string;
     JWT_REFRESH_SECRET: string;

@@ -67,7 +67,6 @@ export declare class ApiKeyService extends BaseProjectService {
     publicApiKey(apiKey: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey;
     summarizeUsage(series: ApiKeyUsageSeriesPoint[]): ApiKeyUsage["summary"];
     summarizeBulk(results: BulkOperationResult["results"]): BulkOperationResult;
-    private configObject;
     evictApiKeyConfig(secretHash: string): void;
 }
 //# sourceMappingURL=api-key.service.d.ts.map

@@ -44,9 +44,9 @@ export class EventAnalyticsService {
   async getOverview(orgId: string, q: TimeRangeQuery): Promise<Record<string, unknown>> {
     const range = resolveTimeRange(q);
     const [errors, requests, uniqueUsers] = await Promise.all([
-      this.repo.getErrorStats(orgId, q.projectId, range),
-      this.repo.getRequestStats(orgId, q.projectId, range),
-      this.repo.getUniqueUserCount(orgId, q.projectId, range),
+      this.repo.getErrorStats(orgId, q.projectId, q.environment, range),
+      this.repo.getRequestStats(orgId, q.projectId, q.environment, range),
+      this.repo.getUniqueUserCount(orgId, q.projectId, q.environment, range),
     ]);
     return {
       errors,
@@ -61,9 +61,9 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const bucket = q.granularity;
     const [errorSeries, requestSeries] = await Promise.all([
-      this.repo.getEventTrend('errors', orgId, q.projectId, range, bucket,
+      this.repo.getEventTrend('errors', orgId, q.projectId, q.environment, range, bucket,
         `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal, COUNT(*) FILTER (WHERE severity='error')::bigint AS error`),
-      this.repo.getEventTrend('requests', orgId, q.projectId, range, bucket,
+      this.repo.getEventTrend('requests', orgId, q.projectId, q.environment, range, bucket,
         `COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS errors, AVG(latency_ms)::int AS avg_latency`),
     ]);
     return { errors: errorSeries, requests: requestSeries, granularity: bucket };
@@ -73,7 +73,7 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const [dbOk, requests] = await Promise.all([
       this.repo.ping(),
-      this.repo.getRequestStats(orgId, q.projectId, range),
+      this.repo.getRequestStats(orgId, q.projectId, q.environment, range),
     ]);
     // Simple health score: 100 minus error-rate penalty.
     const score = Math.max(0, Math.round(100 - requests.errorRate * 100));
@@ -92,6 +92,7 @@ export class EventAnalyticsService {
     const start = Date.now();
     const { rows, total } = await this.repo.listErrors(orgId, range, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.severity !== undefined ? { severity: q.severity } : {}),
       ...(q.service !== undefined ? { service: q.service } : {}),
       ...(q.release !== undefined ? { release: q.release } : {}),
@@ -102,8 +103,13 @@ export class EventAnalyticsService {
     return { data: rows, meta: { total, limit: q.limit, offset: q.offset, queryTimeMs: Date.now() - start } };
   }
 
-  async getError(orgId: string, id: string): Promise<Record<string, unknown>> {
-    const row = await this.repo.getErrorById(orgId, id);
+  async getError(
+    orgId: string,
+    id: string,
+    projectId?: string,
+    environment?: string,
+  ): Promise<Record<string, unknown>> {
+    const row = await this.repo.getErrorById(orgId, id, projectId, environment);
     if (!row) throw new AnalyticsNotFoundError('Error event');
     return row;
   }
@@ -111,6 +117,7 @@ export class EventAnalyticsService {
   async listErrorGroups(orgId: string, q: ListErrorGroupsQuery): Promise<Record<string, unknown>> {
     const { rows, total } = await this.repo.listErrorGroups(orgId, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.status !== undefined ? { status: q.status } : {}),
       ...(q.search !== undefined ? { search: q.search } : {}),
       sortBy: q.sortBy, sortOrder: q.sortOrder, limit: q.limit, offset: q.offset,
@@ -118,38 +125,58 @@ export class EventAnalyticsService {
     return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
   }
 
-  async getErrorGroup(orgId: string, fingerprint: string): Promise<Record<string, unknown>> {
-    const group = await this.repo.getErrorGroup(orgId, fingerprint);
+  async getErrorGroup(
+    orgId: string,
+    fingerprint: string,
+    projectId: string,
+    environment: string,
+  ): Promise<Record<string, unknown>> {
+    const group = await this.repo.getErrorGroup(orgId, projectId, fingerprint, environment);
     if (!group) throw new AnalyticsNotFoundError('Error group');
     return group;
   }
 
-  async setErrorGroupStatus(orgId: string, meta: RequestMeta, fingerprint: string, status: 'resolved' | 'ignored' | 'unresolved' | 'muted', assignedTo: string | null): Promise<Record<string, unknown>> {
-    const updated = await this.repo.updateErrorGroupStatus(orgId, fingerprint, status, assignedTo);
+  async setErrorGroupStatus(
+    orgId: string,
+    meta: RequestMeta,
+    fingerprint: string,
+    projectId: string,
+    environment: string,
+    status: 'resolved' | 'ignored' | 'unresolved' | 'muted',
+    assignedTo: string | null,
+  ): Promise<Record<string, unknown>> {
+    const updated = await this.repo.updateErrorGroupStatus(
+      orgId,
+      projectId,
+      fingerprint,
+      environment,
+      status,
+      assignedTo,
+    );
     if (!updated) throw new AnalyticsNotFoundError('Error group');
-    this.audit(orgId, meta, `analytics.error_group.${status}`, 'analytics_error_group', fingerprint);
+    this.audit(orgId, meta, `analytics.error_group.${status}`, 'analytics_error_group', `${projectId}:${fingerprint}`);
     return updated;
   }
 
   async getErrorTrends(orgId: string, q: TrendsQuery): Promise<Array<Record<string, unknown>>> {
     const range = resolveTimeRange(q);
-    return this.repo.getEventTrend('errors', orgId, q.projectId, range, q.granularity,
+    return this.repo.getEventTrend('errors', orgId, q.projectId, q.environment, range, q.granularity,
       `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal`);
   }
 
   // ── Performance ──────────────────────────────────────────────────────────
   async getRoutePerformance(orgId: string, q: RoutePerfQuery): Promise<Array<Record<string, unknown>>> {
     const since = new Date(Date.now() - q.days * 24 * 60 * 60 * 1000);
-    return this.repo.getRoutePerformance(orgId, q.projectId, since, q.limit);
+    return this.repo.getRoutePerformance(orgId, q.projectId, q.environment, since, q.limit);
   }
 
   async getLatencyDistribution(orgId: string, q: TimeRangeQuery): Promise<Array<Record<string, unknown>>> {
-    return this.repo.getLatencyDistribution(orgId, q.projectId, resolveTimeRange(q));
+    return this.repo.getLatencyDistribution(orgId, q.projectId, q.environment, resolveTimeRange(q));
   }
 
   async getApdex(orgId: string, q: TimeRangeQuery): Promise<Record<string, unknown>> {
     const range = resolveTimeRange(q);
-    const counts = await this.repo.getApdexCounts(orgId, q.projectId, range, APDEX_THRESHOLD_MS);
+    const counts = await this.repo.getApdexCounts(orgId, q.projectId, q.environment, range, APDEX_THRESHOLD_MS);
     return { apdex: computeApdex(counts.satisfied, counts.tolerating, counts.total), thresholdMs: APDEX_THRESHOLD_MS, ...counts };
   }
 
@@ -158,6 +185,7 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const { rows, total } = await this.repo.listRequests(orgId, range, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.method !== undefined ? { method: q.method } : {}),
       ...(q.statusCode !== undefined ? { statusCode: q.statusCode } : {}),
       ...(q.route !== undefined ? { route: q.route } : {}),
@@ -168,16 +196,26 @@ export class EventAnalyticsService {
     return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
   }
 
-  async getRequest(orgId: string, id: string): Promise<Record<string, unknown>> {
-    const row = await this.repo.getRequestById(orgId, id);
+  async getRequest(
+    orgId: string,
+    id: string,
+    projectId?: string,
+    environment?: string,
+  ): Promise<Record<string, unknown>> {
+    const row = await this.repo.getRequestById(orgId, id, projectId, environment);
     if (!row) throw new AnalyticsNotFoundError('Request event');
     return row;
   }
 
-  async getTraceWaterfall(orgId: string, traceId: string): Promise<Record<string, unknown>> {
+  async getTraceWaterfall(
+    orgId: string,
+    traceId: string,
+    projectId: string,
+    environment: string,
+  ): Promise<Record<string, unknown>> {
     const [trace, spans] = await Promise.all([
-      this.repo.getTraceById(orgId, traceId),
-      this.repo.getSpansByTrace(orgId, traceId),
+      this.repo.getTraceById(orgId, traceId, projectId, environment),
+      this.repo.getSpansByTrace(orgId, traceId, projectId, environment),
     ]);
     if (!trace && spans.length === 0) throw new AnalyticsNotFoundError('Trace');
     const waterfall = buildWaterfallTree(spans as unknown as FlatSpan[]);
@@ -188,6 +226,7 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const { rows, total } = await this.repo.listTraces(orgId, range, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.traceId !== undefined ? { traceId: q.traceId } : {}),
       ...(q.requestId !== undefined ? { requestId: q.requestId } : {}),
       ...(q.service !== undefined ? { service: q.service } : {}),
@@ -200,21 +239,26 @@ export class EventAnalyticsService {
     return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
   }
 
-  async getTrace(orgId: string, traceId: string): Promise<Record<string, unknown>> {
-    return this.getTraceWaterfall(orgId, traceId);
+  async getTrace(
+    orgId: string,
+    traceId: string,
+    projectId: string,
+    environment: string,
+  ): Promise<Record<string, unknown>> {
+    return this.getTraceWaterfall(orgId, traceId, projectId, environment);
   }
 
   // ── Metrics ─────────────────────────────────────────────────────────────
   async listMetricNames(orgId: string, q: TimeRangeQuery): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listMetricNames(orgId, q.projectId, resolveTimeRange(q));
+    return this.repo.listMetricNames(orgId, q.projectId, q.environment, resolveTimeRange(q));
   }
 
   async getMetricSeries(orgId: string, name: string, q: MetricSeriesQuery): Promise<Array<Record<string, unknown>>> {
-    return this.repo.getMetricSeries(orgId, name, resolveTimeRange(q), q.granularity, q.aggregate, q.projectId);
+    return this.repo.getMetricSeries(orgId, name, resolveTimeRange(q), q.granularity, q.aggregate, q.projectId, q.environment);
   }
 
   async getMetricStats(orgId: string, name: string, q: TimeRangeQuery): Promise<Record<string, unknown>> {
-    const stats = await this.repo.getMetricStats(orgId, name, resolveTimeRange(q), q.projectId);
+    const stats = await this.repo.getMetricStats(orgId, name, resolveTimeRange(q), q.projectId, q.environment);
     if (!stats) throw new AnalyticsNotFoundError('Metric');
     return stats;
   }
@@ -224,6 +268,7 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const { rows, total } = await this.repo.listLogs(orgId, range, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.level !== undefined ? { level: q.level } : {}),
       ...(q.service !== undefined ? { service: q.service } : {}),
       ...(q.search !== undefined ? { search: q.search } : {}),
@@ -240,7 +285,7 @@ export class EventAnalyticsService {
   }
 
   async listObservedServices(orgId: string, q: TimeRangeQuery, limit = 50): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listObservedServices(orgId, resolveTimeRange(q), q.projectId, limit);
+    return this.repo.listObservedServices(orgId, resolveTimeRange(q), q.projectId, q.environment, limit);
   }
 
   async summarizeLogs(
@@ -250,6 +295,7 @@ export class EventAnalyticsService {
   ): Promise<Array<Record<string, unknown>>> {
     return this.repo.summarizeLogs(orgId, resolveTimeRange(q), {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(filters.level !== undefined ? { level: filters.level } : {}),
       ...(filters.service !== undefined ? { service: filters.service } : {}),
       ...(filters.search !== undefined ? { search: filters.search } : {}),
@@ -263,15 +309,15 @@ export class EventAnalyticsService {
     q: TimeRangeQuery,
     limit = 50,
   ): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listServiceEndpoints(orgId, service, resolveTimeRange(q), q.projectId, limit);
+    return this.repo.listServiceEndpoints(orgId, service, resolveTimeRange(q), q.projectId, q.environment, limit);
   }
 
-  async pollLogsSince(orgId: string, since: Date, projectId: string | undefined): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listLogsSince(orgId, since, projectId, 100);
+  async pollLogsSince(orgId: string, since: Date, projectId: string | undefined, environment: string | undefined): Promise<Array<Record<string, unknown>>> {
+    return this.repo.listLogsSince(orgId, since, projectId, environment, 100);
   }
 
-  async pollErrorsSince(orgId: string, since: Date, projectId: string | undefined): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listErrorsSince(orgId, since, projectId, 100);
+  async pollErrorsSince(orgId: string, since: Date, projectId: string | undefined, environment: string | undefined): Promise<Array<Record<string, unknown>>> {
+    return this.repo.listErrorsSince(orgId, since, projectId, environment, 100);
   }
 
   // ── Sessions / users ───────────────────────────────────────────────────
@@ -279,6 +325,7 @@ export class EventAnalyticsService {
     const range = resolveTimeRange(q);
     const { rows, total } = await this.repo.listSessions(orgId, range, {
       ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+      ...(q.environment !== undefined ? { environment: q.environment } : {}),
       ...(q.userId !== undefined ? { userId: q.userId } : {}),
       ...(q.crashedOnly !== undefined ? { crashedOnly: q.crashedOnly } : {}),
       limit: q.limit, offset: q.offset,
@@ -286,28 +333,40 @@ export class EventAnalyticsService {
     return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
   }
 
-  async getSession(orgId: string, sessionId: string): Promise<Record<string, unknown>> {
-    const row = await this.repo.getSession(orgId, sessionId);
+  async getSession(
+    orgId: string,
+    sessionId: string,
+    projectId: string,
+    environment: string,
+  ): Promise<Record<string, unknown>> {
+    const row = await this.repo.getSession(orgId, sessionId, projectId, environment);
     if (!row) throw new AnalyticsNotFoundError('Session');
     return row;
   }
 
   async listUsers(orgId: string, q: TimeRangeQuery & { limit: number; offset: number }): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listUsers(orgId, resolveTimeRange(q), q.projectId, q.limit, q.offset);
+    return this.repo.listUsers(orgId, resolveTimeRange(q), q.projectId, q.environment, q.limit, q.offset);
   }
 
   async getUserJourney(orgId: string, userId: string, q: TimeRangeQuery): Promise<Record<string, unknown>> {
     const range = resolveTimeRange(q);
-    return this.repo.getUserJourney(orgId, userId, range, 200);
+    return this.repo.getUserJourney(orgId, userId, range, q.projectId, q.environment, 200);
   }
 
   // ── Crons ────────────────────────────────────────────────────────────────
-  async listCrons(orgId: string, projectId: string | undefined): Promise<Array<Record<string, unknown>>> {
-    return this.repo.listCrons(orgId, projectId);
+  async listCrons(orgId: string, projectId: string | undefined, environment: string | undefined): Promise<Array<Record<string, unknown>>> {
+    return this.repo.listCrons(orgId, projectId, environment);
   }
 
-  async getCronHistory(orgId: string, slug: string, limit: number, offset: number): Promise<Array<Record<string, unknown>>> {
-    return this.repo.getCronHistory(orgId, slug, limit, offset);
+  async getCronHistory(
+    orgId: string,
+    slug: string,
+    projectId: string | undefined,
+    environment: string | undefined,
+    limit: number,
+    offset: number,
+  ): Promise<Array<Record<string, unknown>>> {
+    return this.repo.getCronHistory(orgId, slug, projectId, environment, limit, offset);
   }
 
   // ── Dashboards ──────────────────────────────────────────────────────────
@@ -417,7 +476,7 @@ export class EventAnalyticsService {
   // ── Export ─────────────────────────────────────────────────────────────
   async exportData(orgId: string, body: ExportBody): Promise<{ rows: Array<Record<string, unknown>>; format: 'csv' | 'json' }> {
     const range = resolveTimeRange({ range: body.range });
-    const rows = await this.repo.exportDataset(orgId, body.dataset, range, body.projectId, body.limit);
+    const rows = await this.repo.exportDataset(orgId, body.dataset, range, body.projectId, body.environment, body.limit);
     return { rows, format: body.format };
   }
 

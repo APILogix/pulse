@@ -10,7 +10,7 @@ export declare class EventProcessor {
     private readonly log;
     private readonly writer;
     private readonly usage;
-    constructor(pool: Pool, metrics: WorkerMetrics, log: Logger);
+    constructor(pool: Pool, metrics: WorkerMetrics, log: Logger, usagePool?: Pool);
     start(): void;
     stop(): Promise<void>;
     /** Process one ingest job payload. Throws to fail the job (pg-boss retry). */

@@ -72,6 +72,9 @@ export async function analyticsRoutes(fastify, _options) {
             status: parseStatus(query.status),
             limit: parseLimit(query.limit, 25),
         };
+        const environment = parseEnvironment(query.environment);
+        if (environment !== undefined)
+            errorGroupQuery.environment = environment;
         const priority = parseOptionalInt(query.priority);
         if (priority !== undefined) {
             Object.assign(errorGroupQuery, { priority });
@@ -166,7 +169,11 @@ function parseTimeRange(query, fallbackMs) {
     // dashboard/list calls can actually reuse LRU/Redis entries.
     const to = explicitTo ?? floorDate(new Date(), DEFAULT_CACHE_WINDOW_MS);
     const from = parseDate(query.from) ?? new Date(to.getTime() - fallbackMs);
-    return { from, to };
+    const range = { from, to };
+    const environment = parseEnvironment(query.environment);
+    if (environment !== undefined)
+        range.environment = environment;
+    return range;
 }
 function floorDate(date, bucketMs) {
     return new Date(Math.floor(date.getTime() / bucketMs) * bucketMs);
@@ -188,6 +195,20 @@ function parseOptionalInt(value) {
     }
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) ? parsed : undefined;
+}
+function parseEnvironment(value) {
+    if (value === undefined)
+        return undefined;
+    const environment = value.trim();
+    if (environment.length === 0 ||
+        environment.length > 64 ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(environment)) {
+        const error = new Error('Invalid environment');
+        error.statusCode = 400;
+        error.code = 'INVALID_ENVIRONMENT';
+        throw error;
+    }
+    return environment;
 }
 function parseSort(value) {
     return value === "asc" ? "asc" : "desc";

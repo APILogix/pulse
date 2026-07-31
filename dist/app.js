@@ -121,8 +121,8 @@ export async function buildApp() {
         origin: buildCorsOrigin(),
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
-        exposedHeaders: ['X-Request-ID'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
+        exposedHeaders: ['X-Request-ID', 'ETag', 'X-Config-Revision'],
     });
     await app.register(compress, {
         threshold: 1024, // Only compress responses > 1KB
@@ -168,20 +168,18 @@ export async function buildApp() {
     // ── Prometheus Metrics ─────────────────────────────────────────────
     await app.register(registerMetricsPlugin);
     // ── Business Modules ───────────────────────────────────────────────
-    // Registration order matters: modules that provide decorators consumed
-    // by later modules must be registered first. The dependency chain is:
-    //
-    //   ingestion (provides redisCache)
-    //       └── projects (consumes redisCache)
-    //
-    // All other modules are independent.
+    // Registration order matters only for explicit Fastify decorators. SDK
+    // delivery is registered before ingestion because ingestion delegates SDK
+    // initialization to the canonical RemoteSdkConfigService. Organization is
+    // registered before projects because project services consume its decorators.
+    // All control-plane caching is in-process LRU; no module depends on Redis.
     await app.register(registerAuthModule);
     await app.register(registerUserAccountModule);
+    await app.register(registerSdkConfigDeliveryModule); // Canonical compiler/delivery used by init + admin
     await app.register(registerOrganizationModule);
     await app.register(registerBillingModule);
-    await app.register(ingestionModule); // Must be before projects
-    await app.register(registerProjectsModule); // Depends on ingestion.redisCache
-    await app.register(registerSdkConfigDeliveryModule); // API-key SDK delivery: POST /v1/sdk-config
+    await app.register(ingestionModule); // Depends on sdk-config delivery
+    await app.register(registerProjectsModule);
     await app.register(registerAnalyticsModule);
     await app.register(registerConnectorsModule);
     await app.register(registerAlertingModule);

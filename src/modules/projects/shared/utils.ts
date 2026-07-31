@@ -42,6 +42,7 @@ export const ProjectErrorCodes = {
   INSUFFICIENT_PERMISSIONS: 403,
   ENVIRONMENT_NOT_FOUND: 404,
   ENVIRONMENT_EXISTS: 409,
+  ENVIRONMENT_NOT_SOFT_DELETED: 409,
   API_KEY_NOT_FOUND: 404,
   API_KEY_LIMIT_EXCEEDED: 400,
   API_KEY_REVOKED: 400,
@@ -180,8 +181,8 @@ export function hashApiKey(rawKey: string): string {
 /**
  * Mint a new API key.
  *
- * Format: `pv_live_{24 hex}.{32 hex}` for Production and
- * `pv_test_{24 hex}.{32 hex}` for every non-production environment. The
+ * Format: `pv_live_{24 hex}.{64 hex}` for Production and
+ * `pv_test_{24 hex}.{64 hex}` for every non-production environment. The
  * segment before the dot is the public identifier; the full string is hashed
  * for persistence. Environment identity is stored in
  * project_api_keys.environment_id, not leaked into the public credential prefix.

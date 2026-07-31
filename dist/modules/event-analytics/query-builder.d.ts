@@ -36,6 +36,7 @@ export declare class AnalyticsQueryBuilder {
     private next;
     whereTimeRange(start: Date, end: Date, column?: string): this;
     whereProject(projectId?: string): this;
+    whereEnvironment(environment?: string): this;
     whereEq(column: string, value: unknown): this;
     whereRaw(fragment: string, value: unknown): this;
     whereTrue(column: string, enabled?: boolean): this;

@@ -106,8 +106,14 @@ export class WorkerRegistry {
   constructor(
     private readonly pool: Pool,
     private readonly log: Logger,
+    telemetryPool: Pool = pool,
   ) {
-    this.processor = new EventProcessor(pool, this.metrics, log.child({ component: 'event-processor' }));
+    this.processor = new EventProcessor(
+      telemetryPool,
+      this.metrics,
+      log.child({ component: 'event-processor' }),
+      pool,
+    );
     this.rollup = new UsageRollup(pool, this.metrics, log.child({ component: 'usage-rollup' }));
     this.metricsServer = new MetricsServer(this.metrics, pool, log.child({ component: 'metrics-server' }));
   }
@@ -277,7 +283,7 @@ export class WorkerRegistry {
         jobType: typeof d.eventType === 'string' ? d.eventType : 'unknown',
         orgId: d.organizationId,
         projectId: d.projectId,
-        payload: d.payload ?? null,
+        payload: d,
         attempts: 1,
         lastError: typeof d.error === 'string' ? d.error : 'validation failed',
         errorCode: 'validation_failed',

@@ -9,6 +9,6 @@ export interface BillingProvisioningResult {
 }
 /** SQL boundary for the Billing-owned part of organization provisioning. */
 export declare class BillingProvisioningRepository {
-    provisionFreeSubscription(client: PoolClient, organizationId: string): Promise<BillingProvisioningResult>;
+    provisionDefaultSubscription(client: PoolClient, organizationId: string): Promise<BillingProvisioningResult>;
 }
 //# sourceMappingURL=repository.d.ts.map

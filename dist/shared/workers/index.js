@@ -7,7 +7,7 @@ import { createIngestionJobHandler } from '../../modules/ingestion/pipeline/inge
 const workerLogger = logger.child({ component: 'worker-registry' });
 export function initializeWorkers(deps) {
     const queue = new PgQueue(deps.pool, { queue: 'ingestion' });
-    const writer = new TelemetryWriter(deps.pool);
+    const writer = new TelemetryWriter(deps.telemetryPool ?? deps.pool);
     const handler = createIngestionJobHandler(writer);
     const concurrency = deps.concurrency ?? 4;
     const poolMax = 10; // pgPool max from main.ts

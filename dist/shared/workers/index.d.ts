@@ -14,7 +14,10 @@ import type { Pool } from 'pg';
 import { PgQueue } from '../../modules/ingestion/queue/pg-queue.js';
 import { PgQueueWorker } from '../../modules/ingestion/queue/pg-queue-worker.js';
 export interface WorkerDependencies {
+    /** Primary/control-plane pool for legacy queue claims. */
     pool: Pool;
+    /** Log DB pool for telemetry event persistence. Defaults to pool for tests only. */
+    telemetryPool?: Pool;
     /** Number of concurrent PgQueueWorkers in this process. */
     concurrency?: number;
     shutdown?: () => Promise<void>;

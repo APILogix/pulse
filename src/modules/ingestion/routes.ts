@@ -23,8 +23,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createRequire } from "node:module";
 import type { Ajv as AjvInstance } from "ajv";
-import { createGunzip } from "zlib";
-import { Transform, type TransformCallback } from "stream";
 import { authenticate, requireAdmin } from "../../shared/middleware/auth.js";
 import {
   requireProjectMembershipFromBody,
@@ -32,14 +30,15 @@ import {
 } from "../../shared/middleware/tenant.js";
 import { extractApiKeyFromRequest } from "./utils/api-key.js";
 import { env } from "../../config/env.js";
+import { acceptEmptyJsonBodyAsObject } from "../../shared/http/empty-json-body.js";
 import { IngestionController } from "./controller.js";
 import { IngestionService } from "./service.js";
 import {
   ErrorByIdSchema,
   ErrorListSchema,
   IngestSchema,
-  InitSchema,
   ReplaySchema,
+  type IngestRequest,
 } from "./types.js";
 import { TYPED_INGEST_ROUTES } from "./route-table.js";
 
@@ -116,42 +115,45 @@ function assertControllerMethods(controller: IngestionController): void {
   }
 }
 
-/**
- * Cumulative decompressed-byte guard for gzip ingest bodies. The SDK
- * transport contract allows `Content-Encoding: gzip` batches; this caps the
- * INFLATED size (zip-bomb protection) so a small compressed payload cannot
- * expand into unbounded memory in the JSON parser. On overflow the stream
- * errors with a 413-tagged failure, which the global error handler maps to
- * "Request body too large".
- */
-class DecompressedSizeGuard extends Transform {
-  private seen = 0;
-
-  constructor(private readonly maxBytes: number) {
-    super();
+function ingestBodySummary(body: unknown): Record<string, unknown> {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { bodyType: typeof body };
   }
-
-  override _transform(
-    chunk: Buffer,
-    _encoding: BufferEncoding,
-    callback: TransformCallback,
-  ): void {
-    this.seen += chunk.length;
-    if (this.seen > this.maxBytes) {
-      const err = new Error("Decompressed body exceeds maximum allowed size") as Error & {
-        statusCode: number;
-        code: string;
-      };
-      err.statusCode = 413;
-      err.code = "FST_ERR_GZIP_BODY_TOO_LARGE";
-      callback(err);
-      return;
+  const ingest = body as Partial<IngestRequest>;
+  const events = Array.isArray(ingest.events) ? ingest.events : [];
+  const types = new Map<string, number>();
+  const eventShapeSamples: Array<Record<string, unknown>> = [];
+  let approximateEventBytes = 0;
+  for (const [index, event] of events.entries()) {
+    if (event && typeof event === "object") {
+      const record = event as unknown as Record<string, unknown>;
+      const type = String(record.type ?? "unknown");
+      types.set(type, (types.get(type) ?? 0) + 1);
+      if (eventShapeSamples.length < 3) {
+        eventShapeSamples.push({
+          index,
+          type,
+          keys: Object.keys(record).slice(0, 30),
+        });
+      }
     }
-    callback(null, chunk);
+    approximateEventBytes += Buffer.byteLength(JSON.stringify(event ?? null), "utf8");
   }
+  return {
+    environment: ingest.metadata?.environment,
+    sdkVersion: ingest.metadata?.sdkVersion,
+    batchId: ingest.metadata?.batchId,
+    declaredCompression: ingest.metadata?.compression,
+    eventCount: events.length,
+    eventTypes: Object.fromEntries(types),
+    eventShapeSamples,
+    approximateEventBytes,
+  };
 }
 
 export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
+  acceptEmptyJsonBodyAsObject(fastify);
+
   const ajv = new AjvCtor({
     coerceTypes: true,
     useDefaults: true,
@@ -173,6 +175,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
       defaultRateLimitPerSecond: env.INGESTION_DEFAULT_RATE_PER_SECOND,
       defaultRateLimitPerMinute: env.INGESTION_DEFAULT_RATE_PER_MINUTE,
     },
+    fastify.sdkConfigDelivery,
   );
 
   const controller = new IngestionController(service);
@@ -180,23 +183,64 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.addHook("onClose", async () => service.shutdown());
 
-  // ── Gzip request decompression (SDK transport contract) ─────────────────
-  // Registered in this encapsulated plugin scope, so it only affects
-  // ingestion routes. When the SDK sends `Content-Encoding: gzip`, the raw
-  // body stream is inflated through zlib plus a cumulative byte guard BEFORE
-  // the JSON parser sees it; non-gzip requests pass through untouched.
-  fastify.addHook(
-    "preParsing",
-    (request, _reply, payload, done) => {
-      if (request.headers["content-encoding"] === "gzip") {
-        const gunzip = createGunzip();
-        const guard = new DecompressedSizeGuard(env.INGESTION_GZIP_MAX_BYTES);
-        done(null, payload.pipe(gunzip).pipe(guard));
-        return;
-      }
-      done(null, payload);
-    },
-  );
+  // ── Ingestion request telemetry ─────────────────────────────────────────
+  // Request gzip decompression is handled by the root @fastify/compress plugin.
+  // Do not gunzip again here: double-decompression causes FST_CP_ERR_INVALID_CONTENT.
+  fastify.addHook("onRequest", async (request) => {
+    request.log.info(
+      {
+        method: request.method,
+        url: request.url,
+        contentType: request.headers["content-type"],
+        contentEncoding: request.headers["content-encoding"],
+        contentLength: request.headers["content-length"],
+        userAgent: request.headers["user-agent"],
+      },
+      "Ingestion request received",
+    );
+  });
+
+  fastify.addHook("preHandler", async (request) => {
+    if (request.method !== "POST") return;
+    const summary = ingestBodySummary(request.body);
+    console.log("[PULSE INGEST DEBUG] event types received:", summary.eventTypes);
+    request.log.info(
+      {
+        method: request.method,
+        url: request.url,
+        contentEncoding: request.headers["content-encoding"],
+        decompressed: request.headers["content-encoding"] === "gzip",
+        body: summary,
+      },
+      "Ingestion request body after decompression",
+    );
+  });
+
+  fastify.addHook("onResponse", async (request, reply) => {
+    request.log.info(
+      {
+        method: request.method,
+        url: request.url,
+        statusCode: reply.statusCode,
+        contentEncoding: request.headers["content-encoding"],
+      },
+      "Ingestion request completed",
+    );
+  });
+
+  fastify.addHook("onError", async (request, _reply, error) => {
+    request.log.warn(
+      {
+        err: error,
+        method: request.method,
+        url: request.url,
+        contentType: request.headers["content-type"],
+        contentEncoding: request.headers["content-encoding"],
+        contentLength: request.headers["content-length"],
+      },
+      "Ingestion request failed",
+    );
+  });
 
   // ── SDK ingestion endpoints ─────────────────────────────────────────────
   // Typed ingestion endpoints validate their bodies via JSON Schema. This
@@ -204,7 +248,6 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   // app uses a Zod validator compiler.
   fastify.post(
     "/v1/init",
-    { schema: InitSchema },
     controller.init.bind(controller),
   );
 

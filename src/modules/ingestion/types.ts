@@ -25,7 +25,7 @@ export interface SDKErrorEvent {
   requestId: string;
   message: string;
   name: string | Record<string, any>;
-  stack: string[];
+  stack: unknown[];
   fingerprint: string;
   timestamp: number;
   context: Record<string, any>;
@@ -57,9 +57,10 @@ export type SDKEvent = SDKRequestEvent | SDKErrorEvent | SDKLogEvent | SDKMetric
 
 /** API Request Body */
 export interface IngestRequest {
-  apiKey: string;
+  apiKey?: string;
   events: SDKEvent[];
   metadata?: {
+    environment: string;
     sdkVersion?: string;
     compression?: 'gzip' | 'none';
     batchId?: string;
@@ -81,6 +82,7 @@ export interface IngestResponse {
 
 export interface ErrorEventListQuery {
   projectId: string;
+  environment?: string;
   limit?: number;
   offset?: number;
   from?: string;
@@ -99,13 +101,14 @@ export interface ErrorEventRecord {
   id: string;
   eventId: string;
   projectId: string;
+  environment: string;
   requestId: string | null;
   message: string;
   errorType: string;
   fingerprint: string;
   stack: unknown;
   context: unknown;
-  metadata: unknown;
+  metadata: { environment: string };
   timestamp: string;
   createdAt: string;
   resolvedAt: string | null;
@@ -122,22 +125,13 @@ export interface ErrorEventListResult {
   hasMore: boolean;
 }
 
-/** SDK Init Response delivered to the SDK after API-key lookup. */
-export interface SDKInitResponse {
-  success: boolean;
-  projectId: string;
-  environment: string;
-  configRevision: number | null;
-  configHash: string | null;
-  config: Record<string, unknown>;
-}
-
 /** Internal Enriched Event (after API processing) */
 export interface EnrichedEvent {
   id: string;
   type: EventType;
   projectId: string;
   orgId: string;
+  environment: string;
   requestId?: string;
   receivedAt: number;
   ingestedAt?: string;
@@ -150,6 +144,7 @@ export interface ReplayRequest {
   projectId: string;
   startTime: string;
   endTime: string;
+  environment?: string;
   eventTypes?: EventType[];
   targetQueue?: string;
 }
@@ -209,7 +204,20 @@ export const IngestSchema: FastifySchema = {
             userId: { type: ['string', 'null'] },
             message: { type: 'string' },
             fingerprint: { type: 'string' },
-            stack: { type: 'array', items: { type: 'string' } },
+            stack: {
+              type: 'array',
+              maxItems: 200,
+              items: {
+                anyOf: [
+                  { type: 'string' },
+                  { type: 'object' },
+                  { type: 'array' },
+                  { type: 'number' },
+                  { type: 'boolean' },
+                  { type: 'null' },
+                ],
+              },
+            },
             context: { type: 'object' },
             level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
             headers: { type: 'object' },
@@ -217,18 +225,24 @@ export const IngestSchema: FastifySchema = {
           }
         }
       },
-      metadata: { type: 'object' }
+      metadata: {
+        type: 'object',
+        required: [],
+        properties: {
+          environment: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 128,
+            pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+          },
+          sdkVersion: { type: 'string', maxLength: 64 },
+          compression: { type: 'string', enum: ['gzip', 'none'] },
+          batchId: { type: 'string', maxLength: 128 },
+        },
+        additionalProperties: false,
+      }
     }
   }
-};
-
-export const InitSchema: FastifySchema = {
-  body: {
-    type: 'object',
-    properties: {
-      apiKey: { type: 'string', minLength: 32, maxLength: 128 },
-    },
-  },
 };
 
 export const ReplaySchema: FastifySchema = {
@@ -239,6 +253,12 @@ export const ReplaySchema: FastifySchema = {
       projectId: { type: 'string', format: 'uuid' },
       startTime: { type: 'string', format: 'date-time' },
       endTime: { type: 'string', format: 'date-time' },
+      environment: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+        pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+      },
       eventTypes: {
         type: 'array',
         items: { type: 'string', enum: sdkTypeEnum },
@@ -254,6 +274,12 @@ export const ErrorListSchema: FastifySchema = {
     required: ['projectId'],
     properties: {
       projectId: { type: 'string', format: 'uuid' },
+      environment: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+        pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+      },
       limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
       offset: { type: 'integer', minimum: 0, default: 0 },
       from: { type: 'string', format: 'date-time' },

@@ -7,12 +7,14 @@ foreign keys to `organizations`, `projects`, `project_api_keys`, `users`,
 
 Partitioning choices:
 
-- Usage rollups are range-partitioned by `bucket` for dashboard windows,
+- Analytics rollups are range-partitioned by `bucket` for dashboard windows,
   worker UPSERTs, and retention pruning.
-- Canonical event and legacy telemetry tables are range-partitioned by event
-  time because ingestion is append-heavy and queries are time-bounded.
-- Runtime/audit tables are range-partitioned by creation or occurrence time to
-  isolate hot writes and allow old partitions to be dropped.
+- Canonical event tables are range-partitioned by event time because ingestion
+  is append-heavy and queries are time-bounded. No legacy telemetry tables are
+  recreated after the environment-string upgrade.
+- Derived runtime/audit facts may be range-partitioned by creation or occurrence
+  time. pg-boss jobs, DLQ administration, and usage/billing staging remain in
+  the control-plane database.
 - Lookup and dimension tables are intentionally not partitioned because they are
   comparatively small, high-read reference datasets.
 

@@ -321,6 +321,17 @@ export class ProjectsService {
       return (this.environments as any).deleteEnvironment(orgId, projectId, environmentId, userId, meta) as any;
   }
 
+  /** Irreversible: permanently deletes an already soft-deleted environment and its API keys. */
+  async permanentlyDeleteEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<void> {
+      return this.environments.permanentlyDeleteEnvironment(orgId, projectId, environmentId, userId, meta);
+  }
+
   async restoreEnvironment(
     orgId: string,
     projectId: string,

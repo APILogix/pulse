@@ -2,8 +2,8 @@
  * SDK config delivery module (composition root).
  *
  * Wires the Postgres-backed ConfigStore + RemoteSdkConfigService and registers
- * the API-key-authenticated `POST /v1/sdk-config` delivery route at the root.
- * The route is intentionally NOT under the session-authenticated org prefix —
+ * the API-key-authenticated `POST /v1/init` and `POST /v1/sdk-config` routes at
+ * the root through one shared handler. These routes are intentionally NOT under the session-authenticated org prefix —
  * it authenticates SDKs by API key only.
  */
 import type { FastifyInstance, FastifyPluginOptions } from "fastify";

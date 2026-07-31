@@ -21,6 +21,8 @@ export declare class ProjectUsageRepository {
         environmentCount: number;
     }>;
     getProjectUsageCounters(projectId: string, client?: PoolClient): Promise<ProjectUsageCounter[]>;
+    private getProjectUsageCountersFromDaily;
+    private resolveProjectUsageDailyBucketColumn;
     getProjectModuleUsageCounts(orgId: string, client?: PoolClient): Promise<ProjectModuleUsageCounts>;
 }
 //# sourceMappingURL=project-usage.repository.d.ts.map

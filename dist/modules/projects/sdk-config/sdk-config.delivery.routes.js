@@ -1,11 +1,11 @@
 /**
- * SDK delivery route: `POST /v1/sdk-config`.
+ * Canonical SDK delivery routes: `POST /v1/init` and `POST /v1/sdk-config`.
  *
  * Authorization is rooted in the presented API key (design.md §7.3, Property 1):
  *   - The bearer/X-API-Key credential is verified with a constant-time compare.
- *   - Organization/project/environment come from the key mapping, NEVER the body.
- *   - The request body's `projectId`/`service` are ignored; `environment` is a
- *     hint that only selects an environment already granted to the key.
+ *   - Organization comes from the key mapping.
+ *   - Project/environment are SDK metadata and select a committed config inside
+ *     that organization; environment UUIDs are not accepted from the SDK.
  *
  * Returns the complete schema-v1 document with `ETag` and `X-Config-Revision`
  * (revision/publish metadata travels in headers, never inside schema-v1 `meta`).
@@ -48,9 +48,10 @@ async function resolveApiKeyMapping(rawKey) {
     const publicKey = extractApiKeyPrefix(rawKey);
     if (!publicKey)
         return null;
-    const result = await pool.query(`SELECT organization_id, project_id, environment_id, secret_hash
-       FROM project_api_keys
-      WHERE public_key = $1 AND status = 'active' AND deleted_at IS NULL
+    const result = await pool.query(`SELECT p.org_id AS organization_id, k.project_id, k.environment_id, k.secret_hash
+       FROM project_api_keys k
+       JOIN projects p ON p.id = k.project_id AND p.deleted_at IS NULL
+      WHERE k.public_key = $1 AND k.status = 'active' AND k.deleted_at IS NULL
       LIMIT 1`, [publicKey]);
     const row = result.rows[0];
     if (!row)
@@ -68,19 +69,26 @@ function toHints(body, mapping) {
     const hints = {};
     if (typeof body.schemaVersion === "number")
         hints.schemaVersion = body.schemaVersion;
-    if (Array.isArray(body.capabilities))
-        hints.capabilities = body.capabilities.filter((c) => typeof c === "string");
-    if (typeof body.projectId === "string")
+    if (typeof body.metadata?.projectId === "string")
+        hints.projectId = body.metadata.projectId;
+    else if (typeof body.projectId === "string")
         hints.projectId = body.projectId;
-    // `environment` is a slug hint. A pulse key grants one environment, so the hint
-    // can only ever resolve to that environment or fall back to it. Body identity
-    // never widens scope.
+    if (typeof body.metadata?.environment === "string")
+        hints.environment = body.metadata.environment;
+    else if (typeof body.environment === "string")
+        hints.environment = body.environment;
+    // Fallback for older SDKs that do not send metadata. New SDKs select by
+    // metadata.projectId + metadata.environment; only org id is taken from the key.
     hints.environmentId = mapping.defaultEnvironmentId;
     return hints;
 }
-/** Register the API-key-authenticated SDK delivery route. */
+/**
+ * Register both SDK bootstrap names against one handler. This guarantees
+ * `/v1/init` and `/v1/sdk-config` use the same API-key mapping, service call,
+ * response document, and cache/revision headers.
+ */
 export function registerSdkDeliveryRoutes(fastify, service) {
-    fastify.post("/v1/sdk-config", async (request, reply) => {
+    const deliver = async (request, reply) => {
         const rawKey = extractApiKey(request);
         if (!rawKey) {
             return reply.code(401).send({ error: { code: "unauthorized", message: "Missing API key" } });
@@ -112,6 +120,8 @@ export function registerSdkDeliveryRoutes(fastify, service) {
             request.log.error({ err: error }, "sdk-config delivery failed");
             return reply.code(503).send({ error: { code: "unavailable", message: "Configuration temporarily unavailable" } });
         }
-    });
+    };
+    fastify.post("/v1/init", deliver);
+    fastify.post("/v1/sdk-config", deliver);
 }
 //# sourceMappingURL=sdk-config.delivery.routes.js.map

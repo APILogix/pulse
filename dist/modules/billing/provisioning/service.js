@@ -8,8 +8,8 @@ export class BillingProvisioningService {
     constructor(repository = new BillingProvisioningRepository()) {
         this.repository = repository;
     }
-    provisionFreeSubscription(client, organizationId) {
-        return this.repository.provisionFreeSubscription(client, organizationId);
+    provisionDefaultSubscription(client, organizationId) {
+        return this.repository.provisionDefaultSubscription(client, organizationId);
     }
 }
 //# sourceMappingURL=service.js.map

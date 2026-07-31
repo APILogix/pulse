@@ -32,6 +32,9 @@ export declare const LIMITS: {
 };
 export declare const SDK_EVENT_TYPES: readonly ["error", "message", "request", "span", "trace", "metric", "log", "profile", "cron_checkin", "replay"];
 export type SdkEventType = (typeof SDK_EVENT_TYPES)[number];
+/** SDK-supplied telemetry environment. Never substitute a credential UUID or server-derived slug. */
+export declare const SDK_ENVIRONMENT_MAX_LENGTH = 64;
+export declare function normalizeSdkEnvironment(value: unknown): string | null;
 export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     message: z.ZodString;
     name: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodRecord<z.ZodString, z.ZodUnknown>]>>;

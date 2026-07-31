@@ -39,8 +39,8 @@ export declare const TriggerDefinitionSchema: z.ZodObject<{
     triggerKind: z.ZodEnum<{
         schedule: "schedule";
         manual: "manual";
-        webhook: "webhook";
         event: "event";
+        webhook: "webhook";
     }>;
     triggerType: z.ZodEnum<{
         "alert.event.created": "alert.event.created";
@@ -184,7 +184,6 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         connector: "connector";
-        quota: "quota";
         alert_routing: "alert_routing";
         escalation: "escalation";
         incident_creation: "incident_creation";
@@ -196,6 +195,7 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         remediation: "remediation";
         runbook: "runbook";
         data_retention: "data_retention";
+        quota: "quota";
     }>;
     scope: z.ZodDefault<z.ZodEnum<{
         organization: "organization";
@@ -207,8 +207,8 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         triggerKind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
@@ -347,8 +347,8 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
         triggerKind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
@@ -513,7 +513,6 @@ export declare const ListWorkflowsQuerySchema: z.ZodObject<{
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         connector: "connector";
-        quota: "quota";
         alert_routing: "alert_routing";
         escalation: "escalation";
         incident_creation: "incident_creation";
@@ -525,6 +524,7 @@ export declare const ListWorkflowsQuerySchema: z.ZodObject<{
         remediation: "remediation";
         runbook: "runbook";
         data_retention: "data_retention";
+        quota: "quota";
     }>>;
     isEnabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
@@ -689,7 +689,6 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
         dead_letter: "dead_letter";
         anomaly: "anomaly";
         connector: "connector";
-        quota: "quota";
         alert_routing: "alert_routing";
         escalation: "escalation";
         incident_creation: "incident_creation";
@@ -701,13 +700,14 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
         remediation: "remediation";
         runbook: "runbook";
         data_retention: "data_retention";
+        quota: "quota";
     }>;
     trigger: z.ZodObject<{
         kind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         type: z.ZodEnum<{
             "alert.event.created": "alert.event.created";

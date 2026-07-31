@@ -39,6 +39,23 @@ export const SDK_EVENT_TYPES = [
 ] as const;
 export type SdkEventType = (typeof SDK_EVENT_TYPES)[number];
 
+/** SDK-supplied telemetry environment. Never substitute a credential UUID or server-derived slug. */
+export const SDK_ENVIRONMENT_MAX_LENGTH = 64;
+const SDK_ENVIRONMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function normalizeSdkEnvironment(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (
+    normalized.length === 0 ||
+    normalized.length > SDK_ENVIRONMENT_MAX_LENGTH ||
+    !SDK_ENVIRONMENT_PATTERN.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
 // Bounded primitives reused across schemas.
 const boundedStr = (max: number = LIMITS.maxStringLen) => z.string().max(max);
 const epochMs = z.number().int().nonnegative();

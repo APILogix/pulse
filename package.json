@@ -32,6 +32,8 @@
     "db:migrate": "tsx scripts/setup-db.ts",
     "db:migrate:draft": "tsx scripts/setup-db.ts --migrations-profile draft",
     "db:migrate:logdb": "tsx scripts/migrate-logdb.ts",
+    "db:create:logdb": "tsx scripts/migrate-logdb.ts",
+    "db:reset:logdb": "tsx scripts/reset-logdb.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:indexes": "tsx scripts/add-indexes.ts"
   },

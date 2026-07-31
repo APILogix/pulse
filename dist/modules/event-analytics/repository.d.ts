@@ -13,13 +13,13 @@ export declare class EventAnalyticsRepository {
     private readonly db;
     constructor(db: Pool);
     private withTransaction;
-    getErrorStats(orgId: string, projectId: string | undefined, range: TimeRange): Promise<{
+    getErrorStats(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<{
         total: number;
         fatal: number;
         error: number;
         warning: number;
     }>;
-    getRequestStats(orgId: string, projectId: string | undefined, range: TimeRange): Promise<{
+    getRequestStats(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<{
         total: number;
         errors: number;
         errorRate: number;
@@ -28,10 +28,11 @@ export declare class EventAnalyticsRepository {
         p95: number | null;
         p99: number | null;
     }>;
-    getUniqueUserCount(orgId: string, projectId: string | undefined, range: TimeRange): Promise<number>;
-    getEventTrend(tableKey: AnalyticsTableKey, orgId: string, projectId: string | undefined, range: TimeRange, bucket: TimeBucket, extraSelects?: string): Promise<Array<Record<string, unknown>>>;
+    getUniqueUserCount(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<number>;
+    getEventTrend(tableKey: AnalyticsTableKey, orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange, bucket: TimeBucket, extraSelects?: string): Promise<Array<Record<string, unknown>>>;
     listErrors(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         severity?: string;
         service?: string;
         release?: string;
@@ -43,9 +44,10 @@ export declare class EventAnalyticsRepository {
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
-    getErrorById(orgId: string, id: string): Promise<Record<string, unknown> | null>;
+    getErrorById(orgId: string, id: string, projectId?: string, environment?: string): Promise<Record<string, unknown> | null>;
     listErrorGroups(orgId: string, filters: {
         projectId?: string;
+        environment?: string;
         status?: string;
         search?: string;
         sortBy: string;
@@ -56,19 +58,20 @@ export declare class EventAnalyticsRepository {
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
-    getErrorGroup(orgId: string, fingerprint: string): Promise<Record<string, unknown> | null>;
-    updateErrorGroupStatus(orgId: string, fingerprint: string, status: string, assignedTo: string | null): Promise<Record<string, unknown> | null>;
+    getErrorGroup(orgId: string, projectId: string, fingerprint: string, environment: string): Promise<Record<string, unknown> | null>;
+    updateErrorGroupStatus(orgId: string, projectId: string, fingerprint: string, environment: string, status: string, assignedTo: string | null): Promise<Record<string, unknown> | null>;
     /** Route performance from the pre-aggregated summary; falls back to live compute. */
-    getRoutePerformance(orgId: string, projectId: string | undefined, sinceDate: Date, limit: number): Promise<Array<Record<string, unknown>>>;
-    getLatencyDistribution(orgId: string, projectId: string | undefined, range: TimeRange): Promise<Array<Record<string, unknown>>>;
+    getRoutePerformance(orgId: string, projectId: string | undefined, environment: string | undefined, sinceDate: Date, limit: number): Promise<Array<Record<string, unknown>>>;
+    getLatencyDistribution(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<Array<Record<string, unknown>>>;
     /** Raw counts needed for an Apdex score (T = satisfied threshold ms). */
-    getApdexCounts(orgId: string, projectId: string | undefined, range: TimeRange, thresholdMs: number): Promise<{
+    getApdexCounts(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange, thresholdMs: number): Promise<{
         satisfied: number;
         tolerating: number;
         total: number;
     }>;
     listRequests(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         method?: string;
         statusCode?: number;
         route?: string;
@@ -80,11 +83,12 @@ export declare class EventAnalyticsRepository {
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
-    getRequestById(orgId: string, id: string): Promise<Record<string, unknown> | null>;
-    getSpansByTrace(orgId: string, traceId: string): Promise<Array<Record<string, unknown>>>;
-    getTraceById(orgId: string, traceId: string): Promise<Record<string, unknown> | null>;
+    getRequestById(orgId: string, id: string, projectId?: string, environment?: string): Promise<Record<string, unknown> | null>;
+    getSpansByTrace(orgId: string, traceId: string, projectId: string, environment: string): Promise<Array<Record<string, unknown>>>;
+    getTraceById(orgId: string, traceId: string, projectId: string, environment: string): Promise<Record<string, unknown> | null>;
     listTraces(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         traceId?: string;
         requestId?: string;
         service?: string;
@@ -97,11 +101,12 @@ export declare class EventAnalyticsRepository {
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
-    listMetricNames(orgId: string, projectId: string | undefined, range: TimeRange): Promise<Array<Record<string, unknown>>>;
-    getMetricSeries(orgId: string, name: string, range: TimeRange, bucket: TimeBucket, aggregate: string, projectId: string | undefined): Promise<Array<Record<string, unknown>>>;
-    getMetricStats(orgId: string, name: string, range: TimeRange, projectId: string | undefined): Promise<Record<string, unknown> | null>;
+    listMetricNames(orgId: string, projectId: string | undefined, environment: string | undefined, range: TimeRange): Promise<Array<Record<string, unknown>>>;
+    getMetricSeries(orgId: string, name: string, range: TimeRange, bucket: TimeBucket, aggregate: string, projectId: string | undefined, environment: string | undefined): Promise<Array<Record<string, unknown>>>;
+    getMetricStats(orgId: string, name: string, range: TimeRange, projectId: string | undefined, environment: string | undefined): Promise<Record<string, unknown> | null>;
     listLogs(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         level?: string;
         service?: string;
         search?: string;
@@ -115,18 +120,20 @@ export declare class EventAnalyticsRepository {
     getLog(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     summarizeLogs(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         level?: string;
         service?: string;
         search?: string;
         limit: number;
     }): Promise<Array<Record<string, unknown>>>;
-    listObservedServices(orgId: string, range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
-    listServiceEndpoints(orgId: string, service: string, range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    listObservedServices(orgId: string, range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    listServiceEndpoints(orgId: string, service: string, range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     /** Logs newer than a cursor timestamp — used by the SSE poll loop. */
-    listLogsSince(orgId: string, since: Date, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
-    listErrorsSince(orgId: string, since: Date, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    listLogsSince(orgId: string, since: Date, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    listErrorsSince(orgId: string, since: Date, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     listSessions(orgId: string, range: TimeRange, filters: {
         projectId?: string;
+        environment?: string;
         userId?: string;
         crashedOnly?: boolean;
         limit: number;
@@ -135,14 +142,14 @@ export declare class EventAnalyticsRepository {
         rows: Array<Record<string, unknown>>;
         total: number;
     }>;
-    getSession(orgId: string, sessionId: string): Promise<Record<string, unknown> | null>;
-    listUsers(orgId: string, range: TimeRange, projectId: string | undefined, limit: number, offset: number): Promise<Array<Record<string, unknown>>>;
-    getUserJourney(orgId: string, userId: string, range: TimeRange, limit: number): Promise<{
+    getSession(orgId: string, sessionId: string, projectId: string, environment: string): Promise<Record<string, unknown> | null>;
+    listUsers(orgId: string, range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number, offset: number): Promise<Array<Record<string, unknown>>>;
+    getUserJourney(orgId: string, userId: string, range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<{
         errors: Array<Record<string, unknown>>;
         requests: Array<Record<string, unknown>>;
     }>;
-    listCrons(orgId: string, projectId: string | undefined): Promise<Array<Record<string, unknown>>>;
-    getCronHistory(orgId: string, slug: string, limit: number, offset: number): Promise<Array<Record<string, unknown>>>;
+    listCrons(orgId: string, projectId: string | undefined, environment: string | undefined): Promise<Array<Record<string, unknown>>>;
+    getCronHistory(orgId: string, slug: string, projectId: string | undefined, environment: string | undefined, limit: number, offset: number): Promise<Array<Record<string, unknown>>>;
     createDashboard(input: {
         orgId: string;
         projectId: string | null;
@@ -186,7 +193,7 @@ export declare class EventAnalyticsRepository {
     listAlerts(orgId: string): Promise<Array<Record<string, unknown>>>;
     getAlert(orgId: string, id: string): Promise<Record<string, unknown> | null>;
     deleteAlert(orgId: string, id: string): Promise<boolean>;
-    exportDataset(orgId: string, dataset: 'errors' | 'requests' | 'logs' | 'metrics', range: TimeRange, projectId: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
+    exportDataset(orgId: string, dataset: 'errors' | 'requests' | 'logs' | 'metrics', range: TimeRange, projectId: string | undefined, environment: string | undefined, limit: number): Promise<Array<Record<string, unknown>>>;
     refreshHourlyRollup(orgId: string, startHour: Date, endHour: Date): Promise<void>;
     listOrgsWithRecentErrors(sinceHours: number): Promise<string[]>;
     /**

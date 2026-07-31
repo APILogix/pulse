@@ -36,24 +36,26 @@ interface ProvisioningPriceRow {
   provider_price_id: string | null;
 }
 
-const REQUIRED_FREE_PLAN_FEATURES = [EVENT_LIMIT_FEATURE_KEY, AI_CREDIT_LIMIT_FEATURE_KEY] as const;
+const DEFAULT_PLAN_KEY = 'enterprise';
+const REQUIRED_DEFAULT_PLAN_FEATURES = [EVENT_LIMIT_FEATURE_KEY, AI_CREDIT_LIMIT_FEATURE_KEY] as const;
 
 /** SQL boundary for the Billing-owned part of organization provisioning. */
 export class BillingProvisioningRepository {
-  async provisionFreeSubscription(
+  async provisionDefaultSubscription(
     client: PoolClient,
     organizationId: string,
   ): Promise<BillingProvisioningResult> {
     const planResult = await client.query<ProvisioningPlanRow>(
       `SELECT id, key, version, tier, trial_days
        FROM plans
-       WHERE key = 'free' AND is_active = TRUE AND deleted_at IS NULL
+       WHERE key = $1 AND is_active = TRUE AND deleted_at IS NULL
        ORDER BY version DESC, sort_order ASC, created_at DESC
        LIMIT 1
        FOR SHARE`,
+      [DEFAULT_PLAN_KEY],
     );
     const plan = planResult.rows[0];
-    if (!plan) throw new NotFoundError('Free billing plan');
+    if (!plan) throw new NotFoundError('Enterprise billing plan');
 
     const entitlementsResult = await client.query<BillingEntitlementSnapshotRow>(
       `SELECT
@@ -77,14 +79,14 @@ export class BillingProvisioningRepository {
     );
     const entitlements = entitlementsResult.rows;
     if (entitlements.length === 0) {
-      throw new NotFoundError('Free billing plan entitlements');
+      throw new NotFoundError('Enterprise billing plan entitlements');
     }
 
-    const missingRequiredFeature = REQUIRED_FREE_PLAN_FEATURES.find(
+    const missingRequiredFeature = REQUIRED_DEFAULT_PLAN_FEATURES.find(
       (featureKey) => !entitlements.some((entitlement) => entitlement.feature_key === featureKey),
     );
     if (missingRequiredFeature) {
-      throw new NotFoundError(`Free billing plan entitlement ${missingRequiredFeature}`);
+      throw new NotFoundError(`Enterprise billing plan entitlement ${missingRequiredFeature}`);
     }
 
     const priceResult = await client.query<ProvisioningPriceRow>(

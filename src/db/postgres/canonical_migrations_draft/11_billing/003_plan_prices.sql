@@ -144,3 +144,28 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 COMMIT;
+ALTER TABLE plan_prices
+
+ADD COLUMN IF NOT EXISTS country_code CHAR(2),
+
+ADD COLUMN IF NOT EXISTS region_code VARCHAR(50),
+
+ADD COLUMN IF NOT EXISTS tax_behavior billing_tax_behavior
+NOT NULL DEFAULT 'unspecified',
+
+ADD COLUMN IF NOT EXISTS is_promotional BOOLEAN
+NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_plan_prices_region
+ON plan_prices
+(
+    country_code,
+    region_code
+)
+WHERE deleted_at IS NULL;
+ALTER TABLE plan_prices
+ADD CONSTRAINT chk_country_code
+CHECK
+(
+    country_code IS NULL
+    OR country_code ~ '^[A-Z]{2}$'
+);

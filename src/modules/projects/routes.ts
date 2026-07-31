@@ -12,11 +12,6 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
-import {
-  ListSdkConfigsQuerySchema,
-  ResolveSdkConfigQuerySchema,
-  UpdateSdkConfigSchema,
-} from "../organization/sdk-config.types.js";
 import type { RequestMeta as OrganizationRequestMeta } from "../organization/types.js";
 import type { RequestMeta } from "./service.js";
 import {

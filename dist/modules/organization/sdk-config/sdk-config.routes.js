@@ -1,5 +1,8 @@
+/** Organization management routes for environment SDK configuration. */
+import { ZodError } from "zod";
 import { authenticate } from "../../../shared/middleware/auth.js";
 import { OrganizationError } from "../types.js";
+import { SdkConfigError } from "../../projects/sdk-config/errors.js";
 import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, RollbackSdkConfigSchema, SdkConfigParamsSchema, SdkConfigVersionParamsSchema, UpdateSdkConfigSchema, } from "./sdk-config.types.js";
 const asAuth = (request) => request;
 function buildMeta(request) {
@@ -16,6 +19,22 @@ function buildMeta(request) {
     };
 }
 function handleError(error, reply) {
+    if (error instanceof SdkConfigError) {
+        return reply.code(error.statusCode).send({
+            success: false,
+            error: { code: error.code, message: error.message, details: error.details },
+        });
+    }
+    if (error instanceof ZodError) {
+        return reply.code(422).send({
+            success: false,
+            error: {
+                code: "VALIDATION_ERROR",
+                message: "Invalid SDK configuration request",
+                details: error.flatten(),
+            },
+        });
+    }
     if (error instanceof OrganizationError) {
         return reply.code(error.statusCode).send({
             success: false,
@@ -68,9 +87,9 @@ export function registerSdkConfigRoutes(fastify, service) {
     fastify.patch("/:orgId/sdk-configs/:configId", auth, wrap(async (request, reply) => {
         const { orgId, configId } = SdkConfigParamsSchema.parse(request.params);
         const body = UpdateSdkConfigSchema.parse(request.body);
-        const update = { configValue: body.configValue };
-        if (body.schemaVersion !== undefined)
-            update.schemaVersion = body.schemaVersion;
+        const update = {
+            editableConfig: body.editableConfig,
+        };
         if (body.changeSummary !== undefined)
             update.changeSummary = body.changeSummary;
         const result = await service.updateConfig(buildMeta(request), orgId, configId, update);

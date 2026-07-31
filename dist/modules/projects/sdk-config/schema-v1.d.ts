@@ -1,124 +1,79 @@
-/**
- * Schema-v1 contract for remote SDK configuration.
- *
- * This module is the single source of truth for the shape of the schema-v1
- * document that is compiled by the backend, stored in immutable revisions, and
- * delivered to the Node SDK. It is intentionally free of side effects so it can
- * be unit-tested and shared by the compiler, validator, allowlist, projection,
- * and delivery layers.
- *
- * Design references:
- * - design.md §4.1 (schema-v1 contract) — required sections, feature/killswitch
- *   keys, sampling signals, integrations, and the ten fixed transport routes.
- * - implementation.md "SDK Acceptance Check" — the exact acceptance rules the
- *   current Node SDK enforces.
- *
- * The wire schema version is fixed at 1 for current SDK compatibility. The
- * backend never emits a newer schema to the current SDK.
- */
-/** Fixed wire schema version. Never changes for the current SDK contract. */
+import { type TransportRouteKey } from "../../ingestion/route-table.js";
+/** The only SDK configuration contract emitted, stored, or accepted by Pulse. */
 export declare const SCHEMA_VERSION: 1;
-/** Generator identity written into `meta.generatedBy`. */
 export declare const GENERATOR_ID: "pulse-config-compiler@1";
-/**
- * The eleven telemetry feature toggles. Every value is a boolean.
- * Order is significant only for deterministic iteration; canonical output
- * always sorts keys.
- */
+export declare const DEFAULT_SDK_RELEASE: "1.0.0";
 export declare const FEATURE_KEYS: readonly ["tracing", "requestCapture", "errors", "metrics", "logging", "profiling", "crons", "sessionReplay", "runtimeMetrics", "eventLoopMonitoring", "gcMonitoring"];
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
-/** The seven operational killswitches. Every value is a boolean. */
 export declare const KILLSWITCH_KEYS: readonly ["disableSDK", "disableTracing", "disableMetrics", "disableTransport", "disableProfiling", "disableErrors", "disableLogs"];
 export type KillswitchKey = (typeof KILLSWITCH_KEYS)[number];
-/** The six base sampling signals. Rates are numbers in [0, 1]. */
-export declare const SAMPLING_SIGNALS: readonly ["traces", "requests", "errors", "profiles", "replays", "metrics"];
+export declare const SAMPLING_SIGNALS: readonly ["errors", "traces", "spans", "requests", "metrics", "logs", "events", "messages", "profiles", "replays", "crons"];
 export type SamplingSignal = (typeof SAMPLING_SIGNALS)[number];
-/** The eleven auto-instrumentation integrations. */
-export declare const INTEGRATION_KEYS: readonly ["http", "https", "fetch", "axios", "fastify", "express", "graphql", "prisma", "mongodb", "redis", "bullmq"];
-export type IntegrationKey = (typeof INTEGRATION_KEYS)[number];
-/**
- * The fixed transport routes. They are derived from the ingestion route table,
- * so the SDK config never advertises a write endpoint the backend does not
- * register.
- */
-import { type TransportRouteKey } from "../../ingestion/route-table.js";
+export declare const INSTRUMENTATION_KEYS: readonly ["http", "https", "fetch", "axios", "fastify", "express", "graphql", "prisma", "mongodb", "redis", "bullmq", "pg", "mysql2", "eventEmitterPatch"];
+export type InstrumentationKey = (typeof INSTRUMENTATION_KEYS)[number];
+export declare const PRIVACY_CAPTURE_KEYS: readonly ["headers", "body", "response", "query", "cookies"];
+export type PrivacyCaptureKey = (typeof PRIVACY_CAPTURE_KEYS)[number];
+export declare const PII_DETECTION_KEYS: readonly ["enabled", "maskEmails", "maskPhones", "maskIPs"];
+export type PiiDetectionKey = (typeof PII_DETECTION_KEYS)[number];
+export declare const TENANT_GOVERNANCE_KEYS: readonly ["enabled", "maxTenantsTracked", "quotaPerWindow", "windowDurationMs", "criticalReserve"];
+export type TenantGovernanceKey = (typeof TENANT_GOVERNANCE_KEYS)[number];
+export declare const ENTITLEMENT_KEYS: readonly ["customSpans", "customMetrics", "profiling", "logging", "sessionReplay", "crons", "requestCapture", "tracing", "errors", "metrics"];
+export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number];
 export declare const ROUTE_KEYS: readonly TransportRouteKey[];
 export type RouteKey = TransportRouteKey;
-/**
- * Public ingest path templates per route. These include the Fastify module
- * mount prefix (`/api`) because SDKs call the externally exposed backend paths,
- * not the ingestion module's internal route suffixes. They are platform-owned
- * topology and are never user-editable. The compiler joins the trusted origin
- * with these paths to derive `transport.routes.*.url`.
- */
+/** Route suffixes are derived from the same table that registers ingestion routes. */
 export declare const ROUTE_INGEST_PATHS: Readonly<Record<RouteKey, string>>;
-/** Deterministic scheduler priority per route. Platform-owned, protected. */
-export declare const ROUTE_PRIORITY: Readonly<Record<RouteKey, number>>;
-/** Allowed transport compression modes in schema-v1. */
 export declare const COMPRESSION_MODES: readonly ["gzip", "none"];
 export type CompressionMode = (typeof COMPRESSION_MODES)[number];
-/** Editable privacy capture leaves. Every value is a boolean. */
-export declare const PRIVACY_CAPTURE_KEYS: readonly ["headers", "body", "query", "cookies", "response"];
-export type PrivacyCaptureKey = (typeof PRIVACY_CAPTURE_KEYS)[number];
-/** Editable PII masking leaves. Every value is a boolean. */
-export declare const PRIVACY_PII_KEYS: readonly ["enabled", "maskEmails", "maskCreditCards", "maskPhoneNumbers"];
-export type PrivacyPiiKey = (typeof PRIVACY_PII_KEYS)[number];
-/** Optional tenant-governance leaves under `limits.tenantGovernance`. */
-export declare const TENANT_GOVERNANCE_KEYS: readonly ["maxTenantsTracked", "quota", "windowMs", "reserve"];
-export type TenantGovernanceKey = (typeof TENANT_GOVERNANCE_KEYS)[number];
+export declare const TRANSPORT_PRIORITIES: readonly ["critical", "high", "normal", "low"];
+export type TransportPriority = (typeof TRANSPORT_PRIORITIES)[number];
+export declare const RETRY_BACKOFF_MODES: readonly ["exponential", "linear", "fixed"];
+export type RetryBackoff = (typeof RETRY_BACKOFF_MODES)[number];
+export declare const QUEUE_OVERFLOW_STRATEGIES: readonly ["drop_oldest", "drop_newest", "reject"];
+export type QueueOverflowStrategy = (typeof QUEUE_OVERFLOW_STRATEGIES)[number];
 export interface SdkIdentity {
     projectId: string;
     environment: string;
-    release?: string;
+    release: string;
 }
 export type FeatureFlags = Record<FeatureKey, boolean>;
 export type Killswitches = Record<KillswitchKey, boolean>;
 export type SamplingRates = Record<SamplingSignal, number>;
-export interface SamplingRouteOverride {
-    prefix: string;
-    /** Per-signal rate overrides for requests matching the prefix. */
-    traces?: number;
-    requests?: number;
-    errors?: number;
-    profiles?: number;
-    replays?: number;
-    metrics?: number;
-}
+export type SamplingRouteOverride = Partial<Record<SamplingSignal, number>>;
 export interface Sampling extends SamplingRates {
-    routeOverrides: SamplingRouteOverride[];
+    routes: Record<string, SamplingRouteOverride>;
 }
-export interface IntegrationConfig {
-    enabled: boolean;
-    options?: Record<string, string | number | boolean>;
-}
-export type Instrumentation = Record<IntegrationKey, IntegrationConfig>;
+export type Instrumentation = Record<InstrumentationKey, boolean>;
 export interface PrivacyCapture {
     headers: boolean;
     body: boolean;
+    response: boolean;
     query: boolean;
     cookies: boolean;
-    response: boolean;
 }
 export interface PrivacyScrubbing {
+    enabled: boolean;
     headers: string[];
     fields: string[];
 }
-export interface PrivacyPii {
+export interface PrivacyPiiDetection {
     enabled: boolean;
     maskEmails: boolean;
-    maskCreditCards: boolean;
-    maskPhoneNumbers: boolean;
+    maskPhones: boolean;
+    maskIPs: boolean;
 }
 export interface Privacy {
     capture: PrivacyCapture;
     scrubbing: PrivacyScrubbing;
-    pii: PrivacyPii;
+    piiDetection: PrivacyPiiDetection;
 }
+export type MaxMemoryMb = "auto" | number;
 export interface TenantGovernance {
+    enabled: boolean;
     maxTenantsTracked: number;
-    quota: number;
-    windowMs: number;
-    reserve: number;
+    quotaPerWindow: number;
+    windowDurationMs: number;
+    criticalReserve: number;
 }
 export interface Limits {
     maxSpansPerTrace: number;
@@ -126,35 +81,37 @@ export interface Limits {
     maxAttributeLength: number;
     maxPayloadSize: number;
     maxQueueSize: number;
-    maxMemoryMb: number;
-    maxCpuOverheadPercent: number;
-    tenantGovernance?: TenantGovernance;
+    maxMemoryMb: MaxMemoryMb;
+    tenantGovernance: TenantGovernance;
 }
 export interface TransportRoute {
     url: string;
-    priority: number;
     batchSize: number;
     flushIntervalMs: number;
     timeoutMs: number;
     compression: CompressionMode;
+    priority: TransportPriority;
 }
 export interface TransportRetry {
+    enabled: boolean;
     maxRetries: number;
+    backoff: RetryBackoff;
     baseDelayMs: number;
 }
 export interface TransportQueue {
+    overflowStrategy: QueueOverflowStrategy;
     maxSize: number;
     criticalReserve: number;
 }
 export interface TransportConnections {
-    total: number;
+    maxTotalConnections: number;
     acquireTimeoutMs: number;
 }
 export interface Transport {
     retry: TransportRetry;
     queue: TransportQueue;
-    keepAlive: boolean;
     connections: TransportConnections;
+    keepAlive: boolean;
     routes: Record<RouteKey, TransportRoute>;
 }
 export interface Runtime {
@@ -164,10 +121,10 @@ export interface Runtime {
 export interface ConfigMeta {
     generatedAt: string;
     generatedBy: string;
-    environmentName?: string;
-    configHash?: string;
+    configHash: string;
 }
-/** A complete, valid schema-v1 document. */
+export type Entitlements = Record<EntitlementKey, boolean>;
+/** Complete wire document. All sections and leaves are required. */
 export interface SchemaV1Config {
     schemaVersion: 1;
     sdk: SdkIdentity;
@@ -180,8 +137,8 @@ export interface SchemaV1Config {
     transport: Transport;
     runtime: Runtime;
     meta: ConfigMeta;
-    entitlements?: Record<string, boolean>;
+    entitlements: Entitlements;
 }
-/** The ten required top-level sections that must exist in every document. */
-export declare const REQUIRED_SECTIONS: readonly ["sdk", "features", "sampling", "instrumentation", "privacy", "limits", "killswitches", "transport", "runtime", "meta"];
+export declare const REQUIRED_SECTIONS: readonly ["sdk", "features", "sampling", "instrumentation", "privacy", "limits", "killswitches", "transport", "runtime", "meta", "entitlements"];
+export declare const TOP_LEVEL_KEYS: readonly ["schemaVersion", "sdk", "features", "sampling", "instrumentation", "privacy", "limits", "killswitches", "transport", "runtime", "meta", "entitlements"];
 //# sourceMappingURL=schema-v1.d.ts.map

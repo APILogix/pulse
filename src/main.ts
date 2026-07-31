@@ -3,7 +3,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 import { connectLogDB, logDB } from './config/log-database.js';
-import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
+// import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
 import { startPgBoss, stopPgBoss } from './lib/pgboss.js';
 
 const bootLogger = logger.child({ component: 'bootstrap' });
@@ -114,14 +114,16 @@ async function bootstrap(): Promise<void> {
     databaseConnected = true;
     await connectLogDB();
     logDatabaseConnected = true;
-    await connectRedis();
-    redisConnected = true;
+    // Redis connection disabled — see config/redis.ts. Re-enable by
+    // restoring the import above and uncommenting the two lines below.
+    // await connectRedis();
+    // redisConnected = true;
     await startPgBoss();
     pgBossStarted = true;
 
-    if (!(await checkRedis())) {
-      throw new Error('Redis health check failed');
-    }
+    // if (!(await checkRedis())) {
+    //   throw new Error('Redis health check failed');
+    // }
 
     bootLogger.info('All datastores connected');
     app = await buildApp();

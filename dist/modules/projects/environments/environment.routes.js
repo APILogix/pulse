@@ -1,5 +1,5 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
-import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
+import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config/sdk-config.types.js";
 import { CreateEnvironmentBodySchema, EnvironmentParamsSchema, ListEnvironmentsQuerySchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, UpdateEnvironmentBodySchema, } from "../types.js";
 import { ProjectError } from "../shared/utils.js";
 import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling, } from "../shared/route-utils.js";
@@ -49,9 +49,7 @@ export async function projectEnvironmentRoutes(fastify) {
         const userId = authenticatedUser(request).id;
         await service.getProject(orgId, projectId, userId);
         const body = UpdateSdkConfigSchema.parse(request.body);
-        const update = { configValue: body.configValue };
-        if (body.schemaVersion !== undefined)
-            update.schemaVersion = body.schemaVersion;
+        const update = { editableConfig: body.editableConfig };
         if (body.changeSummary !== undefined)
             update.changeSummary = body.changeSummary;
         const config = await sdkConfigService.updateProjectConfig(organizationRequestMeta(request), orgId, projectId, configId, update);

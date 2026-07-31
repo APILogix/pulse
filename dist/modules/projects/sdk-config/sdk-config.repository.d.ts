@@ -21,7 +21,11 @@ export declare class PgConfigStore implements ConfigStore {
     loadCompiledByEnvironment(organizationId: string, environmentId: string): Promise<{
         revisionNo: number;
         compiledSnapshot: SchemaV1Config;
-        environmentName: string;
+    } | null>;
+    loadCompiledBySdkMetadata(organizationId: string, projectId: string, environment: string): Promise<{
+        revisionNo: number;
+        environmentId: string;
+        compiledSnapshot: SchemaV1Config;
     } | null>;
 }
 //# sourceMappingURL=sdk-config.repository.d.ts.map

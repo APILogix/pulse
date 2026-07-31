@@ -77,9 +77,9 @@ export class PgConfigStore {
             const revisionNo = headRow.current_revision + 1;
             const inserted = await client.query(`INSERT INTO project_environment_sdk_config_revisions(
            config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_value, config_hash,
+           requested_config, compiled_snapshot, config_hash,
            change_type, rolled_back_to_revision, published_by
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11)
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING id`, [
                 headRow.id,
                 scope.organizationId,
@@ -153,8 +153,8 @@ export class PgConfigStore {
                 return; // created concurrently; loadCurrent below resolves it
             await client.query(`INSERT INTO project_environment_sdk_config_revisions(
            id, config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_value, config_hash, change_type
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,'initial')`, [
+           requested_config, compiled_snapshot, config_hash, change_type
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'initial')`, [
                 revisionId,
                 headId,
                 scope.organizationId,
@@ -172,7 +172,7 @@ export class PgConfigStore {
         return created;
     }
     async loadCompiledByEnvironment(organizationId, environmentId) {
-        const result = await this.db.query(`SELECT r.revision_number, r.compiled_snapshot, e.name AS environment_name
+        const result = await this.db.query(`SELECT r.revision_number, r.compiled_snapshot
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
          JOIN project_environments e
@@ -184,7 +184,28 @@ export class PgConfigStore {
             ? {
                 revisionNo: row.revision_number,
                 compiledSnapshot: row.compiled_snapshot,
-                environmentName: row.environment_name,
+            }
+            : null;
+    }
+    async loadCompiledBySdkMetadata(organizationId, projectId, environment) {
+        const result = await this.db.query(`SELECT r.revision_number, h.environment_id, r.compiled_snapshot
+         FROM project_environment_sdk_configs h
+         JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
+         JOIN projects p
+           ON p.id = h.project_id AND p.org_id = h.organization_id
+         JOIN project_environments e
+           ON e.id = h.environment_id AND e.project_id = h.project_id AND e.organization_id = h.organization_id
+        WHERE h.organization_id = $1
+          AND h.project_id = $2
+          AND e.slug = $3
+          AND p.status = 'active' AND p.deleted_at IS NULL
+          AND e.is_active = TRUE AND e.deleted_at IS NULL`, [organizationId, projectId, environment]);
+        const row = result.rows[0];
+        return row
+            ? {
+                revisionNo: row.revision_number,
+                environmentId: row.environment_id,
+                compiledSnapshot: row.compiled_snapshot,
             }
             : null;
     }

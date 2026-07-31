@@ -321,9 +321,6 @@ export class ApiKeyService extends BaseProjectService {
                     environmentId: candidate.apiKey.environmentId,
                     environmentName: candidate.environmentName,
                     environmentSlug: candidate.environmentSlug,
-                    samplingRules: this.configObject(candidate.publishedConfig.samplingRules),
-                    featureFlags: this.configObject(candidate.publishedConfig.featureFlags),
-                    sdkConfig: candidate.publishedConfig,
                 };
             }
         }
@@ -371,11 +368,6 @@ export class ApiKeyService extends BaseProjectService {
             failed: results.length - succeeded,
             results,
         };
-    }
-    configObject(value) {
-        return value !== null && typeof value === "object" && !Array.isArray(value)
-            ? value
-            : {};
     }
     evictApiKeyConfig(secretHash) {
         try {

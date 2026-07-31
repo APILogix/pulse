@@ -23,6 +23,10 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).toContain('04_projects/016_add_environment_runtime_configuration.up.sql');
     expect(files).toContain('04_projects/017_simplify_project_environments.up.sql');
     expect(files).toContain('04_projects/018_normalize_project_api_keys_and_usage.up.sql');
+    expect(files).toContain('04_projects/019_upgrade_environment_sdk_config_snapshot.up.sql');
+    expect(files).toContain('04_projects/020_remove_sdk_config_provisioning_trigger.up.sql');
+    expect(files).toContain('04_projects/023_update_sdk_config_transport_routes.up.sql');
+    expect(files).toContain('04_projects/025_upgrade_sdk_contract_v1.up.sql');
     expect(files.some((file) => file.startsWith('05_project_credentials/'))).toBe(false);
     expect(files.some((file) => file.startsWith('20_project_module_refactor/'))).toBe(false);
     expect(files).not.toContain('04_projects/999_delete_all_project_tables.down.sql');
@@ -714,5 +718,80 @@ describe('API-key normalization migration', () => {
     }
     expect(sql).toContain("ARRAY['project_usage_minute','project_usage_hourly','project_usage_daily']");
     expect(sql).toContain('DROP COLUMN IF EXISTS latency_ms_p99');
+  });
+});
+
+
+describe('SDK schema-v1 persistence transition', () => {
+  it('creates only editable intent and the sole complete compiled snapshot on fresh installs', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/015_create_environment_sdk_configuration.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('requested_config JSONB NOT NULL');
+    expect(sql).toContain('compiled_snapshot JSONB NOT NULL');
+    expect(sql).toContain('config_hash CHAR(64) NOT NULL');
+    expect(sql).not.toContain('config_value');
+    expect(sql).not.toContain('CREATE OR REPLACE FUNCTION provision_environment_sdk_config');
+    expect(sql).not.toContain('CREATE TRIGGER trg_project_environments_sdk_config');
+    expect(sql).not.toContain('pulse_build_initial_sdk_config');
+  });
+
+  it('uses migration 019 only as a conditional one-way legacy bridge', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/019_upgrade_environment_sdk_config_snapshot.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('information_schema.columns');
+    expect(sql).toContain("column_name = 'config_value'");
+    expect(sql).toContain('SET compiled_snapshot = config_value');
+    expect(sql).toContain('DROP COLUMN config_value');
+    expect(sql).not.toContain('r.config_value');
+    expect(sql).not.toContain('pulse_build_initial_sdk_config');
+  });
+
+  it('keeps migration 023 inert so migration 025 owns historical regeneration', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/023_update_sdk_config_transport_routes.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('Intentionally empty');
+    expect(sql).not.toContain('CREATE OR REPLACE FUNCTION');
+    expect(sql).not.toContain('UPDATE project_environment_sdk_config_revisions');
+  });
+
+  it('regenerates history, installs hash constraints, then removes its SQL compiler', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/025_upgrade_sdk_contract_v1.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('BEGIN;');
+    expect(sql).toContain('pulse_extract_sdk_intent');
+    expect(sql).toContain('pulse_build_sdk_config');
+    expect(sql).toContain('SET requested_config=resolved.intent');
+    expect(sql).toContain('compiled_snapshot=resolved.compiled');
+    expect(sql).toContain("config_hash=resolved.compiled#>>'{meta,configHash}'");
+    expect(sql).toContain('sdk_revisions_compiled_contract');
+    expect(sql).toContain('sdk_revisions_hash_matches_snapshot');
+    expect(sql).toContain('DROP COLUMN IF EXISTS config_value');
+    expect(sql).toContain('DROP FUNCTION pulse_build_sdk_config(uuid,text,text,jsonb)');
+    expect(sql).toContain('DROP FUNCTION pulse_extract_sdk_intent(jsonb)');
+    expect(sql.trim().endsWith('COMMIT;')).toBe(true);
+  });
+
+  it('never restores the legacy SQL generator on downgrade', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/020_remove_sdk_config_provisioning_trigger.down.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('Intentionally non-restorative breaking downgrade');
+    expect(sql).toContain('DROP FUNCTION IF EXISTS provision_environment_sdk_config()');
+    expect(sql).not.toContain('CREATE OR REPLACE FUNCTION');
+    expect(sql).not.toContain('config_value');
   });
 });

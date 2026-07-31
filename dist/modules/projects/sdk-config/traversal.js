@@ -4,15 +4,18 @@
  * to `setAtPath`.
  */
 import { toJsonPointer } from "./editable-allowlist.js";
-/** A JSON value is a "leaf" if it is a scalar, null, or an array. */
+/** A JSON value is a leaf if it is scalar, null, an array, or an empty object. */
 function isLeaf(value) {
-    return value === null || typeof value !== "object" || Array.isArray(value);
+    return value === null
+        || typeof value !== "object"
+        || Array.isArray(value)
+        || Object.keys(value).length === 0;
 }
 /**
- * Enumerate every leaf path in a nested object. Objects are descended into;
- * scalars, `null`, and arrays are treated as leaves (the whole array is the
- * value). Used to enumerate every touched pointer in a PUT/PATCH body and to
- * apply validated intent during compilation.
+ * Enumerate every leaf path in nested JSON. Non-empty objects are descended
+ * into; scalars, null, arrays, and empty objects are values. Treating an empty
+ * nested object as a touched value prevents unknown/protected containers from
+ * bypassing mutation validation.
  */
 export function enumerateLeafPaths(value, base = []) {
     const results = [];

@@ -2,7 +2,8 @@ import type { Pool } from 'pg';
 import { PostgresWriter } from './postgress.writter.js';
 import { type SdkEventType } from './pipeline/event-normalizer.js';
 import { type PlanTier } from './queue/ingest-queues.js';
-import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus, SDKInitResponse } from './types.js';
+import type { IngestRequest, IngestResponse, ErrorEventListQuery, ErrorEventListResult, ErrorEventRecord, ReplayRequest, HealthStatus } from './types.js';
+import type { DeliveryResult, RemoteSdkConfigService } from '../projects/sdk-config/sdk-config.service.js';
 interface BackpressureConfig {
     readonly highWater: number;
     readonly criticalWater: number;
@@ -19,6 +20,7 @@ interface ServiceConfig {
 export declare class IngestionService {
     private readonly pool;
     private readonly writer;
+    private readonly sdkConfigService?;
     private readonly rateLimiter;
     private readonly orgRateLimiter;
     private readonly usage;
@@ -32,7 +34,7 @@ export declare class IngestionService {
     private cachedDepthAt;
     private readonly quotaCache;
     private readonly quotaCacheTtlMs;
-    constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig);
+    constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig, sdkConfigService?: RemoteSdkConfigService | undefined);
     private resolveProject;
     /** Cached queue-depth probe (refreshed at most every 1s). */
     private queueDepth;
@@ -49,7 +51,7 @@ export declare class IngestionService {
      * (authoritative enforcement happens worker-side / in billing rollups).
      */
     private assertQuotaAvailable;
-    initializeSdk(apiKey: string): Promise<SDKInitResponse>;
+    initializeSdk(apiKey: string): Promise<DeliveryResult>;
     private syncInitLookupsBestEffort;
     /**
      * Legacy mixed-batch entrypoint (POST /v1/ingest). Accepts any combination of
@@ -108,11 +110,10 @@ export declare class IngestionService {
      */
     reprocessDLQJob(jobId: string, replayedBy?: string): Promise<void>;
     /**
-     * Rebuild an IngestJobPayload from a DLQ row. Primary shape: the stored
-     * payload IS the original IngestJobPayload (worker-side DLQ intake stores
-     * the failed job's data verbatim). Fallback: older rows may only carry a
-     * bare event (or an array of events), in which case we wrap them using the
-     * DLQ row's own org/project/type columns.
+     * Rebuild an IngestJobPayload from a DLQ row. The stored payload must retain
+     * either the original job metadata.environment or the complete validation
+     * DLQ envelope with its environment. Older bare-event rows are rejected:
+     * replay must never invent an environment storage dimension.
      */
     private dlqRowToJobPayload;
     reprocessAllDLQ(batchSize?: number, replayedBy?: string): Promise<number>;

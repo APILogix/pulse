@@ -3,13 +3,13 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS analytics_hourly_rollup (
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment_id UUID,
+  environment TEXT NOT NULL,
   bucket TIMESTAMPTZ NOT NULL,
   metric_name TEXT NOT NULL,
   metric_value NUMERIC(20,6) NOT NULL,
   dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (organization_id, project_id, environment_id, bucket, metric_name)
+  PRIMARY KEY (organization_id, project_id, environment, bucket, metric_name)
 ) PARTITION BY RANGE (bucket);
 CREATE TABLE IF NOT EXISTS analytics_hourly_rollup_default PARTITION OF analytics_hourly_rollup DEFAULT;
 CREATE INDEX IF NOT EXISTS idx_analytics_hourly_dims_gin ON analytics_hourly_rollup USING GIN (dimensions);
@@ -18,13 +18,13 @@ CREATE INDEX IF NOT EXISTS idx_analytics_hourly_brin ON analytics_hourly_rollup 
 CREATE TABLE IF NOT EXISTS analytics_daily_rollup (
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment_id UUID,
+  environment TEXT NOT NULL,
   bucket TIMESTAMPTZ NOT NULL,
   metric_name TEXT NOT NULL,
   metric_value NUMERIC(20,6) NOT NULL,
   dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (organization_id, project_id, environment_id, bucket, metric_name)
+  PRIMARY KEY (organization_id, project_id, environment, bucket, metric_name)
 ) PARTITION BY RANGE (bucket);
 CREATE TABLE IF NOT EXISTS analytics_daily_rollup_default PARTITION OF analytics_daily_rollup DEFAULT;
 CREATE INDEX IF NOT EXISTS idx_analytics_daily_dims_gin ON analytics_daily_rollup USING GIN (dimensions);
@@ -33,6 +33,7 @@ CREATE INDEX IF NOT EXISTS idx_analytics_daily_brin ON analytics_daily_rollup US
 CREATE TABLE IF NOT EXISTS analytics_geo_hourly_rollup (
   organization_id UUID NOT NULL,
   project_id UUID,
+  environment TEXT NOT NULL,
   bucket TIMESTAMPTZ NOT NULL,
   country_code CHAR(2) NOT NULL,
   region TEXT,
@@ -41,9 +42,10 @@ CREATE TABLE IF NOT EXISTS analytics_geo_hourly_rollup (
   errors BIGINT NOT NULL DEFAULT 0,
   p95_latency_ms NUMERIC(12,3),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (organization_id, project_id, bucket, country_code, region, city)
+  PRIMARY KEY (organization_id, project_id, environment, bucket, country_code, region, city)
 ) PARTITION BY RANGE (bucket);
 CREATE TABLE IF NOT EXISTS analytics_geo_hourly_rollup_default PARTITION OF analytics_geo_hourly_rollup DEFAULT;
+CREATE INDEX IF NOT EXISTS idx_analytics_geo_tenant_env_time ON analytics_geo_hourly_rollup(organization_id,project_id,environment,bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_analytics_geo_country_time ON analytics_geo_hourly_rollup(country_code, bucket DESC);
 CREATE INDEX IF NOT EXISTS idx_analytics_geo_brin ON analytics_geo_hourly_rollup USING BRIN (bucket);
 
@@ -70,7 +72,7 @@ CREATE TRIGGER trg_analytics_error_groups_updated_at BEFORE UPDATE ON analytics_
 CREATE TABLE IF NOT EXISTS analytics_performance_summary (
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment_id UUID,
+  environment TEXT NOT NULL,
   bucket TIMESTAMPTZ NOT NULL,
   service TEXT NOT NULL,
   endpoint TEXT,
@@ -80,7 +82,7 @@ CREATE TABLE IF NOT EXISTS analytics_performance_summary (
   p95_latency_ms NUMERIC(12,3),
   p99_latency_ms NUMERIC(12,3),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (organization_id, project_id, environment_id, bucket, service, endpoint)
+  PRIMARY KEY (organization_id, project_id, environment, bucket, service, endpoint)
 ) PARTITION BY RANGE (bucket);
 CREATE TABLE IF NOT EXISTS analytics_performance_summary_default PARTITION OF analytics_performance_summary DEFAULT;
 CREATE INDEX IF NOT EXISTS idx_analytics_perf_service_time ON analytics_performance_summary(service, bucket DESC);
@@ -90,7 +92,7 @@ CREATE TABLE IF NOT EXISTS analytics_user_sessions (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment_id UUID,
+  environment TEXT NOT NULL,
   session_id TEXT NOT NULL,
   user_id TEXT,
   started_at TIMESTAMPTZ NOT NULL,
@@ -117,7 +119,7 @@ BEGIN
       CREATE TABLE IF NOT EXISTS %I (
         organization_id UUID NOT NULL,
         project_id UUID,
-        environment_id UUID,
+        environment TEXT NOT NULL,
         bucket TIMESTAMPTZ NOT NULL,
         entity_key TEXT NOT NULL,
         total_count BIGINT NOT NULL DEFAULT 0,
@@ -125,7 +127,7 @@ BEGIN
         latency_ms_p95 NUMERIC(12,3),
         attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (organization_id, project_id, environment_id, bucket, entity_key)
+        PRIMARY KEY (organization_id, project_id, environment, bucket, entity_key)
       ) PARTITION BY RANGE (bucket)
     $sql$, table_name);
     EXECUTE format('CREATE TABLE IF NOT EXISTS %I_default PARTITION OF %I DEFAULT', table_name, table_name);
@@ -138,7 +140,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS analytics_trace_service_edges (
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment_id UUID,
+  environment TEXT NOT NULL,
   bucket TIMESTAMPTZ NOT NULL,
   source_service TEXT NOT NULL,
   target_service TEXT NOT NULL,
@@ -146,7 +148,7 @@ CREATE TABLE IF NOT EXISTS analytics_trace_service_edges (
   error_count BIGINT NOT NULL DEFAULT 0,
   p95_latency_ms NUMERIC(12,3),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (organization_id, project_id, environment_id, bucket, source_service, target_service)
+  PRIMARY KEY (organization_id, project_id, environment, bucket, source_service, target_service)
 ) PARTITION BY RANGE (bucket);
 CREATE TABLE IF NOT EXISTS analytics_trace_service_edges_default PARTITION OF analytics_trace_service_edges DEFAULT;
 CREATE INDEX IF NOT EXISTS idx_analytics_trace_edges_source ON analytics_trace_service_edges(source_service, bucket DESC);

@@ -8,10 +8,10 @@ import { BillingProvisioningRepository, type BillingProvisioningResult } from '.
 export class BillingProvisioningService {
   constructor(private readonly repository = new BillingProvisioningRepository()) {}
 
-  provisionFreeSubscription(
+  provisionDefaultSubscription(
     client: PoolClient,
     organizationId: string,
   ): Promise<BillingProvisioningResult> {
-    return this.repository.provisionFreeSubscription(client, organizationId);
+    return this.repository.provisionDefaultSubscription(client, organizationId);
   }
 }

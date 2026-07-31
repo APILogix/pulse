@@ -1,4 +1,4 @@
-import { type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 export type DbOperation = 'read' | 'write';
 export interface QueryOptions {
     /** Max retry attempts (default: env.LOG_RETRIES). */
@@ -146,6 +146,11 @@ declare class LogDatabaseManager {
         primary: PoolStats;
         replica?: PoolStats;
     };
+    /**
+     * Standard pg Pool used by typed telemetry persistence and analytics SQL.
+     * Control-plane repositories must continue using config/database.ts.
+     */
+    getPrimaryPool(): Pool;
     /** Graceful shutdown — drains both pools. */
     close(): Promise<void>;
 }

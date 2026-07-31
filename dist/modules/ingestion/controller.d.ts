@@ -19,7 +19,7 @@
  *   - All error paths log the reqId so a 500 in production is traceable.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { IngestionService } from './service.js';
+import type { IngestionService } from './service.js';
 import type { SdkEventType } from './pipeline/event-normalizer.js';
 export declare class IngestionController {
     private readonly service;

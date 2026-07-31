@@ -1,18 +1,7 @@
-/**
- * Server-side validation for schema-v1 documents and editable intent.
- *
- * The backend is stricter than the SDK: it REJECTS out-of-range values rather
- * than relying on SDK clamps (design.md §9, ADR-007, Property 11). Two entry
- * points:
- *   - validateEditableLeaf(): per-leaf type + bounds check used during PUT/PATCH
- *     traversal so a single bad value is reported at its exact pointer.
- *   - validateSchemaV1(): full structural + bounds + cross-field validation of a
- *     compiled snapshot / delivery document (all sections, fixed routes).
- */
+import { computeConfigHash } from "./canonical.js";
 import { SdkConfigError, SdkConfigErrorCollector } from "./errors.js";
-import { toJsonPointer, INSTRUMENTATION_OPTION_ALLOWLIST_V1 } from "./editable-allowlist.js";
-import { COMPRESSION_MODES, FEATURE_KEYS, INTEGRATION_KEYS, KILLSWITCH_KEYS, PRIVACY_CAPTURE_KEYS, PRIVACY_PII_KEYS, REQUIRED_SECTIONS, ROUTE_KEYS, SAMPLING_SIGNALS, SCHEMA_VERSION, TENANT_GOVERNANCE_KEYS, } from "./schema-v1.js";
-/** Inclusive server hard bounds (design.md §9). Policy may narrow, never widen. */
+import { toJsonPointer } from "./editable-allowlist.js";
+import { COMPRESSION_MODES, ENTITLEMENT_KEYS, FEATURE_KEYS, GENERATOR_ID, INSTRUMENTATION_KEYS, KILLSWITCH_KEYS, PII_DETECTION_KEYS, PRIVACY_CAPTURE_KEYS, QUEUE_OVERFLOW_STRATEGIES, REQUIRED_SECTIONS, RETRY_BACKOFF_MODES, ROUTE_INGEST_PATHS, ROUTE_KEYS, SAMPLING_SIGNALS, SCHEMA_VERSION, TENANT_GOVERNANCE_KEYS, TOP_LEVEL_KEYS, TRANSPORT_PRIORITIES, } from "./schema-v1.js";
 export const BOUNDS = {
     "limits.maxSpansPerTrace": { min: 1, max: 5000, integer: true },
     "limits.maxSpanAttributes": { min: 1, max: 500, integer: true },
@@ -20,34 +9,74 @@ export const BOUNDS = {
     "limits.maxPayloadSize": { min: 1024, max: 4194304, integer: true },
     "limits.maxQueueSize": { min: 1, max: 100000, integer: true },
     "limits.maxMemoryMb": { min: 16, max: 1024, integer: true },
-    "limits.maxCpuOverheadPercent": { min: 0.1, max: 25, integer: false, maxDecimals: 3 },
     "transport.retry.maxRetries": { min: 0, max: 10, integer: true },
     "transport.retry.baseDelayMs": { min: 100, max: 30000, integer: true },
     "transport.queue.maxSize": { min: 1, max: 100000, integer: true },
     "transport.queue.criticalReserve": { min: 0, max: 100000, integer: true },
-    "transport.connections.total": { min: 1, max: 500, integer: true },
+    "transport.connections.maxTotalConnections": { min: 1, max: 500, integer: true },
     "transport.connections.acquireTimeoutMs": { min: 100, max: 60000, integer: true },
     "runtime.configTtlSeconds": { min: 30, max: 86400, integer: true },
     "route.batchSize": { min: 1, max: 5000, integer: true },
-    "route.flushIntervalMs": { min: 100, max: 300000, integer: true },
+    "route.flushIntervalMs": { min: 0, max: 300000, integer: true },
     "route.timeoutMs": { min: 250, max: 60000, integer: true },
     "tenant.maxTenantsTracked": { min: 1, max: 100000, integer: true },
-    "tenant.quota": { min: 1, max: 1000000, integer: true },
-    "tenant.windowMs": { min: 1000, max: 3600000, integer: true },
-    "tenant.reserve": { min: 0, max: 100000, integer: true },
+    "tenant.quotaPerWindow": { min: 1, max: 1000000, integer: true },
+    "tenant.windowDurationMs": { min: 1000, max: 3600000, integer: true },
+    "tenant.criticalReserve": { min: 0, max: 100000, integer: true },
 };
 export const SAMPLING_RATE_BOUND = { min: 0, max: 1, integer: false };
-export const MAX_ROUTE_OVERRIDES = 1000;
-export const MAX_PREFIX_BYTES = 512;
+export const MAX_SAMPLING_ROUTES = 1000;
+export const MAX_ROUTE_PATH_BYTES = 512;
 export const MAX_SCRUB_PATTERNS = 500;
 export const MAX_PATTERN_BYTES = 512;
-const utf8Bytes = (value) => Buffer.byteLength(value, "utf8");
+function isPlainObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function objectValue(value, pointer, out) {
+    if (!isPlainObject(value)) {
+        out.push({ path: pointer, rule: "type", message: "Value must be an object", requested: value });
+        return {};
+    }
+    return value;
+}
+function checkExactKeys(pointer, value, required, out) {
+    const expected = new Set(required);
+    for (const key of required) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) {
+            out.push({ path: `${pointer}/${key}`, rule: "required", message: `Missing required field '${key}'` });
+        }
+    }
+    for (const key of Object.keys(value)) {
+        if (!expected.has(key)) {
+            out.push({ path: `${pointer}/${key}`, rule: "unknown", message: `Unexpected field '${key}'` });
+        }
+    }
+}
+function checkBoolean(pointer, value, out) {
+    if (typeof value !== "boolean") {
+        out.push({ path: pointer, rule: "type", message: "Value must be a boolean", requested: value });
+    }
+}
+function checkString(pointer, value, out, options = {}) {
+    if (typeof value !== "string") {
+        out.push({ path: pointer, rule: "type", message: "Value must be a string", requested: value });
+        return;
+    }
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (options.nonEmpty && bytes === 0) {
+        out.push({ path: pointer, rule: "required", message: "Value must not be empty" });
+    }
+    if (options.maxBytes !== undefined && bytes > options.maxBytes) {
+        out.push({ path: pointer, rule: "length", message: `Value must be at most ${options.maxBytes} UTF-8 bytes` });
+    }
+}
 function countDecimals(value) {
-    const text = value.toString();
+    const text = value.toString().toLowerCase();
+    if (text.includes("e-"))
+        return Number(text.split("e-")[1] ?? 0);
     const dot = text.indexOf(".");
     return dot < 0 ? 0 : text.length - dot - 1;
 }
-/** Validate a finite number against a bound, appending a detail if invalid. */
 function checkNumber(pointer, value, bound, out) {
     if (typeof value !== "number" || !Number.isFinite(value)) {
         out.push({ path: pointer, rule: "type", message: "Value must be a finite number", requested: value });
@@ -58,13 +87,7 @@ function checkNumber(pointer, value, bound, out) {
         return;
     }
     if (bound.maxDecimals !== undefined && countDecimals(value) > bound.maxDecimals) {
-        out.push({
-            path: pointer,
-            rule: "precision",
-            message: `Value must have at most ${bound.maxDecimals} decimal places`,
-            requested: value,
-        });
-        return;
+        out.push({ path: pointer, rule: "precision", message: `Value must have at most ${bound.maxDecimals} decimal places`, requested: value });
     }
     if (value < bound.min || value > bound.max) {
         out.push({
@@ -76,52 +99,96 @@ function checkNumber(pointer, value, bound, out) {
         });
     }
 }
-function checkBoolean(pointer, value, out) {
-    if (typeof value !== "boolean") {
-        out.push({ path: pointer, rule: "type", message: "Value must be a boolean", requested: value });
+function checkEnum(pointer, value, values, out) {
+    if (typeof value !== "string" || !values.includes(value)) {
+        out.push({ path: pointer, rule: "enum", message: `Value must be one of: ${values.join(", ")}`, requested: value, allowed: values });
     }
 }
 function checkSamplingRate(pointer, value, out) {
     checkNumber(pointer, value, SAMPLING_RATE_BOUND, out);
 }
-/** Validate one editable route override entry within `/sampling/routeOverrides`. */
-function checkRouteOverride(index, entry, out) {
-    const base = `/sampling/routeOverrides/${index}`;
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-        out.push({ path: base, rule: "type", message: "Route override must be an object" });
+function checkStringArray(pointer, value, out) {
+    if (!Array.isArray(value)) {
+        out.push({ path: pointer, rule: "type", message: "Value must be an array of strings", requested: value });
         return;
     }
-    const record = entry;
-    const prefix = record["prefix"];
-    if (typeof prefix !== "string") {
-        out.push({ path: `${base}/prefix`, rule: "type", message: "prefix must be a string" });
+    if (value.length > MAX_SCRUB_PATTERNS) {
+        out.push({ path: pointer, rule: "max", message: `At most ${MAX_SCRUB_PATTERNS} entries are allowed`, requested: value.length });
     }
-    else {
-        const bytes = utf8Bytes(prefix);
-        if (bytes < 1 || bytes > MAX_PREFIX_BYTES) {
-            out.push({
-                path: `${base}/prefix`,
-                rule: "length",
-                message: `prefix must be 1..${MAX_PREFIX_BYTES} UTF-8 bytes`,
-                requested: bytes,
-            });
+    const seen = new Set();
+    value.forEach((entry, index) => {
+        const itemPointer = `${pointer}/${index}`;
+        checkString(itemPointer, entry, out, { nonEmpty: true, maxBytes: MAX_PATTERN_BYTES });
+        if (typeof entry === "string") {
+            if (seen.has(entry))
+                out.push({ path: itemPointer, rule: "duplicate", message: "Duplicate entry", requested: entry });
+            seen.add(entry);
         }
+    });
+}
+function checkMaxMemory(pointer, value, out) {
+    if (value === "auto")
+        return;
+    if (typeof value === "string") {
+        out.push({ path: pointer, rule: "enum", message: "Value must be 'auto' or a number", requested: value, allowed: ["auto", "number"] });
+        return;
     }
-    for (const key of Object.keys(record)) {
-        if (key === "prefix")
-            continue;
-        if (!SAMPLING_SIGNALS.includes(key)) {
-            out.push({ path: `${base}/${key}`, rule: "unknown", message: `Unknown route override field '${key}'` });
-            continue;
+    checkNumber(pointer, value, BOUNDS["limits.maxMemoryMb"], out);
+}
+function validateSamplingRoutes(value, pointer, out) {
+    const routes = objectValue(value, pointer, out);
+    const entries = Object.entries(routes);
+    if (entries.length > MAX_SAMPLING_ROUTES) {
+        out.push({ path: pointer, rule: "max", message: `At most ${MAX_SAMPLING_ROUTES} route overrides are allowed`, requested: entries.length });
+    }
+    for (const [path, rawOverride] of entries) {
+        const routePointer = `${pointer}/${path.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+        const bytes = Buffer.byteLength(path, "utf8");
+        if (!path.startsWith("/") || bytes > MAX_ROUTE_PATH_BYTES) {
+            out.push({ path: routePointer, rule: "format", message: `Route key must start with '/' and be at most ${MAX_ROUTE_PATH_BYTES} UTF-8 bytes`, requested: path });
         }
-        checkSamplingRate(`${base}/${key}`, record[key], out);
+        const override = objectValue(rawOverride, routePointer, out);
+        if (Object.keys(override).length === 0) {
+            out.push({ path: routePointer, rule: "min", message: "Route override must contain at least one sampling signal" });
+        }
+        for (const [signal, rate] of Object.entries(override)) {
+            if (!SAMPLING_SIGNALS.includes(signal)) {
+                out.push({ path: `${routePointer}/${signal}`, rule: "unknown", message: `Unknown sampling signal '${signal}'` });
+            }
+            else {
+                checkSamplingRate(`${routePointer}/${signal}`, rate, out);
+            }
+        }
     }
 }
-/**
- * Validate a single editable leaf's value (type + bounds). `segments` are the
- * classified-editable reference tokens; `value` is the intended value. Returns
- * detail records (empty when valid). Does NOT perform cross-field checks.
- */
+function validateTransportRoutes(value, out) {
+    const routes = objectValue(value, "/transport/routes", out);
+    checkExactKeys("/transport/routes", routes, ROUTE_KEYS, out);
+    const routeFields = ["url", "batchSize", "flushIntervalMs", "timeoutMs", "compression", "priority"];
+    for (const routeKey of ROUTE_KEYS) {
+        const base = `/transport/routes/${routeKey}`;
+        const route = objectValue(routes[routeKey], base, out);
+        checkExactKeys(base, route, routeFields, out);
+        checkString(`${base}/url`, route.url, out, { nonEmpty: true });
+        if (typeof route.url === "string") {
+            try {
+                const parsed = new URL(route.url);
+                const hasAllowedProtocol = parsed.protocol === "https:" || parsed.protocol === "http:";
+                if (!hasAllowedProtocol || !parsed.pathname.endsWith(ROUTE_INGEST_PATHS[routeKey])) {
+                    out.push({ path: `${base}/url`, rule: "topology", message: `URL must be HTTP(S) and end at ${ROUTE_INGEST_PATHS[routeKey]}`, requested: route.url });
+                }
+            }
+            catch {
+                out.push({ path: `${base}/url`, rule: "format", message: "URL must be valid" });
+            }
+        }
+        checkNumber(`${base}/batchSize`, route.batchSize, BOUNDS["route.batchSize"], out);
+        checkNumber(`${base}/flushIntervalMs`, route.flushIntervalMs, BOUNDS["route.flushIntervalMs"], out);
+        checkNumber(`${base}/timeoutMs`, route.timeoutMs, BOUNDS["route.timeoutMs"], out);
+        checkEnum(`${base}/compression`, route.compression, COMPRESSION_MODES, out);
+        checkEnum(`${base}/priority`, route.priority, TRANSPORT_PRIORITIES, out);
+    }
+}
 export function validateEditableLeaf(segments, value) {
     const out = [];
     const pointer = toJsonPointer(segments);
@@ -129,309 +196,192 @@ export function validateEditableLeaf(segments, value) {
     switch (head) {
         case "features":
         case "killswitches":
+        case "instrumentation":
             checkBoolean(pointer, value, out);
             break;
         case "runtime":
             if (rest[0] === "configTtlSeconds")
                 checkNumber(pointer, value, BOUNDS["runtime.configTtlSeconds"], out);
-            else if (rest[0] === "staleWhileRevalidate")
+            else
                 checkBoolean(pointer, value, out);
             break;
         case "sampling":
-            if (rest[0] === "routeOverrides") {
-                if (!Array.isArray(value)) {
-                    out.push({ path: pointer, rule: "type", message: "routeOverrides must be an array" });
-                }
-                else if (value.length > MAX_ROUTE_OVERRIDES) {
-                    out.push({
-                        path: pointer,
-                        rule: "max",
-                        message: `At most ${MAX_ROUTE_OVERRIDES} route overrides`,
-                        requested: value.length,
-                    });
-                }
-                else {
-                    const seen = new Set();
-                    value.forEach((entry, index) => {
-                        checkRouteOverride(index, entry, out);
-                        const prefix = entry?.["prefix"];
-                        if (typeof prefix === "string") {
-                            const normalized = prefix.trim();
-                            if (seen.has(normalized)) {
-                                out.push({
-                                    path: `/sampling/routeOverrides/${index}/prefix`,
-                                    rule: "duplicate",
-                                    message: "Duplicate normalized route override prefix",
-                                    requested: prefix,
-                                });
-                            }
-                            seen.add(normalized);
-                        }
-                    });
-                }
-            }
-            else {
-                checkSamplingRate(pointer, value, out);
-            }
-            break;
-        case "instrumentation":
-            if (rest[1] === "enabled") {
-                checkBoolean(pointer, value, out);
-            }
-            else if (rest[1] === "options") {
-                const registry = INSTRUMENTATION_OPTION_ALLOWLIST_V1[rest[0]] ?? {};
-                const expected = registry[rest[2] ?? ""];
-                if (!expected) {
-                    out.push({ path: pointer, rule: "unknown", message: "Unknown instrumentation option" });
-                }
-                else if (typeof value !== expected) {
-                    out.push({ path: pointer, rule: "type", message: `Option must be of type ${expected}`, requested: value });
-                }
-            }
+            checkSamplingRate(pointer, value, out);
             break;
         case "privacy":
-            if (rest[0] === "capture" || rest[0] === "pii") {
-                checkBoolean(pointer, value, out);
-            }
-            else if (rest[0] === "scrubbing") {
+            if (rest[0] === "scrubbing" && (rest[1] === "headers" || rest[1] === "fields"))
                 checkStringArray(pointer, value, out);
-            }
+            else
+                checkBoolean(pointer, value, out);
             break;
         case "limits":
-            if (rest[0] === "tenantGovernance") {
-                const key = `tenant.${rest[1]}`;
-                if (BOUNDS[key])
-                    checkNumber(pointer, value, BOUNDS[key], out);
+            if (rest[0] === "maxMemoryMb")
+                checkMaxMemory(pointer, value, out);
+            else if (rest[0] === "tenantGovernance") {
+                if (rest[1] === "enabled")
+                    checkBoolean(pointer, value, out);
+                else {
+                    const bound = BOUNDS[`tenant.${rest[1]}`];
+                    if (bound)
+                        checkNumber(pointer, value, bound, out);
+                }
             }
             else {
-                const key = `limits.${rest[0]}`;
-                if (BOUNDS[key])
-                    checkNumber(pointer, value, BOUNDS[key], out);
+                const bound = BOUNDS[`limits.${rest[0]}`];
+                if (bound)
+                    checkNumber(pointer, value, bound, out);
             }
             break;
         case "transport":
-            checkTransportLeaf(rest, pointer, value, out);
-            break;
-        default:
+            validateTransportLeaf(rest, pointer, value, out);
             break;
     }
     return out;
 }
-function checkStringArray(pointer, value, out) {
-    if (!Array.isArray(value)) {
-        out.push({ path: pointer, rule: "type", message: "Value must be an array of strings" });
-        return;
+function validateTransportLeaf(rest, pointer, value, out) {
+    if (rest[0] === "keepAlive" || (rest[0] === "retry" && rest[1] === "enabled")) {
+        checkBoolean(pointer, value, out);
     }
-    if (value.length > MAX_SCRUB_PATTERNS) {
-        out.push({ path: pointer, rule: "max", message: `At most ${MAX_SCRUB_PATTERNS} patterns`, requested: value.length });
-        return;
+    else if (rest[0] === "retry" && rest[1] === "backoff") {
+        checkEnum(pointer, value, RETRY_BACKOFF_MODES, out);
     }
-    value.forEach((entry, index) => {
-        if (typeof entry !== "string") {
-            out.push({ path: `${pointer}/${index}`, rule: "type", message: "Pattern must be a string" });
-            return;
-        }
-        const bytes = utf8Bytes(entry);
-        if (bytes < 1 || bytes > MAX_PATTERN_BYTES) {
-            out.push({
-                path: `${pointer}/${index}`,
-                rule: "length",
-                message: `Pattern must be 1..${MAX_PATTERN_BYTES} UTF-8 bytes`,
-                requested: bytes,
-            });
-        }
-    });
-}
-function checkTransportLeaf(rest, pointer, value, out) {
-    const group = rest[0];
-    if (group === "retry") {
-        const key = `transport.retry.${rest[1]}`;
-        if (BOUNDS[key])
-            checkNumber(pointer, value, BOUNDS[key], out);
+    else if (rest[0] === "queue" && rest[1] === "overflowStrategy") {
+        checkEnum(pointer, value, QUEUE_OVERFLOW_STRATEGIES, out);
     }
-    else if (group === "queue") {
-        const key = `transport.queue.${rest[1]}`;
-        if (BOUNDS[key])
-            checkNumber(pointer, value, BOUNDS[key], out);
+    else if (rest[0] === "routes" && rest[2] === "compression") {
+        checkEnum(pointer, value, COMPRESSION_MODES, out);
     }
-    else if (group === "connections") {
-        const key = `transport.connections.${rest[1]}`;
-        if (BOUNDS[key])
-            checkNumber(pointer, value, BOUNDS[key], out);
+    else if (rest[0] === "routes" && rest[2] === "priority") {
+        checkEnum(pointer, value, TRANSPORT_PRIORITIES, out);
     }
-    else if (group === "routes") {
-        const field = rest[2];
-        if (field === "batchSize")
-            checkNumber(pointer, value, BOUNDS["route.batchSize"], out);
-        else if (field === "flushIntervalMs")
-            checkNumber(pointer, value, BOUNDS["route.flushIntervalMs"], out);
-        else if (field === "timeoutMs")
-            checkNumber(pointer, value, BOUNDS["route.timeoutMs"], out);
+    else {
+        const key = rest[0] === "routes"
+            ? `route.${rest[2]}`
+            : `transport.${rest[0]}.${rest[1]}`;
+        const bound = BOUNDS[key];
+        if (bound)
+            checkNumber(pointer, value, bound, out);
     }
 }
-// ---------------------------------------------------------------------------
-// Full compiled-document validation.
-// ---------------------------------------------------------------------------
-function isPlainObject(value) {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-/**
- * Validate a complete compiled schema-v1 document. Throws a 422 SdkConfigError
- * with pointer-level details when anything is missing, mistyped, out of range,
- * or violates a cross-field invariant. This is the authoritative gate that the
- * compiler output and the delivery document must pass (design.md §9).
- */
+/** Validate the exact wire contract. Unknown and legacy fields are rejected. */
 export function validateSchemaV1(config) {
     const collector = new SdkConfigErrorCollector();
     const out = [];
-    if (!isPlainObject(config)) {
-        throw new SdkConfigError("schema_invalid", "Configuration must be an object", 422, [
-            { path: "", rule: "type", message: "Root must be an object" },
-        ]);
+    const root = objectValue(config, "", out);
+    checkExactKeys("", root, TOP_LEVEL_KEYS, out);
+    if (root.schemaVersion !== SCHEMA_VERSION) {
+        out.push({ path: "/schemaVersion", rule: "const", message: `schemaVersion must be ${SCHEMA_VERSION}`, requested: root.schemaVersion });
     }
-    if (config["schemaVersion"] !== SCHEMA_VERSION) {
-        out.push({
-            path: "/schemaVersion",
-            rule: "const",
-            message: `schemaVersion must be ${SCHEMA_VERSION}`,
-            requested: config["schemaVersion"],
-        });
-    }
-    for (const section of REQUIRED_SECTIONS) {
-        if (!isPlainObject(config[section])) {
-            out.push({ path: `/${section}`, rule: "required", message: `Missing required section '${section}'` });
-        }
-    }
-    if (out.length > 0) {
-        collector.addAll(out);
-        collector.throwIfAny("schema_invalid", "Configuration is structurally invalid");
-    }
-    const cfg = config;
-    // sdk identity
-    if (typeof cfg.sdk.projectId !== "string" || cfg.sdk.projectId.length === 0) {
-        out.push({ path: "/sdk/projectId", rule: "required", message: "sdk.projectId must be a non-empty string" });
-    }
-    if (typeof cfg.sdk.environment !== "string" || cfg.sdk.environment.length === 0) {
-        out.push({ path: "/sdk/environment", rule: "required", message: "sdk.environment must be a non-empty string" });
-    }
-    // features + killswitches
+    for (const section of REQUIRED_SECTIONS)
+        objectValue(root[section], `/${section}`, out);
+    const sdk = objectValue(root.sdk, "/sdk", out);
+    checkExactKeys("/sdk", sdk, ["projectId", "environment", "release"], out);
+    checkString("/sdk/projectId", sdk.projectId, out, { nonEmpty: true, maxBytes: 128 });
+    checkString("/sdk/environment", sdk.environment, out, { nonEmpty: true, maxBytes: 64 });
+    checkString("/sdk/release", sdk.release, out, { nonEmpty: true, maxBytes: 100 });
+    const features = objectValue(root.features, "/features", out);
+    checkExactKeys("/features", features, FEATURE_KEYS, out);
     for (const key of FEATURE_KEYS)
-        checkBoolean(`/features/${key}`, cfg.features[key], out);
-    for (const key of KILLSWITCH_KEYS)
-        checkBoolean(`/killswitches/${key}`, cfg.killswitches[key], out);
-    // sampling
-    for (const signal of SAMPLING_SIGNALS)
-        checkSamplingRate(`/sampling/${signal}`, cfg.sampling[signal], out);
-    if (!Array.isArray(cfg.sampling.routeOverrides)) {
-        out.push({ path: "/sampling/routeOverrides", rule: "type", message: "routeOverrides must be an array" });
-    }
-    else {
-        cfg.sampling.routeOverrides.forEach((entry, index) => checkRouteOverride(index, entry, out));
-    }
-    // instrumentation
-    for (const integration of INTEGRATION_KEYS) {
-        const node = cfg.instrumentation[integration];
-        if (!isPlainObject(node)) {
-            out.push({ path: `/instrumentation/${integration}`, rule: "type", message: "Integration must be an object" });
-            continue;
-        }
-        checkBoolean(`/instrumentation/${integration}/enabled`, node["enabled"], out);
-    }
-    // privacy
+        checkBoolean(`/features/${key}`, features[key], out);
+    const sampling = objectValue(root.sampling, "/sampling", out);
+    checkExactKeys("/sampling", sampling, [...SAMPLING_SIGNALS, "routes"], out);
+    for (const key of SAMPLING_SIGNALS)
+        checkSamplingRate(`/sampling/${key}`, sampling[key], out);
+    validateSamplingRoutes(sampling.routes, "/sampling/routes", out);
+    const instrumentation = objectValue(root.instrumentation, "/instrumentation", out);
+    checkExactKeys("/instrumentation", instrumentation, INSTRUMENTATION_KEYS, out);
+    for (const key of INSTRUMENTATION_KEYS)
+        checkBoolean(`/instrumentation/${key}`, instrumentation[key], out);
+    const privacy = objectValue(root.privacy, "/privacy", out);
+    checkExactKeys("/privacy", privacy, ["capture", "scrubbing", "piiDetection"], out);
+    const capture = objectValue(privacy.capture, "/privacy/capture", out);
+    checkExactKeys("/privacy/capture", capture, PRIVACY_CAPTURE_KEYS, out);
     for (const key of PRIVACY_CAPTURE_KEYS)
-        checkBoolean(`/privacy/capture/${key}`, cfg.privacy.capture?.[key], out);
-    for (const key of PRIVACY_PII_KEYS)
-        checkBoolean(`/privacy/pii/${key}`, cfg.privacy.pii?.[key], out);
-    checkStringArray("/privacy/scrubbing/headers", cfg.privacy.scrubbing?.headers, out);
-    checkStringArray("/privacy/scrubbing/fields", cfg.privacy.scrubbing?.fields, out);
-    // limits
-    checkNumber("/limits/maxSpansPerTrace", cfg.limits.maxSpansPerTrace, BOUNDS["limits.maxSpansPerTrace"], out);
-    checkNumber("/limits/maxSpanAttributes", cfg.limits.maxSpanAttributes, BOUNDS["limits.maxSpanAttributes"], out);
-    checkNumber("/limits/maxAttributeLength", cfg.limits.maxAttributeLength, BOUNDS["limits.maxAttributeLength"], out);
-    checkNumber("/limits/maxPayloadSize", cfg.limits.maxPayloadSize, BOUNDS["limits.maxPayloadSize"], out);
-    checkNumber("/limits/maxQueueSize", cfg.limits.maxQueueSize, BOUNDS["limits.maxQueueSize"], out);
-    checkNumber("/limits/maxMemoryMb", cfg.limits.maxMemoryMb, BOUNDS["limits.maxMemoryMb"], out);
-    checkNumber("/limits/maxCpuOverheadPercent", cfg.limits.maxCpuOverheadPercent, BOUNDS["limits.maxCpuOverheadPercent"], out);
-    if (cfg.limits.tenantGovernance !== undefined) {
-        const tg = cfg.limits.tenantGovernance;
-        for (const key of TENANT_GOVERNANCE_KEYS) {
-            checkNumber(`/limits/tenantGovernance/${key}`, tg[key], BOUNDS[`tenant.${key}`], out);
-        }
-        if (typeof tg.reserve === "number" && typeof tg.quota === "number" && tg.reserve > tg.quota) {
-            out.push({ path: "/limits/tenantGovernance/reserve", rule: "cross_field", message: "reserve must be <= quota" });
-        }
+        checkBoolean(`/privacy/capture/${key}`, capture[key], out);
+    const scrubbing = objectValue(privacy.scrubbing, "/privacy/scrubbing", out);
+    checkExactKeys("/privacy/scrubbing", scrubbing, ["enabled", "headers", "fields"], out);
+    checkBoolean("/privacy/scrubbing/enabled", scrubbing.enabled, out);
+    checkStringArray("/privacy/scrubbing/headers", scrubbing.headers, out);
+    checkStringArray("/privacy/scrubbing/fields", scrubbing.fields, out);
+    const pii = objectValue(privacy.piiDetection, "/privacy/piiDetection", out);
+    checkExactKeys("/privacy/piiDetection", pii, PII_DETECTION_KEYS, out);
+    for (const key of PII_DETECTION_KEYS)
+        checkBoolean(`/privacy/piiDetection/${key}`, pii[key], out);
+    const limits = objectValue(root.limits, "/limits", out);
+    const limitKeys = [
+        "maxSpansPerTrace", "maxSpanAttributes", "maxAttributeLength", "maxPayloadSize",
+        "maxQueueSize", "maxMemoryMb", "tenantGovernance",
+    ];
+    checkExactKeys("/limits", limits, limitKeys, out);
+    for (const key of limitKeys.slice(0, 5)) {
+        checkNumber(`/limits/${key}`, limits[key], BOUNDS[`limits.${key}`], out);
     }
-    // transport
-    checkNumber("/transport/retry/maxRetries", cfg.transport.retry?.maxRetries, BOUNDS["transport.retry.maxRetries"], out);
-    checkNumber("/transport/retry/baseDelayMs", cfg.transport.retry?.baseDelayMs, BOUNDS["transport.retry.baseDelayMs"], out);
-    checkNumber("/transport/queue/maxSize", cfg.transport.queue?.maxSize, BOUNDS["transport.queue.maxSize"], out);
-    checkNumber("/transport/queue/criticalReserve", cfg.transport.queue?.criticalReserve, BOUNDS["transport.queue.criticalReserve"], out);
-    checkBoolean("/transport/keepAlive", cfg.transport.keepAlive, out);
-    checkNumber("/transport/connections/total", cfg.transport.connections?.total, BOUNDS["transport.connections.total"], out);
-    checkNumber("/transport/connections/acquireTimeoutMs", cfg.transport.connections?.acquireTimeoutMs, BOUNDS["transport.connections.acquireTimeoutMs"], out);
-    validateRoutes(cfg, out);
-    // runtime
-    checkNumber("/runtime/configTtlSeconds", cfg.runtime.configTtlSeconds, BOUNDS["runtime.configTtlSeconds"], out);
-    checkBoolean("/runtime/staleWhileRevalidate", cfg.runtime.staleWhileRevalidate, out);
-    // meta
-    if (typeof cfg.meta.generatedAt !== "string") {
-        out.push({ path: "/meta/generatedAt", rule: "required", message: "meta.generatedAt must be a string" });
+    checkMaxMemory("/limits/maxMemoryMb", limits.maxMemoryMb, out);
+    const tenant = objectValue(limits.tenantGovernance, "/limits/tenantGovernance", out);
+    checkExactKeys("/limits/tenantGovernance", tenant, TENANT_GOVERNANCE_KEYS, out);
+    checkBoolean("/limits/tenantGovernance/enabled", tenant.enabled, out);
+    for (const key of TENANT_GOVERNANCE_KEYS.slice(1)) {
+        checkNumber(`/limits/tenantGovernance/${key}`, tenant[key], BOUNDS[`tenant.${key}`], out);
     }
-    if (typeof cfg.meta.generatedBy !== "string") {
-        out.push({ path: "/meta/generatedBy", rule: "required", message: "meta.generatedBy must be a string" });
+    if (typeof tenant.criticalReserve === "number" && typeof tenant.quotaPerWindow === "number" && tenant.criticalReserve > tenant.quotaPerWindow) {
+        out.push({ path: "/limits/tenantGovernance/criticalReserve", rule: "cross_field", message: "criticalReserve must be <= quotaPerWindow" });
     }
-    // cross-field: queue reserve and per-route batch size
-    const queueMax = cfg.transport.queue?.maxSize;
-    if (typeof queueMax === "number") {
-        if (typeof cfg.transport.queue.criticalReserve === "number" && cfg.transport.queue.criticalReserve > queueMax) {
-            out.push({ path: "/transport/queue/criticalReserve", rule: "cross_field", message: "criticalReserve must be <= queue.maxSize" });
-        }
-        if (typeof cfg.limits.maxQueueSize === "number" && cfg.limits.maxQueueSize > queueMax) {
-            out.push({ path: "/limits/maxQueueSize", rule: "cross_field", message: "limits.maxQueueSize must be <= transport.queue.maxSize" });
+    const killswitches = objectValue(root.killswitches, "/killswitches", out);
+    checkExactKeys("/killswitches", killswitches, KILLSWITCH_KEYS, out);
+    for (const key of KILLSWITCH_KEYS)
+        checkBoolean(`/killswitches/${key}`, killswitches[key], out);
+    const transport = objectValue(root.transport, "/transport", out);
+    checkExactKeys("/transport", transport, ["retry", "queue", "connections", "keepAlive", "routes"], out);
+    const retry = objectValue(transport.retry, "/transport/retry", out);
+    checkExactKeys("/transport/retry", retry, ["enabled", "maxRetries", "backoff", "baseDelayMs"], out);
+    checkBoolean("/transport/retry/enabled", retry.enabled, out);
+    checkNumber("/transport/retry/maxRetries", retry.maxRetries, BOUNDS["transport.retry.maxRetries"], out);
+    checkEnum("/transport/retry/backoff", retry.backoff, RETRY_BACKOFF_MODES, out);
+    checkNumber("/transport/retry/baseDelayMs", retry.baseDelayMs, BOUNDS["transport.retry.baseDelayMs"], out);
+    const queue = objectValue(transport.queue, "/transport/queue", out);
+    checkExactKeys("/transport/queue", queue, ["overflowStrategy", "maxSize", "criticalReserve"], out);
+    checkEnum("/transport/queue/overflowStrategy", queue.overflowStrategy, QUEUE_OVERFLOW_STRATEGIES, out);
+    checkNumber("/transport/queue/maxSize", queue.maxSize, BOUNDS["transport.queue.maxSize"], out);
+    checkNumber("/transport/queue/criticalReserve", queue.criticalReserve, BOUNDS["transport.queue.criticalReserve"], out);
+    const connections = objectValue(transport.connections, "/transport/connections", out);
+    checkExactKeys("/transport/connections", connections, ["maxTotalConnections", "acquireTimeoutMs"], out);
+    checkNumber("/transport/connections/maxTotalConnections", connections.maxTotalConnections, BOUNDS["transport.connections.maxTotalConnections"], out);
+    checkNumber("/transport/connections/acquireTimeoutMs", connections.acquireTimeoutMs, BOUNDS["transport.connections.acquireTimeoutMs"], out);
+    checkBoolean("/transport/keepAlive", transport.keepAlive, out);
+    validateTransportRoutes(transport.routes, out);
+    if (typeof queue.criticalReserve === "number" && typeof queue.maxSize === "number" && queue.criticalReserve > queue.maxSize) {
+        out.push({ path: "/transport/queue/criticalReserve", rule: "cross_field", message: "criticalReserve must be <= maxSize" });
+    }
+    if (typeof limits.maxQueueSize === "number" && typeof queue.maxSize === "number" && limits.maxQueueSize > queue.maxSize) {
+        out.push({ path: "/limits/maxQueueSize", rule: "cross_field", message: "maxQueueSize must be <= transport.queue.maxSize" });
+    }
+    const runtime = objectValue(root.runtime, "/runtime", out);
+    checkExactKeys("/runtime", runtime, ["configTtlSeconds", "staleWhileRevalidate"], out);
+    checkNumber("/runtime/configTtlSeconds", runtime.configTtlSeconds, BOUNDS["runtime.configTtlSeconds"], out);
+    checkBoolean("/runtime/staleWhileRevalidate", runtime.staleWhileRevalidate, out);
+    const meta = objectValue(root.meta, "/meta", out);
+    checkExactKeys("/meta", meta, ["generatedAt", "generatedBy", "configHash"], out);
+    checkString("/meta/generatedAt", meta.generatedAt, out, { nonEmpty: true });
+    if (typeof meta.generatedAt === "string" && Number.isNaN(Date.parse(meta.generatedAt))) {
+        out.push({ path: "/meta/generatedAt", rule: "format", message: "generatedAt must be an ISO date-time" });
+    }
+    if (meta.generatedBy !== GENERATOR_ID) {
+        out.push({ path: "/meta/generatedBy", rule: "const", message: `generatedBy must be '${GENERATOR_ID}'`, requested: meta.generatedBy });
+    }
+    if (typeof meta.configHash !== "string" || !/^[0-9a-f]{64}$/.test(meta.configHash)) {
+        out.push({ path: "/meta/configHash", rule: "format", message: "configHash must be a lowercase SHA-256 hex digest", requested: meta.configHash });
+    }
+    const entitlements = objectValue(root.entitlements, "/entitlements", out);
+    checkExactKeys("/entitlements", entitlements, ENTITLEMENT_KEYS, out);
+    for (const key of ENTITLEMENT_KEYS)
+        checkBoolean(`/entitlements/${key}`, entitlements[key], out);
+    if (out.length === 0) {
+        const expectedHash = computeConfigHash(config);
+        if (config.meta.configHash !== expectedHash) {
+            out.push({ path: "/meta/configHash", rule: "hash", message: "configHash does not match the complete configuration", requested: config.meta.configHash, allowed: expectedHash });
         }
     }
     collector.addAll(out);
-    collector.throwIfAny("schema_invalid", "Configuration failed schema-v1 validation");
-}
-function validateRoutes(cfg, out) {
-    const routes = cfg.transport.routes;
-    if (!isPlainObject(routes)) {
-        out.push({ path: "/transport/routes", rule: "type", message: "transport.routes must be an object" });
-        return;
-    }
-    const presentKeys = Object.keys(routes);
-    // Exactly the fixed routes — no more, no fewer.
-    for (const key of ROUTE_KEYS) {
-        if (!isPlainObject(routes[key])) {
-            out.push({ path: `/transport/routes/${key}`, rule: "required", message: `Missing required route '${key}'` });
-        }
-    }
-    for (const key of presentKeys) {
-        if (!ROUTE_KEYS.includes(key)) {
-            out.push({ path: `/transport/routes/${key}`, rule: "unknown", message: `Unexpected route '${key}'` });
-        }
-    }
-    const queueMax = cfg.transport.queue?.maxSize;
-    for (const key of ROUTE_KEYS) {
-        const route = routes[key];
-        if (!isPlainObject(route))
-            continue;
-        const base = `/transport/routes/${key}`;
-        if (typeof route["url"] !== "string" || !/^https:\/\//.test(route["url"])) {
-            out.push({ path: `${base}/url`, rule: "topology", message: "Route url must be a trusted https URL" });
-        }
-        if (typeof route["priority"] !== "number") {
-            out.push({ path: `${base}/priority`, rule: "type", message: "priority must be a number" });
-        }
-        checkNumber(`${base}/batchSize`, route["batchSize"], BOUNDS["route.batchSize"], out);
-        checkNumber(`${base}/flushIntervalMs`, route["flushIntervalMs"], BOUNDS["route.flushIntervalMs"], out);
-        checkNumber(`${base}/timeoutMs`, route["timeoutMs"], BOUNDS["route.timeoutMs"], out);
-        if (!COMPRESSION_MODES.includes(route["compression"])) {
-            out.push({ path: `${base}/compression`, rule: "enum", message: "compression must be gzip or none" });
-        }
-        if (typeof route["batchSize"] === "number" && typeof queueMax === "number" && route["batchSize"] > queueMax) {
-            out.push({ path: `${base}/batchSize`, rule: "cross_field", message: "batchSize must be <= transport.queue.maxSize" });
-        }
-    }
+    collector.throwIfAny("schema_invalid", "Configuration failed the SDK schema-v1 contract");
 }
 //# sourceMappingURL=validator.js.map

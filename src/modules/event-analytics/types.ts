@@ -42,13 +42,27 @@ export interface TimeRange {
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export const UuidSchema = z.string().uuid();
+export const EnvironmentSchema = z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
 export const OrgIdParamsSchema = z.object({ orgId: UuidSchema });
+
+export const TelemetryScopeQuerySchema = z.object({
+  projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
+});
+export type TelemetryScopeQuery = z.infer<typeof TelemetryScopeQuerySchema>;
+
+export const TelemetryIdentityQuerySchema = z.object({
+  projectId: UuidSchema,
+  environment: EnvironmentSchema,
+});
+export type TelemetryIdentityQuery = z.infer<typeof TelemetryIdentityQuerySchema>;
 
 export const TimeRangeQuerySchema = z.object({
   range: TimeRangeKeySchema.default('24h'),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
 });
 export type TimeRangeQuery = z.infer<typeof TimeRangeQuerySchema>;
 
@@ -76,6 +90,7 @@ export type ListErrorsQuery = z.infer<typeof ListErrorsQuerySchema>;
 
 export const ListErrorGroupsQuerySchema = PaginationSchema.extend({
   projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
   status: z.enum(['unresolved', 'resolved', 'ignored', 'muted']).optional(),
   search: z.string().max(256).optional(),
   sortBy: z.enum(['last_seen_at', 'first_seen_at', 'total_count']).default('last_seen_at'),
@@ -88,6 +103,7 @@ export const ResolveGroupSchema = z.object({ actorId: UuidSchema.optional() });
 // â”€â”€ Performance â”€â”€
 export const RoutePerfQuerySchema = z.object({
   projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
   days: z.coerce.number().int().min(1).max(90).default(7),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
@@ -139,6 +155,7 @@ export type ListSessionsQuery = z.infer<typeof ListSessionsQuerySchema>;
 // â”€â”€ Crons â”€â”€
 export const CronHistoryQuerySchema = PaginationSchema.extend({
   projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
 });
 
 // â”€â”€ Dashboards â”€â”€
@@ -186,6 +203,7 @@ export const ExportSchema = z.object({
   format: z.enum(['csv', 'json']).default('json'),
   range: TimeRangeKeySchema.default('24h'),
   projectId: UuidSchema.optional(),
+  environment: EnvironmentSchema.optional(),
   limit: z.coerce.number().int().min(1).max(10_000).default(1000),
 });
 export type ExportBody = z.infer<typeof ExportSchema>;

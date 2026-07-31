@@ -18,6 +18,7 @@ import {
   TYPED_INGEST_ROUTE_BY_PATH,
   TYPED_INGEST_PATHS,
 } from '../../src/modules/ingestion/route-table.js';
+import { IngestSchema } from '../../src/modules/ingestion/types.js';
 import { ROUTE_INGEST_PATHS } from '../../src/modules/projects/sdk-config/schema-v1.js';
 import { SDK_EVENT_TYPES } from '../../src/modules/ingestion/pipeline/event-normalizer.js';
 
@@ -28,7 +29,7 @@ describe('distributed ingestion route contract', () => {
     const backendPaths = new Set(TYPED_INGEST_PATHS.map((path) => `${INGESTION_ROUTE_PREFIX}${path}`));
     for (const [routeKey, advertisedPath] of Object.entries(ROUTE_INGEST_PATHS)) {
       expect(
-        backendPaths.has(advertisedPath),
+        backendPaths.has(`${INGESTION_ROUTE_PREFIX}${advertisedPath}`),
         `ROUTE_INGEST_PATHS.${routeKey} = "${advertisedPath}" has no matching backend POST route`,
       ).toBe(true);
     }
@@ -68,5 +69,26 @@ describe('distributed ingestion route contract', () => {
     expect(TYPED_INGEST_ROUTE_BY_PATH.get('/v1/profiles')).toBe('profile');
     expect(TYPED_INGEST_ROUTE_BY_PATH.get('/v1/checkins')).toBe('cron_checkin');
     expect(TYPED_INGEST_ROUTE_BY_PATH.get('/v1/replays')).toBe('replay');
+  });
+
+  it('allows structured SDK stack frames on error ingestion payloads', () => {
+    const body = IngestSchema.body as {
+      properties: {
+        events: {
+          items: {
+            properties: Record<string, unknown>;
+          };
+        };
+      };
+    };
+    expect(body.properties.events.items.properties.stack).toMatchObject({
+      type: 'array',
+      items: {
+        anyOf: expect.arrayContaining([
+          { type: 'string' },
+          { type: 'object' },
+        ]),
+      },
+    });
   });
 });

@@ -21,7 +21,7 @@ BEGIN
         id UUID NOT NULL DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL,
         project_id UUID,
-        environment_id UUID,
+        environment TEXT,
         user_id UUID,
         model TEXT,
         provider TEXT,
@@ -37,11 +37,18 @@ BEGIN
         error_message TEXT,
         occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (id, occurred_at)
+        PRIMARY KEY (id, occurred_at),
+        CHECK (
+          environment IS NULL OR (
+            char_length(environment) BETWEEN 1 AND 64
+            AND environment ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+          )
+        )
       ) PARTITION BY RANGE (occurred_at)
     $sql$, table_name);
     EXECUTE format('CREATE TABLE IF NOT EXISTS %I_default PARTITION OF %I DEFAULT', table_name, table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (organization_id, occurred_at DESC)', 'idx_' || table_name || '_org_time', table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (project_id, environment, occurred_at DESC)', 'idx_' || table_name || '_environment_time', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (model, occurred_at DESC) WHERE model IS NOT NULL', 'idx_' || table_name || '_model_time', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (cache_key, occurred_at DESC) WHERE cache_key IS NOT NULL', 'idx_' || table_name || '_cache_key', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (metadata)', 'idx_' || table_name || '_metadata_gin', table_name);

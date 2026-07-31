@@ -141,9 +141,6 @@ export interface ValidatedApiKey {
     environmentId: string;
     environmentName: string;
     environmentSlug: string;
-    samplingRules: Record<string, unknown>;
-    featureFlags: Record<string, unknown>;
-    sdkConfig: Record<string, unknown>;
 }
 export interface ApiKeyUsageSeriesPoint {
     bucket: string;

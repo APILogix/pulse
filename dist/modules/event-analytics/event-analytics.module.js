@@ -1,12 +1,12 @@
 import fp from 'fastify-plugin';
-import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { EventAnalyticsRepository } from './repository.js';
 import { EventAnalyticsService } from './service.js';
 import { eventAnalyticsRoutes } from './routes.js';
 const moduleLogger = logger.child({ component: 'event-analytics-module' });
 async function eventAnalyticsModule(fastify, _options) {
-    const repository = new EventAnalyticsRepository(pool);
+    const repository = new EventAnalyticsRepository(logDB.getPrimaryPool());
     const service = new EventAnalyticsService(repository, fastify.log);
     fastify.decorate('eventAnalytics', { repository, service });
     await fastify.register(eventAnalyticsRoutes, { prefix: '/organizations/:orgId/analytics' });

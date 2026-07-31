@@ -31,6 +31,7 @@ export interface IngestJobMetadata {
     planTier: PlanTier;
     /** ISO timestamp when the gateway accepted the batch (e2e latency anchor). */
     receivedAt: string;
+    /** Normalized environment string supplied by the SDK ingestion envelope. */
     environment: string;
     /** Fairness defer counter (worker-side). */
     deferCount: number;
@@ -50,6 +51,8 @@ export interface DlqIntakePayload {
     sourceQueue: string;
     organizationId: string;
     projectId: string;
+    /** Original normalized SDK environment; required for faithful replay. */
+    environment: string;
     eventType: SdkEventType | 'unknown';
     payload: unknown;
     failedAt: string;

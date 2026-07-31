@@ -5,6 +5,8 @@ export interface ScopedEvent {
     projectId: string;
     /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
     orgId: string | null;
+    /** Normalized string supplied by the SDK envelope; never an environment UUID. */
+    environment: string;
     event: NormalizedEvent;
 }
 /** Storage error_name for an error event (shared with the error grouper). */

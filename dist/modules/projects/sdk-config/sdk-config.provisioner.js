@@ -21,12 +21,12 @@
  * validated at COMMIT, keeping the whole unit atomic and orphan-free.
  */
 import { randomUUID } from "node:crypto";
+import { env } from "../../../config/env.js";
 import { compileInitial } from "./compiler.js";
 import { validateSchemaV1 } from "./validator.js";
 /** Trusted ingest origin used to derive protected route URLs during compilation. */
 function defaultTopology() {
-    const configured = process.env["PULSE_INGEST_BASE_URL"];
-    return { ingestBaseUrl: configured && configured.length > 0 ? configured : "https://ingest.pulse.local" };
+    return { ingestBaseUrl: env.BACKEND_URL };
 }
 export class SdkConfigProvisioner {
     orgPolicy;
@@ -69,9 +69,9 @@ export class SdkConfigProvisioner {
         ]);
         await client.query(`INSERT INTO project_environment_sdk_config_revisions(
          id, config_id, organization_id, project_id, environment_id, revision_number,
-         requested_config, compiled_snapshot, config_value, config_hash,
+         requested_config, compiled_snapshot, config_hash,
          schema_version, change_type, change_summary, published_by
-       ) VALUES ($1,$2,$3,$4,$5,1,$6,$7,$7,$8,$9,'initial',$10,$11)`, [
+       ) VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8,$9,'initial',$10,$11)`, [
             revisionId,
             headId,
             scope.organizationId,

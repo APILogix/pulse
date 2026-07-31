@@ -28,7 +28,7 @@
 import { createHash } from 'crypto';
 import { env } from '../../../config/env.js';
 import { pgboss } from '../../../lib/pgboss.js';
-import { normalizeEvent, } from '../pipeline/event-normalizer.js';
+import { normalizeEvent, normalizeSdkEnvironment, } from '../pipeline/event-normalizer.js';
 import { TelemetryWriter, errorFingerprint, errorNameOf, } from '../pipeline/telemetry-writer.js';
 import { UsageCounter } from '../usage/usage-counter.js';
 import { INGEST_DLQ_INTAKE_QUEUE, } from '../queue/ingest-queues.js';
@@ -54,9 +54,9 @@ export function stableStringify(value) {
     return 'null';
 }
 /** Deterministic storage identity for events that arrive without one. */
-function deterministicEventId(projectId, type, event) {
+function deterministicEventId(projectId, environment, type, event) {
     return createHash('sha256')
-        .update(`${projectId}:${type}:${stableStringify(event)}`)
+        .update(`${projectId}:${environment}:${type}:${stableStringify(event)}`)
         .digest('hex')
         .slice(0, 32);
 }
@@ -84,8 +84,12 @@ const UPSERT_ERROR_GROUP_SQL = `
     week_count = analytics_error_groups.week_count + EXCLUDED.week_count,
     month_count = analytics_error_groups.month_count + EXCLUDED.month_count,
     status = CASE WHEN analytics_error_groups.status = 'resolved'
-                  THEN 'unresolved'::error_group_status
+                  THEN 'unresolved'
                   ELSE analytics_error_groups.status END,
+    resolved_at = CASE WHEN analytics_error_groups.status = 'resolved'
+                       THEN NULL ELSE analytics_error_groups.resolved_at END,
+    resolved_by = CASE WHEN analytics_error_groups.status = 'resolved'
+                       THEN NULL ELSE analytics_error_groups.resolved_by END,
     error_name = EXCLUDED.error_name,
     message_template = EXCLUDED.message_template,
     services = (SELECT array_agg(DISTINCT v) FROM unnest(
@@ -100,14 +104,14 @@ export class EventProcessor {
     log;
     writer;
     usage;
-    constructor(pool, metrics, log) {
+    constructor(pool, metrics, log, usagePool = pool) {
         this.pool = pool;
         this.metrics = metrics;
         this.log = log;
         this.writer = new TelemetryWriter(pool);
         // The usage-rollup cron job is the ONLY rollup driver (driveRollup: false)
         // — this instance just drains tier-1 memory into usage_counter_staging.
-        this.usage = new UsageCounter(pool, log, {
+        this.usage = new UsageCounter(usagePool, log, {
             flushIntervalMs: env.INGESTION_USAGE_FLUSH_MS,
             bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
             driveRollup: false,
@@ -126,6 +130,9 @@ export class EventProcessor {
         const projectId = payload?.projectId ?? '';
         const orgId = payload?.organizationId ?? '';
         const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
+        const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
+        if (!environment)
+            throw new Error('INVALID_ENVIRONMENT');
         // 1) Validate + 2) assign deterministic identity.
         const scoped = [];
         const rejected = [];
@@ -138,9 +145,9 @@ export class EventProcessor {
             const event = r.event;
             const eventId = event.eventId;
             if (typeof eventId !== 'string' || eventId.length === 0) {
-                event.eventId = deterministicEventId(projectId, type, event);
+                event.eventId = deterministicEventId(projectId, environment, type, event);
             }
-            scoped.push({ projectId, orgId, event });
+            scoped.push({ projectId, orgId, environment, event });
         }
         // Route validation rejects to the DLQ intake queue (one message per job).
         // If this send throws, the job fails and retries — rejects are never lost.
@@ -149,6 +156,7 @@ export class EventProcessor {
                 sourceQueue: queue,
                 organizationId: orgId,
                 projectId,
+                environment,
                 eventType: type ?? 'unknown',
                 payload: rejected,
                 failedAt: new Date().toISOString(),
@@ -190,7 +198,7 @@ export class EventProcessor {
      */
     async upsertErrorGroups(insertedErrors) {
         const groups = new Map();
-        for (const { orgId, projectId, event } of insertedErrors) {
+        for (const { orgId, projectId, environment, event } of insertedErrors) {
             if (!orgId)
                 continue;
             const e = event;
@@ -207,7 +215,7 @@ export class EventProcessor {
                     errorName,
                     messageTemplate: e.message.slice(0, 500),
                     service: str(r.service, 100),
-                    environment: str(r.environment, 50),
+                    environment,
                     release: str(r.release, 100),
                     count: 0,
                 };

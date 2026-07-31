@@ -231,8 +231,7 @@ export class ApiKeyRepository {
          p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
          p.deleted_by AS p_deleted_by, p.created_at AS p_created_at, p.updated_at AS p_updated_at,
          p.version AS p_version,
-         e.name AS env_name, e.slug AS env_slug,
-         cr.config_value AS environment_sdk_config
+         e.name AS env_name, e.slug AS env_slug
        FROM project_api_keys k
        INNER JOIN projects p ON p.id = k.project_id AND p.org_id = k.organization_id
        INNER JOIN project_environments e
@@ -241,12 +240,6 @@ export class ApiKeyRepository {
         AND e.organization_id = k.organization_id
         AND e.is_active = TRUE
         AND e.deleted_at IS NULL
-       INNER JOIN project_environment_sdk_configs ch
-         ON ch.environment_id = e.id
-        AND ch.project_id = k.project_id
-        AND ch.organization_id = k.organization_id
-       INNER JOIN project_environment_sdk_config_revisions cr
-         ON cr.id = ch.published_revision_id
        WHERE k.public_key = $1
          AND p.status = 'active'
          AND p.deleted_at IS NULL
@@ -268,7 +261,6 @@ export class ApiKeyRepository {
             project: this.mapProject(this.prefixedProjectRow(row)),
             environmentName: row.env_name ?? "default",
             environmentSlug: row.env_slug ?? "production",
-            publishedConfig: row.environment_sdk_config ?? {},
         }));
     }
     // ── Usage analytics ─────────────────────────────────────────────────────────

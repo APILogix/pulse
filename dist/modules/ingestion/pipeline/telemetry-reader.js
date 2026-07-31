@@ -32,6 +32,10 @@ export class TelemetryReader {
         const params = [query.projectId];
         const where = ['e.project_id = $1'];
         let index = params.length;
+        if (query.environment) {
+            params.push(query.environment);
+            where.push(`e.environment = $${++index}`);
+        }
         if (query.from) {
             params.push(query.from);
             where.push(`e.timestamp >= $${++index}`);
@@ -57,7 +61,8 @@ export class TelemetryReader {
         const limitParam = ++index;
         const offsetParam = ++index;
         const list = await this.pool.query(`
-        SELECT e.id, e.organization_id, e.project_id, e.event_id, e.request_id,
+        SELECT e.id, e.organization_id, e.project_id, e.environment, e.metadata,
+               e.event_id, e.request_id,
                e.message, e.error_name, e.fingerprint, e.stack_frames, e.contexts,
                e.breadcrumbs, e.severity, e.timestamp, e.created_at
         FROM events_errors e
@@ -78,7 +83,8 @@ export class TelemetryReader {
     }
     async getErrorEventById(errorId, projectId) {
         const result = await this.pool.query(`
-        SELECT e.id, e.organization_id, e.project_id, e.event_id, e.request_id,
+        SELECT e.id, e.organization_id, e.project_id, e.environment, e.metadata,
+               e.event_id, e.request_id,
                e.message, e.error_name, e.fingerprint, e.stack_frames, e.contexts,
                e.breadcrumbs, e.severity, e.timestamp, e.created_at
         FROM events_errors e
@@ -102,7 +108,7 @@ export class TelemetryReader {
         }
         return null;
     }
-    async getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents = 10_000) {
+    async getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents = 10_000, environment) {
         const safeMax = Number.isFinite(maxEvents) && maxEvents > 0
             ? Math.min(Math.trunc(maxEvents), 100_000)
             : 10_000;
@@ -118,8 +124,9 @@ export class TelemetryReader {
                 e.timestamp, e.created_at, to_jsonb(e) AS details
          FROM ${table} e
          WHERE e.project_id = $1 AND e.timestamp BETWEEN $2 AND $3
+           AND ($5::text IS NULL OR e.environment = $5)
          ORDER BY e.timestamp ASC
-         LIMIT $4`, [projectId, startTime, endTime, remaining]);
+         LIMIT $4`, [projectId, startTime, endTime, remaining, environment ?? null]);
             for (const row of rows.rows) {
                 const details = row.details;
                 const normalized = this.rowToNormalizedEvent(type, details);
@@ -130,6 +137,7 @@ export class TelemetryReader {
                     type,
                     projectId,
                     orgId: details.organization_id ? String(details.organization_id) : '',
+                    environment: String(details.environment ?? ''),
                     receivedAt: Date.now(),
                     batchId: `replay-${Date.now()}`,
                     payload: normalized,
@@ -162,13 +170,14 @@ export class TelemetryReader {
             id: row.id,
             eventId: row.event_id ?? row.id,
             projectId: row.project_id ?? '',
+            environment: row.environment,
             requestId: row.request_id,
             message: row.message,
             errorType: row.error_name,
             fingerprint: row.fingerprint,
             stack: row.stack_frames,
             context: row.contexts,
-            metadata: { severity: row.severity, breadcrumbs: row.breadcrumbs },
+            metadata: { environment: row.environment },
             timestamp: new Date(row.timestamp).toISOString(),
             createdAt: new Date(row.created_at).toISOString(),
             // events_errors has no per-event resolution; tracked in analytics_error_groups.

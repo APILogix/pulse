@@ -11,7 +11,7 @@ export declare class WorkerRegistry {
     private readonly inFlight;
     private readonly registeredQueues;
     private started;
-    constructor(pool: Pool, log: Logger);
+    constructor(pool: Pool, log: Logger, telemetryPool?: Pool);
     /** Provision queues, then register every worker + cron + metrics. */
     start(): Promise<void>;
     /** offWork every queue (waiting for in-flight jobs), then drain the rest. */

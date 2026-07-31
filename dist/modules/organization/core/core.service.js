@@ -51,12 +51,12 @@ export class CoreService {
     }
     async createOrganization(meta, data) {
         const provisioned = await this.deps.repository.withTransaction(async (client) => {
-            // 1. Create organization (defaults to 'trialing' per canonical schema)
+            // 1. Create organization (status is synced to default billing below)
             const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');
             // 2. Billing provisioning: creates subscription, subscription_events, and usage_current_period
-            const billing = await this.deps.billingProvisioning.provisionFreeSubscription(client, created.organization.id);
+            const billing = await this.deps.billingProvisioning.provisionDefaultSubscription(client, created.organization.id);
             // 3. Sync org status with the billing subscription status
-            //    (e.g. 'active' if free plan has trial_days=0, 'trialing' if trial_days>0)
+            //    (e.g. 'active' if default plan has trial_days=0, 'trialing' if trial_days>0)
             if (billing.status !== 'trialing') {
                 await client.query(`UPDATE organizations SET status=$1, updated_at=NOW() WHERE id=$2`, [billing.status, created.organization.id]);
                 created.organization.status = billing.status;

@@ -12,6 +12,7 @@ export declare const ConditionTypeSchema: z.ZodEnum<{
 export type ConditionType = z.infer<typeof ConditionTypeSchema>;
 export declare const ConditionOperatorSchema: z.ZodEnum<{
     in: "in";
+    regex: "regex";
     gt: "gt";
     lt: "lt";
     gte: "gte";
@@ -19,7 +20,6 @@ export declare const ConditionOperatorSchema: z.ZodEnum<{
     eq: "eq";
     neq: "neq";
     contains: "contains";
-    regex: "regex";
     exists: "exists";
 }>;
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
@@ -44,6 +44,7 @@ export declare const RuleConditionSchema: z.ZodObject<{
     fieldPath: z.ZodString;
     operator: z.ZodEnum<{
         in: "in";
+        regex: "regex";
         gt: "gt";
         lt: "lt";
         gte: "gte";
@@ -51,7 +52,6 @@ export declare const RuleConditionSchema: z.ZodObject<{
         eq: "eq";
         neq: "neq";
         contains: "contains";
-        regex: "regex";
         exists: "exists";
     }>;
     thresholdValue: z.ZodOptional<z.ZodUnknown>;
@@ -60,8 +60,8 @@ export declare const RuleConditionSchema: z.ZodObject<{
         max: "max";
         min: "min";
         count: "count";
-        avg: "avg";
         sum: "sum";
+        avg: "avg";
         p99: "p99";
     }>>;
     isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -122,6 +122,7 @@ export declare const CreateRuleSchema: z.ZodObject<{
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
             in: "in";
+            regex: "regex";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -129,7 +130,6 @@ export declare const CreateRuleSchema: z.ZodObject<{
             eq: "eq";
             neq: "neq";
             contains: "contains";
-            regex: "regex";
             exists: "exists";
         }>;
         thresholdValue: z.ZodOptional<z.ZodUnknown>;
@@ -138,8 +138,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
             max: "max";
             min: "min";
             count: "count";
-            avg: "avg";
             sum: "sum";
+            avg: "avg";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;
@@ -200,6 +200,7 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
             in: "in";
+            regex: "regex";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -207,7 +208,6 @@ export declare const UpdateRuleSchema: z.ZodObject<{
             eq: "eq";
             neq: "neq";
             contains: "contains";
-            regex: "regex";
             exists: "exists";
         }>;
         thresholdValue: z.ZodOptional<z.ZodUnknown>;
@@ -216,8 +216,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
             max: "max";
             min: "min";
             count: "count";
-            avg: "avg";
             sum: "sum";
+            avg: "avg";
             p99: "p99";
         }>>;
         isRequired: z.ZodDefault<z.ZodBoolean>;

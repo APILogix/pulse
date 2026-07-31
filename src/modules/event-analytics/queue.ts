@@ -12,7 +12,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { pgboss } from '../../lib/pgboss.js';
-import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { EventAnalyticsRepository } from './repository.js';
 
 export const ANALYTICS_JOBS = {
@@ -31,7 +31,8 @@ export async function registerAnalyticsWorkers(
   logger: FastifyBaseLogger,
 ): Promise<{ stop: () => Promise<void> }> {
   const log = logger.child({ component: 'event-analytics-workers' });
-  const repo = new EventAnalyticsRepository(pool);
+  const logDbPool = logDB.getPrimaryPool();
+  const repo = new EventAnalyticsRepository(logDbPool);
 
   const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
   for (const name of Object.values(ANALYTICS_JOBS)) {
@@ -67,7 +68,7 @@ export async function registerAnalyticsWorkers(
     ANALYTICS_JOBS.partitionMaintain,
     {} as never,
     (async () => {
-      await pool.query('SELECT create_event_partitions(7)');
+      await logDbPool.query('SELECT create_event_partitions(7)');
       log.info('Daily partitions ensured');
     }) as never,
   );

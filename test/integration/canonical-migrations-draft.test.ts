@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Client } from 'pg';
+import { compile, compileInitial } from '../../src/modules/projects/sdk-config/compiler.js';
 
 import {
   applyMigrationSql,
@@ -8,6 +10,118 @@ import {
   listMigrationFiles,
   readMigrationSql,
 } from '../../scripts/lib/migrations.js';
+
+interface LegacySdkHistorySeed {
+  headId: string;
+  revisionIds: [string, string];
+  projectId: string;
+  environmentId: string;
+}
+
+async function seedLegacySdkHistory(client: Client): Promise<LegacySdkHistorySeed> {
+  const user = await client.query<{ id: string }>(
+    `INSERT INTO users(email,full_name,email_verified)
+     VALUES('legacy-sdk-owner@example.test','Legacy SDK Owner',true) RETURNING id`,
+  );
+  const userId = user.rows[0]!.id;
+  const organization = await client.query<{ id: string }>(
+    `INSERT INTO organizations(name,slug,owner_user_id,created_by,status)
+     VALUES('Legacy SDK Org','legacy-sdk-org',$1,$1,'active') RETURNING id`,
+    [userId],
+  );
+  const organizationId = organization.rows[0]!.id;
+  const project = await client.query<{ id: string }>(
+    `INSERT INTO projects(org_id,name,slug,created_by)
+     VALUES($1,'Legacy SDK Project','legacy-sdk-project',$2) RETURNING id`,
+    [organizationId, userId],
+  );
+  const projectId = project.rows[0]!.id;
+
+  let environment = await client.query<{ id: string }>(
+    `SELECT id FROM project_environments
+      WHERE project_id=$1 AND slug='production' AND deleted_at IS NULL LIMIT 1`,
+    [projectId],
+  );
+  if (environment.rowCount === 0) {
+    environment = await client.query<{ id: string }>(
+      `INSERT INTO project_environments(
+         project_id,organization_id,name,slug,type,description,color,is_default,is_active
+       ) VALUES($1,$2,'Production','production','production','Legacy production','#16A34A',true,true)
+       RETURNING id`,
+      [projectId, organizationId],
+    );
+  }
+  const environmentId = environment.rows[0]!.id;
+
+  // Recreate only the old input shape that migration 019 is explicitly meant
+  // to bridge. The final chain must remove this column again.
+  await client.query(
+    `ALTER TABLE project_environment_sdk_config_revisions
+       ADD COLUMN config_value JSONB,
+       ALTER COLUMN compiled_snapshot DROP NOT NULL`,
+  );
+
+  const headId = randomUUID();
+  const revisionOneId = randomUUID();
+  const revisionTwoId = randomUUID();
+  const placeholderHash = '0'.repeat(64);
+  const validLegacy = {
+    features: { tracing: false },
+    instrumentation: { http: { enabled: false } },
+    privacy: { pii: { maskPhoneNumbers: false } },
+    limits: { maxMemoryMb: 512 },
+    transport: { connections: { total: 25 } },
+    runtime: { configTtlSeconds: 600 },
+  };
+  const invalidLegacy = {
+    features: { tracing: false },
+    limits: { maxMemoryMb: 'automatic' },
+  };
+
+  await client.query('BEGIN');
+  try {
+    await client.query(
+      `INSERT INTO project_environment_sdk_configs(
+         id,organization_id,project_id,environment_id,published_revision_id,
+         current_revision,current_hash,schema_version,created_by,updated_by
+       ) VALUES($1,$2,$3,$4,$5,2,$6,'legacy',$7,$7)`,
+      [headId, organizationId, projectId, environmentId, revisionTwoId, placeholderHash, userId],
+    );
+    await client.query(
+      `INSERT INTO project_environment_sdk_config_revisions(
+         id,config_id,organization_id,project_id,environment_id,revision_number,
+         requested_config,compiled_snapshot,config_value,config_hash,schema_version,
+         change_type,published_by,published_at
+       ) VALUES
+         ($1,$3,$4,$5,$6,1,'{}'::jsonb,NULL,$7::jsonb,$9,'legacy','initial',$10,'2025-01-01T00:00:00.000Z'),
+         ($2,$3,$4,$5,$6,2,'{}'::jsonb,NULL,$8::jsonb,$9,'legacy','publish',$10,'2025-01-01T00:00:00.001Z')`,
+      [
+        revisionOneId,
+        revisionTwoId,
+        headId,
+        organizationId,
+        projectId,
+        environmentId,
+        JSON.stringify(validLegacy),
+        JSON.stringify(invalidLegacy),
+        placeholderHash,
+        userId,
+      ],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  }
+
+  return {
+    headId,
+    revisionIds: [revisionOneId, revisionTwoId],
+    projectId,
+    environmentId,
+  };
+}
+
 
 describe('canonical migrations draft bootstrap', () => {
   let container: PostgreSqlContainer | null = null;
@@ -51,9 +165,16 @@ describe('canonical migrations draft bootstrap', () => {
       '04_projects/015_create_environment_sdk_configuration.up.sql',
     );
     expect(files.some((file) => file.startsWith('20_project_module_refactor/'))).toBe(false);
+    let legacySdkHistory: LegacySdkHistorySeed | null = null;
     for (const filename of files) {
+      if (filename === '04_projects/019_upgrade_environment_sdk_config_snapshot.up.sql') {
+        legacySdkHistory = await seedLegacySdkHistory(client);
+      }
       const sql = await readMigrationSql(filename, DRAFT_MIGRATIONS_DIR);
       await applyMigrationSql(client, filename, sql);
+    }
+    if (!legacySdkHistory) {
+      throw new Error('Legacy SDK history was not seeded before migration 019');
     }
 
     const requiredTables = [
@@ -135,8 +256,10 @@ describe('canonical migrations draft bootstrap', () => {
       'environment_id', 'published_revision_id', 'current_revision', 'current_hash', 'version',
     ]));
     expect(byTable.get('project_environment_sdk_config_revisions')).toEqual(expect.arrayContaining([
-      'config_id', 'environment_id', 'revision_number', 'config_value', 'config_hash', 'published_at',
+      'config_id', 'environment_id', 'revision_number', 'requested_config',
+      'compiled_snapshot', 'config_hash', 'published_at',
     ]));
+    expect(byTable.get('project_environment_sdk_config_revisions')).not.toContain('config_value');
     expect(byTable.get('project_alert_thresholds')).toEqual(expect.arrayContaining([
       'environment_id', 'threshold_key', 'comparison_operator', 'cooldown_minutes', 'version',
       'current_breaches', 'is_breaching', 'last_evaluated_at',
@@ -144,6 +267,72 @@ describe('canonical migrations draft bootstrap', () => {
     expect(byTable.get('project_alert_channels')).toEqual(expect.arrayContaining([
       'connector_id', 'channel_type', 'destination_metadata', 'is_default', 'version',
     ]));
+
+    const migratedHistory = await client.query<{
+      id: string;
+      revision_number: number;
+      requested_config: Record<string, unknown>;
+      compiled_snapshot: Record<string, unknown>;
+      config_hash: string;
+      calculated_hash: string;
+    }>(
+      `SELECT id,revision_number,requested_config,compiled_snapshot,config_hash,
+              pulse_sdk_hash(compiled_snapshot) AS calculated_hash
+         FROM project_environment_sdk_config_revisions
+        WHERE config_id=$1
+        ORDER BY revision_number`,
+      [legacySdkHistory.headId],
+    );
+    expect(migratedHistory.rows.map((row) => row.id)).toEqual(legacySdkHistory.revisionIds);
+    expect(migratedHistory.rows.map((row) => row.revision_number)).toEqual([1, 2]);
+    expect(migratedHistory.rows[0]!.requested_config).toMatchObject({
+      features: { tracing: false },
+      instrumentation: { http: false },
+      privacy: { piiDetection: { maskPhones: false } },
+      limits: { maxMemoryMb: 512 },
+      transport: { connections: { maxTotalConnections: 25 } },
+      runtime: { configTtlSeconds: 600 },
+    });
+    expect(migratedHistory.rows[0]!.compiled_snapshot).toMatchObject({
+      schemaVersion: 1,
+      sdk: { projectId: legacySdkHistory.projectId, environment: 'production', release: '1.0.0' },
+      features: { tracing: false },
+      instrumentation: { http: false },
+      privacy: { piiDetection: { maskPhones: false } },
+      limits: { maxMemoryMb: 512 },
+      transport: { connections: { maxTotalConnections: 25 } },
+      runtime: { configTtlSeconds: 600 },
+      meta: { generatedAt: '2025-01-01T00:00:00.000Z' },
+    });
+    // The second legacy row contains an invalid maxMemoryMb alias. Migration
+    // 025 must regenerate a valid default rather than preserve corrupt intent.
+    expect(migratedHistory.rows[1]!.requested_config).toEqual({});
+    expect(migratedHistory.rows[1]!.compiled_snapshot).toMatchObject({
+      schemaVersion: 1,
+      sdk: { projectId: legacySdkHistory.projectId, environment: 'production', release: '1.0.0' },
+      features: { tracing: true },
+      limits: { maxMemoryMb: 'auto' },
+      meta: { generatedAt: '2025-01-01T00:00:00.001Z' },
+    });
+    for (const row of migratedHistory.rows) {
+      expect(row.config_hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(row.config_hash).toBe(row.calculated_hash);
+    }
+    const migratedHead = await client.query<{
+      current_revision: number;
+      current_hash: string;
+      published_revision_id: string;
+    }>(
+      `SELECT current_revision,current_hash,published_revision_id
+         FROM project_environment_sdk_configs WHERE id=$1`,
+      [legacySdkHistory.headId],
+    );
+    expect(migratedHead.rows[0]).toEqual({
+      current_revision: 2,
+      current_hash: migratedHistory.rows[1]!.config_hash,
+      published_revision_id: legacySdkHistory.revisionIds[1],
+    });
+
     expect(byTable.get('alert_delivery_attempts')).toEqual(expect.arrayContaining([
       'project_alert_channel_id', 'recipient_user_id',
     ]));
@@ -191,44 +380,138 @@ describe('canonical migrations draft bootstrap', () => {
     );
     const projectId = project.rows[0]!.id;
 
-    const provisioned = await client.query<{
-      settings: number; environments: number; default_environments: number;
-      config_heads: number; config_revisions: number; owners: number; current_usage: number; thresholds: number;
-      notification_defaults: number;
+    const databaseProvisioned = await client.query<{
+      settings: number; environments: number; config_heads: number;
+      config_revisions: number; owners: number; current_usage: number;
     }>(
       `SELECT
         (SELECT count(*)::int FROM project_settings WHERE project_id=$1) settings,
         (SELECT count(*)::int FROM project_environments WHERE project_id=$1) environments,
-        (SELECT count(*)::int FROM project_environments WHERE project_id=$1 AND is_default) default_environments,
         (SELECT count(*)::int FROM project_environment_sdk_configs WHERE project_id=$1) config_heads,
         (SELECT count(*)::int FROM project_environment_sdk_config_revisions WHERE project_id=$1) config_revisions,
-        (SELECT count(*)::int FROM project_members WHERE project_id=$1 AND user_id=$2 AND role='owner' AND status='active') owners,
-        (SELECT count(*)::int FROM project_usage_current WHERE project_id=$1) current_usage,
-        (SELECT count(*)::int FROM project_alert_thresholds WHERE project_id=$1 AND deleted_at IS NULL) thresholds,
-        (SELECT count(*)::int FROM project_notification_preferences WHERE project_id=$1 AND deleted_at IS NULL) notification_defaults`,
-      [projectId, userId],
-    );
-    expect(provisioned.rows[0]).toMatchObject({
-      settings: 1, environments: 5, default_environments: 1,
-      config_heads: 5, config_revisions: 5,
-      owners: 1, current_usage: 1, thresholds: 13, notification_defaults: 1,
-    });
-
-    const defaultEnvironment = await client.query<{ id: string }>(
-      `SELECT id FROM project_environments WHERE project_id=$1 AND is_default`,
+        (SELECT count(*)::int FROM project_members WHERE project_id=$1) owners,
+        (SELECT count(*)::int FROM project_usage_current WHERE project_id=$1) current_usage`,
       [projectId],
     );
+    expect(databaseProvisioned.rows[0]).toEqual({
+      settings: 0,
+      environments: 0,
+      config_heads: 0,
+      config_revisions: 0,
+      owners: 0,
+      current_usage: 0,
+    });
+
+    // Mirror the application transaction: identity rows are created explicitly,
+    // and the sole TypeScript compiler supplies revision 1. No SQL generator or
+    // environment trigger is allowed to synthesize a second document.
+    await client.query(
+      `INSERT INTO project_members(project_id,user_id,organization_id,role,status,created_by)
+       VALUES($1,$2,$3,'owner','active',$2)`,
+      [projectId, userId, organizationId],
+    );
+    const defaultEnvironment = await client.query<{ id: string }>(
+      `INSERT INTO project_environments(
+         project_id,organization_id,name,slug,type,description,color,is_default,is_active
+       ) VALUES($1,$2,'Production','production','production','Production telemetry','#16A34A',true,true)
+       RETURNING id`,
+      [projectId, organizationId],
+    );
+    const environmentId = defaultEnvironment.rows[0]!.id;
+    const compiled = compileInitial(
+      { projectId, environment: 'production' },
+      { ingestBaseUrl: 'https://ingest.pulse.test' },
+      '2026-01-01T00:00:00.000Z',
+    );
+    const headId = randomUUID();
+    const revisionId = randomUUID();
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO project_environment_sdk_configs(
+           id,organization_id,project_id,environment_id,published_revision_id,
+           current_revision,current_hash,schema_version,created_by,updated_by
+         ) VALUES($1,$2,$3,$4,$5,1,$6,'1',$7,$7)`,
+        [headId, organizationId, projectId, environmentId, revisionId, compiled.meta.configHash, userId],
+      );
+      await client.query(
+        `INSERT INTO project_environment_sdk_config_revisions(
+           id,config_id,organization_id,project_id,environment_id,revision_number,
+           requested_config,compiled_snapshot,config_hash,schema_version,change_type,published_by
+         ) VALUES($1,$2,$3,$4,$5,1,'{}'::jsonb,$6::jsonb,$7,'1','initial',$8)`,
+        [revisionId, headId, organizationId, projectId, environmentId,
+         JSON.stringify(compiled), compiled.meta.configHash, userId],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    }
+
+    const persistedConfig = await client.query<{
+      requested_config: Record<string, unknown>;
+      compiled_snapshot: Record<string, unknown>;
+      config_hash: string;
+      calculated_hash: string;
+    }>(
+      `SELECT requested_config,compiled_snapshot,config_hash,
+              pulse_sdk_hash(compiled_snapshot) AS calculated_hash
+         FROM project_environment_sdk_config_revisions
+        WHERE id=$1`,
+      [revisionId],
+    );
+    expect(persistedConfig.rows[0]).toEqual({
+      requested_config: {},
+      compiled_snapshot: compiled,
+      config_hash: compiled.meta.configHash,
+      calculated_hash: compiled.meta.configHash,
+    });
+
+    const edgeConfig = compile({
+      identity: { projectId, environment: 'production' },
+      topology: { ingestBaseUrl: 'https://ingest.pulse.test' },
+      requestedIntent: {
+        sampling: {
+          traces: 1e-7,
+          routes: {
+            '/\uE000': { traces: 0.25 },
+            '/😀': { traces: 0.5 },
+          },
+        },
+        limits: { maxMemoryMb: 512 },
+      },
+      generatedAt: '2026-01-01T00:00:00.001Z',
+    });
+    const edgeHash = await client.query<{ calculated_hash: string; valid: boolean }>(
+      `SELECT pulse_sdk_hash($1::jsonb) AS calculated_hash,
+              pulse_sdk_config_valid($1::jsonb) AS valid`,
+      [JSON.stringify(edgeConfig)],
+    );
+    expect(edgeHash.rows[0]).toEqual({
+      calculated_hash: edgeConfig.meta.configHash,
+      valid: true,
+    });
+
+    const removedRuntimeGenerators = await client.query<{
+      provisioner: string | null;
+      compiler: string | null;
+    }>(
+      `SELECT to_regprocedure('provision_environment_sdk_config()')::text AS provisioner,
+              to_regprocedure('pulse_build_sdk_config(uuid,text,text,jsonb)')::text AS compiler`,
+    );
+    expect(removedRuntimeGenerators.rows[0]).toEqual({ provisioner: null, compiler: null });
+
     const apiKey = await client.query<{ id: string }>(
       `INSERT INTO project_api_keys(
          project_id,organization_id,environment_id,public_key,secret_hash,name,created_by
        ) VALUES($1,$2,$3,'pulsiv_prod_abcdefghijklmnop',$4,'Integration key',$5) RETURNING id`,
-      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'a'.repeat(64), userId],
+      [projectId, organizationId, environmentId, 'a'.repeat(64), userId],
     );
     await expect(client.query(
       `INSERT INTO project_api_keys(
          project_id,organization_id,environment_id,public_key,secret_hash,name,created_by
        ) VALUES($1,$2,$3,'customer_prod_abcdefghijklmnop',$4,'Spoofed key',$5)`,
-      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'b'.repeat(64), userId],
+      [projectId, organizationId, environmentId, 'b'.repeat(64), userId],
     )).rejects.toThrow();
 
     const outsider = await client.query<{ id: string }>(
@@ -245,7 +528,7 @@ describe('canonical migrations draft bootstrap', () => {
       `INSERT INTO project_api_keys(
          project_id,organization_id,environment_id,public_key,secret_hash,name,created_by
        ) VALUES($1,$2,$3,'pulsiv_prod_crossorgkey123',$4,'Cross-tenant key',$5)`,
-      [projectId, otherOrganization.rows[0]!.id, defaultEnvironment.rows[0]!.id, 'c'.repeat(64), outsiderId],
+      [projectId, otherOrganization.rows[0]!.id, environmentId, 'c'.repeat(64), outsiderId],
     )).rejects.toThrow(/tenant|foreign key/i);
 
     await client.query(
@@ -286,7 +569,7 @@ describe('canonical migrations draft bootstrap', () => {
       `INSERT INTO project_api_keys(
          project_id,organization_id,environment_id,public_key,secret_hash,name,created_by,rotated_from_key_id
        ) VALUES($1,$2,$3,'pulsiv_prod_rotatedkey12345',$4,'Rotated key',$5,$6) RETURNING id`,
-      [projectId, organizationId, defaultEnvironment.rows[0]!.id, 'd'.repeat(64), userId, apiKey.rows[0]!.id],
+      [projectId, organizationId, environmentId, 'd'.repeat(64), userId, apiKey.rows[0]!.id],
     );
     await client.query(`UPDATE project_api_keys SET status='rotated' WHERE id=$1`, [apiKey.rows[0]!.id]);
     await client.query(
@@ -294,7 +577,7 @@ describe('canonical migrations draft bootstrap', () => {
          organization_id,project_id,environment_id,old_key_id,new_key_id,state,reason,
          initiated_by,initiated_at,completed_at
        ) VALUES($1,$2,$3,$4,$5,'completed','routine rotation',$6,NOW(),NOW())`,
-      [organizationId, projectId, defaultEnvironment.rows[0]!.id,
+      [organizationId, projectId, environmentId,
        apiKey.rows[0]!.id, rotatedKey.rows[0]!.id, userId],
     );
     const rotation = await client.query<{ rotations: number }>(
@@ -307,7 +590,7 @@ describe('canonical migrations draft bootstrap', () => {
       `INSERT INTO project_api_key_rotations(
          organization_id,project_id,environment_id,old_key_id,new_key_id,state,initiated_at,completed_at
        ) VALUES($1,$2,$3,$4,$5,'completed',NOW(),NOW())`,
-      [otherOrganization.rows[0]!.id, projectId, defaultEnvironment.rows[0]!.id,
+      [otherOrganization.rows[0]!.id, projectId, environmentId,
        apiKey.rows[0]!.id, rotatedKey.rows[0]!.id],
     )).rejects.toThrow(/foreign key/i);
 
@@ -329,13 +612,6 @@ describe('canonical migrations draft bootstrap', () => {
        ) VALUES($1,$2,$3,$4)`,
       [organizationId, projectId, outsiderId, channel.rows[0]!.id],
     )).rejects.toThrow(/not an active project member/);
-
-    const apdex = await client.query<{ comparison_operator: string; category: string }>(
-      `SELECT comparison_operator,category FROM project_alert_thresholds
-       WHERE project_id=$1 AND threshold_key='apdex'`,
-      [projectId],
-    );
-    expect(apdex.rows[0]).toMatchObject({ comparison_operator: '<=', category: 'performance' });
 
     await client.query(`UPDATE projects SET description='audited change' WHERE id=$1`, [projectId]);
     await client.query(

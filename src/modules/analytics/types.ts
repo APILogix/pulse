@@ -3,6 +3,7 @@ export type SortDirection = "asc" | "desc";
 export interface TimeRange {
   from: Date;
   to: Date;
+  environment?: string;
 }
 
 export interface EventListQuery extends TimeRange {
@@ -17,6 +18,7 @@ export interface EventListQuery extends TimeRange {
 
 export interface ErrorGroupListQuery {
   status: "all" | "resolved" | "unresolved";
+  environment?: string;
   priority?: number;
   limit: number;
   cursor?: string;

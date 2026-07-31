@@ -10,7 +10,7 @@ function createClient(featureRows: Array<Record<string, unknown>>) {
   const query = vi.fn(async (sql: unknown) => {
     const text = sqlText(sql);
     if (text.includes('FROM plans')) {
-      return { rows: [{ id: 'plan-free', key: 'free', version: 2, tier: 'free', trial_days: 14 }] };
+      return { rows: [{ id: 'plan-enterprise', key: 'enterprise', version: 2, tier: 'enterprise', trial_days: 14 }] };
     }
     if (text.includes('FROM plan_feature_entitlements')) {
       return { rows: featureRows };
@@ -19,7 +19,7 @@ function createClient(featureRows: Array<Record<string, unknown>>) {
       return {
         rows: [
           {
-            id: 'price-free-monthly',
+            id: 'price-enterprise-monthly',
             provider: 'system',
             billing_interval: 'monthly',
             currency: 'USD',
@@ -40,7 +40,7 @@ function createClient(featureRows: Array<Record<string, unknown>>) {
       };
     }
     if (text.includes('INSERT INTO organization_subscriptions')) {
-      return { rows: [{ id: 'sub-free' }] };
+      return { rows: [{ id: 'sub-enterprise' }] };
     }
     return { rows: [] };
   });
@@ -81,15 +81,15 @@ const validFeatureRows = [
 ];
 
 describe('BillingProvisioningRepository', () => {
-  it('provisions org billing state from the free plan entitlement seed', async () => {
+  it('provisions org billing state from the enterprise plan entitlement seed', async () => {
     const client = createClient(validFeatureRows);
     const repository = new BillingProvisioningRepository();
 
-    const result = await repository.provisionFreeSubscription(client, 'org-1');
+    const result = await repository.provisionDefaultSubscription(client, 'org-1');
 
     expect(result).toEqual({
-      subscriptionId: 'sub-free',
-      planId: 'plan-free',
+      subscriptionId: 'sub-enterprise',
+      planId: 'plan-enterprise',
       status: 'trialing',
       featureCount: 3,
       eventLimit: 10000,
@@ -125,12 +125,12 @@ describe('BillingProvisioningRepository', () => {
     expect(client.query.mock.calls.some(([sql]: [unknown]) => sqlText(sql).includes('INSERT INTO billing_audit_logs'))).toBe(true);
   });
 
-  it('fails fast when the free plan seed is missing required usage features', async () => {
+  it('fails fast when the enterprise plan seed is missing required usage features', async () => {
     const client = createClient(validFeatureRows.filter((row) => row.feature_key !== 'module_ai_insights_monthly_credits'));
     const repository = new BillingProvisioningRepository();
 
-    await expect(repository.provisionFreeSubscription(client, 'org-1')).rejects.toThrow(
-      'Free billing plan entitlement module_ai_insights_monthly_credits',
+    await expect(repository.provisionDefaultSubscription(client, 'org-1')).rejects.toThrow(
+      'Enterprise billing plan entitlement module_ai_insights_monthly_credits',
     );
   });
 });

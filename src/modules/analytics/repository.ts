@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { pool } from "../../config/database.js";
+import { logDB } from "../../config/log-database.js";
 import type {
   DashboardData,
   ErrorGroupListQuery,
@@ -15,270 +15,258 @@ interface CursorPayload {
   id: string;
 }
 
+/**
+ * One read projection over the ten canonical typed event tables. The physical
+ * tables stay separate for write throughput and retention, while this bounded
+ * UNION gives the older project-scoped API a single event list without
+ * restoring the removed generic events/request_events/error_events schema.
+ */
+const UNIFIED_EVENTS_SQL = `
+  SELECT id,event_id,'error'::text AS type,project_id,environment,timestamp,
+         payload,status_code,NULL::text AS method,NULL::text AS url,
+         NULL::numeric AS latency_ms,message,error_name,service,trace_id,user_id
+    FROM events_errors
+  UNION ALL
+  SELECT id,event_id,'request'::text,project_id,environment,timestamp,
+         payload,status_code,method,url,latency_ms,message,NULL::text,service,trace_id,user_id
+    FROM events_requests
+  UNION ALL
+  SELECT id,event_id,'log'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_logs
+  UNION ALL
+  SELECT id,event_id,'metric'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_metrics
+  UNION ALL
+  SELECT id,event_id,'span'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_spans
+  UNION ALL
+  SELECT id,event_id,'trace'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_traces
+  UNION ALL
+  SELECT id,event_id,'message'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_messages
+  UNION ALL
+  SELECT id,event_id,'profile'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_profiles
+  UNION ALL
+  SELECT id,event_id,'replay'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_replays
+  UNION ALL
+  SELECT id,event_id,'cron_checkin'::text,project_id,environment,timestamp,
+         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+    FROM events_cron_checkins
+`;
+
 export class AnalyticsRepository {
   private readonly maxLimit = 100;
 
-  constructor(private readonly db = pool) {}
+  constructor(private readonly db = logDB.getPrimaryPool()) {}
 
-  async listEvents(
-    projectId: string,
-    query: EventListQuery,
-  ): Promise<PaginatedResult> {
+  async listEvents(projectId: string, query: EventListQuery): Promise<PaginatedResult> {
     const limit = this.clampLimit(query.limit);
     const params: unknown[] = [projectId, query.from, query.to];
     const where = ["e.project_id = $1", "e.timestamp BETWEEN $2 AND $3"];
     let index = params.length;
 
-    if (query.type) {
+    if (query.environment) {
+      params.push(query.environment);
+      where.push(`e.environment = $${++index}`);
+    }
+    if (query.type === "error" || query.type === "request") {
       params.push(query.type);
       where.push(`e.type = $${++index}`);
+    } else if (query.type === "custom") {
+      where.push("e.type NOT IN ('error','request')");
     }
-
     if (query.statusCode !== undefined) {
       params.push(query.statusCode);
-      where.push(`re.status_code = $${++index}`);
+      where.push(`e.status_code = $${++index}`);
     }
-
     if (query.method) {
       params.push(query.method.toUpperCase());
-      where.push(`re.method = $${++index}`);
+      where.push(`e.method = $${++index}`);
     }
-
     if (query.searchQuery) {
       params.push(`%${query.searchQuery}%`);
-      where.push(
-        `(e.payload::text ILIKE $${++index} OR ee.message ILIKE $${index} OR re.url ILIKE $${index})`,
-      );
+      const searchParam = ++index;
+      where.push(`(e.payload::text ILIKE $${searchParam} OR e.message ILIKE $${searchParam} OR e.url ILIKE $${searchParam})`);
     }
 
     const cursor = this.decodeCursor(query.cursor);
     if (cursor) {
       params.push(cursor.timestamp, cursor.id);
       const operator = query.sort === "asc" ? ">" : "<";
-      where.push(`(e.timestamp, e.id) ${operator} ($${++index}, $${++index})`);
+      where.push(`(e.timestamp,e.id) ${operator} ($${++index},$${++index})`);
     }
 
-    const order = query.sort === "asc" ? "ASC" : "DESC";
     params.push(limit + 1);
     const limitParam = ++index;
+    const order = query.sort === "asc" ? "ASC" : "DESC";
     const whereSql = where.join(" AND ");
 
     return this.withProjectContext(projectId, async (client) => {
-      const start = Date.now();
-
-      // 🔒 enforce max limit
-      const safeLimit = Math.min(limit ?? 50, 100);
-
-      // ⚠️ fetch one extra row for pagination detection
-      const listQuery = `
-    SELECT
-      e.id,
-      e.type,
-      e.timestamp,
-      re.method,
-      re.url,
-      re.status_code,
-      re.latency_ms,
-      (ee.event_id IS NOT NULL) AS has_error
-    FROM events e
-    LEFT JOIN request_events re
-      ON re.event_id = e.id AND re.project_id = e.project_id
-    LEFT JOIN error_events ee
-      ON ee.event_id = e.id AND ee.project_id = e.project_id
-    WHERE ${whereSql}
-    ORDER BY e.timestamp ${order}, e.id ${order}
-    LIMIT $${limitParam}
-  `;
-
-      // ❌ count query is expensive → make optional
-      const shouldFetchCount = false;
-
-      const [items, count] = await Promise.all([
-        client.query(listQuery, params),
-        shouldFetchCount
-          ? client.query(
-              `
-            SELECT COUNT(*)::int AS total
-            FROM events e
-            WHERE ${whereSql}
-          `,
-              params.slice(0, -1),
-            )
-          : Promise.resolve(null),
-      ]);
-
-      const rows = items.rows;
-
-      // pagination logic
-      const hasMore = rows.length > safeLimit;
-      const data = rows.slice(0, safeLimit);
-      const last = data.at(-1);
-
-      const response: PaginatedResult = {
-        data: data.map((row) => ({
+      const startedAt = Date.now();
+      const result = await client.query(
+        `WITH unified_events AS (${UNIFIED_EVENTS_SQL})
+         SELECT e.id,e.event_id,e.type,e.environment,e.timestamp,e.method,e.url,
+                e.status_code,e.latency_ms,e.service,e.trace_id,
+                (e.type='error' OR COALESCE(e.status_code,0) >= 500) AS has_error
+           FROM unified_events e
+          WHERE ${whereSql}
+          ORDER BY e.timestamp ${order},e.id ${order}
+          LIMIT $${limitParam}`,
+        params,
+      );
+      const hasMore = result.rows.length > limit;
+      const rows = result.rows.slice(0, limit);
+      const last = rows.at(-1);
+      return {
+        data: rows.map((row) => ({
           id: row.id,
+          eventId: row.event_id,
           type: row.type,
+          environment: row.environment,
           timestamp: row.timestamp,
           method: row.method,
           url: row.url,
           statusCode: row.status_code,
           latencyMs: row.latency_ms,
+          service: row.service,
+          traceId: row.trace_id,
           hasError: row.has_error,
         })),
         hasMore,
-        nextCursor:
-          hasMore && last ? this.encodeCursor(last.timestamp, last.id) : null,
-        queryTimeMs: Date.now() - start,
+        nextCursor: hasMore && last ? this.encodeCursor(last.timestamp, last.id) : null,
+        queryTimeMs: Date.now() - startedAt,
       };
-
-      if (count) {
-        response.totalEstimated = Number(count.rows[0]?.total ?? 0);
-      }
-
-      return response;
     });
   }
 
-  async getEventDetails(
-    projectId: string,
-    eventId: string,
-  ): Promise<EventDetails | null> {
+  async getEventDetails(projectId: string, eventId: string): Promise<EventDetails | null> {
     return this.withProjectContext(projectId, async (client) => {
-      const [base, request, error, trace] = await Promise.all([
-        client.query(
-          "SELECT * FROM events WHERE project_id = $1 AND id = $2 LIMIT 1",
-          [projectId, eventId],
-        ),
-        client.query(
-          "SELECT * FROM request_events WHERE project_id = $1 AND event_id = $2 LIMIT 1",
-          [projectId, eventId],
-        ),
-        client.query(
-          "SELECT * FROM error_events WHERE project_id = $1 AND event_id = $2 LIMIT 1",
-          [projectId, eventId],
-        ),
-        client.query(
-          `
-            SELECT id, type, timestamp, payload
-            FROM events
-            WHERE project_id = $1
-              AND request_id = (SELECT request_id FROM events WHERE project_id = $1 AND id = $2)
-            ORDER BY timestamp ASC
-          `,
-          [projectId, eventId],
-        ),
-      ]);
+      const event = await client.query(
+        `WITH unified_events AS (${UNIFIED_EVENTS_SQL})
+         SELECT * FROM unified_events
+          WHERE project_id=$1 AND id=$2
+          LIMIT 1`,
+        [projectId, eventId],
+      );
+      const row = event.rows[0] as Record<string, unknown> | undefined;
+      if (!row) return null;
 
-      if (!base.rows[0]) {
-        return null;
+      const traceId = typeof row.trace_id === "string" ? row.trace_id : null;
+      const environment = typeof row.environment === "string" ? row.environment : null;
+      let trace: unknown[] = [];
+      if (traceId && environment) {
+        const related = await client.query(
+          `SELECT 'trace'::text AS type,to_jsonb(t) AS details,t.timestamp
+             FROM events_traces t
+            WHERE t.project_id=$1 AND t.trace_id=$2 AND t.environment=$3
+           UNION ALL
+           SELECT 'span'::text,to_jsonb(s),s.timestamp
+             FROM events_spans s
+            WHERE s.project_id=$1 AND s.trace_id=$2 AND s.environment=$3
+           UNION ALL
+           SELECT 'request'::text,to_jsonb(r),r.timestamp
+             FROM events_requests r
+            WHERE r.project_id=$1 AND r.trace_id=$2 AND r.environment=$3
+           UNION ALL
+           SELECT 'error'::text,to_jsonb(e),e.timestamp
+             FROM events_errors e
+            WHERE e.project_id=$1 AND e.trace_id=$2 AND e.environment=$3
+           ORDER BY timestamp ASC`,
+          [projectId, traceId, environment],
+        );
+        trace = related.rows.map((relatedRow) => ({
+          type: relatedRow.type,
+          ...(relatedRow.details as Record<string, unknown>),
+        }));
       }
 
       return {
-        base: base.rows[0],
-        request: request.rows[0] ?? null,
-        error: error.rows[0] ?? null,
-        trace: trace.rows,
+        base: row,
+        request: row.type === "request" ? row : null,
+        error: row.type === "error" ? row : null,
+        trace,
       };
     });
   }
 
-  async getRequestOverview(
-    projectId: string,
-    range: TimeRange,
-  ): Promise<unknown> {
+  async getRequestOverview(projectId: string, range: TimeRange): Promise<unknown> {
     return this.one(
       projectId,
-      `
-      SELECT jsonb_build_object(
-        'total_requests', COUNT(*),
-        'avg_latency_ms', COALESCE(ROUND(AVG(latency_ms)), 0),
-        'p95_latency_ms', COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
-        'error_count', COUNT(*) FILTER (WHERE status_code >= 500),
-        'error_rate_pct', COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*), 0), 2), 0),
-        'unique_users', COUNT(DISTINCT user_id)
-      ) AS data
-      FROM request_events
-      WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-    `,
-      [projectId, range.from, range.to],
+      `SELECT jsonb_build_object(
+         'total_requests',COUNT(*),
+         'avg_latency_ms',COALESCE(ROUND(AVG(latency_ms)),0),
+         'p95_latency_ms',COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms),0),
+         'error_count',COUNT(*) FILTER (WHERE status_code >= 500),
+         'error_rate_pct',COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*),0),2),0),
+         'unique_users',COUNT(DISTINCT user_id)
+       ) AS data
+       FROM events_requests
+       WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+         AND ($4::text IS NULL OR environment=$4)`,
+      [projectId, range.from, range.to, range.environment ?? null],
     );
   }
 
-  async getDashboard(
-    projectId: string,
-    range: TimeRange,
-  ): Promise<DashboardData> {
+  async getDashboard(projectId: string, range: TimeRange): Promise<DashboardData> {
     return this.withProjectContext(projectId, async (client) => {
-      const [requests, errors, endpoints, topErrors, status] =
-        await Promise.all([
-          this.queryData(
-            client,
-            `
-          SELECT jsonb_build_object(
-            'total', COUNT(*),
-            'avg_latency_ms', COALESCE(ROUND(AVG(latency_ms)), 0),
-            'p95_latency_ms', COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0),
-            'error_rate_pct', COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*), 0), 2), 0)
-          ) AS data
-          FROM request_events
-          WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-        `,
-            [projectId, range.from, range.to],
-          ),
-          this.queryData(
-            client,
-            `
-          SELECT jsonb_build_object(
-            'total', COUNT(*),
-            'unresolved', COUNT(*) FILTER (WHERE is_resolved = FALSE),
-            'critical', COUNT(*) FILTER (WHERE priority = 1 AND is_resolved = FALSE)
-          ) AS data
-          FROM error_groups
-          WHERE project_id = $1 AND last_seen BETWEEN $2 AND $3
-        `,
-            [projectId, range.from, range.to],
-          ),
-          this.queryRows(
-            client,
-            `
-          SELECT md5(COALESCE(url, '') || COALESCE(method, '')) AS endpoint_hash,
-                 url, method, COUNT(*)::int AS requests,
-                 COALESCE(ROUND(AVG(latency_ms)), 0)::int AS avg_latency_ms
-          FROM request_events
-          WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3 AND url IS NOT NULL
-          GROUP BY url, method
-          ORDER BY requests DESC
-          LIMIT 10
-        `,
-            [projectId, range.from, range.to],
-          ),
-          this.queryRows(
-            client,
-            `
-          SELECT fingerprint, error_type, last_message, occurrences, priority, is_resolved, last_seen
-          FROM error_groups
-          WHERE project_id = $1 AND last_seen BETWEEN $2 AND $3
-          ORDER BY occurrences DESC
-          LIMIT 10
-        `,
-            [projectId, range.from, range.to],
-          ),
-          this.queryData(
-            client,
-            `
-          SELECT jsonb_build_object(
-            '2xx', COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
-            '3xx', COUNT(*) FILTER (WHERE status_code BETWEEN 300 AND 399),
-            '4xx', COUNT(*) FILTER (WHERE status_code BETWEEN 400 AND 499),
-            '5xx', COUNT(*) FILTER (WHERE status_code >= 500)
-          ) AS data
-          FROM request_events
-          WHERE project_id = $1 AND timestamp BETWEEN $2 AND $3
-        `,
-            [projectId, range.from, range.to],
-          ),
-        ]);
-
+      const params = [projectId, range.from, range.to, range.environment ?? null];
+      const [requests, errors, endpoints, topErrors, status] = await Promise.all([
+        this.queryData(client,
+          `SELECT jsonb_build_object(
+             'total',COUNT(*),
+             'avg_latency_ms',COALESCE(ROUND(AVG(latency_ms)),0),
+             'p95_latency_ms',COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms),0),
+             'error_rate_pct',COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*),0),2),0)
+           ) AS data
+           FROM events_requests
+           WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+             AND ($4::text IS NULL OR environment=$4)`, params),
+        this.queryData(client,
+          `SELECT jsonb_build_object(
+             'total',COALESCE(SUM(total_count),0),
+             'unresolved',COUNT(*) FILTER (WHERE status<>'resolved'),
+             'critical',COUNT(*) FILTER (WHERE priority=1 AND status<>'resolved')
+           ) AS data
+           FROM analytics_error_groups
+           WHERE project_id=$1 AND last_seen_at BETWEEN $2 AND $3
+             AND ($4::text IS NULL OR $4=ANY(environments))`, params),
+        this.queryRows(client,
+          `SELECT md5(COALESCE(url,'') || COALESCE(method,'')) AS endpoint_hash,
+                  url,method,COUNT(*)::int AS requests,
+                  COALESCE(ROUND(AVG(latency_ms)),0)::int AS avg_latency_ms
+             FROM events_requests
+            WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+              AND ($4::text IS NULL OR environment=$4) AND url IS NOT NULL
+            GROUP BY url,method ORDER BY requests DESC LIMIT 10`, params),
+        this.queryRows(client,
+          `SELECT fingerprint,error_name,message_template AS last_message,
+                  total_count AS occurrences,priority,(status='resolved') AS is_resolved,
+                  last_seen_at AS last_seen,environments
+             FROM analytics_error_groups
+            WHERE project_id=$1 AND last_seen_at BETWEEN $2 AND $3
+              AND ($4::text IS NULL OR $4=ANY(environments))
+            ORDER BY total_count DESC LIMIT 10`, params),
+        this.queryData(client,
+          `SELECT jsonb_build_object(
+             '2xx',COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299),
+             '3xx',COUNT(*) FILTER (WHERE status_code BETWEEN 300 AND 399),
+             '4xx',COUNT(*) FILTER (WHERE status_code BETWEEN 400 AND 499),
+             '5xx',COUNT(*) FILTER (WHERE status_code >= 500)
+           ) AS data
+           FROM events_requests
+           WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+             AND ($4::text IS NULL OR environment=$4)`, params),
+      ]);
       return {
         requests,
         errors,
@@ -290,65 +278,57 @@ export class AnalyticsRepository {
     });
   }
 
-  async listErrorGroups(
-    projectId: string,
-    query: ErrorGroupListQuery,
-  ): Promise<PaginatedResult> {
+  async listErrorGroups(projectId: string, query: ErrorGroupListQuery): Promise<PaginatedResult> {
     const limit = this.clampLimit(query.limit);
     const params: unknown[] = [projectId];
-    const where = ["project_id = $1"];
+    const where = ["project_id=$1"];
     let index = params.length;
 
-    if (query.status === "resolved") {
-      where.push("is_resolved = TRUE");
-    } else if (query.status === "unresolved") {
-      where.push("is_resolved = FALSE");
+    if (query.environment) {
+      params.push(query.environment);
+      where.push(`$${++index}=ANY(environments)`);
     }
-
+    if (query.status === "resolved") where.push("status='resolved'");
+    if (query.status === "unresolved") where.push("status<>'resolved'");
     if (query.priority !== undefined) {
       params.push(query.priority);
-      where.push(`priority = $${++index}`);
+      where.push(`priority=$${++index}`);
     }
-
     if (query.cursor) {
       params.push(query.cursor);
-      where.push(`last_seen < $${++index}`);
+      where.push(`last_seen_at < $${++index}`);
     }
 
     params.push(limit + 1);
     const limitParam = ++index;
     const whereSql = where.join(" AND ");
-
     return this.withProjectContext(projectId, async (client) => {
+      const startedAt = Date.now();
       const [items, count] = await Promise.all([
         client.query(
-          `
-            SELECT *
-            FROM error_groups
+          `SELECT *,total_count AS occurrences,last_seen_at AS last_seen,
+                  (status='resolved') AS is_resolved
+             FROM analytics_error_groups
             WHERE ${whereSql}
-            ORDER BY last_seen DESC
-            LIMIT $${limitParam}
-          `,
+            ORDER BY last_seen_at DESC
+            LIMIT $${limitParam}`,
           params,
         ),
         client.query(
-          `SELECT COUNT(*)::int AS total FROM error_groups WHERE ${whereSql}`,
+          `SELECT COUNT(*)::int AS total FROM analytics_error_groups WHERE ${whereSql}`,
           params.slice(0, -1),
         ),
       ]);
-
-      const data = items.rows.slice(0, limit);
-      const last = data.at(-1);
-
+      const rows = items.rows.slice(0, limit);
+      const last = rows.at(-1);
       return {
-        data,
+        data: rows,
         totalEstimated: Number(count.rows[0]?.total ?? 0),
         hasMore: items.rows.length > limit,
-        nextCursor:
-          items.rows.length > limit && last
-            ? new Date(last.last_seen).toISOString()
-            : null,
-        queryTimeMs: 0,
+        nextCursor: items.rows.length > limit && last
+          ? new Date(last.last_seen_at).toISOString()
+          : null,
+        queryTimeMs: Date.now() - startedAt,
       };
     });
   }
@@ -358,29 +338,34 @@ export class AnalyticsRepository {
     fingerprint: string,
     update: ErrorGroupUpdate,
   ): Promise<unknown | null> {
-    const sets: string[] = ["updated_at = NOW()"];
+    const sets = ["updated_at=NOW()"];
     const params: unknown[] = [projectId, fingerprint];
     let index = params.length;
 
     if (update.priority !== undefined) {
       params.push(update.priority);
-      sets.push(`priority = $${++index}`);
+      sets.push(`priority=$${++index}`);
     }
-
     if (update.isResolved !== undefined) {
       params.push(update.isResolved);
-      sets.push(`is_resolved = $${++index}`);
-      sets.push(`resolved_at = CASE WHEN $${index} THEN NOW() ELSE NULL END`);
+      const resolvedParam = ++index;
+      sets.push(`status=CASE WHEN $${resolvedParam} THEN 'resolved' ELSE 'unresolved' END`);
+      sets.push(`resolved_at=CASE WHEN $${resolvedParam} THEN NOW() ELSE NULL END`);
+      if (!update.isResolved) sets.push("resolved_by=NULL");
+    }
+    if (update.resolvedBy !== undefined) {
+      params.push(update.resolvedBy);
+      sets.push(`resolved_by=$${++index}`);
+      sets.push(`assigned_to=$${index}`);
     }
 
     return this.withProjectContext(projectId, async (client) => {
       const result = await client.query(
-        `
-          UPDATE error_groups
-          SET ${sets.join(", ")}
-          WHERE project_id = $1 AND fingerprint = $2
-          RETURNING *
-        `,
+        `UPDATE analytics_error_groups
+            SET ${sets.join(",")}
+          WHERE project_id=$1 AND fingerprint=$2
+          RETURNING *,total_count AS occurrences,last_seen_at AS last_seen,
+                    (status='resolved') AS is_resolved`,
         params,
       );
       return result.rows[0] ?? null;
@@ -389,39 +374,23 @@ export class AnalyticsRepository {
 
   async checkHealth(projectId: string): Promise<boolean> {
     try {
-      await this.withProjectContext(projectId, (client) =>
-        client.query("SELECT 1"),
-      );
+      await this.withProjectContext(projectId, (client) => client.query("SELECT 1"));
       return true;
     } catch {
       return false;
     }
   }
 
-  private async one(
-    projectId: string,
-    sql: string,
-    params: unknown[],
-  ): Promise<unknown> {
-    return this.withProjectContext(projectId, async (client) =>
-      this.queryData(client, sql, params),
-    );
+  private async one(projectId: string, sql: string, params: unknown[]): Promise<unknown> {
+    return this.withProjectContext(projectId, (client) => this.queryData(client, sql, params));
   }
 
-  private async queryData(
-    client: PoolClient,
-    sql: string,
-    params: unknown[],
-  ): Promise<unknown> {
+  private async queryData(client: PoolClient, sql: string, params: unknown[]): Promise<unknown> {
     const result = await client.query(sql, params);
     return result.rows[0]?.data ?? null;
   }
 
-  private async queryRows(
-    client: PoolClient,
-    sql: string,
-    params: unknown[],
-  ): Promise<unknown[]> {
+  private async queryRows(client: PoolClient, sql: string, params: unknown[]): Promise<unknown[]> {
     const result = await client.query(sql, params);
     return result.rows;
   }
@@ -433,10 +402,7 @@ export class AnalyticsRepository {
     const client = await this.db.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
-        "SELECT set_config('app.current_project_id', $1, true)",
-        [projectId],
-      );
+      await client.query("SELECT set_config('app.current_project_id',$1,true)", [projectId]);
       const result = await callback(client);
       await client.query("COMMIT");
       return result;
@@ -453,22 +419,23 @@ export class AnalyticsRepository {
   }
 
   private encodeCursor(timestamp: Date | string, id: string): string {
-    const payload: CursorPayload = {
+    return Buffer.from(JSON.stringify({
       timestamp: new Date(timestamp).toISOString(),
       id,
-    };
-    return Buffer.from(JSON.stringify(payload)).toString("base64url");
+    } satisfies CursorPayload)).toString("base64url");
   }
 
   private decodeCursor(cursor?: string): CursorPayload | null {
-    if (!cursor) {
-      return null;
-    }
-
+    if (!cursor) return null;
     try {
-      return JSON.parse(
-        Buffer.from(cursor, "base64url").toString("utf8"),
-      ) as CursorPayload;
+      const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<CursorPayload>;
+      if (
+        typeof parsed.timestamp !== "string"
+        || Number.isNaN(new Date(parsed.timestamp).getTime())
+        || typeof parsed.id !== "string"
+        || parsed.id.length === 0
+      ) return null;
+      return { timestamp: parsed.timestamp, id: parsed.id };
     } catch {
       return null;
     }

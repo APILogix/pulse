@@ -15,6 +15,7 @@
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
 import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { ingestionRoutes } from './routes.js';
 import { PostgresWriter } from './postgress.writter.js';
@@ -29,7 +30,7 @@ declare module 'fastify' {
 
 export const ingestionModule = fp(
   async function ingestionPlugin(fastify: FastifyInstance) {
-    const postgresWriter = new PostgresWriter(pool);
+    const postgresWriter = new PostgresWriter(pool, logDB.getPrimaryPool());
     fastify.decorate('postgresWriter', postgresWriter);
 
     await fastify.register(ingestionRoutes, { prefix: '/api' });
@@ -38,5 +39,6 @@ export const ingestionModule = fp(
   },
   {
     name: 'ingestion-module',
+    dependencies: ['sdk-config-delivery-module'],
   },
 );

@@ -15,6 +15,7 @@
  */
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { registerAlertingWorkers } from '../../modules/alerting/queue.js';
 import { registerAuthAutomationWorkers } from '../../modules/auth/infrastructure/jobs/queue.js';
@@ -53,6 +54,7 @@ async function bootstrapWorkers(): Promise<void> {
   });
 
   await pgPool.query('SELECT 1');
+  await logDB.connect();
 
   const maintenance = new TelemetryMaintenanceWorker(pgPool, workerLogger);
   maintenance.start();
@@ -90,6 +92,7 @@ async function bootstrapWorkers(): Promise<void> {
     if (aiWorkers) await aiWorkers.stop();
     if (automationWorkers) await automationWorkers.stop();
     await stopPgBoss();
+    await logDB.close();
     await pgPool.end();
     process.exit(0);
   };

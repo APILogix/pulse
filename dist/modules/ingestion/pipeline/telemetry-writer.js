@@ -114,15 +114,22 @@ export function errorFingerprint(event, errorName = errorNameOf(event)) {
  * against the (project_id, event_id) identity indexes; RETURNING keeps
  * rowCount truthful — it counts only ACTUALLY inserted rows. */
 function buildInsert(table, cols, rows, returning = 'id') {
+    const timestampIndex = cols.indexOf('timestamp');
+    const insertCols = timestampIndex >= 0 && !cols.includes('occurred_at')
+        ? [...cols, 'occurred_at']
+        : cols;
+    const insertRows = insertCols === cols
+        ? rows
+        : rows.map((row) => [...row, row[timestampIndex]]);
     const values = [];
     const tuples = [];
     let p = 1;
-    for (const row of rows) {
+    for (const row of insertRows) {
         tuples.push(`(${row.map(() => `$${p++}`).join(', ')})`);
         values.push(...row);
     }
     return {
-        text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
+        text: `INSERT INTO ${table} (${insertCols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
         values,
     };
 }
@@ -201,7 +208,7 @@ export class TelemetryWriter {
     // ── events_errors ─────────────────────────────────────────────────────────
     async writeErrors(list) {
         const ids = list.map(({ event }) => this.eventId(event));
-        const rows = list.map(({ projectId, orgId, event }, i) => {
+        const rows = list.map(({ projectId, orgId, environment, event }, i) => {
             const e = event;
             const r = rec(event);
             const errorName = errorNameOf(event);
@@ -211,13 +218,13 @@ export class TelemetryWriter {
                 errorName, eventSeverity(e.severity, 'error'),
                 str(r.stackHash, 64), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(r.source, 100) ?? 'capture', str(r.mechanism, 50), str(r.service, 100),
-                str(r.environment, 50), str(r.release, 100), str(r.serverName, 100),
+                environment, str(r.release, 100), str(r.serverName, 100),
                 str(r.applicationName, 100), str(r.applicationVersion, 50),
                 JSON.stringify(e.stack ?? []), r.sourceContext != null ? JSON.stringify(r.sourceContext) : null,
                 str(r.userId, 255), str(r.userEmail, 255), inet(r.userIp),
                 JSON.stringify(e.breadcrumbs ?? []),
                 JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(e.context ?? {}),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'event_id', 'fingerprint', 'message',
@@ -225,7 +232,7 @@ export class TelemetryWriter {
             'source', 'mechanism', 'service', 'environment', 'release', 'server_name',
             'application_name', 'application_version',
             'stack_frames', 'source_context', 'user_id', 'user_email', 'user_ip',
-            'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'], rows, 'event_id');
+            'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows, 'event_id');
         const res = await this.pool.query(text, values);
         // Pair each returned event_id with its first unpaired input occurrence, so
         // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
@@ -249,24 +256,24 @@ export class TelemetryWriter {
     }
     // ── events_messages ─────────────────────────────────────────────────────────
     async writeMessages(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
                 orgId, projectId, this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+                str(r.service, 100), environment, str(r.release, 100),
                 str(r.serverName, 100), str(r.applicationName, 100), str(r.applicationVersion, 50),
                 str(r.userId, 255), inet(r.userIp),
                 JSON.stringify(r.tags ?? {}), JSON.stringify(e.context ?? {}), JSON.stringify(e.breadcrumbs ?? []),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'event_id', 'message', 'severity',
             'trace_id', 'span_id', 'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
-            'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
@@ -274,7 +281,7 @@ export class TelemetryWriter {
     async writeRequests(list) {
         // Open the GeoIP databases once (no-op after first call; never throws).
         await this.enricher.init();
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             // Enrich clientIp -> geo, userAgent -> browser/os/device. Populates the
@@ -290,9 +297,9 @@ export class TelemetryWriter {
                 str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
                 inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
                 e.traceId ?? null, e.spanId ?? null,
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+                str(r.service, 100), environment, str(r.release, 100),
                 str(r.serverName, 100), str(r.applicationName, 100), str(r.applicationVersion, 50),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
                 // Enrichment columns.
                 g.geoCountryCode, g.geoRegion, g.geoAsn, g.clientIpHash,
                 g.browserFamily, g.browserVersionMajor, g.osName, g.osVersionMajor,
@@ -305,7 +312,7 @@ export class TelemetryWriter {
             'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
             'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'timestamp',
+            'sdk_name', 'sdk_version', 'metadata', 'timestamp',
             'geo_country_code', 'geo_region', 'geo_asn', 'client_ip_hash',
             'browser_family', 'browser_version_major', 'os_name', 'os_version_major',
             'device_type', 'is_bot'], rows);
@@ -314,7 +321,7 @@ export class TelemetryWriter {
     }
     // ── events_spans ─────────────────────────────────────────────────────────
     async writeSpans(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
@@ -327,8 +334,8 @@ export class TelemetryWriter {
                 str(r.httpMethod, 10), str(r.httpUrl, 8192), num(r.httpStatusCode), str(r.httpHost, 255), str(r.httpRoute, 500),
                 str(r.messagingSystem, 50), str(r.messagingDestination, 255), str(r.messagingOperation, 50),
                 e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
@@ -338,13 +345,13 @@ export class TelemetryWriter {
             'http_method', 'http_url', 'http_status_code', 'http_host', 'http_route',
             'messaging_system', 'messaging_destination', 'messaging_operation',
             'request_id', 'session_id', 'user_id', 'tenant_id',
-            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_traces ─────────────────────────────────────────────────────────
     async writeTraces(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             const root = (e.rootSpan ?? {});
@@ -354,20 +361,20 @@ export class TelemetryWriter {
                 e.spanCount, num(e.totalDuration), e.isPartial ?? false,
                 e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
                 e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'event_id', 'trace_id',
             'root_span_name', 'root_span_id', 'span_count', 'total_duration_ms', 'is_partial',
             'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
-            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_metrics ─────────────────────────────────────────────────────────
     async writeMetrics(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
@@ -377,41 +384,41 @@ export class TelemetryWriter {
                 num(r.rate), e.buckets != null ? JSON.stringify(e.buckets) : null,
                 num(r.p50), num(r.p75), num(r.p90), num(r.p95), num(r.p99),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_metrics', ['organization_id', 'project_id', 'event_id', 'metric_name', 'metric_type',
             'value', 'unit', 'tags', 'count', 'sum', 'min', 'max', 'avg',
             'rate', 'buckets', 'p50', 'p75', 'p90', 'p95', 'p99',
             'trace_id', 'span_id', 'request_id', 'service', 'environment', 'release',
-            'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_logs ─────────────────────────────────────────────────────────
     async writeLogs(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
                 orgId, projectId, this.eventId(event), logLevel(e.level), e.message,
                 JSON.stringify(e.args ?? []), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+                str(r.service, 100), environment, str(r.release, 100),
                 str(r.userId, 255), inet(r.userIp),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_logs', ['organization_id', 'project_id', 'event_id', 'level', 'message',
             'args', 'trace_id', 'span_id', 'request_id',
             'service', 'environment', 'release', 'user_id', 'user_ip',
-            'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_profiles ─────────────────────────────────────────────────────────
     async writeProfiles(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             const ts = resolveTimestamp(event);
@@ -421,46 +428,46 @@ export class TelemetryWriter {
                 e.startTime != null ? iso(e.startTime) : iso(ts),
                 e.endTime != null ? iso(e.endTime) : null, num(e.duration),
                 e.profile != null ? JSON.stringify(e.profile) : null,
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(ts),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(ts),
             ];
         });
         const { text, values } = buildInsert('events_profiles', ['organization_id', 'project_id', 'event_id', 'profile_type',
             'trace_id', 'span_id', 'request_id', 'start_time', 'end_time', 'duration_ms',
-            'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_cron_checkins ─────────────────────────────────────────────────────
     async writeCronCheckins(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
                 orgId, projectId, this.eventId(event), e.monitorSlug, e.status, num(e.duration),
-                str(r.service, 100), str(e.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_cron_checkins', ['organization_id', 'project_id', 'event_id', 'monitor_slug', 'status', 'duration_ms',
-            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_replays ─────────────────────────────────────────────────────────
     async writeReplays(list) {
-        const rows = list.map(({ projectId, orgId, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, event }) => {
             const e = event;
             const r = rec(event);
             return [
                 orgId, projectId, this.eventId(event), e.sessionId, e.segmentId,
                 JSON.stringify(e.events ?? []),
-                str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-                str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+                str(r.service, 100), environment, str(r.release, 100),
+                str(r.sdkName, 50), str(r.sdkVersion, 50), JSON.stringify({ environment }), iso(resolveTimestamp(event)),
             ];
         });
         const { text, values } = buildInsert('events_replays', ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
-            'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'], rows);
+            'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'], rows);
         const res = await this.pool.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }

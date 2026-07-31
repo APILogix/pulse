@@ -21,14 +21,14 @@ BEGIN
         id UUID NOT NULL DEFAULT gen_random_uuid(),
         organization_id UUID NOT NULL,
         project_id UUID,
-        environment_id UUID,
+        environment TEXT NOT NULL,
         api_key_id UUID,
         event_id TEXT NOT NULL,
         trace_id TEXT,
         span_id TEXT,
         parent_span_id TEXT,
         session_id TEXT,
-        user_id TEXT,/kiro
+        user_id TEXT,
         service TEXT,
         endpoint TEXT,
         release TEXT,
@@ -40,6 +40,7 @@ BEGIN
         message TEXT,
         name TEXT,
         attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         occurred_at TIMESTAMPTZ NOT NULL,
         ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -50,9 +51,11 @@ BEGIN
     EXECUTE format('CREATE TABLE IF NOT EXISTS %I_default PARTITION OF %I DEFAULT', table_name, table_name);
     EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS %I ON %I (organization_id, event_id, occurred_at)', 'idx_' || table_name || '_event_unique', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (organization_id, project_id, occurred_at DESC)', 'idx_' || table_name || '_tenant_time', table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (organization_id, project_id, environment, occurred_at DESC)', 'idx_' || table_name || '_tenant_env_time', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (trace_id, occurred_at DESC) WHERE trace_id IS NOT NULL', 'idx_' || table_name || '_trace', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I (service, occurred_at DESC) WHERE service IS NOT NULL', 'idx_' || table_name || '_service', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (attributes)', 'idx_' || table_name || '_attributes_gin', table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (metadata)', 'idx_' || table_name || '_metadata_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (payload)', 'idx_' || table_name || '_payload_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING BRIN (occurred_at)', 'idx_' || table_name || '_occurred_brin', table_name);
   END LOOP;

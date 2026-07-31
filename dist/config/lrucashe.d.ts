@@ -1,4 +1,5 @@
 import { LRUCache } from 'lru-cache';
+import type { SdkConfigResolvedDto } from '../modules/organization/sdk-config/sdk-config.types.js';
 export interface CachedProjectConfig {
     id: string;
     orgId: string;
@@ -20,11 +21,6 @@ export interface CachedProjectConfig {
     allowedIps: string[];
     allowedDomains: string[];
     allowedSdks: string[];
-    samplingRules: Record<string, unknown>;
-    featureFlags: Record<string, unknown>;
-    sdkConfig: Record<string, unknown>;
-    sdkConfigRevision?: number | null;
-    sdkConfigHash?: string | null;
     isActive: boolean;
     apiKeyId: string;
     /** Billing plan tier resolved at key-lookup time; drives queue priority. */
@@ -70,7 +66,6 @@ export declare function alertThresholdCacheKey(orgId: string, projectId?: string
 /** Evict a cached alert-threshold config after an update. */
 export declare function evictAlertThresholdCache(orgId: string, projectId?: string | null): void;
 /** Published SDK configuration cache, keyed only by environment ID. */
-import type { SdkConfigResolvedDto } from '../modules/organization/sdk-config.types.js';
 export declare const sdkConfigCache: LRUCache<string, SdkConfigResolvedDto, unknown>;
 export declare function sdkConfigCacheKey(environmentId: string): string;
 export declare function evictSdkConfigCache(environmentId: string): void;

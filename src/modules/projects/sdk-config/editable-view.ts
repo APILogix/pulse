@@ -57,8 +57,8 @@ export interface EditableConfigView {
 /**
  * Extract the editable subset of a compiled snapshot: every leaf that classifies
  * as `editable`, rebuilt field-by-field into a fresh object. Protected leaves
- * (sdk.*, meta.*, entitlements.*, transport.routes.*.url, keepAlive, priority,
- * compression, schemaVersion) are excluded by construction.
+ * (sdk.*, meta.*, entitlements.*, transport.routes.*.url, schemaVersion) are
+ * excluded by construction.
  */
 export function extractEditableConfig(compiled: SchemaV1Config): Record<string, unknown> {
   const editable: Record<string, unknown> = {};

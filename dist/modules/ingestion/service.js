@@ -36,7 +36,7 @@ import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffo
 import { PostgresWriter } from './postgress.writter.js';
 import { IngestionRateLimiter } from './rate-limiter.js';
 import { UsageCounter } from './usage/usage-counter.js';
-import { SDK_EVENT_TYPES } from './pipeline/event-normalizer.js';
+import { SDK_EVENT_TYPES, normalizeSdkEnvironment, } from './pipeline/event-normalizer.js';
 import { enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
 const svcLogger = logger.child({ component: 'ingestion-service' });
 function hashApiKey(apiKey) {
@@ -68,6 +68,7 @@ const DEFAULT_BACKPRESSURE = {
 export class IngestionService {
     pool;
     writer;
+    sdkConfigService;
     rateLimiter;
     orgRateLimiter;
     usage;
@@ -89,9 +90,10 @@ export class IngestionService {
     // Cached org quota reads (organization_usage_current_period), fail-open.
     quotaCache = new Map();
     quotaCacheTtlMs = env.INGESTION_QUOTA_CACHE_TTL_MS;
-    constructor(pool, writer, config) {
+    constructor(pool, writer, config, sdkConfigService) {
         this.pool = pool;
         this.writer = writer;
+        this.sdkConfigService = sdkConfigService;
         this.maxBatchSize = config.maxBatchSize;
         this.defaultRatePerSecond = config.defaultRateLimitPerSecond;
         this.defaultRatePerMinute = config.defaultRateLimitPerMinute;
@@ -145,11 +147,6 @@ export class IngestionService {
                 allowedIps: cached.allowedIps ?? [],
                 allowedDomains: cached.allowedDomains ?? [],
                 allowedSdks: cached.allowedSdks ?? [],
-                samplingRules: cached.samplingRules ?? {},
-                featureFlags: cached.featureFlags ?? {},
-                sdkConfig: cached.sdkConfig ?? {},
-                sdkConfigRevision: cached.sdkConfigRevision ?? null,
-                sdkConfigHash: cached.sdkConfigHash ?? null,
                 planTier: normalizePlanTier(cached.planTier),
                 orgRateLimitPerSecond: cached.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
                 orgRateLimitPerMinute: cached.orgRateLimitPerMinute ?? env.INGESTION_ORG_RATE_LIMIT_PER_MINUTE,
@@ -179,11 +176,6 @@ export class IngestionService {
             allowedIps: auth.allowedIps,
             allowedDomains: auth.allowedDomains,
             allowedSdks: auth.allowedSdks,
-            samplingRules: auth.samplingRules,
-            featureFlags: auth.featureFlags,
-            sdkConfig: auth.sdkConfig,
-            sdkConfigRevision: auth.sdkConfigRevision,
-            sdkConfigHash: auth.sdkConfigHash,
             planTier: normalizePlanTier(auth.planTier),
             orgRateLimitPerSecond: auth.orgRateLimitPerSecond ?? env.INGESTION_ORG_RATE_LIMIT_PER_SECOND,
             orgRateLimitPerMinute: auth.orgRateLimitPerMinute ?? env.INGESTION_ORG_RATE_LIMIT_PER_MINUTE,
@@ -206,11 +198,6 @@ export class IngestionService {
             allowedIps: resolved.allowedIps,
             allowedDomains: resolved.allowedDomains,
             allowedSdks: resolved.allowedSdks,
-            samplingRules: resolved.samplingRules,
-            featureFlags: resolved.featureFlags,
-            sdkConfig: resolved.sdkConfig,
-            sdkConfigRevision: resolved.sdkConfigRevision,
-            sdkConfigHash: resolved.sdkConfigHash,
             isActive: resolved.isActive,
             apiKeyId: resolved.apiKeyId,
             planTier: resolved.planTier,
@@ -297,15 +284,21 @@ export class IngestionService {
             throw new Error('INVALID_API_KEY');
         if (!project.isActive)
             throw new Error('PROJECT_INACTIVE');
+        if (!this.sdkConfigService)
+            throw new Error('CONFIG_UNAVAILABLE');
         this.syncInitLookupsBestEffort(project);
-        return {
-            success: true,
-            projectId: project.id,
-            environment: project.environmentSlug,
-            configRevision: project.sdkConfigRevision,
-            configHash: project.sdkConfigHash,
-            config: project.sdkConfig ?? {},
-        };
+        try {
+            return await this.sdkConfigService.buildDelivery({
+                organizationId: project.orgId,
+                projectId: project.id,
+                defaultEnvironmentId: project.environmentId,
+                allowedEnvironmentIds: [project.environmentId],
+            }, { schemaVersion: 1, environmentId: project.environmentId });
+        }
+        catch (error) {
+            svcLogger.error({ err: error, projectId: project.id }, 'canonical SDK initialization failed');
+            throw new Error('CONFIG_UNAVAILABLE');
+        }
     }
     syncInitLookupsBestEffort(project) {
         syncProjectLookupToLogDbBestEffort(project.id, 'sdk.init');
@@ -368,6 +361,12 @@ export class IngestionService {
             throw new Error('INVALID_API_KEY');
         if (!project.isActive)
             throw new Error('PROJECT_INACTIVE');
+        const suppliedEnvironment = req.metadata?.environment;
+        const environment = suppliedEnvironment === undefined || suppliedEnvironment === null
+            ? normalizeSdkEnvironment(project.environmentSlug)
+            : normalizeSdkEnvironment(suppliedEnvironment);
+        if (!environment)
+            throw new Error('INVALID_ENVIRONMENT');
         // 3. Key permissions.
         this.assertKeyCanUseEndpoint(project, expectedType);
         // 4. Rate limits: project-scoped AND org-wide (noisy-neighbor guard).
@@ -446,7 +445,7 @@ export class IngestionService {
                 projectId: project.id,
                 apiKeyId: project.apiKeyId,
                 planTier: project.planTier,
-                environment: project.environmentSlug,
+                environment,
                 batchId,
                 receivedAt,
                 byType: acceptedByType,
@@ -687,11 +686,10 @@ export class IngestionService {
         WHERE id = $1`, [jobId, replayedBy ?? null]);
     }
     /**
-     * Rebuild an IngestJobPayload from a DLQ row. Primary shape: the stored
-     * payload IS the original IngestJobPayload (worker-side DLQ intake stores
-     * the failed job's data verbatim). Fallback: older rows may only carry a
-     * bare event (or an array of events), in which case we wrap them using the
-     * DLQ row's own org/project/type columns.
+     * Rebuild an IngestJobPayload from a DLQ row. The stored payload must retain
+     * either the original job metadata.environment or the complete validation
+     * DLQ envelope with its environment. Older bare-event rows are rejected:
+     * replay must never invent an environment storage dimension.
      */
     dlqRowToJobPayload(row) {
         const stored = row.payload;
@@ -704,6 +702,9 @@ export class IngestionService {
             SDK_EVENT_TYPE_SET.has(stored.eventType) &&
             Array.isArray(stored.events)) {
             const meta = (stored.metadata ?? {});
+            const environment = normalizeSdkEnvironment(meta.environment);
+            if (!environment)
+                return null;
             const planTier = normalizePlanTier(meta.planTier);
             return {
                 organizationId: stored.organizationId,
@@ -715,7 +716,7 @@ export class IngestionService {
                     apiKeyId: typeof meta.apiKeyId === 'string' ? meta.apiKeyId : '',
                     planTier,
                     receivedAt: new Date().toISOString(),
-                    environment: typeof meta.environment === 'string' ? meta.environment : 'unknown',
+                    environment,
                     deferCount: 0,
                     replay: true,
                 },
@@ -733,6 +734,9 @@ export class IngestionService {
             typeof stored.organizationId === 'string' &&
             typeof stored.projectId === 'string') {
             const intake = stored;
+            const environment = normalizeSdkEnvironment(intake.environment);
+            if (!environment)
+                return null;
             const inner = intake.payload;
             const events = (Array.isArray(inner) ? inner : [inner]).map((item) => item && typeof item === 'object' && 'event' in item
                 ? item.event
@@ -751,35 +755,15 @@ export class IngestionService {
                     apiKeyId: '',
                     planTier: normalizePlanTier(null),
                     receivedAt: new Date().toISOString(),
-                    environment: 'unknown',
+                    environment,
                     deferCount: 0,
                     replay: true,
                 },
             };
         }
-        // Adapted shape: wrap the stored event(s) in a fresh payload.
-        if (!row.org_id || !row.project_id)
-            return null;
-        if (!SDK_EVENT_TYPE_SET.has(row.job_type))
-            return null;
-        const eventType = row.job_type;
-        const events = Array.isArray(row.payload) ? row.payload : [row.payload];
-        const planTier = normalizePlanTier(null);
-        return {
-            organizationId: row.org_id,
-            projectId: row.project_id,
-            eventType,
-            events,
-            metadata: {
-                batchId: randomUUID(),
-                apiKeyId: '',
-                planTier,
-                receivedAt: new Date().toISOString(),
-                environment: 'unknown',
-                deferCount: 0,
-                replay: true,
-            },
-        };
+        // Bare historical DLQ rows have no trustworthy SDK envelope environment.
+        // They cannot be replayed without fabricating a storage dimension.
+        return null;
     }
     async reprocessAllDLQ(batchSize = 100, replayedBy) {
         const safeBatch = Number.isFinite(batchSize) && batchSize > 0
@@ -808,7 +792,13 @@ export class IngestionService {
      * INGESTION_REPLAY_MAX_EVENTS to prevent operator typos flooding the queue.
      */
     async replayEvents(req) {
-        const events = await this.writer.getEventsForReplay(req.projectId, req.startTime, req.endTime, req.eventTypes, this.replayMaxEvents);
+        const requestedEnvironment = req.environment === undefined
+            ? undefined
+            : normalizeSdkEnvironment(req.environment);
+        if (req.environment !== undefined && !requestedEnvironment)
+            throw new Error('INVALID_ENVIRONMENT');
+        const replayEnvironment = requestedEnvironment ?? undefined;
+        const events = await this.writer.getEventsForReplay(req.projectId, req.startTime, req.endTime, req.eventTypes, this.replayMaxEvents, replayEnvironment);
         const replayId = randomUUID();
         if (events.length === 0)
             return { replayId, queued: 0 };
@@ -817,29 +807,37 @@ export class IngestionService {
         const planTier = normalizePlanTier(planCtx?.planTier ?? null);
         const organizationId = planCtx?.orgId ?? events[0]?.orgId ?? '';
         const receivedAt = new Date().toISOString();
-        const byType = new Map();
+        // Never collapse historical environments into a synthetic "replay" value.
+        // Each environment gets its own job batch with the original normalized
+        // storage dimension copied into mandatory job metadata.
+        const byEnvironment = new Map();
         for (const e of events) {
             if (!SDK_EVENT_TYPE_SET.has(e.type))
                 continue;
+            const environment = normalizeSdkEnvironment(e.environment);
+            if (!environment)
+                continue;
             const type = e.type;
+            const byType = byEnvironment.get(environment) ?? new Map();
             const list = byType.get(type) ?? [];
             list.push(e.payload);
             byType.set(type, list);
+            byEnvironment.set(environment, byType);
         }
-        if (byType.size === 0)
+        if (byEnvironment.size === 0)
             return { replayId, queued: 0 };
         await ensureIngestQueuesProvisioned();
-        const jobs = this.buildJobs({
+        const jobs = [...byEnvironment.entries()].flatMap(([environment, byType]) => this.buildJobs({
             organizationId,
             projectId: req.projectId,
             apiKeyId: '',
             planTier,
-            environment: 'replay',
+            environment,
             batchId: replayId,
             receivedAt,
             replay: true,
             byType,
-        });
+        }));
         const result = await enqueueIngestJobs(jobs);
         return { replayId, queued: result.enqueuedEvents };
     }
@@ -877,7 +875,6 @@ export class IngestionService {
             return [];
         }
         const params = [projectId];
-        const metricClause = counterType ? "WHERE metric.counter_type = $2" : "";
         if (counterType)
             params.push(counterType);
         const r = await this.pool.query(`SELECT metric.counter_type,
@@ -891,7 +888,8 @@ export class IngestionService {
            ('total_bytes', usage.total_bytes::numeric),
            ('rate_limit_usage', usage.rate_limit_usage::numeric)
          ) metric(counter_type, value)
-        ${metricClause}
+        WHERE usage.project_id = $1
+          ${counterType ? "AND metric.counter_type = $2" : ""}
         GROUP BY metric.counter_type
         ORDER BY metric.counter_type`, params);
         return r.rows.map((row) => ({
@@ -906,6 +904,13 @@ export class IngestionService {
             limit: this.normalizeInteger(query.limit, 50, 1, 100),
             offset: this.normalizeInteger(query.offset, 0, 0, 100_000),
         };
+        const environment = query.environment === undefined
+            ? undefined
+            : normalizeSdkEnvironment(query.environment);
+        if (query.environment !== undefined && !environment)
+            throw new Error('INVALID_ENVIRONMENT');
+        if (environment)
+            normalized.environment = environment;
         const from = this.parseOptionalDate(query.from);
         const to = this.parseOptionalDate(query.to);
         if (from && to && from.getTime() > to.getTime())

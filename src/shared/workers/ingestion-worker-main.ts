@@ -16,8 +16,9 @@
  * retry-safe usage accounting make redelivery harmless.
  *
  * Process model:
- *   - One dedicated Postgres pool (max INGESTION_DB_POOL_SIZE,
- *     application_name='pulse_ingestion_workers') for persistence/usage/metrics.
+ *   - One dedicated primary Postgres pool (max INGESTION_DB_POOL_SIZE,
+ *     application_name='pulse_ingestion_workers') for queue, usage and billing state.
+ *   - The shared Log DB primary pool for event persistence and analytics tables.
  *   - The pg-boss singleton (its own pool) drives delivery.
  *   - One WorkerRegistry that owns the per-type worker pools, the tenant
  *     fairness gate, the DLQ intake worker, the usage-rollup cron and the
@@ -27,9 +28,11 @@
  */
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { WorkerRegistry } from '../../modules/ingestion/workers/worker-registry.js';
+import { applyLogDbMigrations } from '../logdb/migrations.js';
 
 const log = logger.child({ component: 'ingestion-worker-main' });
 
@@ -51,13 +54,19 @@ class IngestionWorkerProcess {
       log.error({ err }, 'Ingestion worker pool error (idle connection lost)'),
     );
 
-    // Fail fast if the database is unreachable at boot.
+    // Fail fast if either required database is unreachable at boot.
     await this.pool.query('SELECT 1');
+    await logDB.connect();
+    if (env.LOG_DB_AUTO_MIGRATE) {
+      await applyLogDbMigrations(logDB.getPrimaryPool(), { logger: log });
+    } else {
+      log.warn('LOG_DB_AUTO_MIGRATE=false; ingestion worker will assume Log DB migrations are already applied');
+    }
 
     // pg-boss must be started before any work/schedule/send call.
     await startPgBoss();
 
-    this.registry = new WorkerRegistry(this.pool, log);
+    this.registry = new WorkerRegistry(this.pool, log, logDB.getPrimaryPool());
     await this.registry.start();
 
     this.installSignalHandlers();
@@ -89,6 +98,7 @@ class IngestionWorkerProcess {
     try {
       if (this.registry) await this.registry.stop();
       await stopPgBoss();
+      await logDB.close();
       if (this.pool) await this.pool.end();
     } catch (err) {
       log.error({ err }, 'Error during ingestion worker shutdown');

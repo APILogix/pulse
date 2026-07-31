@@ -52,7 +52,11 @@ export interface ConfigStore {
     loadCompiledByEnvironment(organizationId: string, environmentId: string): Promise<{
         revisionNo: number;
         compiledSnapshot: SchemaV1Config;
-        environmentName: string;
+    } | null>;
+    loadCompiledBySdkMetadata(organizationId: string, projectId: string, environment: string): Promise<{
+        revisionNo: number;
+        environmentId: string;
+        compiledSnapshot: SchemaV1Config;
     } | null>;
 }
 export interface ServiceOptions {
@@ -78,6 +82,7 @@ export interface DeliveryResult {
 export declare class RemoteSdkConfigService {
     private readonly store;
     private readonly options;
+    private lastGeneratedAtMs;
     constructor(store: ConfigStore, options: ServiceOptions);
     private topologyFor;
     private policyFor;

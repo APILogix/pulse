@@ -217,6 +217,23 @@ export class OrganizationRepository extends BaseRepository {
     };
   }
 
+  /**
+   * Adjust the fast-path `organization_usage_current_period.api_keys_used`
+   * counter so org-level dashboards/quota checks reflect API key creation and
+   * deletion immediately. Non-fatal: callers treat a missing usage row (org
+   * has no active subscription period yet) as a no-op rather than an error,
+   * since the authoritative limit enforcement is the live COUNT(*) in
+   * `ProjectsRepository.getProjectModuleUsageCounts`.
+   */
+  async adjustApiKeyUsageCounter(orgId: string, delta: number): Promise<void> {
+    await this.db.query(
+      `UPDATE organization_usage_current_period
+          SET api_keys_used = GREATEST(api_keys_used + $2, 0)
+        WHERE organization_id = $1`,
+      [orgId, delta],
+    );
+  }
+
   // ── Backward Compatibility for Modules ────────────────────────
   async findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null> {
     const r = await this.db.query<OrgMemberRow>(

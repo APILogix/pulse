@@ -20,6 +20,7 @@ const envSchema = z.object({
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(5000).default(20_000),
   APP_NAME: z.string().default('Pulsiv'),
   APP_URL: z.string().url().default('http://localhost:5173'),
+  BACKEND_URL: z.string().url().default('http://localhost:5000/api'),
   API_PUBLIC_URL: z.string().url().optional(),
   // Primary Database (PostgreSQL)
   DATABASE_URL: z.string(),
@@ -80,6 +81,13 @@ const envSchema = z.object({
   LOG_DB_CHUNK_INTERVAL: z.string().default('1 day'),
   LOG_DB_COMPRESS_AFTER: z.string().default('7 days'),
   LOG_DB_RETENTION: z.string().default('90 days'),
+  // Ingestion workers write into the dedicated Log DB event schema. Keep this
+  // enabled so workers fail fast instead of processing jobs against stale/missing
+  // Log DB tables. Set to false only when migrations are handled externally.
+  LOG_DB_AUTO_MIGRATE: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
 
   // ClickHouse (Optional)
   CLICKHOUSE_URL: z.string().optional(),
