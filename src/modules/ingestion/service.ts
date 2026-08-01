@@ -151,6 +151,7 @@ interface ResolvedProject {
 interface QuotaCacheEntry {
   eventsUsed: number;
   eventLimit: number;
+  usageBehavior: 'none' | 'hard_limit' | 'soft_limit' | 'overage' | 'throttle';
   at: number;
 }
 
@@ -357,7 +358,7 @@ export class IngestionService {
   }
 
   /**
-   * Cached quota pre-check against organization_usage_current_period.
+   * Cached quota pre-check against the canonical monthly_events entitlement.
    * Fail-open by design: a missing row or a DB error allows the batch
    * (authoritative enforcement happens worker-side / in billing rollups).
    */
@@ -368,21 +369,35 @@ export class IngestionService {
       try {
         const r = await this.pool.query<{
           events_used: string;
-          event_limit: string;
+          integer_value: string | null;
+          usage_behavior: QuotaCacheEntry['usageBehavior'] | null;
         }>(
-          `SELECT events_used, event_limit
-             FROM organization_usage_current_period
-            WHERE organization_id = $1`,
+          `SELECT u.events_used, ee.integer_value, bf.usage_behavior
+             FROM organization_usage_current_period u
+             LEFT JOIN LATERAL (
+               SELECT *
+                 FROM v_effective_entitlements
+                WHERE organization_id = u.organization_id
+                  AND feature_key IN ('quota.monthly_events', 'monthly_events')
+                ORDER BY CASE feature_key WHEN 'quota.monthly_events' THEN 0 ELSE 1 END
+                LIMIT 1
+             ) ee ON TRUE
+             LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
+            WHERE u.organization_id = $1`,
           [orgId],
         );
         const row = r.rows[0];
-        entry = row
+        entry = row && row.integer_value !== null
           ? {
               eventsUsed: Number(row.events_used) || 0,
-              eventLimit: Number(row.event_limit) || 0,
+              eventLimit: Number(row.integer_value) || 0,
+              usageBehavior: row.usage_behavior ?? 'hard_limit',
               at: now,
             }
-          : { eventsUsed: 0, eventLimit: 0, at: now };
+          // A missing entitlement is a migration/legacy-data condition, not a
+          // zero quota. The worker-side authoritative consumption path remains
+          // responsible for explicit limits once the catalog is populated.
+          : { eventsUsed: 0, eventLimit: -1, usageBehavior: 'none', at: now };
         if (this.quotaCache.size >= QUOTA_CACHE_MAX_ENTRIES) {
           // Map iterates in insertion order: drop the oldest entry first.
           const oldest = this.quotaCache.keys().next();
@@ -394,7 +409,11 @@ export class IngestionService {
         return;
       }
     }
-    if (entry.eventLimit > 0 && entry.eventsUsed >= entry.eventLimit) {
+    if (
+      entry.eventLimit >= 0
+      && entry.eventsUsed >= entry.eventLimit
+      && (entry.usageBehavior === 'hard_limit' || entry.usageBehavior === 'throttle')
+    ) {
       throw new Error('QUOTA_EXCEEDED');
     }
   }
@@ -602,6 +621,22 @@ export class IngestionService {
         byType: acceptedByType,
       });
       const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
+      svcLogger.info(
+        {
+          batchId,
+          expectedType: expectedType ?? 'mixed',
+          eventTypes: Object.fromEntries(
+            [...acceptedByType.entries()].map(([type, list]) => [type, list.length]),
+          ),
+          queues: jobs.map((job) => ({
+            queue: job.queue,
+            eventType: job.payload.eventType,
+            events: job.payload.events.length,
+          })),
+          submittedEvents,
+        },
+        'ingestion events queued for workers',
+      );
       const result = await enqueueIngestJobs(jobs);
       accepted = result.enqueuedEvents;
       if (accepted < submittedEvents) {

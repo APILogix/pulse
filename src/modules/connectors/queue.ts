@@ -20,10 +20,11 @@ import { ConnectorMonitor } from './monitor.js';
 import { sweepRateLimiter } from './runtime.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
 import { CONNECTOR_JOBS } from './job.constants.js';
-import type { NotificationPayload, RequestMeta } from './types.js';
+import type { ConnectorConfigRow, NotificationPayload, RequestMeta } from './types.js';
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
+import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -44,6 +45,13 @@ export interface ConnectorSendJobData {
   connectorId: string;
   payload: NotificationPayload;
   routeId?: string | null;
+  projectChannel?: {
+    userId?: string;
+    channelId?: string;
+    channelType?: string;
+    destination?: string | null;
+    metadata?: Record<string, unknown>;
+  };
 }
 
 export interface ConnectorTestJobData {
@@ -88,11 +96,35 @@ function resolveCredentialExpiry(config: Record<string, unknown>, fallback: Date
   return fallback;
 }
 
+function payloadWithProjectChannel(job: ConnectorSendJobData): NotificationPayload {
+  if (!job.projectChannel) return job.payload;
+  return {
+    ...job.payload,
+    metadata: {
+      ...(job.payload.metadata ?? {}),
+      projectChannel: {
+        ...(job.projectChannel.metadata ?? {}),
+        userId: job.projectChannel.userId,
+        channelId: job.projectChannel.channelId,
+        channelType: job.projectChannel.channelType,
+        destination: job.projectChannel.destination ?? null,
+      },
+    },
+  };
+}
+
+function hasEmailDestination(payload: NotificationPayload): boolean {
+  const projectChannel = payload.metadata?.projectChannel as Record<string, unknown> | undefined;
+  return typeof projectChannel?.destination === 'string'
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(projectChannel.destination.trim());
+}
+
 export async function registerConnectorWorkers(
   logger: FastifyBaseLogger,
 ): Promise<{ stop: () => Promise<void> }> {
   const log = logger.child({ component: 'connector-workers' });
   const repository = new ConnectorRepository();
+  const entitlements = new EntitlementsRepository();
   const dispatcher = new NotificationDispatcher(repository, logger);
   const service = new ConnectorService({
     repository,
@@ -126,13 +158,45 @@ export async function registerConnectorWorkers(
         await Promise.allSettled(jobs.map(async (job) => {
           workerMetrics.recordJobStarted();
           try {
-            const row = rowMap.get(job.data.connectorId);
-            if (!row) {
-              log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector send skipped: connector not found');
-              workerMetrics.recordJobFailed(false);
-              return;
+            let row: ConnectorConfigRow | null | undefined = rowMap.get(job.data.connectorId);
+            const payload = payloadWithProjectChannel(job.data);
+            if (!row || row.status !== 'active') {
+              if (!hasEmailDestination(payload)) {
+                log.warn(
+                  { jobId: job.id, connectorId: job.data.connectorId, status: row?.status ?? null },
+                  'Connector send skipped: connector unavailable and no email fallback destination is present',
+                );
+                workerMetrics.recordJobFailed(false);
+                return;
+              }
+              row = await repository.findFirstActiveByType(job.data.organizationId, 'email');
+              if (!row) {
+                const canUseManagedFallback = await entitlements.hasFeature(
+                  job.data.organizationId,
+                  'alerting.managed_email_fallback',
+                );
+                if (!canUseManagedFallback) {
+                  log.warn(
+                    { jobId: job.id, connectorId: job.data.connectorId },
+                    'Connector send skipped: managed email fallback is not entitled',
+                  );
+                  workerMetrics.recordJobFailed(false);
+                  return;
+                }
+                row = await repository.getOrCreateManagedEmailConnector(job.data.organizationId);
+              }
+              log.warn(
+                {
+                  jobId: job.id,
+                  requestedConnectorId: job.data.connectorId,
+                  requestedConnectorStatus: rowMap.get(job.data.connectorId)?.status ?? null,
+                  fallbackConnectorId: row.id,
+                  managedFallback: row.metadata?.managedBy === 'pulse',
+                },
+                'Connector unavailable; falling back to email transport',
+              );
             }
-            const outcome = await dispatcher.dispatch(row, job.data.payload, { routeId: job.data.routeId ?? null });
+            const outcome = await dispatcher.dispatch(row, payload, { routeId: job.data.routeId ?? null });
             if (outcome.status === 'sent') {
               workerMetrics.recordJobCompleted();
             } else {

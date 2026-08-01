@@ -64,18 +64,6 @@ import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
 import {
-  forgotPasswordRateLimit,
-  loginMfaRateLimit,
-  loginRateLimit,
-  mfaEmailResendRateLimit,
-  refreshSessionRateLimit,
-  registerRateLimit,
-  resendVerificationRateLimit,
-  resetPasswordRateLimit,
-  tokenConfirmRateLimit,
-  verifyEmailRateLimit,
-} from '../middleware/rate-limits.js';
-import {
   getRefreshCookieNames,
   getRefreshCookieOptions,
   getRefreshCookieValue,
@@ -313,7 +301,7 @@ export async function mfaRoutes(fastify: FastifyInstance) {
   // Authenticated users only. Generates a fresh OTP and emails it.
   fastify.post(
     '/mfa/email/resend',
-    { preHandler: [authenticate, mfaEmailResendRateLimit] },
+    { preHandler: [authenticate] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
@@ -480,7 +468,7 @@ export async function mfaRoutes(fastify: FastifyInstance) {
   // Consumes the email-confirmation token and actually disables MFA.
   fastify.post(
     '/mfa/disable/confirm',
-    { preHandler: [tokenConfirmRateLimit] },
+    {},
     async (request, reply) => {
     try {
       return reply.status(410).send({

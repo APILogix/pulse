@@ -21,12 +21,16 @@ VALUES
 ('alerting.escalation_policies','Escalation Policies','Configure escalations','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('alerting.on_call','On-call Routing','Route alerts to on-call responders','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('alerting.incident_timeline','Incident Timeline','Timeline for incidents','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
+('alerting.managed_email_fallback','Managed Email Fallback','Use Pulse-managed SMTP when no organization email connector is available','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 
 ('ai.alert_prioritization','AI Alert Prioritization','Rank alerts by importance','ai','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('ai.alert_deduplication','AI Alert Deduplication','Cluster similar alerts','ai','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 
 ('quota.alert_rules','Alert Rules','Maximum alert rules','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
 ('quota.notification_channels','Notification Channels','Maximum notification channels','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
+('quota.daily_alerts','Daily Alerts','Maximum alert notifications generated per day','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
+('quota.monthly_alerts','Monthly Alerts','Maximum alert notifications generated per month','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
+('quota.connector_sends','Connector Sends','Maximum connector delivery attempts per month','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
 ('quota.incidents','Monthly Incidents','Maximum tracked incidents','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
 
 ('integrations.email','Email Notifications','Notify via email','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
@@ -34,12 +38,13 @@ VALUES
 ('integrations.discord','Discord Integration','Notify Discord','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('integrations.microsoft_teams','Microsoft Teams','Notify Microsoft Teams','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('integrations.webhook','Webhook Notifications','Custom webhook notifications','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
+('integrations.sms','SMS Notifications','Notify via SMS','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('integrations.pagerduty','PagerDuty','PagerDuty integration','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
 ('integrations.opsgenie','Opsgenie','Opsgenie integration','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE)
 )
 
 INSERT INTO billing_features
-(feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
+(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
 SELECT
 feature_key,name,description,
 category::billing_feature_category,
@@ -50,7 +55,7 @@ configuration,is_public,is_module_root
 FROM feature_seed
 ON CONFLICT (feature_key)
 DO UPDATE SET
-name=EXCLUDED.name,
+feature_name=EXCLUDED.feature_name,
 description=EXCLUDED.description,
 category=EXCLUDED.category,
 module=EXCLUDED.module,

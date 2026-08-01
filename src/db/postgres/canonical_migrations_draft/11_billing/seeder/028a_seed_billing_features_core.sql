@@ -86,7 +86,7 @@ VALUES
 INSERT INTO billing_features
 (
     feature_key,
-    name,
+    feature_name,
     description,
     category,
     module,
@@ -111,7 +111,7 @@ FROM feature_seed
 
 ON CONFLICT (feature_key)
 DO UPDATE SET
-    name = EXCLUDED.name,
+    feature_name = EXCLUDED.feature_name,
     description = EXCLUDED.description,
     category = EXCLUDED.category,
     module = EXCLUDED.module,

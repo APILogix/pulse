@@ -28,7 +28,10 @@ export class ConnectorRepository {
   async findById(organizationId: string, id: string) { return this.core.findById(organizationId, id); }
   async findByIdInternal(id: string) { return this.core.findByIdInternal(id); }
   async getByIds(ids: string[]) { return this.core.getByIds(ids); }
+  async findFirstActiveByType(organizationId: string, type: ConnectorType) { return this.core.findFirstActiveByType(organizationId, type); }
+  async getOrCreateManagedEmailConnector(organizationId: string) { return this.core.getOrCreateManagedEmailConnector(organizationId); }
   async list(organizationId: string, query: ListConnectorsQuery) { return this.core.list(organizationId, query); }
+  async countActiveConnectors(organizationId: string) { return this.core.countActiveConnectors(organizationId); }
   async listMonitorable() { return this.core.listMonitorable(); }
   async update(organizationId: string, id: string, fields: Record<string, unknown>) { return this.core.update(organizationId, id, fields); }
   async upsertCredential(input: import('./core/connector.repository.js').UpsertConnectorCredentialInput) { return this.core.upsertCredential(input); }
@@ -46,6 +49,11 @@ export class ConnectorRepository {
   async getDelivery(organizationId: string, id: string) { return this.delivery.getDelivery(organizationId, id); }
   async insertDeliveryIdempotent(input: import('./delivery/delivery.repository.js').InsertDeliveryInput) { return this.delivery.insertDeliveryIdempotent(input); }
   async findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number) { return this.delivery.findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes); }
+  async consumeRateLimitToken(connectorId: string, limit: number, windowSeconds: number) { return this.delivery.consumeRateLimitToken(connectorId, limit, windowSeconds); }
+  async circuitAllows(connectorId: string, resetTimeoutMs: number) { return this.delivery.circuitAllows(connectorId, resetTimeoutMs); }
+  async recordCircuitSuccess(connectorId: string) { return this.delivery.recordCircuitSuccess(connectorId); }
+  async recordCircuitFailure(connectorId: string, failureThreshold: number) { return this.delivery.recordCircuitFailure(connectorId, failureThreshold); }
+  async recordSuccessfulDeliveryUsage(organizationId: string, projectId: string | null, connectorType: ConnectorType) { return this.delivery.recordSuccessfulDeliveryUsage(organizationId, projectId, connectorType); }
   async listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: { limit: number; offset: number }) { return this.delivery.listAttempts(organizationId, connectorId, deliveryId, filters); }
   async retryDelivery(organizationId: string, id: string) { return this.delivery.retryDelivery(organizationId, id); }
   async getDlqGrowth(windowMinutes: number) { return this.delivery.getDlqGrowth(windowMinutes); }

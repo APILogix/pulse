@@ -70,9 +70,40 @@ export const LEGACY_MIGRATION_ALIASES: Record<string, string> = {
   '012_auth_harden_email_outbox_schema.up.sql': '012_auth_email_outbox_hardening.up.sql',
 };
 
-function isMigrationFile(filename: string): boolean {
-  if (!filename.endsWith('.sql')) return false;
-  if (filename.endsWith('.down.sql')) return false;
+/**
+ * These billing files describe application defaults or example data, not
+ * database-owned state.  Keeping them beside the historical seed drafts makes
+ * the decision visible, while excluding them prevents the generic recursive
+ * loader from creating (or requiring) non-canonical tables for templates,
+ * webhook names, tax presets, and demo overrides.
+ */
+const BILLING_APPLICATION_CONSTANT_SEEDS = new Set([
+  '032_seed_default_sdk_configuration.sql',
+  // These two drafts target retired table shapes. Their canonical replacements
+  // must seed feature_dependencies and addons/addon_prices, never purchases.
+  '029_seed_feature_dependencies.sql',
+  '031_seed_plan_addons.sql',
+  '033_seed_feature_overrides.sql',
+  '034_seed_usage_billing_rules.sql',
+  '035_seed_invoice_templates.sql',
+  '036_seed_tax_configuration.sql',
+  '037_seed_coupon_templates.sql',
+  '038_seed_usage_alert_policies.sql',
+  '039_seed_billing_webhook_events.sql',
+  '040_seed_email_templates.sql',
+  '041_seed_notification_templates.sql',
+]);
+
+export function isMigrationFile(filename: string): boolean {
+  const normalized = filename.split(path.sep).join('/');
+  if (!normalized.endsWith('.sql')) return false;
+  if (normalized.endsWith('.down.sql')) return false;
+  if (
+    (normalized.startsWith('11_billing/seeder/') || normalized.includes('/11_billing/seeder/'))
+    && BILLING_APPLICATION_CONSTANT_SEEDS.has(path.posix.basename(normalized))
+  ) {
+    return false;
+  }
   // Include both .up.sql and plain .sql (used by billing, automation, etc.)
   return true;
 }
@@ -87,10 +118,11 @@ async function collectMigrationFiles(
     if (entry.isDirectory()) {
       return collectMigrationFiles(rootDir, fullPath);
     }
-    if (!entry.isFile() || !isMigrationFile(entry.name)) {
+    const relativePath = path.relative(rootDir, fullPath).split(path.sep).join('/');
+    if (!entry.isFile() || !isMigrationFile(relativePath)) {
       return [];
     }
-    return [path.relative(rootDir, fullPath).split(path.sep).join('/')];
+    return [relativePath];
   }));
 
   return files
@@ -137,7 +169,7 @@ export async function readMigrationSql(
   migrationsDir?: string,
 ): Promise<string> {
   const dir = migrationsDir ?? await resolveMigrationsDir();
-  return fs.readFile(path.join(dir, filename), 'utf8');
+  return (await fs.readFile(path.join(dir, filename), 'utf8')).replace(/^\uFEFF/, '');
 }
 
 export function migrationHasExplicitTransaction(sql: string): boolean {

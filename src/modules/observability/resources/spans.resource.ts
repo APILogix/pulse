@@ -1,0 +1,67 @@
+/**
+ * Spans explorer resource (Phase 8). Backed by `events_spans`.
+ * Exposes `db.`, `http.` and `messaging.` semantic attributes as first-class filters.
+ */
+import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
+import { commonFields, commonSearchAliases, makeMapRow } from './common.js';
+
+const spanFields: Record<string, FieldDef> = {
+  ...commonFields,
+  kind: { column: 'kind', type: 'string', filterable: true, projectable: true, label: 'Kind' },
+  status: { column: 'status', type: 'string', filterable: true, projectable: true, label: 'Status' },
+  statusMessage: { column: 'status_message', type: 'string', filterable: true, projectable: true, label: 'Status Message' },
+  exclusiveDurationMs: { column: 'exclusive_duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Self Time (ms)' },
+  dbSystem: { column: 'db_system', type: 'string', filterable: true, projectable: true, label: 'DB System' },
+  dbName: { column: 'db_name', type: 'string', filterable: true, projectable: true, label: 'DB Name' },
+  dbOperation: { column: 'db_operation', type: 'string', filterable: true, projectable: true, label: 'DB Operation' },
+  dbCollection: { column: 'db_collection', type: 'string', filterable: true, projectable: true, label: 'DB Collection' },
+  dbStatement: { column: 'db_statement', type: 'string', filterable: true, searchable: true, projectable: true, label: 'DB Statement' },
+  httpMethod: { column: 'http_method', type: 'string', filterable: true, projectable: true, label: 'HTTP Method' },
+  httpUrl: { column: 'http_url', type: 'string', filterable: true, searchable: true, projectable: true, label: 'HTTP URL' },
+  httpStatusCode: { column: 'http_status_code', type: 'number', filterable: true, projectable: true, label: 'HTTP Status' },
+  httpHost: { column: 'http_host', type: 'string', filterable: true, projectable: true, label: 'HTTP Host' },
+  httpRoute: { column: 'http_route', type: 'string', filterable: true, projectable: true, label: 'HTTP Route' },
+  messagingSystem: { column: 'messaging_system', type: 'string', filterable: true, projectable: true, label: 'Messaging System' },
+  messagingDestination: { column: 'messaging_destination', type: 'string', filterable: true, projectable: true, label: 'Messaging Destination' },
+  messagingOperation: { column: 'messaging_operation', type: 'string', filterable: true, projectable: true, label: 'Messaging Operation' },
+  requestId: { column: 'request_id', type: 'string', filterable: true, projectable: true, label: 'Request ID' },
+  tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+};
+
+export const spansResource: ExplorerResource = {
+  name: 'spans',
+  table: 'events_spans',
+  timeColumn: 'timestamp',
+  idColumn: 'id',
+  fields: spanFields,
+  searchFields: ['name', 'service', 'dbStatement', 'httpUrl'],
+  searchAliases: {
+    ...commonSearchAliases,
+    operation: 'name',
+    kind: 'kind',
+    db: 'dbSystem',
+    http: 'httpUrl',
+    duration: 'durationMs',
+  },
+  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultProjection: [
+    'id', 'projectId', 'environment', 'timestamp', 'traceId', 'spanId', 'parentSpanId', 'name',
+    'kind', 'status', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
+  ],
+  preferredIndexes: ['idx_events_spans_tenant_env_time', 'idx_events_spans_trace'],
+  errorPredicate: "status = 'error' OR severity IN ('error','critical','fatal')",
+  summary: {
+    total: 'COUNT(*)::bigint',
+    uniqueOperations: 'COUNT(DISTINCT name)::bigint',
+    dbSpans: '(COUNT(*) FILTER (WHERE db_system IS NOT NULL))::bigint',
+    httpSpans: '(COUNT(*) FILTER (WHERE http_method IS NOT NULL))::bigint',
+  },
+  statistics: {
+    avgDuration: 'AVG(duration_ms)',
+    maxDuration: 'MAX(duration_ms)',
+    p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)',
+    p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)',
+    p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms)',
+  },
+  mapRow: makeMapRow(['durationMs', 'exclusiveDurationMs', 'httpStatusCode', 'statusCode']),
+};

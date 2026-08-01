@@ -8,6 +8,11 @@ const unschedule = vi.fn();
 const createQueue = vi.fn();
 const retryDelivery = vi.fn();
 const insertAuditLog = vi.fn();
+const getByIds = vi.fn();
+const findFirstActiveByType = vi.fn();
+const getOrCreateManagedEmailConnector = vi.fn();
+const dispatch = vi.fn();
+const hasFeature = vi.fn();
 
 vi.mock('../../../src/lib/pgboss.js', () => ({
   pgboss: {
@@ -24,6 +29,9 @@ vi.mock('../../../src/modules/connectors/repository.js', () => ({
     return {
     retryDelivery,
     insertAuditLog,
+    getByIds,
+    findFirstActiveByType,
+    getOrCreateManagedEmailConnector,
     findById: vi.fn(),
     findByIdInternal: vi.fn(),
     claimRetryableDeliveries: vi.fn(),
@@ -36,10 +44,16 @@ vi.mock('../../../src/modules/connectors/repository.js', () => ({
 vi.mock('../../../src/modules/connectors/delivery/delivery.service.js', () => ({
   NotificationDispatcher: vi.fn(function NotificationDispatcher() {
     return {
-    dispatch: vi.fn(),
+    dispatch,
     processRetry: vi.fn(),
     instantiate: vi.fn(),
     };
+  }),
+}));
+
+vi.mock('../../../src/modules/billing/entitlements/repository.js', () => ({
+  EntitlementsRepository: vi.fn(function EntitlementsRepository() {
+    return { hasFeature };
   }),
 }));
 
@@ -81,6 +95,11 @@ describe('connector queue workers', () => {
     createQueue.mockReset();
     retryDelivery.mockReset();
     insertAuditLog.mockReset();
+    getByIds.mockReset();
+    findFirstActiveByType.mockReset();
+    getOrCreateManagedEmailConnector.mockReset();
+    dispatch.mockReset();
+    hasFeature.mockReset();
   });
 
   it('wakes delivery retry processing after a dead-letter retry job resets state', async () => {
@@ -122,5 +141,108 @@ describe('connector queue workers', () => {
       { organizationId: 'org-1', deliveryId: 'delivery-1' },
       { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 120 },
     );
+  });
+
+  it('falls back to managed email when the requested connector is unavailable', async () => {
+    process.env.NODE_ENV = 'development';
+    createQueue.mockResolvedValue(undefined);
+    work.mockResolvedValue(undefined);
+    schedule.mockResolvedValue(undefined);
+    getByIds.mockResolvedValue([]);
+    findFirstActiveByType.mockResolvedValue(null);
+    hasFeature.mockResolvedValue(true);
+    getOrCreateManagedEmailConnector.mockResolvedValue({
+      id: 'managed-email-1',
+      type: 'email',
+      status: 'active',
+      metadata: { managedBy: 'pulse' },
+    });
+    dispatch.mockResolvedValue({
+      deliveryId: 'delivery-1',
+      status: 'sent',
+      result: { success: true, latencyMs: 3 },
+    });
+
+    const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
+    await registerConnectorWorkers(logger() as never);
+
+    const sendWork = work.mock.calls.find((call) => call[0] === `${CONNECTOR_JOBS.send}-slack`);
+    expect(sendWork).toBeTruthy();
+
+    const handler = sendWork![2] as (job: unknown) => Promise<void>;
+    await handler({
+      id: 'job-1',
+      data: {
+        organizationId: 'org-1',
+        connectorId: 'missing-slack-1',
+        payload: {
+          notificationType: 'alert',
+          severity: 'critical',
+          title: 'CPU high',
+          body: 'CPU exceeded threshold',
+          correlationId: 'corr-1',
+        },
+        projectChannel: {
+          userId: 'user-1',
+          channelId: 'channel-1',
+          channelType: 'email',
+          destination: 'oncall@example.com',
+          metadata: { source: 'project-channel' },
+        },
+      },
+    });
+
+    expect(findFirstActiveByType).toHaveBeenCalledWith('org-1', 'email');
+    expect(hasFeature).toHaveBeenCalledWith('org-1', 'alerting.managed_email_fallback');
+    expect(getOrCreateManagedEmailConnector).toHaveBeenCalledWith('org-1');
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'managed-email-1', type: 'email' }),
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          projectChannel: expect.objectContaining({
+            destination: 'oncall@example.com',
+          }),
+        }),
+      }),
+      { routeId: null },
+    );
+  });
+
+  it('does not use managed email fallback when the feature is not entitled', async () => {
+    process.env.NODE_ENV = 'development';
+    createQueue.mockResolvedValue(undefined);
+    work.mockResolvedValue(undefined);
+    schedule.mockResolvedValue(undefined);
+    getByIds.mockResolvedValue([]);
+    findFirstActiveByType.mockResolvedValue(null);
+    hasFeature.mockResolvedValue(false);
+
+    const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
+    await registerConnectorWorkers(logger() as never);
+
+    const sendWork = work.mock.calls.find((call) => call[0] === `${CONNECTOR_JOBS.send}-slack`);
+    const handler = sendWork![2] as (job: unknown) => Promise<void>;
+    await handler({
+      id: 'job-1',
+      data: {
+        organizationId: 'org-1',
+        connectorId: 'missing-slack-1',
+        payload: {
+          notificationType: 'alert',
+          severity: 'critical',
+          title: 'CPU high',
+          body: 'CPU exceeded threshold',
+          correlationId: 'corr-1',
+        },
+        projectChannel: {
+          channelType: 'email',
+          destination: 'oncall@example.com',
+        },
+      },
+    });
+
+    expect(hasFeature).toHaveBeenCalledWith('org-1', 'alerting.managed_email_fallback');
+    expect(getOrCreateManagedEmailConnector).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

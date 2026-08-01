@@ -76,7 +76,17 @@ export interface DeliveryAttemptInsert {
 }
 
 export class EventsRepository {
-  private readonly db = pool;
+  /**
+   * Pool is injected explicitly (ADR-0006). This is the LEGACY runtime repository: it
+   * still targets the control-plane copies of the alert runtime tables and remains
+   * authoritative until ALERTING_V2_READ is enabled. New runtime access goes through
+   * modules/alerting/runtime/alert-runtime.repository.ts on the Log DB pool.
+   */
+  private readonly db: typeof pool;
+
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();

@@ -1,1 +1,0 @@
-{"version":3,"file":"sdk-config.routes.d.ts","sourceRoot":"","sources":["../../../../src/modules/organization/sdk-config/sdk-config.routes.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,eAAe,EAAgC,MAAM,SAAS,CAAC;AAI7E,OAAO,KAAK,EAAE,gBAAgB,EAAE,MAAM,yBAAyB,CAAC;AAyEhE,wBAAgB,uBAAuB,CAAC,OAAO,EAAE,eAAe,EAAE,OAAO,EAAE,gBAAgB,GAAG,IAAI,CA8DjG"}

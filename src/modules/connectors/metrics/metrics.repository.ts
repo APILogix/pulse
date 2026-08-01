@@ -24,7 +24,12 @@ import {
 } from '../types.js';
 
 export class ConnectorMetricsRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /** ADR-0006: pools are injected explicitly. */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
   // ── Connector CRUD ─────────────────────────────────────────────────────
   // ── Health / failure bookkeeping ───────────────────────────────────────
   async recordSuccess(connectorId: string): Promise<void> {

@@ -81,6 +81,7 @@ export interface ConfigStore {
 export interface ServiceOptions {
   topology: TrustedTopology | ((scope: ConfigScope) => TrustedTopology);
   orgPolicy?: (scope: ConfigScope) => OrgPolicy | undefined;
+  deliveryOverride?: (organizationId: string) => Promise<OperatorOverride | undefined>;
   /** Injected clock for deterministic meta.generatedAt. */
   clock?: () => string;
 }
@@ -275,9 +276,12 @@ export class RemoteSdkConfigService {
     if (!environmentId) {
       throw new SdkConfigError("not_found", "No committed configuration available", 503);
     }
+    const entitlementOverride = this.options.deliveryOverride
+      ? await this.options.deliveryOverride(scope.organizationId)
+      : undefined;
     const snapshot = buildDeliverySnapshot({
       compiled: loaded.compiledSnapshot,
-      ...(override !== undefined ? { override } : {}),
+      ...(entitlementOverride !== undefined ? { override: entitlementOverride } : override !== undefined ? { override } : {}),
     });
     return {
       organizationId: scope.organizationId,

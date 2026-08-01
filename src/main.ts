@@ -3,7 +3,6 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 import { connectLogDB, logDB } from './config/log-database.js';
-// import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
 import { startPgBoss, stopPgBoss } from './lib/pgboss.js';
 
 const bootLogger = logger.child({ component: 'bootstrap' });
@@ -33,7 +32,6 @@ type App = Awaited<ReturnType<typeof buildApp>>;
 let app: App | null = null;
 let databaseConnected = false;
 let logDatabaseConnected = false;
-let redisConnected = false;
 let pgBossStarted = false;
 let shutdownPromise: Promise<void> | null = null;
 
@@ -72,10 +70,6 @@ function shutdown(reason: string, exitCode: number): Promise<void> {
     await closeStep('pg-boss', pgBossStarted, async () => {
       await stopPgBoss(Math.min(10_000, env.SHUTDOWN_TIMEOUT_MS));
       pgBossStarted = false;
-    });
-    await closeStep('redis', redisConnected, async () => {
-      await closeRedis();
-      redisConnected = false;
     });
     await closeStep('log-database', logDatabaseConnected, async () => {
       await logDB.close();

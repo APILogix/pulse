@@ -204,6 +204,20 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
     if (request.method !== "POST") return;
     const summary = ingestBodySummary(request.body);
     console.log("[PULSE INGEST DEBUG] event types received:", summary.eventTypes);
+
+    if (request.body && typeof request.body === "object") {
+      const ingest = request.body as Partial<IngestRequest>;
+      const events = Array.isArray(ingest.events)
+        ? ingest.events
+        : Array.isArray(request.body)
+        ? (request.body as unknown[])
+        : [request.body];
+
+      for (const event of events) {
+        console.log(event);
+      }
+    }
+
     request.log.info(
       {
         method: request.method,

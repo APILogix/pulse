@@ -96,6 +96,23 @@ describe('canonical_migrations_draft discovery', () => {
     expect(connectorSql).not.toContain('encrypted_config');
   });
 
+  it('keeps billing audit logs writable across monthly partition gaps', async () => {
+    const files = await listMigrationFiles(DRAFT_MIGRATIONS_DIR);
+    const billingSql = (await Promise.all(
+      files
+        .filter((file) => file.startsWith('11_billing/'))
+        .map((file) => readMigrationSql(file, DRAFT_MIGRATIONS_DIR)),
+    )).join('\n');
+
+    expect(files).toContain('11_billing/043_billing_audit_log_partition_safety.sql');
+    expect(billingSql).toContain('CREATE TABLE IF NOT EXISTS billing_audit_logs_2026_08');
+    expect(billingSql).toContain(
+      "PARTITION OF billing_audit_logs\nFOR VALUES FROM ('2026-08-01') TO ('2026-09-01')",
+    );
+    expect(billingSql).toContain('CREATE TABLE IF NOT EXISTS billing_audit_logs_default');
+    expect(billingSql).toContain('PARTITION OF billing_audit_logs\nDEFAULT');
+  });
+
   it('keeps connector migration columns aligned with runtime repositories', async () => {
     const files = await listMigrationFiles(DRAFT_MIGRATIONS_DIR);
     const connectorSql = (await Promise.all(

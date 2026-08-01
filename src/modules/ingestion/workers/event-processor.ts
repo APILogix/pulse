@@ -170,6 +170,15 @@ export class EventProcessor {
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
+    this.log.info(
+      {
+        queue,
+        eventType: type ?? 'unknown',
+        batchId: payload?.metadata?.batchId,
+        received: rawEvents.length,
+      },
+      'ingestion event type picked',
+    );
 
     // 1) Validate + 2) assign deterministic identity.
     const scoped: ScopedEvent[] = [];
@@ -209,8 +218,21 @@ export class EventProcessor {
       await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {} as never);
     }
 
-    // 3) Idempotent persistence — learn what was ACTUALLY inserted.
-    const result = await this.writer.writeBatchDetailed(scoped);
+    // 3) Idempotent persistence + telemetry outbox in the same telemetry DB
+    // transaction. The alert relay owns enqueueing, so ingestion does not block
+    // on primary-DB alert configuration or connector lookups.
+    const result = await this.writer.writeBatchDetailedWithOutbox(scoped);
+    this.log.info(
+      {
+        queue,
+        eventType: type ?? 'unknown',
+        batchId: payload?.metadata?.batchId,
+        received: rawEvents.length,
+        rejected: rejected.length,
+        inserted: result.totalInserted,
+      },
+      'ingestion event type stored',
+    );
 
     // 4) Error grouping for confirmed-inserted errors only.
     if (result.insertedErrors.length > 0) {
@@ -291,9 +313,9 @@ export class EventProcessor {
         g.errorName,
         g.messageTemplate,
         g.count,
-        g.service ? [g.service] : [],
-        g.environment ? [g.environment] : [],
-        g.release ? [g.release] : [],
+        g.service ? [g.service] : '{}',
+        g.environment ? [g.environment] : '{}',
+        g.release ? [g.release] : '{}',
       ]);
     }
   }

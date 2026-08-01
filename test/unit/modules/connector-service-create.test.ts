@@ -49,15 +49,36 @@ const createdRow = {
 } as const;
 
 describe('ConnectorService create lifecycle', () => {
+  function entitlementStub(overrides: {
+    moduleEnabled?: boolean;
+    providerEnabled?: boolean;
+    connectorLimit?: number;
+    integrationLimit?: number;
+  } = {}) {
+    return {
+      hasFeature: vi.fn(async (_orgId: string, featureKey: string) => {
+        if (featureKey === 'alerting.enabled') return overrides.moduleEnabled ?? true;
+        return overrides.providerEnabled ?? true;
+      }),
+      getEffectiveIntegerFeature: vi.fn(async (_orgId: string, featureKey: string) => {
+        if (featureKey === 'quota.connectors') return overrides.connectorLimit ?? 10;
+        if (featureKey === 'quota.integrations') return overrides.integrationLimit ?? 10;
+        return 0;
+      }),
+    };
+  }
+
   it('stores encrypted config and queues connector-test for activation validation', async () => {
     const repository = {
       create: vi.fn().mockResolvedValue(createdRow),
+      countActiveConnectors: vi.fn().mockResolvedValue(0),
       insertAuditLog: vi.fn().mockResolvedValue(undefined),
     };
     const enqueueConnectorJob = vi.fn().mockResolvedValue('test-job-1');
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      entitlements: entitlementStub() as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
       emitEvent: vi.fn().mockResolvedValue(undefined),
       enqueueConnectorJob,
@@ -96,5 +117,59 @@ describe('ConnectorService create lifecycle', () => {
       connectorId: createdRow.id,
       changesSummary: { jobId: 'test-job-1' },
     }));
+  });
+
+  it('rejects connector creation when the provider feature is not included', async () => {
+    const repository = {
+      create: vi.fn(),
+      countActiveConnectors: vi.fn().mockResolvedValue(0),
+      insertAuditLog: vi.fn(),
+    };
+    const service = new ConnectorService({
+      repository: repository as never,
+      dispatcher: {} as never,
+      entitlements: entitlementStub({ providerEnabled: false }) as never,
+      logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
+    });
+
+    await expect(service.createConnector(createdRow.organization_id, meta, {
+      name: 'incident-webhook',
+      type: 'webhook',
+      config: {
+        url: 'https://example.com/alerts',
+        signingSecret: 'super-secret-signing-key',
+      },
+    })).rejects.toMatchObject({
+      code: 'CONNECTOR_ENTITLEMENT_DENIED',
+      statusCode: 403,
+    });
+    expect(repository.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects connector creation when the connector quota is exhausted', async () => {
+    const repository = {
+      create: vi.fn(),
+      countActiveConnectors: vi.fn().mockResolvedValue(10),
+      insertAuditLog: vi.fn(),
+    };
+    const service = new ConnectorService({
+      repository: repository as never,
+      dispatcher: {} as never,
+      entitlements: entitlementStub({ connectorLimit: 10 }) as never,
+      logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
+    });
+
+    await expect(service.createConnector(createdRow.organization_id, meta, {
+      name: 'incident-webhook',
+      type: 'webhook',
+      config: {
+        url: 'https://example.com/alerts',
+        signingSecret: 'super-secret-signing-key',
+      },
+    })).rejects.toMatchObject({
+      code: 'CONNECTOR_QUOTA_EXCEEDED',
+      statusCode: 409,
+    });
+    expect(repository.create).not.toHaveBeenCalled();
   });
 });

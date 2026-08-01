@@ -40,16 +40,26 @@ function shouldDestroyTransactionClient(error: unknown): boolean {
 // USER QUERIES
 // ============================================================================
 
+export type UserDbRow = User & { email_verified?: boolean };
+
+export function toUser(row: UserDbRow | undefined | null): User | null {
+  if (!row) return null;
+  return {
+    ...row,
+    email_is_verified: Boolean(row.email_verified ?? row.email_is_verified),
+  };
+}
+
 export async function findUserById(
   id: string,
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 export async function findUserByEmailHash(
@@ -57,11 +67,11 @@ export async function findUserByEmailHash(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `SELECT * FROM users WHERE email_hash = $1 AND deleted_at IS NULL`,
     [emailHash],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -72,8 +82,8 @@ export async function findUserByIdIncludingDeleted(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(`SELECT * FROM users WHERE id = $1`, [id]);
-  return result.rows[0] || null;
+  const result = await db.query<UserDbRow>(`SELECT * FROM users WHERE id = $1`, [id]);
+  return toUser(result.rows[0]);
 }
 
 export async function createUser(
@@ -91,7 +101,7 @@ export async function createUser(
   client?: PoolClient,
 ): Promise<User> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `INSERT INTO users (
        id, email, full_name, avatar_url, password_hash,
        status, email_verified, email_verified_at,
@@ -120,7 +130,7 @@ export async function createUser(
       data.marketing_consent ?? false,
     ],
   );
-  return result.rows[0]!;
+  return toUser(result.rows[0])!;
 }
 
 export async function updateUser(
@@ -164,13 +174,13 @@ export async function updateUser(
 
   values.push(id);
   values.push(requestingUserId);
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
      WHERE id = $${idx++} AND deleted_at IS NULL AND id = $${idx}
      RETURNING *`,
     values,
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 export async function softDeleteUser(
@@ -195,7 +205,7 @@ export async function restoreUser(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL,
          status = 'active', updated_at = NOW()
@@ -203,7 +213,7 @@ export async function restoreUser(
      RETURNING *`,
     [id],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -217,7 +227,7 @@ export async function suspendUser(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET status = 'suspended',
          status_reason = $2,
@@ -228,7 +238,7 @@ export async function suspendUser(
      RETURNING *`,
     [id, reason, suspendedBy],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -239,7 +249,7 @@ export async function unsuspendUser(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET status = 'active',
          status_reason = NULL,
@@ -252,7 +262,7 @@ export async function unsuspendUser(
      RETURNING *`,
     [id],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -266,7 +276,7 @@ export async function adminLockUser(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET locked_until = NOW() + INTERVAL '10 years',
          status_reason = $2,
@@ -277,7 +287,7 @@ export async function adminLockUser(
      RETURNING *`,
     [id, `[admin_lock:${lockedBy}] ${reason}`],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -288,7 +298,7 @@ export async function adminUnlockUser(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET locked_until = NULL,
          login_attempts = 0,
@@ -297,7 +307,7 @@ export async function adminUnlockUser(
      RETURNING *`,
     [id],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 /**
@@ -339,7 +349,7 @@ export async function listUsers(
     params,
   );
 
-  const usersResult = await db.query<User>(
+  const usersResult = await db.query<UserDbRow>(
     `SELECT * FROM users ${whereSql}
      ORDER BY created_at DESC, id DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
@@ -347,7 +357,7 @@ export async function listUsers(
   );
 
   return {
-    users: usersResult.rows,
+    users: usersResult.rows.map((row) => toUser(row)!),
     total: parseInt(countResult.rows[0]!.count, 10),
   };
 }
@@ -424,7 +434,7 @@ export async function updateUserPassword(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET password_hash = $2,
          password_history = $3::jsonb,
@@ -436,6 +446,6 @@ export async function updateUserPassword(
      RETURNING *`,
     [id, passwordHash, JSON.stringify(passwordHistory)],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 

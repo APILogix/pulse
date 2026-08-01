@@ -185,6 +185,19 @@ export class WorkerRegistry {
 
   private async handleIngestBatch(queue: string, type: SdkEventType, arg: unknown): Promise<JobOutcome[]> {
     const jobs = normalizeJobs(arg);
+    this.log.info(
+      {
+        queue,
+        eventType: type,
+        jobs: jobs.length,
+        events: jobs.reduce((count, job) => {
+          const payload = job.data as Partial<IngestJobPayload> | undefined;
+          return count + (Array.isArray(payload?.events) ? payload.events.length : 0);
+        }, 0),
+        jobIds: jobs.map((job) => job.id),
+      },
+      'ingestion worker picked jobs',
+    );
     const outcomes = await Promise.all(
       jobs.map(async (job): Promise<JobOutcome> => {
         try {
@@ -215,6 +228,7 @@ export class WorkerRegistry {
     const deferCount = typeof meta?.deferCount === 'number' ? meta.deferCount : 0;
     const limit = TENANT_INFLIGHT_LIMIT[planTier];
     const current = this.inFlight.get(orgId) ?? 0;
+    const eventCount = Array.isArray(payload?.events) ? payload.events.length : 0;
 
     if (current >= limit && deferCount < env.INGESTION_FAIRNESS_MAX_DEFERS) {
       // Re-enqueue a copy with an aged priority boost, then complete the
@@ -228,7 +242,18 @@ export class WorkerRegistry {
         startAfter: env.INGESTION_FAIRNESS_DEFER_DELAY_SECONDS,
         priority: jobPriority(planTier, type, deferCount + 1),
       } as never);
-      this.metrics.recordDeferred(queue, Array.isArray(payload?.events) ? payload.events.length : 0);
+      this.metrics.recordDeferred(queue, eventCount);
+      this.log.info(
+        {
+          queue,
+          eventType: type,
+          batchId: meta?.batchId,
+          events: eventCount,
+          deferCount: deferCount + 1,
+          limit,
+        },
+        'ingestion worker deferred job for tenant fairness',
+      );
       return { deferred: true, deferCount: deferCount + 1 };
     }
 

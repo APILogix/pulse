@@ -146,5 +146,47 @@ module.exports = {
       description: 'Ingestion worker tier (pg-boss pipelines + DLQ + usage rollup)',
       version: '2.0.0',
     },
+
+    {
+      // Analytics engine — docs/analytics/06-worker-architecture.md §1.
+      // Intentionally a separate process from both the API and the ingestion
+      // tier: analytics must never block ingestion, and it scales on its own.
+      // Safe to run multiple instances: pg-boss uses SKIP LOCKED and every
+      // rollup write is a whole-bucket recompute, so duplicate work converges.
+      name: 'analytics-workers',
+      script: 'dist/shared/workers/analytics-worker-main.js',
+      instances: positiveInteger(process.env.ANALYTICS_WORKER_INSTANCES, 1),
+      exec_mode: 'fork',
+      node_args: ['--max-old-space-size=512'],
+
+      autorestart: true,
+      max_restarts: 10,
+      min_uptime: '10s',
+      restart_delay: 2000,
+      max_memory_restart: '640M',
+
+      merge_logs: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      out_file: 'logs/pm2-analytics-out.log',
+      error_file: 'logs/pm2-analytics-error.log',
+
+      wait_ready: true,
+      listen_timeout: 20000,
+      kill_timeout: 20000,
+
+      env: {
+        NODE_ENV: 'development',
+        PROCESS_ROLE: 'analytics',
+        UV_THREADPOOL_SIZE: '8',
+      },
+      env_production: {
+        NODE_ENV: 'production',
+        PROCESS_ROLE: 'analytics',
+        UV_THREADPOOL_SIZE: '8',
+      },
+
+      description: 'Analytics engine workers (rollups, compaction, retention) — Log DB read-only',
+      version: '1.0.0',
+    },
   ],
 };

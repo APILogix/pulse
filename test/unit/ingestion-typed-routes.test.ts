@@ -41,6 +41,8 @@ import { IngestionService } from "../../src/modules/ingestion/service.js";
 import { compileInitial } from "../../src/modules/projects/sdk-config/compiler.js";
 import type { RemoteSdkConfigService } from "../../src/modules/projects/sdk-config/sdk-config.service.js";
 import type { IngestRequest } from "../../src/modules/ingestion/types.js";
+import { TYPED_INGEST_ROUTES } from "../../src/modules/ingestion/route-table.js";
+import { INGEST_QUEUES } from "../../src/modules/ingestion/queue/ingest-queues.js";
 
 const TEST_API_KEY = "pulse_test_key_0123456789abcdef0123456789abcdef";
 
@@ -176,6 +178,33 @@ describe("IngestionService typed routing and SDK environment", () => {
       TEST_API_KEY,
       "log",
     )).rejects.toThrow("INVALID_EVENT_TYPE");
+  });
+
+  it("enqueues every typed route into the queue drained by its worker", async () => {
+    service = buildService();
+
+    for (const route of TYPED_INGEST_ROUTES) {
+      vi.mocked(pgboss.insert).mockClear();
+
+      const result = await service.ingestTyped(
+        request([{ type: route.type }], "customer-prod"),
+        TEST_API_KEY,
+        route.type,
+      );
+
+      expect(result).toMatchObject({ success: true, accepted: 1, rejected: 0 });
+      expect(pgboss.insert).toHaveBeenCalledWith(
+        INGEST_QUEUES[route.type],
+        expect.arrayContaining([
+          expect.objectContaining({
+            data: expect.objectContaining({
+              eventType: route.type,
+              events: [{ type: route.type }],
+            }),
+          }),
+        ]),
+      );
+    }
   });
 
   it("delegates SDK initialization to the one canonical config service", async () => {

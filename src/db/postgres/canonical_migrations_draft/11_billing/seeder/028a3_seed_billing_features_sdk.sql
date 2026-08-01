@@ -52,7 +52,7 @@ VALUES
 )
 
 INSERT INTO billing_features
-(feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
+(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
 SELECT
 feature_key,
 name,
@@ -67,7 +67,7 @@ is_module_root
 FROM feature_seed
 ON CONFLICT (feature_key)
 DO UPDATE SET
-name=EXCLUDED.name,
+feature_name=EXCLUDED.feature_name,
 description=EXCLUDED.description,
 category=EXCLUDED.category,
 module=EXCLUDED.module,

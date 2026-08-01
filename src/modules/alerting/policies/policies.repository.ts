@@ -39,7 +39,12 @@ function pgCode(e: unknown): string | undefined {
 }
 
 export class PoliciesRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /** ADR-0006: escalation policies/steps are control-plane configuration. */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();

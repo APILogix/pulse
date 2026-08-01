@@ -11,11 +11,7 @@ import {
 import { getClientInfo } from '../../../../shared/utils/request.js';
 
 import * as identity from '../../application/services/identity.service.js';
-import {
-  accountUnlockRequestRateLimit,
-  ssoDiscoveryRateLimit,
-  tokenConfirmRateLimit,
-} from '../../presentation/middleware/rate-limits.js';
+
 import {
   getEffectiveAuthPolicy,
   getPasswordPolicy,
@@ -80,7 +76,7 @@ export default async function identityRoutes(fastify: FastifyInstance) {
   // GET /auth/sso/discovery?email=
   fastify.get(
     '/sso/discovery',
-    { preHandler: [ssoDiscoveryRateLimit] },
+    {},
     async (request, reply) => {
     try {
       const query = SsoDiscoveryQuerySchema.parse(request.query);
@@ -95,7 +91,7 @@ export default async function identityRoutes(fastify: FastifyInstance) {
   // POST /auth/account/unlock/request
   fastify.post(
     '/account/unlock/request',
-    { preHandler: [accountUnlockRequestRateLimit] },
+    {},
     async (request, reply) => {
     try {
       const body = AccountUnlockRequestSchema.parse(request.body);
@@ -115,7 +111,7 @@ export default async function identityRoutes(fastify: FastifyInstance) {
   // POST /auth/account/unlock/confirm
   fastify.post(
     '/account/unlock/confirm',
-    { preHandler: [tokenConfirmRateLimit] },
+    {},
     async (request, reply) => {
     try {
       const body = AccountUnlockConfirmSchema.parse(request.body);
@@ -172,7 +168,7 @@ export default async function identityRoutes(fastify: FastifyInstance) {
   // POST /auth/users/me/delete/confirm
   fastify.post(
     '/users/me/delete/confirm',
-    { preHandler: [tokenConfirmRateLimit] },
+    {},
     async (request, reply) => {
     try {
       const body = AccountDeletionConfirmSchema.parse(request.body);

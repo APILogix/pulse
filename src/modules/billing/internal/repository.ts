@@ -45,7 +45,7 @@ export class InternalBillingRepository {
   async getResolvedEntitlements(orgId: string, db: Db = this.db) {
     const result = await db.query(
       `SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
-              bf.module, bf.is_module_root, bf.value_type
+              bf.module, bf.is_module_root, bf.value_type, bf.usage_behavior
         FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
         ORDER BY bf.sort_order NULLS LAST, ee.feature_key`,
@@ -57,7 +57,7 @@ export class InternalBillingRepository {
   async getFeatureValue(orgId: string, featureKey: string, db: Db = this.db) {
     const result = await db.query(
       `SELECT ee.feature_key, ee.boolean_value, ee.integer_value, ee.decimal_value, ee.string_value,
-              bf.module, bf.is_module_root, bf.value_type
+              bf.module, bf.is_module_root, bf.value_type, bf.usage_behavior
         FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ee
          LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
         WHERE ee.feature_key = $2

@@ -64,18 +64,6 @@ import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
 import {
-  forgotPasswordRateLimit,
-  loginMfaRateLimit,
-  loginRateLimit,
-  mfaEmailResendRateLimit,
-  refreshSessionRateLimit,
-  registerRateLimit,
-  resendVerificationRateLimit,
-  resetPasswordRateLimit,
-  tokenConfirmRateLimit,
-  verifyEmailRateLimit,
-} from '../middleware/rate-limits.js';
-import {
   getRefreshCookieNames,
   getRefreshCookieOptions,
   getRefreshCookieValue,
@@ -301,7 +289,7 @@ export async function sessionRoutes(fastify: FastifyInstance) {
   );
 
   // POST /auth/sessions/refresh — rotate refresh token.
-  fastify.post('/sessions/refresh', { preHandler: [refreshSessionRateLimit] }, async (request, reply) => {
+  fastify.post('/sessions/refresh', async (request, reply) => {
     try {
       // The refresh credential is cookie-backed. Require a non-simple header
       // so another site cannot silently rotate a user's session with a form

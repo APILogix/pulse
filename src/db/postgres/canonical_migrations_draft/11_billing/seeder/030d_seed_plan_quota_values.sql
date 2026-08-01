@@ -17,6 +17,9 @@ VALUES
 ('free','quota.trace_retention_days',7),
 ('free','quota.alert_rules',5),
 ('free','quota.notification_channels',2),
+('free','quota.daily_alerts',0),
+('free','quota.monthly_alerts',0),
+('free','quota.connector_sends',0),
 ('free','quota.status_pages',0),
 ('free','quota.integrations',2),
 ('free','quota.api_tokens',2),
@@ -34,6 +37,9 @@ VALUES
 ('starter','quota.replay_retention_days',7),
 ('starter','quota.trace_retention_days',30),
 ('starter','quota.notification_channels',10),
+('starter','quota.daily_alerts',100),
+('starter','quota.monthly_alerts',1000),
+('starter','quota.connector_sends',1000),
 ('starter','quota.status_pages',1),
 ('starter','quota.integrations',10),
 ('starter','quota.api_tokens',10),
@@ -51,6 +57,9 @@ VALUES
 ('growth','quota.replay_retention_days',30),
 ('growth','quota.trace_retention_days',90),
 ('growth','quota.notification_channels',50),
+('growth','quota.daily_alerts',1000),
+('growth','quota.monthly_alerts',25000),
+('growth','quota.connector_sends',25000),
 ('growth','quota.status_pages',5),
 ('growth','quota.integrations',50),
 ('growth','quota.api_tokens',50),
@@ -68,6 +77,9 @@ VALUES
 ('business','quota.replay_retention_days',90),
 ('business','quota.trace_retention_days',180),
 ('business','quota.notification_channels',250),
+('business','quota.daily_alerts',10000),
+('business','quota.monthly_alerts',250000),
+('business','quota.connector_sends',250000),
 ('business','quota.status_pages',25),
 ('business','quota.integrations',250),
 ('business','quota.api_tokens',250),
@@ -85,6 +97,9 @@ VALUES
 ('enterprise','quota.replay_retention_days',365),
 ('enterprise','quota.trace_retention_days',365),
 ('enterprise','quota.notification_channels',1000),
+('enterprise','quota.daily_alerts',100000),
+('enterprise','quota.monthly_alerts',1000000),
+('enterprise','quota.connector_sends',1000000),
 ('enterprise','quota.status_pages',100),
 ('enterprise','quota.integrations',1000),
 ('enterprise','quota.api_tokens',1000),
@@ -95,14 +110,14 @@ VALUES
 ('enterprise','quota.ai_requests',1000000)
 )
 
-INSERT INTO billing_plan_entitlements
+INSERT INTO plan_feature_entitlements
 (plan_id, feature_id, integer_value)
 SELECT
     p.id,
     f.id,
     q.integer_value
 FROM quota_seed q
-JOIN billing_plans p ON p.key=q.plan_key
+JOIN plans p ON p.key=q.plan_key
 JOIN billing_features f ON f.feature_key=q.feature_key
 ON CONFLICT (plan_id, feature_id)
 DO UPDATE SET

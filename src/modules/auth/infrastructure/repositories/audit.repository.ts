@@ -14,6 +14,7 @@ import type { PoolClient } from 'pg';
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import type { MFADevice, User, UserSession, UserStatus, MFAType } from '../../domain/types.js';
+import { toUser, type UserDbRow } from './user.repository.js';
 
 const repositoryLogger = logger.child({ component: 'auth-repository' });
 
@@ -83,14 +84,14 @@ export async function scheduleAccountDeletion(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET deletion_scheduled_at = $2, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`,
     [userId, scheduledAt],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 export async function clearScheduledAccountDeletion(
@@ -98,27 +99,27 @@ export async function clearScheduledAccountDeletion(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `UPDATE users
      SET deletion_scheduled_at = NULL, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`,
     [userId],
   );
-  return result.rows[0] || null;
+  return toUser(result.rows[0]);
 }
 
 export async function listUsersDueForDeletion(
   client?: PoolClient,
 ): Promise<User[]> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `SELECT * FROM users
      WHERE deleted_at IS NULL
        AND deletion_scheduled_at IS NOT NULL
        AND deletion_scheduled_at <= NOW()`,
   );
-  return result.rows;
+  return result.rows.map((row) => toUser(row)!);
 }
 
 export interface OrgAuthPolicyRow {
@@ -357,7 +358,7 @@ export async function createSsoJitUser(
   client?: PoolClient,
 ): Promise<User> {
   const db = client || pool;
-  const result = await db.query<User>(
+  const result = await db.query<UserDbRow>(
     `INSERT INTO users (
        id, email, full_name, password_hash, status, email_verified, email_verified_at,
        data_processing_consent
@@ -365,7 +366,7 @@ export async function createSsoJitUser(
      RETURNING *`,
     [data.id, data.email, data.full_name],
   );
-  return result.rows[0]!;
+  return toUser(result.rows[0])!;
 }
 
 export async function addOrgMemberSsoProvision(

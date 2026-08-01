@@ -33,7 +33,7 @@
  *     written here — this writer only persists raw events.
  */
 import { randomUUID } from 'crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 import { resolveTimestamp } from './event-normalizer.js';
 import { RequestEnricher } from './request-enrichment.js';
@@ -164,6 +164,8 @@ export interface DetailedWriteResult {
   insertedErrors: ScopedEvent[];
 }
 
+type Queryable = Pool | PoolClient;
+
 export class TelemetryWriter {
   private readonly enricher = RequestEnricher.get();
 
@@ -190,6 +192,28 @@ export class TelemetryWriter {
    * at-least-once retries are never billed twice.
    */
   async writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
+    return this.writeBatchDetailedUsing(this.pool, scoped);
+  }
+
+  async writeBatchDetailedWithOutbox(scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await this.writeBatchDetailedUsing(client, scoped);
+      if (result.totalInserted > 0) {
+        await this.appendTelemetryOutbox(scoped, client);
+      }
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async writeBatchDetailedUsing(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
     const result: DetailedWriteResult = {
       totalReceived: 0,
       totalInserted: 0,
@@ -207,7 +231,7 @@ export class TelemetryWriter {
     }
 
     for (const [type, list] of byType) {
-      const res = await this.writeTyped(type, list);
+      const res = await this.writeTyped(type, list, db);
       result.perType[type] = { received: list.length, inserted: res.inserted };
       result.totalReceived += list.length;
       result.totalInserted += res.inserted;
@@ -216,18 +240,54 @@ export class TelemetryWriter {
     return result;
   }
 
-  private async writeTyped(type: string, list: ScopedEvent[]): Promise<TypedWriteResult> {
+  async appendTelemetryOutbox(scoped: ScopedEvent[], db: Queryable = this.pool): Promise<number> {
+    const rows = scoped
+      .filter((event) => event.orgId !== null)
+      .map((event) => {
+        const record = rec(event.event);
+        return [
+          event.orgId,
+          event.projectId,
+          event.environment,
+          event.event.type,
+          this.eventId(event.event),
+          outboxSeverity(event.event),
+          isFastPathSignal(event),
+          JSON.stringify({
+            eventType: event.event.type,
+            message: str(record.message, 4096),
+            service: str(record.service, 100),
+            requestId: str(record.requestId, 64),
+            monitorSlug: str(record.monitorSlug, 255),
+          }),
+          iso(resolveTimestamp(event.event)),
+        ];
+      });
+    if (rows.length === 0) return 0;
+
+    const { text, values } = buildInsert(
+      'telemetry_outbox',
+      ['organization_id', 'project_id', 'environment', 'signal_kind', 'event_id',
+       'severity', 'fast_path', 'attributes', 'occurred_at'],
+      rows,
+      'id',
+    );
+    const result = await db.query(text, values);
+    return result.rowCount ?? 0;
+  }
+
+  private async writeTyped(type: string, list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     switch (type) {
-      case 'error': return this.writeErrors(list);
-      case 'message': return this.writeMessages(list);
-      case 'request': return this.writeRequests(list);
-      case 'span': return this.writeSpans(list);
-      case 'trace': return this.writeTraces(list);
-      case 'metric': return this.writeMetrics(list);
-      case 'log': return this.writeLogs(list);
-      case 'profile': return this.writeProfiles(list);
-      case 'cron_checkin': return this.writeCronCheckins(list);
-      case 'replay': return this.writeReplays(list);
+      case 'error': return this.writeErrors(list, db);
+      case 'message': return this.writeMessages(list, db);
+      case 'request': return this.writeRequests(list, db);
+      case 'span': return this.writeSpans(list, db);
+      case 'trace': return this.writeTraces(list, db);
+      case 'metric': return this.writeMetrics(list, db);
+      case 'log': return this.writeLogs(list, db);
+      case 'profile': return this.writeProfiles(list, db);
+      case 'cron_checkin': return this.writeCronCheckins(list, db);
+      case 'replay': return this.writeReplays(list, db);
       default: return { inserted: 0 };
     }
   }
@@ -239,7 +299,7 @@ export class TelemetryWriter {
   }
 
   // ── events_errors ─────────────────────────────────────────────────────────
-  private async writeErrors(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeErrors(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const ids = list.map(({ event }) => this.eventId(event));
     const rows = list.map(({ projectId, orgId, environment, event }, i) => {
       const e = event as Extract<NormalizedEvent, { type: 'error' }>;
@@ -271,7 +331,7 @@ export class TelemetryWriter {
       rows,
       'event_id',
     );
-    const res = await this.pool.query<{ event_id: string }>(text, values);
+    const res = await db.query<{ event_id: string }>(text, values);
     // Pair each returned event_id with its first unpaired input occurrence, so
     // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
     // is not double-counted by downstream error grouping.
@@ -291,7 +351,7 @@ export class TelemetryWriter {
   }
 
   // ── events_messages ─────────────────────────────────────────────────────────
-  private async writeMessages(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeMessages(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'message' }>;
       const r = rec(event);
@@ -314,12 +374,12 @@ export class TelemetryWriter {
        'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_requests ─────────────────────────────────────────────────────────
-  private async writeRequests(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeRequests(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     // Open the GeoIP databases once (no-op after first call; never throws).
     await this.enricher.init();
     const rows = list.map(({ projectId, orgId, environment, event }) => {
@@ -361,12 +421,12 @@ export class TelemetryWriter {
        'device_type', 'is_bot'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_spans ─────────────────────────────────────────────────────────
-  private async writeSpans(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeSpans(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'span' }>;
       const r = rec(event);
@@ -396,12 +456,12 @@ export class TelemetryWriter {
        'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_traces ─────────────────────────────────────────────────────────
-  private async writeTraces(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeTraces(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'trace' }>;
       const r = rec(event);
@@ -424,12 +484,12 @@ export class TelemetryWriter {
        'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_metrics ─────────────────────────────────────────────────────────
-  private async writeMetrics(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeMetrics(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'metric' }>;
       const r = rec(event);
@@ -453,12 +513,12 @@ export class TelemetryWriter {
        'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_logs ─────────────────────────────────────────────────────────
-  private async writeLogs(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeLogs(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'log' }>;
       const r = rec(event);
@@ -478,12 +538,12 @@ export class TelemetryWriter {
        'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_profiles ─────────────────────────────────────────────────────────
-  private async writeProfiles(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeProfiles(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'profile' }>;
       const r = rec(event);
@@ -505,12 +565,12 @@ export class TelemetryWriter {
        'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_cron_checkins ─────────────────────────────────────────────────────
-  private async writeCronCheckins(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeCronCheckins(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'cron_checkin' }>;
       const r = rec(event);
@@ -526,12 +586,12 @@ export class TelemetryWriter {
        'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_replays ─────────────────────────────────────────────────────────
-  private async writeReplays(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeReplays(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const rows = list.map(({ projectId, orgId, environment, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'replay' }>;
       const r = rec(event);
@@ -548,7 +608,30 @@ export class TelemetryWriter {
        'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'metadata', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
+}
+
+function outboxSeverity(event: NormalizedEvent): string | null {
+  if (event.type === 'error') return eventSeverity((event as { severity?: unknown }).severity, 'error');
+  if (event.type === 'message') return eventSeverity((event as { severity?: unknown }).severity, 'info');
+  if (event.type === 'log') return logLevel((event as { level?: unknown }).level) === 'error' ? 'error' : 'info';
+  return null;
+}
+
+function isFastPathSignal(scoped: ScopedEvent): boolean {
+  const event = scoped.event;
+  const record = rec(event);
+  if (event.type === 'error') return true;
+  if (event.type === 'cron_checkin') return record.status === 'error';
+  if (event.type === 'log') {
+    const message = typeof record.message === 'string' ? record.message : '';
+    return /out of memory|heap out of memory|oom|security|csrf|xss|sql injection|auth bypass/i.test(message);
+  }
+  if (event.type === 'request') {
+    const status = Number(record.statusCode);
+    return status === 401 || status === 403;
+  }
+  return false;
 }

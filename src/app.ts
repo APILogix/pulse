@@ -4,7 +4,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
-import fastifyRateLimit from '@fastify/rate-limit';
+
 import sensible from '@fastify/sensible';
 import underPressure from '@fastify/under-pressure';
 import {
@@ -30,11 +30,13 @@ import { registerProjectsModule } from './modules/projects/projects.module.js';
 import { registerSdkConfigDeliveryModule } from './modules/projects/sdk-config/sdk-config.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
+import { registerAnalyticsEngineModule } from './modules/analytics-engine/analytics-engine.module.js';
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 import { registerAIModule } from './modules/ai/ai.module.js';
 import { registerAutomationModule } from './modules/automation/automation.module.js';
+import { registerObservabilityModule } from './modules/observability/observability.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 
 declare module 'fastify' {
@@ -162,17 +164,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     runFirst: true,
   });
 
-  await app.register(fastifyRateLimit, {
-    max: 100,
-    timeWindow: '1 minute',
-    keyGenerator: (req: FastifyRequest) => req.ip || 'unknown',
-    skipOnError: false,
-    errorResponseBuilder: (_req, context) => ({
-      statusCode: 429,
-      error: 'Too Many Requests',
-      message: `Rate limit exceeded, retry in ${context.after}`,
-    }),
-  });
+
 
   await app.register(sensible);
 
@@ -210,11 +202,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(ingestionModule);          // Depends on sdk-config delivery
   await app.register(registerProjectsModule);
   await app.register(registerAnalyticsModule);
+  // Analytics engine (v2) reads precomputed rollups only. Registered alongside
+  // the v1 analytics module during the frontend migration; v1 is removed in
+  // Wave 7 of docs/analytics/14-implementation-roadmap.md.
+  await app.register(registerAnalyticsEngineModule);
   await app.register(registerConnectorsModule);
   await app.register(registerAlertingModule);
   await app.register(registerEventAnalyticsModule);
   await app.register(registerAIModule);
   await app.register(registerAutomationModule);
+  await app.register(registerObservabilityModule);
 
   appLogger.info('All modules registered');
 

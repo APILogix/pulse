@@ -90,7 +90,7 @@ VALUES
 ('enterprise','quota.requests_per_second',NULL,50000)
 )
 
-INSERT INTO billing_plan_entitlements
+INSERT INTO plan_feature_entitlements
 (plan_id, feature_id, boolean_value, integer_value)
 SELECT
 p.id,
@@ -98,7 +98,7 @@ f.id,
 e.value_boolean,
 e.value_integer
 FROM entitlement_seed e
-JOIN billing_plans p ON p.key = e.plan_key
+JOIN plans p ON p.key = e.plan_key
 JOIN billing_features f ON f.feature_key = e.feature_key
 ON CONFLICT (plan_id, feature_id)
 DO UPDATE SET

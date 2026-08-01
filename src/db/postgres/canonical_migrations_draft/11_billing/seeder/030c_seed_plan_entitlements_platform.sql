@@ -1,4 +1,4 @@
-- =============================================================================
+-- =============================================================================
 -- Module      : Billing
 -- Migration   : 030c_seed_plan_entitlements_platform.sql
 -- Description : Seed platform feature entitlements (Dashboards, Alerting, AI,
@@ -21,10 +21,15 @@ VALUES
 ('starter','analytics.explorer',TRUE,NULL),
 ('starter','alerting.enabled',TRUE,NULL),
 ('starter','alerting.rules',TRUE,NULL),
-('starter','integrations.webhooks',TRUE,NULL),
+('starter','alerting.managed_email_fallback',TRUE,NULL),
+('starter','integrations.email',TRUE,NULL),
+('starter','integrations.webhook',TRUE,NULL),
 ('starter','integrations.slack',TRUE,NULL),
 ('starter','quota.dashboards',NULL,10),
 ('starter','quota.alert_rules',NULL,10),
+('starter','quota.daily_alerts',NULL,100),
+('starter','quota.monthly_alerts',NULL,1000),
+('starter','quota.connector_sends',NULL,1000),
 
 -- ================= GROWTH =================
 ('growth','dashboards.enabled',TRUE,NULL),
@@ -35,14 +40,20 @@ VALUES
 ('growth','alerting.enabled',TRUE,NULL),
 ('growth','alerting.composite',TRUE,NULL),
 ('growth','alerting.escalation_policies',TRUE,NULL),
+('growth','alerting.managed_email_fallback',TRUE,NULL),
 ('growth','ai.enabled',TRUE,NULL),
 ('growth','ai.summaries',TRUE,NULL),
 ('growth','integrations.github',TRUE,NULL),
 ('growth','integrations.jira',TRUE,NULL),
 ('growth','integrations.slack',TRUE,NULL),
 ('growth','integrations.discord',TRUE,NULL),
+('growth','integrations.email',TRUE,NULL),
+('growth','integrations.webhook',TRUE,NULL),
 ('growth','quota.dashboards',NULL,50),
 ('growth','quota.alert_rules',NULL,50),
+('growth','quota.daily_alerts',NULL,1000),
+('growth','quota.monthly_alerts',NULL,25000),
+('growth','quota.connector_sends',NULL,25000),
 ('growth','quota.ai_credits',NULL,5000),
 
 -- ================= BUSINESS =================
@@ -50,8 +61,11 @@ VALUES
 ('business','dashboards.embeds',TRUE,NULL),
 ('business','dashboards.scheduled_reports',TRUE,NULL),
 ('business','alerting.enabled',TRUE,NULL),
+('business','alerting.composite',TRUE,NULL),
+('business','alerting.escalation_policies',TRUE,NULL),
 ('business','alerting.on_call',TRUE,NULL),
 ('business','alerting.incident_timeline',TRUE,NULL),
+('business','alerting.managed_email_fallback',TRUE,NULL),
 ('business','ai.enabled',TRUE,NULL),
 ('business','ai.root_cause_analysis',TRUE,NULL),
 ('business','ai.anomaly_detection',TRUE,NULL),
@@ -62,8 +76,17 @@ VALUES
 ('business','integrations.github',TRUE,NULL),
 ('business','integrations.gitlab',TRUE,NULL),
 ('business','integrations.terraform',TRUE,NULL),
+('business','integrations.email',TRUE,NULL),
+('business','integrations.slack',TRUE,NULL),
+('business','integrations.discord',TRUE,NULL),
+('business','integrations.webhook',TRUE,NULL),
+('business','integrations.pagerduty',TRUE,NULL),
+('business','integrations.sms',TRUE,NULL),
 ('business','quota.dashboards',NULL,200),
 ('business','quota.alert_rules',NULL,250),
+('business','quota.daily_alerts',NULL,10000),
+('business','quota.monthly_alerts',NULL,250000),
+('business','quota.connector_sends',NULL,250000),
 ('business','quota.ai_credits',NULL,50000),
 
 -- ================= ENTERPRISE =================
@@ -72,8 +95,11 @@ VALUES
 ('enterprise','dashboards.public_links',TRUE,NULL),
 ('enterprise','dashboards.scheduled_reports',TRUE,NULL),
 ('enterprise','alerting.enabled',TRUE,NULL),
+('enterprise','alerting.composite',TRUE,NULL),
+('enterprise','alerting.escalation_policies',TRUE,NULL),
 ('enterprise','alerting.on_call',TRUE,NULL),
 ('enterprise','alerting.incident_timeline',TRUE,NULL),
+('enterprise','alerting.managed_email_fallback',TRUE,NULL),
 ('enterprise','ai.enabled',TRUE,NULL),
 ('enterprise','ai.root_cause_analysis',TRUE,NULL),
 ('enterprise','ai.anomaly_detection',TRUE,NULL),
@@ -90,12 +116,22 @@ VALUES
 ('enterprise','integrations.bitbucket',TRUE,NULL),
 ('enterprise','integrations.terraform',TRUE,NULL),
 ('enterprise','integrations.custom_llm',TRUE,NULL),
+('enterprise','integrations.email',TRUE,NULL),
+('enterprise','integrations.slack',TRUE,NULL),
+('enterprise','integrations.discord',TRUE,NULL),
+('enterprise','integrations.microsoft_teams',TRUE,NULL),
+('enterprise','integrations.webhook',TRUE,NULL),
+('enterprise','integrations.pagerduty',TRUE,NULL),
+('enterprise','integrations.sms',TRUE,NULL),
 ('enterprise','quota.dashboards',NULL,1000),
 ('enterprise','quota.alert_rules',NULL,1000),
+('enterprise','quota.daily_alerts',NULL,100000),
+('enterprise','quota.monthly_alerts',NULL,1000000),
+('enterprise','quota.connector_sends',NULL,1000000),
 ('enterprise','quota.ai_credits',NULL,500000)
 )
 
-INSERT INTO billing_plan_entitlements
+INSERT INTO plan_feature_entitlements
 (plan_id, feature_id, boolean_value, integer_value)
 SELECT
     p.id,
@@ -103,7 +139,7 @@ SELECT
     e.bool_value,
     e.int_value
 FROM entitlement_seed e
-JOIN billing_plans p ON p.key = e.plan_key
+JOIN plans p ON p.key = e.plan_key
 JOIN billing_features f ON f.feature_key = e.feature_key
 ON CONFLICT (plan_id, feature_id)
 DO UPDATE SET

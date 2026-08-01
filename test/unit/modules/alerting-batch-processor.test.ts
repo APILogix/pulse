@@ -461,8 +461,7 @@ describe('AlertBatchProcessor project subscription gating', () => {
   it('materializes a connectorless member email channel and audits the recipient', async () => {
     const event = projectEvent();
     const { alertRepo, connectorRepo } = dependencies(event);
-    const enqueue = vi.fn();
-    const sendDirectEmail = vi.fn().mockResolvedValue(undefined);
+    const enqueue = vi.fn().mockResolvedValue('connector-email-job-1');
     const userId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
     const channelId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
     const resolver = {
@@ -491,20 +490,30 @@ describe('AlertBatchProcessor project subscription gating', () => {
       logger as never,
       resolver,
       authorize as never,
-      sendDirectEmail,
     );
 
     const result = await processor.processBatch({ batchId: 'batch-project', organizationId });
 
     expect(result.success).toBe(1);
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(sendDirectEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'member@example.com' }));
+    expect(enqueue).toHaveBeenCalledWith(
+      'connector-send-email',
+      expect.objectContaining({
+        connectorId: '00000000-0000-0000-0000-000000000000',
+        projectChannel: expect.objectContaining({
+          userId,
+          channelId,
+          destination: 'member@example.com',
+        }),
+      }),
+      expect.any(Object),
+    );
     expect(alertRepo.bulkInsertDeliveryAttempts).toHaveBeenCalledWith([
       expect.objectContaining({
         connectorId: null,
         projectAlertChannelId: channelId,
         recipientUserId: userId,
-        status: 'sent',
+        status: 'queued',
+        externalMessageId: 'connector-email-job-1',
       }),
     ]);
   });
