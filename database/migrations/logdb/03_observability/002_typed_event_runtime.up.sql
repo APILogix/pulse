@@ -32,6 +32,7 @@ END $$;
 
 ALTER TABLE events_errors
   ADD COLUMN IF NOT EXISTS fingerprint TEXT,
+  ADD COLUMN IF NOT EXISTS error_group_id UUID,
   ADD COLUMN IF NOT EXISTS error_name TEXT,
   ADD COLUMN IF NOT EXISTS stack_hash TEXT,
   ADD COLUMN IF NOT EXISTS request_id TEXT,

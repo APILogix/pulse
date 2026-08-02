@@ -178,12 +178,9 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_user_time
   ON events_requests(organization_id, project_id, user_id, timestamp DESC) WHERE user_id IS NOT NULL;
 
 ALTER TABLE events_spans
-  ADD COLUMN IF NOT EXISTS kind TEXT,
   ADD COLUMN IF NOT EXISTS span_kind TEXT,
   ADD COLUMN IF NOT EXISTS span_type TEXT,
-  ADD COLUMN IF NOT EXISTS status TEXT,
   ADD COLUMN IF NOT EXISTS span_status TEXT,
-  ADD COLUMN IF NOT EXISTS status_message TEXT,
   ADD COLUMN IF NOT EXISTS message TEXT,
   ADD COLUMN IF NOT EXISTS endpoint TEXT,
   ADD COLUMN IF NOT EXISTS is_root_span BOOLEAN,

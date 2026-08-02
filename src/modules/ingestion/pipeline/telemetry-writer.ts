@@ -704,7 +704,7 @@ export class TelemetryWriter {
       const tenantId = str(r.tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255);
       return [
         orgId, projectId, this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
-        kind, kind, spanType, status, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
+        kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
         e.name, e.statusMessage ?? null, endpoint,
         iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
         num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)), iso(resolveTimestamp(event)),
@@ -734,8 +734,8 @@ export class TelemetryWriter {
     const { text, values } = buildInsert(
       'events_spans',
       ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
-       'kind', 'span_kind', 'span_type', 'status', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
-       'name', 'status_message', 'endpoint', 'start_time', 'end_time',
+       'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
+       'name', 'message', 'endpoint', 'start_time', 'end_time',
        'duration_ms', 'exclusive_duration_ms', 'occurred_at', 'timestamp',
        'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
        'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',

@@ -7,12 +7,9 @@ import { commonFields, commonSearchAliases, makeMapRow } from './common.js';
 
 const spanFields: Record<string, FieldDef> = {
   ...commonFields,
-  kind: { column: 'kind', type: 'string', filterable: true, projectable: true, label: 'Kind' },
   spanKind: { column: 'span_kind', type: 'string', filterable: true, projectable: true, label: 'Span Kind' },
   spanType: { column: 'span_type', type: 'string', filterable: true, projectable: true, label: 'Span Type' },
-  status: { column: 'status', type: 'string', filterable: true, projectable: true, label: 'Status' },
   spanStatus: { column: 'span_status', type: 'string', filterable: true, projectable: true, label: 'Span Status' },
-  statusMessage: { column: 'status_message', type: 'string', filterable: true, projectable: true, label: 'Status Message' },
   message: { column: 'message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Message' },
   endpoint: { column: 'endpoint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Endpoint' },
   isRootSpan: { column: 'is_root_span', type: 'boolean', filterable: true, projectable: true, label: 'Root Span' },
@@ -76,7 +73,7 @@ export const spansResource: ExplorerResource = {
     'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
   ],
   preferredIndexes: ['idx_events_spans_trace_time', 'idx_events_spans_parent_time', 'idx_events_spans_type_time', 'idx_events_spans_endpoint_time'],
-  errorPredicate: "span_status = 'error' OR status = 'error' OR severity IN ('error','critical','fatal')",
+  errorPredicate: "span_status = 'error' OR severity IN ('error','critical','fatal')",
   summary: {
     total: 'COUNT(*)::bigint',
     uniqueOperations: 'COUNT(DISTINCT name)::bigint',

@@ -37,6 +37,7 @@ import { registerEventAnalyticsModule } from './modules/event-analytics/event-an
 import { registerAIModule } from './modules/ai/ai.module.js';
 import { registerAutomationModule } from './modules/automation/automation.module.js';
 import { registerObservabilityModule } from './modules/observability/observability.module.js';
+import { registerErrorsModule } from './modules/errors/errors.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 
 declare module 'fastify' {
@@ -212,6 +213,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(registerAIModule);
   await app.register(registerAutomationModule);
   await app.register(registerObservabilityModule);
+  await app.register(registerErrorsModule);
 
   appLogger.info('All modules registered');
 
