@@ -65,6 +65,10 @@ function errorRow() {
     contexts: { ignored: true },
     breadcrumbs: [],
     severity: "error",
+    status_code: 422,
+    status_text: "Unprocessable Entity",
+    handled: true,
+    endpoint: "/users/:id",
     timestamp: "2026-01-01T00:00:00.000Z",
     created_at: "2026-01-01T00:00:01.000Z",
   };
@@ -121,6 +125,12 @@ describe("TelemetryReader environment contract", () => {
     expect(result.data[0]).toMatchObject({
       environment: ENVIRONMENT,
       metadata: { environment: ENVIRONMENT },
+      payload: {
+        statusCode: 422,
+        statusText: "Unprocessable Entity",
+        handled: true,
+        route: "/users/:id",
+      },
     });
     expect(result.data[0]?.metadata).toEqual({ environment: ENVIRONMENT });
   });

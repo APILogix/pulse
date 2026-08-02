@@ -3,7 +3,7 @@
  *
  * Exposes the full request column set from the architecture doc plus latency
  * statistics and traffic summary. Filtering leans on the composite
- * `idx_events_requests_tenant_env_time`, `_route_time`, and `_user_time`
+ * `idx_events_requests_tenant_env_time`, `_endpoint_time`, and `_user_time`
  * indexes; the generated `is_error`/`is_slow` columns power error timelines.
  */
 import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
@@ -13,9 +13,10 @@ const requestFields: Record<string, FieldDef> = {
   ...commonFields,
   requestId: { column: 'request_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Request ID' },
   method: { column: 'method', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Method' },
-  url: { column: 'url', type: 'string', filterable: true, searchable: true, projectable: true, label: 'URL' },
-  route: { column: 'route', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Route' },
-  latencyMs: { column: 'latency_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Latency (ms)' },
+  endpoint: { column: 'endpoint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Endpoint' },
+  name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
+  durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
+  latencyMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
   framework: { column: 'framework', type: 'string', filterable: true, projectable: true, label: 'Framework' },
   bodySize: { column: 'body_size', type: 'number', filterable: true, projectable: true, label: 'Request Size' },
   responseSize: { column: 'response_size', type: 'number', filterable: true, projectable: true, label: 'Response Size' },
@@ -40,7 +41,7 @@ const requestFields: Record<string, FieldDef> = {
   tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
 };
 
-const NUMERIC = ['latencyMs', 'statusCode', 'bodySize', 'responseSize', 'durationMs', 'geoAsn'];
+const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'latencyMs', 'geoAsn'];
 
 export const requestsResource: ExplorerResource = {
   name: 'requests',
@@ -48,7 +49,7 @@ export const requestsResource: ExplorerResource = {
   timeColumn: 'timestamp',
   idColumn: 'id',
   fields: requestFields,
-  searchFields: ['url', 'route', 'method', 'requestId', 'userId', 'service'],
+  searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
   searchAliases: {
     ...commonSearchAliases,
     status: 'statusCode',
@@ -61,13 +62,13 @@ export const requestsResource: ExplorerResource = {
   },
   defaultSort: { field: 'timestamp', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'method', 'url', 'route', 'statusCode', 'latencyMs',
+    'id', 'projectId', 'environment', 'method', 'endpoint', 'name', 'statusCode', 'durationMs',
     'timestamp', 'traceId', 'requestId', 'userId', 'service', 'release', 'sdkVersion',
     'geoCountry', 'browser', 'os', 'device', 'clientIp', 'hasError', 'isSlow', 'hasTrace',
   ],
   preferredIndexes: [
     'idx_events_requests_tenant_env_time',
-    'idx_events_requests_route_time',
+    'idx_events_requests_endpoint_time',
     'idx_events_requests_user_time',
   ],
   errorPredicate: 'is_error',
@@ -76,14 +77,14 @@ export const requestsResource: ExplorerResource = {
     errors: '(COUNT(*) FILTER (WHERE is_error))::bigint',
     slow: '(COUNT(*) FILTER (WHERE is_slow))::bigint',
     uniqueUsers: 'COUNT(DISTINCT user_id)::bigint',
-    uniqueRoutes: 'COUNT(DISTINCT route)::bigint',
+    uniqueRoutes: 'COUNT(DISTINCT endpoint)::bigint',
   },
   statistics: {
-    avgLatency: 'AVG(latency_ms)',
-    maxLatency: 'MAX(latency_ms)',
-    p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)',
-    p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)',
-    p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)',
+    avgLatency: 'AVG(duration_ms)',
+    maxLatency: 'MAX(duration_ms)',
+    p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)',
+    p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)',
+    p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms)',
     errorRate: '(COUNT(*) FILTER (WHERE is_error))::float8 / NULLIF(COUNT(*), 0)',
   },
   mapRow: makeMapRow(NUMERIC),

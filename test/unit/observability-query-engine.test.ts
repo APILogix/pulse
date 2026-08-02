@@ -138,7 +138,7 @@ describe('search DSL', () => {
 
 describe('field resolution', () => {
   it('resolves a registered field to its column/selectExpr', () => {
-    expect(resolveField(requestsResource, 'latencyMs').expr).toBe('latency_ms');
+    expect(resolveField(requestsResource, 'latencyMs').expr).toBe('duration_ms');
     expect(resolveField(requestsResource, 'clientIp').expr).toBe('client_ip::text');
   });
   it('resolves JSON path fields by binding the key as a parameter', () => {

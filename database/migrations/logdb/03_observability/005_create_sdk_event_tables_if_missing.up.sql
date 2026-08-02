@@ -110,6 +110,8 @@ ALTER TABLE events_errors
   ADD COLUMN IF NOT EXISTS fingerprint TEXT,
   ADD COLUMN IF NOT EXISTS error_name TEXT,
   ADD COLUMN IF NOT EXISTS stack_hash TEXT,
+  ADD COLUMN IF NOT EXISTS status_text TEXT,
+  ADD COLUMN IF NOT EXISTS handled BOOLEAN,
   ADD COLUMN IF NOT EXISTS source TEXT,
   ADD COLUMN IF NOT EXISTS mechanism TEXT,
   ADD COLUMN IF NOT EXISTS stack_frames JSONB,
@@ -127,7 +129,21 @@ ALTER TABLE events_messages
   ADD COLUMN IF NOT EXISTS user_ip INET,
   ADD COLUMN IF NOT EXISTS tags JSONB,
   ADD COLUMN IF NOT EXISTS contexts JSONB,
-  ADD COLUMN IF NOT EXISTS breadcrumbs JSONB;
+  ADD COLUMN IF NOT EXISTS breadcrumbs JSONB,
+  ADD COLUMN IF NOT EXISTS tenant_id TEXT,
+  ADD COLUMN IF NOT EXISTS logger_name TEXT,
+  ADD COLUMN IF NOT EXISTS message_category TEXT,
+  ADD COLUMN IF NOT EXISTS message_source TEXT;
+CREATE INDEX IF NOT EXISTS idx_events_messages_project_severity_time
+  ON events_messages(organization_id, project_id, severity, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_events_messages_project_time
+  ON events_messages(organization_id, project_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_events_messages_project_request
+  ON events_messages(organization_id, project_id, request_id, timestamp DESC)
+  WHERE request_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_messages_project_trace
+  ON events_messages(organization_id, project_id, trace_id, timestamp DESC)
+  WHERE trace_id IS NOT NULL;
 
 ALTER TABLE events_requests
   ADD COLUMN IF NOT EXISTS url TEXT,
@@ -163,11 +179,23 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_user_time
 
 ALTER TABLE events_spans
   ADD COLUMN IF NOT EXISTS kind TEXT,
+  ADD COLUMN IF NOT EXISTS span_kind TEXT,
+  ADD COLUMN IF NOT EXISTS span_type TEXT,
   ADD COLUMN IF NOT EXISTS status TEXT,
+  ADD COLUMN IF NOT EXISTS span_status TEXT,
   ADD COLUMN IF NOT EXISTS status_message TEXT,
+  ADD COLUMN IF NOT EXISTS message TEXT,
+  ADD COLUMN IF NOT EXISTS endpoint TEXT,
+  ADD COLUMN IF NOT EXISTS is_root_span BOOLEAN,
+  ADD COLUMN IF NOT EXISTS is_http_span BOOLEAN,
+  ADD COLUMN IF NOT EXISTS is_db_span BOOLEAN,
+  ADD COLUMN IF NOT EXISTS is_cache_span BOOLEAN,
+  ADD COLUMN IF NOT EXISTS is_messaging_span BOOLEAN,
   ADD COLUMN IF NOT EXISTS start_time TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS exclusive_duration_ms NUMERIC(14,3),
+  ADD COLUMN IF NOT EXISTS occurred_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS depth INTEGER,
   ADD COLUMN IF NOT EXISTS events JSONB,
   ADD COLUMN IF NOT EXISTS links JSONB,
   ADD COLUMN IF NOT EXISTS db_system TEXT,
@@ -177,9 +205,22 @@ ALTER TABLE events_spans
   ADD COLUMN IF NOT EXISTS db_statement TEXT,
   ADD COLUMN IF NOT EXISTS http_method TEXT,
   ADD COLUMN IF NOT EXISTS http_url TEXT,
+  ADD COLUMN IF NOT EXISTS http_target TEXT,
   ADD COLUMN IF NOT EXISTS http_status_code INTEGER,
+  ADD COLUMN IF NOT EXISTS http_status_text TEXT,
+  ADD COLUMN IF NOT EXISTS http_response_size BIGINT,
+  ADD COLUMN IF NOT EXISTS http_user_agent TEXT,
   ADD COLUMN IF NOT EXISTS http_host TEXT,
   ADD COLUMN IF NOT EXISTS http_route TEXT,
+  ADD COLUMN IF NOT EXISTS http_scheme TEXT,
+  ADD COLUMN IF NOT EXISTS http_flavor TEXT,
+  ADD COLUMN IF NOT EXISTS client_ip_hash TEXT,
+  ADD COLUMN IF NOT EXISTS net_transport TEXT,
+  ADD COLUMN IF NOT EXISTS net_host_name TEXT,
+  ADD COLUMN IF NOT EXISTS net_host_ip TEXT,
+  ADD COLUMN IF NOT EXISTS net_host_port INTEGER,
+  ADD COLUMN IF NOT EXISTS net_peer_ip TEXT,
+  ADD COLUMN IF NOT EXISTS net_peer_port INTEGER,
   ADD COLUMN IF NOT EXISTS messaging_system TEXT,
   ADD COLUMN IF NOT EXISTS messaging_destination TEXT,
   ADD COLUMN IF NOT EXISTS messaging_operation TEXT,
@@ -190,6 +231,12 @@ ALTER TABLE events_traces
   ADD COLUMN IF NOT EXISTS root_span_id TEXT,
   ADD COLUMN IF NOT EXISTS span_count INTEGER,
   ADD COLUMN IF NOT EXISTS total_duration_ms NUMERIC(14,3),
+  ADD COLUMN IF NOT EXISTS http_method TEXT,
+  ADD COLUMN IF NOT EXISTS response_size BIGINT,
+  ADD COLUMN IF NOT EXISTS span_kind TEXT,
+  ADD COLUMN IF NOT EXISTS root_span_status TEXT,
+  ADD COLUMN IF NOT EXISTS user_agent TEXT,
+  ADD COLUMN IF NOT EXISTS client_ip_hash TEXT,
   ADD COLUMN IF NOT EXISTS is_partial BOOLEAN,
   ADD COLUMN IF NOT EXISTS spans_tree JSONB,
   ADD COLUMN IF NOT EXISTS tenant_id TEXT;
@@ -224,7 +271,18 @@ ALTER TABLE events_logs
   ADD COLUMN IF NOT EXISTS user_ip INET,
   ADD COLUMN IF NOT EXISTS logger TEXT,
   ADD COLUMN IF NOT EXISTS context JSONB,
-  ADD COLUMN IF NOT EXISTS tags JSONB;
+  ADD COLUMN IF NOT EXISTS tags JSONB,
+  ADD COLUMN IF NOT EXISTS parent_span_id TEXT,
+  ADD COLUMN IF NOT EXISTS tenant_id TEXT,
+  ADD COLUMN IF NOT EXISTS name TEXT,
+  ADD COLUMN IF NOT EXISTS logger_name TEXT,
+  ADD COLUMN IF NOT EXISTS log_source TEXT,
+  ADD COLUMN IF NOT EXISTS log_category TEXT,
+  ADD COLUMN IF NOT EXISTS endpoint TEXT,
+  ADD COLUMN IF NOT EXISTS http_method TEXT,
+  ADD COLUMN IF NOT EXISTS status_code INTEGER,
+  ADD COLUMN IF NOT EXISTS duration_ms INTEGER,
+  ADD COLUMN IF NOT EXISTS attributes JSONB;
 CREATE INDEX IF NOT EXISTS idx_events_logs_level_time
   ON events_logs(organization_id, project_id, level, timestamp DESC);
 
@@ -236,7 +294,16 @@ ALTER TABLE events_profiles
 
 ALTER TABLE events_cron_checkins
   ADD COLUMN IF NOT EXISTS monitor_slug TEXT,
-  ADD COLUMN IF NOT EXISTS status TEXT;
+  ADD COLUMN IF NOT EXISTS monitor_name TEXT,
+  ADD COLUMN IF NOT EXISTS status TEXT,
+  ADD COLUMN IF NOT EXISTS tenant_id TEXT,
+  ADD COLUMN IF NOT EXISTS is_success BOOLEAN,
+  ADD COLUMN IF NOT EXISTS checkin_type TEXT,
+  ADD COLUMN IF NOT EXISTS schedule_type TEXT,
+  ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS tags JSONB,
+  ADD COLUMN IF NOT EXISTS attributes JSONB;
 
 ALTER TABLE events_replays
   ADD COLUMN IF NOT EXISTS segment_id INTEGER,

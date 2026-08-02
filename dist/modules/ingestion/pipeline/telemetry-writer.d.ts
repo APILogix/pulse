@@ -70,6 +70,9 @@ export declare class TelemetryWriter {
     private writeRequests;
     private writeSpans;
     private writeTraces;
+    private writeTracesInTransaction;
+    private writeTraceSpanTree;
+    private collectTraceSpanRows;
     private writeMetrics;
     private writeLogs;
     private writeProfiles;

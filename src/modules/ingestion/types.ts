@@ -8,6 +8,7 @@ export type EventType = SdkEventType;
 export interface SDKRequestEvent {
   type: 'request';
   requestId: string;
+  route?: string;
   url: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
   statusCode: number;
@@ -16,19 +17,35 @@ export interface SDKRequestEvent {
   headers: Record<string, string>;
   query: Record<string, any>;
   bodySize: number;
+  responseSize?: number;
   userId: string | null;
+  traceId?: string;
+  spanId?: string;
+  metadata?: Record<string, any>;
 }
 
 /** SDK Error Event Payload */
 export interface SDKErrorEvent {
   type: 'error';
-  requestId: string;
+  eventId?: string;
+  requestId?: string;
   message: string;
-  name: string | Record<string, any>;
-  stack: unknown[];
-  fingerprint: string;
+  name?: string | Record<string, any>;
+  stack?: unknown[];
+  severity?: string;
+  fingerprint?: string;
+  traceId?: string;
+  spanId?: string;
+  sessionId?: string;
+  statusCode?: number;
+  statusText?: string;
+  handled?: boolean;
+  method?: string;
+  route?: string;
+  url?: string;
   timestamp: number;
-  context: Record<string, any>;
+  context?: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 /** SDK Log Event Payload */
@@ -44,12 +61,36 @@ export interface SDKLogEvent {
 /** SDK Metric Event Payload */
 export interface SDKMetricEvent {
   type: 'metric';
-  name: string;
-  value: number;
+  eventId?: string;
+  metricName?: string;
+  name?: string;
+  metricType?: 'counter' | 'gauge' | 'histogram' | 'summary' | 'observable_counter' | 'observable_gauge' | 'up_down_counter';
+  value?: number;
   unit?: string;
+  metricUnit?: string;
+  metricNamespace?: string;
+  metricDescription?: string;
+  count?: number;
+  sum?: number;
+  min?: number;
+  max?: number;
+  avg?: number;
+  rate?: number;
+  p50?: number;
+  p75?: number;
+  p90?: number;
+  p95?: number;
+  p99?: number;
+  temporality?: 'delta' | 'cumulative' | 'unspecified';
+  isMonotonic?: boolean;
   tags?: Record<string, string>;
+  attributes?: Record<string, any>;
   metadata?: Record<string, any>;
   requestId?: string;
+  sessionId?: string;
+  tenantId?: string;
+  traceId?: string;
+  spanId?: string;
   timestamp: number;
 }
 
@@ -194,13 +235,23 @@ export const IngestSchema: FastifySchema = {
             name: { type: 'string' },
             metricType: { type: 'string', enum: ['counter', 'gauge', 'histogram'] },
             url: { type: 'string' },
+            route: { type: 'string', maxLength: 2048 },
             method: { 
               type: 'string', 
               enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'] 
             },
             statusCode: { type: 'integer' },
+            statusText: { type: 'string', maxLength: 128 },
+            handled: { type: 'boolean' },
             latency: { type: 'integer', minimum: 0 },
             bodySize: { type: 'integer', minimum: 0 },
+            responseSize: { type: 'integer', minimum: 0 },
+            traceId: { type: 'string', maxLength: 128 },
+            spanId: { type: 'string', maxLength: 128 },
+            rootSpan: { type: 'object' },
+            spanCount: { type: 'integer', minimum: 0 },
+            totalDuration: { type: 'number', minimum: 0 },
+            isPartial: { type: 'boolean' },
             userId: { type: ['string', 'null'] },
             message: { type: 'string' },
             fingerprint: { type: 'string' },
@@ -222,6 +273,8 @@ export const IngestSchema: FastifySchema = {
             level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
             headers: { type: 'object' },
             query: { type: 'object' },
+            attributes: { type: 'object' },
+            metadata: { type: 'object' },
           }
         }
       },
@@ -236,6 +289,10 @@ export const IngestSchema: FastifySchema = {
             pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
           },
           sdkVersion: { type: 'string', maxLength: 64 },
+          sdkName: { type: 'string', maxLength: 64 },
+          applicationName: { type: 'string', maxLength: 128 },
+          applicationVersion: { type: 'string', maxLength: 64 },
+          release: { type: 'string', maxLength: 128 },
           compression: { type: 'string', enum: ['gzip', 'none'] },
           batchId: { type: 'string', maxLength: 128 },
         },

@@ -17,6 +17,58 @@ function errorEvent(): ScopedEvent {
 }
 
 describe('TelemetryWriter transactional outbox', () => {
+  it('persists HTTP error status fields when supplied and omits them for background errors', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        queries.push({ sql, values });
+        return { rowCount: 2, rows: [{ event_id: 'http-error' }, { event_id: 'cron-error' }] };
+      }),
+    };
+
+    await new TelemetryWriter(pool as never).writeBatch([
+      {
+        orgId: '11111111-1111-4111-8111-111111111111',
+        projectId: '22222222-2222-4222-8222-222222222222',
+        environment: 'production',
+        event: {
+          type: 'error',
+          eventId: 'http-error',
+          timestamp: 1_700_000_000_000,
+          message: 'unauthorized',
+          statusCode: 401,
+          handled: true,
+          route: '/admin',
+          requestId: 'req-1',
+        },
+      },
+      {
+        orgId: '11111111-1111-4111-8111-111111111111',
+        projectId: '22222222-2222-4222-8222-222222222222',
+        environment: 'production',
+        event: {
+          type: 'error',
+          eventId: 'cron-error',
+          timestamp: 1_700_000_000_000,
+          message: 'cron failed',
+          mechanism: 'cron',
+          handled: false,
+        },
+      },
+    ]);
+
+    const insert = queries.find((q) => q.sql.startsWith('INSERT INTO events_errors'));
+    expect(insert?.sql).toContain('status_code');
+    expect(insert?.sql).toContain('status_text');
+    expect(insert?.sql).toContain('handled');
+    expect(insert?.values).toContain(401);
+    expect(insert?.values).toContain('Unauthorized');
+    expect(insert?.values).toContain(true);
+    expect(insert?.values).toContain(false);
+    expect(insert?.values).not.toContain(500);
+    expect(insert?.values).not.toContain(0);
+  });
+
   it('commits telemetry and outbox rows in one transaction', async () => {
     const calls: string[] = [];
     const client = {

@@ -35,6 +35,10 @@ interface ErrorRow {
   contexts: unknown;
   breadcrumbs: unknown;
   severity: string | null;
+  status_code: number | null;
+  status_text: string | null;
+  handled: boolean | null;
+  endpoint: string | null;
   timestamp: Date | string;
   created_at: Date | string;
 }
@@ -97,7 +101,8 @@ export class TelemetryReader {
         SELECT e.id, e.organization_id, e.project_id, e.environment, e.metadata,
                e.event_id, e.request_id,
                e.message, e.error_name, e.fingerprint, e.stack_frames, e.contexts,
-               e.breadcrumbs, e.severity, e.timestamp, e.created_at
+               e.breadcrumbs, e.severity, e.status_code, e.status_text,
+               e.handled, e.endpoint, e.timestamp, e.created_at
         FROM events_errors e
         WHERE ${whereSql}
         ORDER BY e.timestamp DESC, e.id DESC
@@ -129,7 +134,8 @@ export class TelemetryReader {
         SELECT e.id, e.organization_id, e.project_id, e.environment, e.metadata,
                e.event_id, e.request_id,
                e.message, e.error_name, e.fingerprint, e.stack_frames, e.contexts,
-               e.breadcrumbs, e.severity, e.timestamp, e.created_at
+               e.breadcrumbs, e.severity, e.status_code, e.status_text,
+               e.handled, e.endpoint, e.timestamp, e.created_at
         FROM events_errors e
         WHERE e.project_id = $1 AND e.id = $2
         LIMIT 1
@@ -236,6 +242,10 @@ export class TelemetryReader {
       timestamp: timestampMs,
       context: (row.contexts as Record<string, unknown>) ?? {},
     };
+    if (row.status_code != null) payload.statusCode = Number(row.status_code);
+    if (row.status_text) payload.statusText = row.status_text;
+    if (row.handled != null) payload.handled = row.handled;
+    if (row.endpoint) payload.route = row.endpoint;
 
     return {
       id: row.id,
@@ -275,6 +285,10 @@ export class TelemetryReader {
           stack: row.stack_frames,
           context: row.contexts,
           requestId: row.request_id ? String(row.request_id) : undefined,
+          statusCode: row.status_code != null ? Number(row.status_code) : undefined,
+          statusText: row.status_text ? String(row.status_text) : undefined,
+          handled: row.handled != null ? Boolean(row.handled) : undefined,
+          route: row.endpoint ? String(row.endpoint) : undefined,
           timestamp: ts,
         } as NormalizedEvent;
       case 'request':
@@ -295,9 +309,15 @@ export class TelemetryReader {
         return {
           type: 'metric',
           metricName: String(row.metric_name ?? ''),
-          metricType: (row.metric_type as 'counter' | 'gauge' | 'histogram') ?? 'gauge',
+          metricType: String(row.metric_type ?? 'gauge') as Extract<NormalizedEvent, { type: 'metric' }>['metricType'],
           value: row.value != null ? Number(row.value) : undefined,
-          unit: row.unit ? String(row.unit) : undefined,
+          unit: row.metric_unit ? String(row.metric_unit) : row.unit ? String(row.unit) : undefined,
+          metricUnit: row.metric_unit ? String(row.metric_unit) : undefined,
+          requestId: row.request_id ? String(row.request_id) : undefined,
+          sessionId: row.session_id ? String(row.session_id) : undefined,
+          traceId: row.trace_id ? String(row.trace_id) : undefined,
+          spanId: row.span_id ? String(row.span_id) : undefined,
+          tenantId: row.tenant_id ? String(row.tenant_id) : undefined,
           tags: row.tags as Record<string, string> | undefined,
           timestamp: ts,
         } as NormalizedEvent;

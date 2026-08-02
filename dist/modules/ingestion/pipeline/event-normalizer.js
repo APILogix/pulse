@@ -77,6 +77,12 @@ const errorSchema = z.object({
     stack: z.array(z.unknown()).max(LIMITS.maxStackFrames).optional(),
     fingerprint: boundedStr(128).optional(),
     severity: z.string().max(16).optional(),
+    statusCode: z.number().int().min(100).max(599).optional(),
+    statusText: boundedStr(128).optional(),
+    handled: z.boolean().optional(),
+    method: z.string().max(10).optional(),
+    route: boundedStr(2048).optional(),
+    url: boundedStr(8192).optional(),
     context: boundedRecord(LIMITS.maxAttributeKeys).optional(),
     breadcrumbs: z.array(z.unknown()).max(LIMITS.maxBreadcrumbs).optional(),
 }).passthrough();
@@ -85,6 +91,15 @@ const messageSchema = z.object({
     ...baseFields,
     message: boundedStr(LIMITS.maxMessageLen),
     severity: z.string().max(16).optional(),
+    name: boundedStr(256).optional(),
+    tenantId: idStr.optional(),
+    loggerName: boundedStr(128).optional(),
+    endpoint: boundedStr(8192).optional(),
+    statusCode: z.number().int().min(0).max(599).optional(),
+    attributes: boundedRecord(LIMITS.maxAttributeKeys).optional(),
+    tags: z.record(z.string().max(256), z.string().max(1024))
+        .refine((o) => Object.keys(o).length <= LIMITS.maxTagKeys, 'too many tags')
+        .optional(),
     context: boundedRecord(LIMITS.maxAttributeKeys).optional(),
     breadcrumbs: z.array(z.unknown()).max(LIMITS.maxBreadcrumbs).optional(),
 }).passthrough();
@@ -152,6 +167,20 @@ const logSchema = z.object({
     level: z.string().max(16),
     message: boundedStr(LIMITS.maxMessageLen),
     args: z.array(z.unknown()).max(10).optional(),
+    // Enterprise fields
+    parentSpanId: idStr.optional(),
+    tenantId: idStr.optional(),
+    name: boundedStr(255).optional(),
+    loggerName: boundedStr(255).optional(),
+    logSource: z.enum(['sdk', 'console', 'framework', 'middleware', 'application', 'worker', 'cron', 'queue', 'unknown']).optional(),
+    logCategory: z.enum(['http', 'application', 'database', 'cache', 'queue', 'worker', 'cron', 'security', 'authentication', 'authorization', 'business', 'system', 'runtime', 'custom', 'unknown']).optional(),
+    endpoint: boundedStr(2048).optional(),
+    httpMethod: z.string().max(16).optional(),
+    statusCode: z.number().int().optional(),
+    durationMs: z.number().optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
+    tags: z.record(z.string().max(256), z.string().max(1024)).optional(),
+    attributes: boundedRecord(LIMITS.maxAttributeKeys).optional(),
 }).passthrough();
 const profileSchema = z.object({
     type: z.literal('profile'),
@@ -166,9 +195,21 @@ const cronSchema = z.object({
     type: z.literal('cron_checkin'),
     ...baseFields,
     monitorSlug: boundedStr(255),
-    status: z.enum(['ok', 'error', 'in_progress']),
+    monitorName: boundedStr(255).optional(),
+    status: z.enum(['ok', 'error', 'in_progress', 'failed', 'timeout', 'missed']),
     duration: z.number().min(0).optional(),
     environment: z.string().max(64).optional(),
+    // Correlation / multi-tenancy
+    tenantId: idStr.optional(),
+    // Execution timeline
+    startedAt: epochMs.optional(),
+    finishedAt: epochMs.optional(),
+    // Classification (auto-derived if not supplied)
+    checkinType: z.enum(['heartbeat', 'scheduled', 'manual', 'retry', 'unknown']).optional(),
+    scheduleType: z.string().max(64).optional(),
+    // Flexible custom data
+    tags: z.record(z.string().max(256), z.string().max(1024)).optional(),
+    attributes: boundedRecord(LIMITS.maxAttributeKeys).optional(),
 }).passthrough();
 const replaySchema = z.object({
     type: z.literal('replay'),

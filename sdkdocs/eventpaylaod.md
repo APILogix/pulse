@@ -261,6 +261,9 @@ The SDK supports **10 distinct event types**, each routed to specific backend en
   "fingerprint": "TypeError:getUserName:user.js:42",
   "timestamp": 1722528000000,
   "severity": "error",
+  "statusCode": 500,
+  "statusText": "Internal Server Error",
+  "handled": true,
   "context": {
     "userId": "user_123",
     "endpoint": "/api/users/123",
@@ -290,6 +293,9 @@ The SDK supports **10 distinct event types**, each routed to specific backend en
   ],
   "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
   "spanId": "00f067aa0ba902b7",
+  "method": "GET",
+  "route": "/api/users/:id",
+  "url": "/api/users/123",
   "mechanism": "manual",
   "metadata": {
     "sdkName": "@pulse/sdk-node",
@@ -318,11 +324,26 @@ The SDK supports **10 distinct event types**, each routed to specific backend en
 | `severity` | string | Yes | `"debug"`, `"info"`, `"warning"`, `"error"`, or `"fatal"` |
 | `context` | object | Yes | Additional contextual data |
 | `requestId` | string | No | Associated request ID |
+| `statusCode` | number | No | HTTP response status code, only present when an HTTP response exists |
+| `statusText` | string | No | HTTP reason phrase for `statusCode` when available |
+| `handled` | boolean | No | Whether the error was captured by handled application/framework code |
+| `method` | string | No | HTTP method when request context already exists |
+| `route` | string | No | HTTP route pattern when request context already exists |
+| `url` | string | No | HTTP URL/path when request context already exists |
 | `breadcrumbs` | Breadcrumb[] | No | Event trail leading to error (see Breadcrumb Structure) |
 | `traceId` | string | No | W3C trace ID |
 | `spanId` | string | No | OpenTelemetry span ID |
 | `mechanism` | string | No | How error was captured: `"manual"`, `"uncaughtException"`, `"unhandledRejection"`, `"console.error"` |
 | `metadata` | object | Yes | SDK metadata |
+
+HTTP status enrichment is backward compatible. SDKs should set `statusCode`,
+`statusText`, `method`, `route`, and `url` only when the error is captured in an
+HTTP request context such as Express middleware or a Fastify error handler.
+Manual captures, cron jobs, workers, CLIs, startup errors, and process-level
+`uncaughtException` / `unhandledRejection` handlers must omit `statusCode`
+instead of sending `0`, `200`, or a synthetic `500`. `handled` should be `true`
+for handled middleware/manual captures and `false` for process-level unhandled
+failures.
 
 ---
 

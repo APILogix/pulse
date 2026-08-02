@@ -41,6 +41,12 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     stack: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     fingerprint: z.ZodOptional<z.ZodString>;
     severity: z.ZodOptional<z.ZodString>;
+    statusCode: z.ZodOptional<z.ZodNumber>;
+    statusText: z.ZodOptional<z.ZodString>;
+    handled: z.ZodOptional<z.ZodBoolean>;
+    method: z.ZodOptional<z.ZodString>;
+    route: z.ZodOptional<z.ZodString>;
+    url: z.ZodOptional<z.ZodString>;
     context: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     breadcrumbs: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
@@ -53,6 +59,13 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
 }, z.core.$loose>, z.ZodObject<{
     message: z.ZodString;
     severity: z.ZodOptional<z.ZodString>;
+    name: z.ZodOptional<z.ZodString>;
+    tenantId: z.ZodOptional<z.ZodString>;
+    loggerName: z.ZodOptional<z.ZodString>;
+    endpoint: z.ZodOptional<z.ZodString>;
+    statusCode: z.ZodOptional<z.ZodNumber>;
+    attributes: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     context: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     breadcrumbs: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
@@ -138,6 +151,45 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     level: z.ZodString;
     message: z.ZodString;
     args: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
+    parentSpanId: z.ZodOptional<z.ZodString>;
+    tenantId: z.ZodOptional<z.ZodString>;
+    name: z.ZodOptional<z.ZodString>;
+    loggerName: z.ZodOptional<z.ZodString>;
+    logSource: z.ZodOptional<z.ZodEnum<{
+        unknown: "unknown";
+        worker: "worker";
+        sdk: "sdk";
+        console: "console";
+        framework: "framework";
+        middleware: "middleware";
+        application: "application";
+        cron: "cron";
+        queue: "queue";
+    }>>;
+    logCategory: z.ZodOptional<z.ZodEnum<{
+        http: "http";
+        database: "database";
+        unknown: "unknown";
+        authorization: "authorization";
+        security: "security";
+        authentication: "authentication";
+        custom: "custom";
+        system: "system";
+        worker: "worker";
+        business: "business";
+        application: "application";
+        cron: "cron";
+        queue: "queue";
+        cache: "cache";
+        runtime: "runtime";
+    }>>;
+    endpoint: z.ZodOptional<z.ZodString>;
+    httpMethod: z.ZodOptional<z.ZodString>;
+    statusCode: z.ZodOptional<z.ZodNumber>;
+    durationMs: z.ZodOptional<z.ZodNumber>;
+    context: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    attributes: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
     timestamp: z.ZodOptional<z.ZodNumber>;
     requestId: z.ZodOptional<z.ZodString>;
@@ -163,13 +215,30 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     type: z.ZodLiteral<"profile">;
 }, z.core.$loose>, z.ZodObject<{
     monitorSlug: z.ZodString;
+    monitorName: z.ZodOptional<z.ZodString>;
     status: z.ZodEnum<{
         error: "error";
         ok: "ok";
+        timeout: "timeout";
+        failed: "failed";
         in_progress: "in_progress";
+        missed: "missed";
     }>;
     duration: z.ZodOptional<z.ZodNumber>;
     environment: z.ZodOptional<z.ZodString>;
+    tenantId: z.ZodOptional<z.ZodString>;
+    startedAt: z.ZodOptional<z.ZodNumber>;
+    finishedAt: z.ZodOptional<z.ZodNumber>;
+    checkinType: z.ZodOptional<z.ZodEnum<{
+        unknown: "unknown";
+        scheduled: "scheduled";
+        manual: "manual";
+        heartbeat: "heartbeat";
+        retry: "retry";
+    }>>;
+    scheduleType: z.ZodOptional<z.ZodString>;
+    tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    attributes: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
     timestamp: z.ZodOptional<z.ZodNumber>;
     requestId: z.ZodOptional<z.ZodString>;

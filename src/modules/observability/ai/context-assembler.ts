@@ -22,7 +22,7 @@ const SEED_ALLOW = new Set([
   'method', 'url', 'route', 'status_code', 'latency_ms', 'duration_ms', 'message', 'name',
   'error_name', 'fingerprint', 'source', 'mechanism', 'trace_id', 'span_id', 'request_id',
   'user_id', 'db_system', 'db_operation', 'http_status_code', 'kind', 'status', 'metric_name',
-  'metric_type', 'value', 'unit', 'monitor_slug', 'profile_type', 'sdk_name', 'sdk_version',
+  'metric_type', 'metric_unit', 'metric_category', 'aggregation_type', 'value', 'unit', 'monitor_slug', 'profile_type', 'sdk_name', 'sdk_version',
 ]);
 const MAX_STR = 500;
 
@@ -81,7 +81,7 @@ export function extractFacts(
   } else if (resource === 'spans') {
     facts.push(`Span ${str(s.name)} (${str(s.kind)}) status=${str(s.status)} in ${str(s.duration_ms)}ms`);
   } else if (resource === 'metrics') {
-    facts.push(`Metric ${str(s.metric_name)}=${str(s.value)}${str(s.unit)} (${str(s.metric_type)})`);
+    facts.push(`Metric ${str(s.metric_name)}=${str(s.value)}${str(s.metric_unit ?? s.unit)} (${str(s.metric_type)})`);
   } else if (resource === 'crons') {
     facts.push(`Cron ${str(s.monitor_slug)} status=${str(s.status)}`);
   } else if (resource === 'profiles') {
