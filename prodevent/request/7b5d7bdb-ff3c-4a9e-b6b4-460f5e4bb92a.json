@@ -1,0 +1,2841 @@
+{
+  "events": [
+    {
+      "url": "/logs/info",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/logs/info",
+      "method": "GET",
+      "spanId": "8f818482aa926493",
+      "eventId": "58fc3f8d-7dfd-4d2e-8677-63dbe452bdec",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "3ce45a5476baa24b11c63630c68dde50",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "6689331d-c5dd-4a19-9e97-c12e4fd0532c",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771394,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 43
+    },
+    {
+      "url": "/messages/breadcrumb-trail",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/messages/breadcrumb-trail",
+      "method": "GET",
+      "spanId": "813c39c69a61eeb1",
+      "eventId": "9f7199b6-9e09-470f-b215-f224b0b207f3",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "0c987e05f01e84fb[phone]2337dd",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "9d090e2e-382a-4c3e-a80d-aac139eb6855",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771396,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 58
+    },
+    {
+      "url": "/users/",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {
+        "limit": "5"
+      },
+      "route": "/users/",
+      "method": "GET",
+      "spanId": "02a4dff8290a9955",
+      "eventId": "44724df0-4539-4d0f-9559-b90e8b61a20a",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "20311be4e19feaabcad075f6de99be06",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "c6b44633-d143-4b2f-a429-4174c52cbd6f",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771398,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 556
+    },
+    {
+      "url": "/orders/stats/summary",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/orders/stats/summary",
+      "method": "GET",
+      "spanId": "52859852e618be52",
+      "eventId": "b50c66a3-ef99-42ce-b9fb-e42dda70eb96",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "8a7d383197ca9c374519cc71d22084c2",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "d6a42d7d-7894-4c25-b2bd-adf487aff8d2",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771401,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 30
+    },
+    {
+      "url": "/messages/breadcrumb-trail",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/messages/breadcrumb-trail",
+      "method": "GET",
+      "spanId": "749d3f42c3b27f7b",
+      "eventId": "ac62103c-1c9b-4c9d-b45a-1d5728d43239",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "9938a01c571c3d0505e2c48fd1c73ba9",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "46c0ff9c-8036-4e07-b4bf-fb9384d799a2",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771404,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 58
+    },
+    {
+      "url": "/scope/user",
+      "body": {
+        "id": "load-user",
+        "email": "[email]"
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/scope/user",
+      "method": "POST",
+      "spanId": "8653f94bcc5d89af",
+      "eventId": "67490a6b-069a-4a82-878f-a091284c2383",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "42",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 5,
+      "traceId": "7c879a4c6cb74c799e3b8d5cebc69f04",
+      "bodySize": 42,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "226ddb21-cd72-459a-a577-69acd3613f2d",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771409,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 43
+    },
+    {
+      "url": "/metrics/system",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/system",
+      "method": "GET",
+      "spanId": "6d17a63f8260a201",
+      "eventId": "1fbc878b-9ac2-4fef-a9cc-13b43b3a35ba",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "cde5f69100b49b6deceb4e943b2a379e",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "22a64a87-5287-41a5-82c5-3656bccb5493",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771418,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 112
+    },
+    {
+      "url": "/logs/warn",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/logs/warn",
+      "method": "GET",
+      "spanId": "ebe5853e85141fca",
+      "eventId": "acba3d81-5438-4a90-ae9a-4fb38c5d11dc",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "6309f874243cd183a727ffc4f858a90d",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "98e9c564-f1f8-4124-a7e3-4b59ee00ca7f",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771422,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 46
+    },
+    {
+      "url": "/tracing/sync",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/tracing/sync",
+      "method": "GET",
+      "spanId": "ea6dc6f1341f1f83",
+      "eventId": "b8a95e63-482d-4c0d-a523-99b7fc3ace4e",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "b622f8d7764c65e[phone]2a660db",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "3d5a5608-a2fc-41d6-826d-09afd0bf80bb",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771425,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 62
+    },
+    {
+      "url": "/metrics/histogram",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/histogram",
+      "method": "GET",
+      "spanId": "42b5852cdb24bf1c",
+      "eventId": "560e39a1-7d23-4610-8547-2291c63fe088",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "23c43116a92cc0c0d6429ae10ecfa1c3",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "7dbb7c3c-b229-4b84-9e60-1dcd05985804",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771428,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 65
+    },
+    {
+      "url": "/replays/sequence",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/replays/sequence",
+      "method": "GET",
+      "spanId": "8c8e7fc33f22a0c1",
+      "eventId": "2067f2e3-950f-4a86-963a-ff03adcc7ee9",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "ccae41d4d7414c9b1b495a5f2d513e2a",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "e40cc6e0-cc4d-4a5f-851e-7308a3bc1165",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771430,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 129
+    },
+    {
+      "url": "/metrics/business",
+      "body": {
+        "event": "load-test",
+        "amount": 10
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/business",
+      "method": "POST",
+      "spanId": "5c4835ab95e6383d",
+      "eventId": "f896ff89-5944-4c29-987f-d3740edcdfc3",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "33",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "b4b9277157faae7a172dd778fcbc8787",
+      "bodySize": 33,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "3f6d9188-90d3-4cf7-894e-5b3f9056aae0",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771434,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 49
+    },
+    {
+      "url": "/orders/stats/summary",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/orders/stats/summary",
+      "method": "GET",
+      "spanId": "db20fbbd97e6a8df",
+      "eventId": "0f0fb8ac-991c-4a98-951d-6dd2efa7ae32",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 5,
+      "traceId": "fc68938316a7d69cb75f333ee0851c87",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "8fd0caf5-6e48-4bf3-bade-c7e7ddb65298",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771437,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 30
+    },
+    {
+      "url": "/errors/nested",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/nested",
+      "method": "POST",
+      "spanId": "6e1aa99461ef8bac",
+      "eventId": "fe01e692-5973-45a4-89fb-258bca5ad081",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "30b01486032e1e96b05799bbdad11064",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "b3b0f545-2e1d-4cff-9f16-b94884bbde60",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771443,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/errors/manual",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/manual",
+      "method": "POST",
+      "spanId": "06a2d9b7539417cd",
+      "eventId": "7af8af6a-c284-4042-bebf-162ae01b0451",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "64534baf7e3dd09459a3f781a8d65804",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "4fab0a83-e253-4a84-bff9-f4107652b550",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771447,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/logs/burst",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {
+        "count": "3"
+      },
+      "route": "/logs/burst",
+      "method": "GET",
+      "spanId": "fcbd84b04c7521f0",
+      "eventId": "63188dd1-a0d8-476c-83e0-ecc74a6314e1",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "f[phone]276334d9c617d1964189d",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "15d09761-15e7-41d2-8815-54dd8e09298d",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771450,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 53
+    },
+    {
+      "url": "/errors/manual",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/manual",
+      "method": "POST",
+      "spanId": "dbc06e1f8c7a1d98",
+      "eventId": "12ad1cbc-fdcb-4c6d-a0ab-ccd68401480c",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "f0c8ce7f063ca4c3301649c93d75005b",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "cf21c3fa-2bd4-4553-bb03-b9d4e2ce50fc",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771452,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/errors/manual",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/manual",
+      "method": "POST",
+      "spanId": "0dc8eef5fc2a679e",
+      "eventId": "50ea44d9-3689-4f45-8797-cedf0a8d5cf3",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "775110edacd68ddef12dcd78bd26bed2",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "3d505aae-5e14-43f0-9d96-18aeecb72fba",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771457,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/messages/breadcrumb-trail",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/messages/breadcrumb-trail",
+      "method": "GET",
+      "spanId": "01ce966b04d4ba9a",
+      "eventId": "1b76e159-5a92-49a3-8459-b2e3694cfaed",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "db56322f9e64436f5e62d9422b1bb323",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "444b6d10-728d-4e13-8c73-d26a3ac1eb08",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771461,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 58
+    },
+    {
+      "url": "/profiling/cpu",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/profiling/cpu",
+      "method": "GET",
+      "spanId": "39c17059073fbc0d",
+      "eventId": "3567a4ed-f612-48c9-acb2-1f225b362de0",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 8,
+      "traceId": "c51997ef70623e88b2a6d3eef64c7768",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "87d52ddb-1a2a-445d-9107-3eb5ef5ccd56",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771464,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 110
+    },
+    {
+      "url": "/errors/scoped",
+      "body": {
+        "test": true
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/scoped",
+      "method": "POST",
+      "spanId": "3d4d1bf52a90c6c9",
+      "eventId": "7560cd5c-4953-44d5-a9f3-b0664a7bade7",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "13",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "14f7404e36b807980cf33352065e2da0",
+      "bodySize": 13,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "8e31bce0-b0a1-4f9e-8d32-54b213f6556a",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771473,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 46
+    },
+    {
+      "url": "/errors/manual",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/manual",
+      "method": "POST",
+      "spanId": "f1198bef3fe88a77",
+      "eventId": "50a1ce3e-fbe5-409a-8de5-f4d30c1c3e2e",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "866fe890304f641453d04b2cedc6a58a",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "d00732df-ecfa-4062-ab0e-3226dc1e4d89",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771478,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/orders/stats/summary",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/orders/stats/summary",
+      "method": "GET",
+      "spanId": "4ce62c5a66d78074",
+      "eventId": "24cac4b8-d560-4933-b895-d96091e57100",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "67eab863c299e37d5d0e700566bf189b",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "8fd74ef0-1755-4b1c-b806-d0727d621fff",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771481,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 30
+    },
+    {
+      "url": "/errors/scoped",
+      "body": {
+        "test": true
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/scoped",
+      "method": "POST",
+      "spanId": "f4997ffe0c3bd1f8",
+      "eventId": "4ac9af8d-bd6f-4a35-87ce-6808edb85490",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "13",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "be480e536fa5d785211b1adf92224dbf",
+      "bodySize": 13,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "21cb7244-80e5-4a17-9f01-d2d4028ff156",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771484,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 46
+    },
+    {
+      "url": "/messages/breadcrumb-trail",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/messages/breadcrumb-trail",
+      "method": "GET",
+      "spanId": "bbb07aa386e72932",
+      "eventId": "5a592cc8-0f6b-40cc-8f3b-41209280b304",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "531ee48f10abe98865b7a76ad8863c68",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "93316627-531b-41e5-a9f5-e8c1f542833d",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771488,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 58
+    },
+    {
+      "url": "/errors/uncaught",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/uncaught",
+      "method": "GET",
+      "spanId": "c4d204dabef2fcf7",
+      "eventId": "d503b0d5-b8b7-43a2-988b-63d0e681aeb8",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 3,
+      "traceId": "bee19d76844ba0f77a594ea5016d7628",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "de79be9e-528c-4a48-9898-4a2a68543256",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771503,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 49
+    },
+    {
+      "url": "/metrics/histogram",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/histogram",
+      "method": "GET",
+      "spanId": "631cd248a6809b89",
+      "eventId": "f9ace636-8638-4551-9943-d2cfa5b56c8a",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "81a4f28da9efb45e[phone]c0b04c",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "a6f594a1-723b-4df1-92ec-6f8a91705dc3",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771510,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 65
+    },
+    {
+      "url": "/users/",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {
+        "limit": "5"
+      },
+      "route": "/users/",
+      "method": "GET",
+      "spanId": "ed476db99d094381",
+      "eventId": "354bc612-6b43-443b-8d7a-097d7e4fdf60",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "6f[phone]b8b2c4386853f522ee98",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "08dc94c8-f326-41fc-b173-b51f486ba497",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771513,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 556
+    },
+    {
+      "url": "/crons/multi",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/multi",
+      "method": "GET",
+      "spanId": "d1da1b238d545cb5",
+      "eventId": "9ed6317f-80a0-4c9d-be45-307f7ea5b53d",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1034,
+      "traceId": "21659fcd93a0ae010d8212b94acf7ea4",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "bf571570-19f6-41d6-a5aa-d522bc44bf83",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610770534,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 273
+    },
+    {
+      "url": "/crons/multi",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/multi",
+      "method": "GET",
+      "spanId": "3885deb6a22e6a51",
+      "eventId": "e1991681-3bca-4214-bd83-f20e9e5f1594",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1395,
+      "traceId": "cb43f8bb787ca39f8cdbfe[phone]",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "43c3c3b1-dce0-4ce5-8111-88072b7a0dda",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610770175,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 273
+    },
+    {
+      "url": "/tracing/pipeline",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/tracing/pipeline",
+      "method": "GET",
+      "spanId": "d3c56eaee2bf5295",
+      "eventId": "db298e5b-7307-457f-855d-7bdb2f9f0a59",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 749,
+      "traceId": "6e52debc793da03bc4b970738e0eb682",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "243a9f54-1a53-4c63-879d-e07d566c4896",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610770823,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 109
+    },
+    {
+      "url": "/crons/success",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/success",
+      "method": "GET",
+      "spanId": "72f14c05f2a9f317",
+      "eventId": "4ad94dc8-b408-4330-9f6d-8cd86a4da633",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 519,
+      "traceId": "3f16187e5df0acd0e72abc992a8be693",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "c6b8de57-8ecb-4f4d-af69-743feaea0556",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771054,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 88
+    },
+    {
+      "url": "/crons/success",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/success",
+      "method": "GET",
+      "spanId": "95301b2d7ced7f09",
+      "eventId": "e0d7557e-9a1c-4a3f-987c-b6d5d8880ae5",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 370,
+      "traceId": "e3cbea072cd79c733282ce1cc53ecbde",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "e4b3db47-b712-4ffc-89d6-980bda2e0c8f",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771205,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 88
+    },
+    {
+      "url": "/crons/success",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/success",
+      "method": "GET",
+      "spanId": "6c1b127d2b633f1a",
+      "eventId": "a5927934-bccd-4ccd-a486-6156d0c66be9",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 371,
+      "traceId": "5fd6d3308397a761b6a4e6d9596322ec",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "10a34f13-0af3-41e9-9d37-f8b7d52a61c4",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771216,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 88
+    },
+    {
+      "url": "/tracing/parallel",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/tracing/parallel",
+      "method": "GET",
+      "spanId": "7ea7d28494f1983d",
+      "eventId": "b7c31edb-7e91-496e-9bfa-03f0b11eec06",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 198,
+      "traceId": "5cb8890b2be1c9b72e191f42acd9f15b",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "42ddeef3-7006-4850-8cfb-1208e79c3d62",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771395,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 49
+    },
+    {
+      "url": "/tracing/parallel",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/tracing/parallel",
+      "method": "GET",
+      "spanId": "cc4f8c849b3da3b4",
+      "eventId": "67e73f2a-6020-4e48-a266-9ad659ae6b48",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 198,
+      "traceId": "2768b5b34e0a567ed38f4addd4cf469f",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "c432cf4c-95c3-4274-b6e9-10d3cf21a8f8",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771436,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 49
+    },
+    {
+      "url": "/crons/success",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/crons/success",
+      "method": "GET",
+      "spanId": "28f9e8d8cde20e43",
+      "eventId": "1665d112-912a-468e-b02f-e5794c5d4805",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 190,
+      "traceId": "2c809711d216f0e760bee5919a7b4667",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "4ed28e3d-8384-4d2d-b1ca-4c2ab47a2ff6",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771456,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 87
+    },
+    {
+      "url": "/metrics/gauge",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/gauge",
+      "method": "GET",
+      "spanId": "3bc6e27474124d3e",
+      "eventId": "0d1189e6-b8cf-4d6d-be1a-1f6ced983073",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 6,
+      "traceId": "0098b090b68b85ac504d1f312cbe0f19",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "958035bc-2cab-4095-9df2-760e46714f93",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771808,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 85
+    },
+    {
+      "url": "/metrics/gauge",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/gauge",
+      "method": "GET",
+      "spanId": "4375ccff7b72b98a",
+      "eventId": "77f8e6ba-9c09-411d-a3df-9994b46d149a",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 4,
+      "traceId": "0824b05fb7f7c14836a836f20e686d1d",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "bcdcad72-c6d3-4d19-a22a-e2e5692cfd8b",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771815,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 85
+    },
+    {
+      "url": "/tracing/sync",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/tracing/sync",
+      "method": "GET",
+      "spanId": "4d8f72410c5fc807",
+      "eventId": "8b6badca-4ea5-44b5-b2f2-45dd3126d942",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 14,
+      "traceId": "22660bc67e2e0d30f0bb4edde095cd64",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "240fb22a-96db-48c7-9643-21a90745e9a4",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771822,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 62
+    },
+    {
+      "url": "/logs/error",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/logs/error",
+      "method": "GET",
+      "spanId": "c70cdd1ced16437a",
+      "eventId": "8c15348d-fe0e-4eb4-9188-02860f1afc16",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 11,
+      "traceId": "8a2197c715c50f6e3028d2e99c065ed1",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "5fd60241-725b-49de-81e0-6432a16b30ce",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771837,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 44
+    },
+    {
+      "url": "/errors/scoped",
+      "body": {
+        "test": true
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/scoped",
+      "method": "POST",
+      "spanId": "940445d05ce254c6",
+      "eventId": "3d46c681-ed7e-40e1-a412-975d7513a237",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "13",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 7,
+      "traceId": "fec10363a75c180bb80cc401556fcb76",
+      "bodySize": 13,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "b888c576-c663-44d6-9ca1-4a158d2bd460",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771850,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 46
+    },
+    {
+      "url": "/metrics/counter",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/metrics/counter",
+      "method": "GET",
+      "spanId": "5d0dfb8b9b294b35",
+      "eventId": "40135b8d-bdc1-4271-b1e4-84f51607f860",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 1,
+      "traceId": "351e89eed846d67fb248c05dd7a4d002",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "d5e7de3f-5688-4ad3-a991-8e160d7f64a0",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771862,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 48
+    },
+    {
+      "url": "/errors/nested",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/nested",
+      "method": "POST",
+      "spanId": "185293f9bd306307",
+      "eventId": "60db6907-6042-49c4-8626-3325d9f482fe",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 4,
+      "traceId": "781dfa66259c0d4b8c16fbbd2c6b8254",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "21c6cd10-f2d6-4abe-b87e-d99553401ae4",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771864,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/errors/scoped",
+      "body": {
+        "test": true
+      },
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/scoped",
+      "method": "POST",
+      "spanId": "e8b319d43aab3829",
+      "eventId": "8396d691-e668-45bf-8fce-adb36fb4fb6f",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "13",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 5,
+      "traceId": "3dfd2638a5761bb33d713bac4706cf9e",
+      "bodySize": 13,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "effab306-565c-4ea4-a834-02002fd789fc",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771870,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 46
+    },
+    {
+      "url": "/messages/info",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/messages/info",
+      "method": "GET",
+      "spanId": "04ef40053406eeec",
+      "eventId": "76c5c341-01de-4d5b-88cd-f003e210a9dd",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "c93075ab9f80660a068e229fa755b97f",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "001452ef-35ab-407c-a25b-a3a6795bbb5d",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771878,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 47
+    },
+    {
+      "url": "/replays/click",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/replays/click",
+      "method": "GET",
+      "spanId": "1ca3d4e83710ae83",
+      "eventId": "6e8458a7-1830-4ae3-9d65-2aa40a16846b",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "2057d413f7f[phone]f7ec9fdee53",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "36350ab7-c7c8-4989-8cb0-dcc8ec6dccce",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771881,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 111
+    },
+    {
+      "url": "/errors/manual",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/errors/manual",
+      "method": "POST",
+      "spanId": "7c2b996a95005a49",
+      "eventId": "90e02b19-6f53-4b01-8421-fe4731a46597",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "content-length": "0",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 4,
+      "traceId": "ac3af8e5b9bdc0486fe4f0329218f847",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "ad829e7c-eb64-4735-8fd7-246bc1a3aa99",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771884,
+      "userAgent": "node",
+      "statusCode": 500,
+      "responseSize": 47
+    },
+    {
+      "url": "/scope/isolated",
+      "body": {},
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "request",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "query": {},
+      "route": "/scope/isolated",
+      "method": "GET",
+      "spanId": "41722b409d5ef61b",
+      "eventId": "f1c84427-a307-46c9-8fc9-e97b0842f642",
+      "headers": {
+        "host": "[ip]:3000",
+        "accept": "*/*",
+        "connection": "keep-alive",
+        "user-agent": "node",
+        "x-tenant-id": "load-test-tenant",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "accept-encoding": "gzip, deflate",
+        "accept-language": "*"
+      },
+      "latency": 2,
+      "traceId": "b9748cba59e0ec7cce9dd89c641117df",
+      "bodySize": 2,
+      "clientIp": "3e48ef9d22e096da",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "tenantId": "load-test-tenant",
+      "requestId": "e1eb837c-3ac4-4817-8b58-9defe6642fae",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610771890,
+      "userAgent": "node",
+      "statusCode": 200,
+      "responseSize": 229
+    }
+  ],
+  "metadata": {
+    "batchId": "ab4eee68-7fab-456b-824b-afc02fa387bc",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 0,
+    "receivedAt": "2026-08-01T18:59:37.524Z",
+    "environment": "production"
+  },
+  "eventType": "request",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

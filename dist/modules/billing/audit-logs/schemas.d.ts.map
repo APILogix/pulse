@@ -1,0 +1,1 @@
+{"version":3,"file":"schemas.d.ts","sourceRoot":"","sources":["../../../../src/modules/billing/audit-logs/schemas.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,CAAC,EAAE,MAAM,KAAK,CAAC;AAGxB,eAAO,MAAM,+BAA+B;;;;;;;;;iBAOlB,CAAC;AAE3B,MAAM,MAAM,yBAAyB,GAAG,CAAC,CAAC,KAAK,CAAC,OAAO,+BAA+B,CAAC,CAAC"}

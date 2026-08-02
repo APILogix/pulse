@@ -1,0 +1,728 @@
+import { resolveRouting } from './routing.js';
+import { CONNECTOR_JOBS, CONNECTOR_PRIORITY } from '../connectors/job.constants.js';
+import { pool } from '../../config/database.js';
+import { env } from '../../config/env.js';
+import { FEATURE_FLAGS, isEnabled } from '../feature-flags/service.js';
+import { getAlertAnalysisHook } from './ai/alert-analysis.js';
+const MANAGED_EMAIL_FALLBACK_CONNECTOR_ID = '00000000-0000-0000-0000-000000000000';
+export class AlertBatchProcessor {
+    alertRepo;
+    connectorRepo;
+    enqueueConnectorJob;
+    logger;
+    projectSubscriptionResolver;
+    static EVENT_CONCURRENCY = 10;
+    authorize;
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver, authorize) {
+        this.alertRepo = alertRepo;
+        this.connectorRepo = connectorRepo;
+        this.enqueueConnectorJob = enqueueConnectorJob;
+        this.logger = logger;
+        this.projectSubscriptionResolver = projectSubscriptionResolver;
+        this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
+    }
+    async mapBounded(items, limit, fn) {
+        const results = new Array(items.length);
+        let cursor = 0;
+        const lane = async () => {
+            while (cursor < items.length) {
+                const i = cursor++;
+                const item = items[i];
+                try {
+                    results[i] = { status: 'fulfilled', value: await fn(item) };
+                }
+                catch (reason) {
+                    results[i] = { status: 'rejected', reason };
+                }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+        return results;
+    }
+    async processBatch(data) {
+        const start = Date.now();
+        const log = this.logger.child({ batchId: data.batchId, orgId: data.organizationId });
+        // 1. Fetch batch + its events in a single query.
+        const loaded = await this.alertRepo.getBatchWithEvents(data.batchId, data.organizationId);
+        if (!loaded) {
+            log.warn('Batch not found — nothing to process');
+            return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, throttled: 0, durationMs: 0, status: 'completed' };
+        }
+        const { batch, events } = loaded;
+        // Idempotency guard: a re-driven or duplicate job for an already-terminal
+        // batch is a no-op (dead-letter retry + orphan recovery both rely on this).
+        if (batch.status !== 'processing') {
+            log.info({ batchStatus: batch.status }, 'Batch already terminal — skipping');
+            return { batchId: data.batchId, total: 0, success: 0, failure: 0, skipped: 0, throttled: 0, durationMs: 0, status: 'completed' };
+        }
+        // Authorization re-verification, straight from the database on every run
+        // (never cached): the organization and every event's project must still
+        // exist and be eligible BEFORE any delivery side effect. Ineligible events
+        // are suppressed and audited, never delivered.
+        const authz = await this.authorize(events, data.batchId, data.organizationId, log);
+        const authorizedEvents = authz.eligible;
+        // 1b. Pre-load project connector subscriptions and authoritative channel
+        // eligibility. Channel lookups are deduplicated by the full routing tuple,
+        // never performed once per connector target.
+        const projectIds = [...new Set(authorizedEvents.map((e) => e.project_id).filter((id) => id !== null))];
+        const projectSubscriptions = new Map();
+        const projectResolver = this.projectSubscriptionResolver;
+        if (projectResolver) {
+            await Promise.all(projectIds.map(async (projectId) => {
+                projectSubscriptions.set(projectId, await projectResolver.resolveByProjectId(projectId));
+            }));
+        }
+        const projectChannelEligibility = new Map();
+        if (projectResolver?.resolveImmediateDeliveryTargets) {
+            const requests = new Map();
+            for (const event of authorizedEvents) {
+                if (!event.project_id)
+                    continue;
+                const request = {
+                    organizationId: event.organization_id,
+                    projectId: event.project_id,
+                    category: this.eventCategory(event),
+                    severity: event.severity,
+                };
+                requests.set(this.channelEligibilityKey(request), request);
+            }
+            await Promise.all([...requests].map(async ([key, request]) => {
+                projectChannelEligibility.set(key, await projectResolver.resolveImmediateDeliveryTargets(request));
+            }));
+        }
+        // 2. Load routing rules, rule actions, connectors, routes, escalation steps
+        //    and throttle windows — each in ONE bulk query (no N+1).
+        const ruleIds = [...new Set(authorizedEvents.map((e) => e.rule_id).filter((id) => id !== null))];
+        const ruleActions = await this.alertRepo.getRuleActionsByRuleIds(ruleIds);
+        const actionsByRuleId = new Map();
+        for (const action of ruleActions) {
+            const list = actionsByRuleId.get(action.rule_id) ?? [];
+            list.push(action);
+            actionsByRuleId.set(action.rule_id, list);
+        }
+        const routingRules = await this.alertRepo.listRoutingRules(data.organizationId);
+        const connectorRoutes = await this.connectorRepo.listRoutesByIds(data.organizationId, this.uniqueRouteIds(routingRules, ruleActions));
+        const connectorIds = new Set(this.uniqueConnectorIds(authorizedEvents, routingRules, actionsByRuleId, connectorRoutes));
+        for (const channelTargets of projectChannelEligibility.values()) {
+            for (const target of channelTargets) {
+                if (target.channelConnectorId)
+                    connectorIds.add(target.channelConnectorId);
+            }
+        }
+        const connectors = await this.connectorRepo.getByIds([...connectorIds]);
+        const connectorMap = new Map(connectors.map((c) => [c.id, c]));
+        const escalationPolicyIds = [...new Set(ruleActions.map((a) => a.escalation_policy_id).filter((id) => id !== null))];
+        const escalationSteps = await this.alertRepo.listEscalationStepsByPolicyIds(escalationPolicyIds);
+        const firstStepByPolicyId = new Map();
+        for (const step of escalationSteps) {
+            if (!firstStepByPolicyId.has(step.policy_id))
+                firstStepByPolicyId.set(step.policy_id, step);
+        }
+        const throttleStates = await this.alertRepo.getThrottleStates(ruleActions
+            .filter((a) => a.throttle_duration_seconds > 0 || a.max_notifications_per_hour !== null)
+            .map((a) => a.id));
+        const throttleByActionId = new Map(throttleStates.map((t) => [t.rule_action_id, t]));
+        // 3. Process ALL events concurrently but bounded. mapBounded guarantees one
+        //    failing event never aborts the batch.
+        const settled = await this.mapBounded(authorizedEvents, AlertBatchProcessor.EVENT_CONCURRENCY, (event) => this.processSingleEvent(event, routingRules, actionsByRuleId, connectorRoutes, connectorMap, firstStepByPolicyId, throttleByActionId, data.batchId, projectSubscriptions, projectChannelEligibility));
+        // 4. Fold results into bulk-update + bulk-insert payloads. Events dropped
+        //    by the authorization re-check are pre-seeded here as suppressed.
+        const statusUpdates = [...authz.suppressedUpdates];
+        const deliveryLogs = [...authz.suppressedAttempts];
+        const deliveredActionIds = new Set();
+        let success = 0, failure = 0, skipped = authz.suppressedUpdates.length, throttled = 0;
+        settled.forEach((res, i) => {
+            const event = authorizedEvents[i];
+            if (res.status === 'fulfilled') {
+                const outcome = res.value;
+                statusUpdates.push({
+                    id: outcome.eventId,
+                    status: outcome.newStatus,
+                    escalationPolicyId: outcome.escalationPolicyId,
+                    escalationStepNumber: outcome.escalationPolicyId !== null ? 0 : null,
+                    nextEscalationAt: outcome.nextEscalationAt,
+                });
+                deliveryLogs.push(...outcome.deliveries);
+                outcome.deliveredActionIds.forEach((id) => deliveredActionIds.add(id));
+                if (outcome.throttled)
+                    throttled += 1;
+                if (outcome.skipped)
+                    skipped += 1;
+                else if (outcome.delivered)
+                    success += 1;
+                else
+                    failure += 1;
+            }
+            else {
+                // Unexpected throw inside processing — mark event errored, count failure.
+                statusUpdates.push({ id: event.id, status: 'error' });
+                failure += 1;
+                log.error({ err: res.reason, eventId: event.id }, 'Event processing rejected');
+            }
+        });
+        // 5 + 6. Bulk update statuses, insert delivery attempts, record throttle
+        //    usage (one query each).
+        await this.alertRepo.bulkUpdateEventStatus(data.organizationId, statusUpdates);
+        await this.alertRepo.bulkInsertDeliveryAttempts(deliveryLogs);
+        await this.alertRepo.recordThrottleNotifications([...deliveredActionIds]);
+        // 7. Mark the batch complete.
+        const durationMs = Date.now() - start;
+        const status = failure === 0 ? 'completed' : success === 0 && skipped === 0 ? 'failed' : 'partial';
+        await this.alertRepo.completeBatch(data.batchId, { success, failure, skipped }, durationMs, status, failure > 0 ? `${failure}/${events.length} deliveries failed` : null);
+        log.info({ total: events.length, success, failure, skipped, throttled, durationMs, status }, 'Batch processed');
+        return { batchId: data.batchId, total: events.length, success, failure, skipped, throttled, durationMs, status };
+    }
+    /** Deliver a single event to all routed connectors concurrently. */
+    async processSingleEvent(event, routingRules, actionsByRuleId, connectorRoutes, connectorMap, firstStepByPolicyId, throttleByActionId, batchId, projectSubscriptions, projectChannelEligibility) {
+        const noEscalation = { escalationPolicyId: null, nextEscalationAt: null };
+        const routable = { severity: event.severity, source: event.source, labels: event.labels };
+        const decision = resolveRouting(routable, routingRules);
+        const ruleActions = event.rule_id ? actionsByRuleId.get(event.rule_id) ?? [] : [];
+        // Split rule actions into deliverable (throttle-passing) and throttled.
+        const now = Date.now();
+        const deliverableActions = [];
+        const throttledActions = [];
+        for (const action of ruleActions) {
+            if (!this.isDeliverAction(action))
+                continue;
+            if (this.isThrottled(action, throttleByActionId.get(action.id), now))
+                throttledActions.push(action);
+            else
+                deliverableActions.push(action);
+        }
+        const targets = this.resolveDeliveryTargets(event, decision, deliverableActions, connectorRoutes);
+        const filteredTargets = this.filterTargetsBySubscriptions(event, targets, projectSubscriptions, projectChannelEligibility);
+        const deliveries = [];
+        // Throttled targets are audited only when the same project subscription
+        // and recipient eligibility checks would otherwise permit delivery.
+        for (const action of throttledActions) {
+            const eligibleTargets = this.filterTargetsBySubscriptions(event, this.actionTargets(event, action, connectorRoutes), projectSubscriptions, projectChannelEligibility, false);
+            for (const target of eligibleTargets) {
+                deliveries.push(this.throttledAttempt(event, target, batchId));
+            }
+        }
+        if (filteredTargets.length === 0) {
+            // No route matched or no subscribed connector — nothing to deliver.
+            return {
+                eventId: event.id, newStatus: 'firing', deliveries, delivered: false,
+                skipped: true, throttled: throttledActions.length > 0, ...noEscalation, deliveredActionIds: [],
+            };
+        }
+        const payload = this.toPayload(event, decision.templateId);
+        // Optional AI enrichment (post-generation, pre-delivery): flag-gated,
+        // non-blocking, never fatal — see enrichWithAiAnalysis.
+        await this.enrichWithAiAnalysis(event, payload);
+        // Fan out to every target connector concurrently (Bulkhead per connector).
+        const perConnector = await Promise.allSettled(filteredTargets.map((target) => this.deliverToTarget(event, target, connectorMap, batchId, payload)));
+        let anyDelivered = false;
+        const deliveredActionIds = new Set();
+        perConnector.forEach((res, i) => {
+            if (res.status === 'fulfilled') {
+                deliveries.push(res.value.log);
+                if (res.value.delivered) {
+                    anyDelivered = true;
+                    const actionId = filteredTargets[i].actionId;
+                    if (actionId)
+                        deliveredActionIds.add(actionId);
+                }
+            }
+        });
+        // Initialize escalation tracking when the event fires and the rule has an
+        // escalate action with an active first step.
+        let escalationPolicyId = null;
+        let nextEscalationAt = null;
+        if (anyDelivered) {
+            const escalateAction = ruleActions.find((a) => a.action_type === 'escalate' && a.escalation_policy_id !== null);
+            if (escalateAction?.escalation_policy_id) {
+                const firstStep = firstStepByPolicyId.get(escalateAction.escalation_policy_id);
+                if (firstStep) {
+                    escalationPolicyId = escalateAction.escalation_policy_id;
+                    nextEscalationAt = new Date(now + firstStep.wait_minutes * 60_000);
+                }
+            }
+        }
+        return {
+            eventId: event.id,
+            newStatus: anyDelivered ? 'firing' : 'error',
+            deliveries,
+            delivered: anyDelivered,
+            skipped: false,
+            throttled: throttledActions.length > 0,
+            escalationPolicyId,
+            nextEscalationAt,
+            deliveredActionIds: [...deliveredActionIds],
+        };
+    }
+    /** Actions that produce direct deliveries (escalate/suppress/group do not). */
+    isDeliverAction(action) {
+        return (action.action_type === 'notify' || action.action_type === 'webhook')
+            && (action.connector_id !== null || action.route_id !== null);
+    }
+    /** Throttle check: min interval between notifications and/or per-hour cap. */
+    isThrottled(action, window, nowMs) {
+        if (action.throttle_duration_seconds <= 0 && action.max_notifications_per_hour === null)
+            return false;
+        if (!window)
+            return false;
+        if (action.throttle_duration_seconds > 0
+            && window.last_notified_at !== null
+            && new Date(window.last_notified_at).getTime() + action.throttle_duration_seconds * 1000 > nowMs) {
+            return true;
+        }
+        return action.max_notifications_per_hour !== null && window.notification_count >= action.max_notifications_per_hour;
+    }
+    throttledAttempt(event, target, batchId) {
+        return {
+            organizationId: event.organization_id,
+            eventId: event.id,
+            connectorId: target.connectorId,
+            routeId: target.routeId,
+            batchId,
+            status: 'cancelled',
+            responseStatusCode: null,
+            errorMessage: 'throttled by rule action rate limits',
+            errorCategory: 'throttled',
+            latencyMs: null,
+            externalMessageId: null,
+            projectAlertChannelId: target.projectChannel?.channelId ?? null,
+            recipientUserId: target.projectChannel?.userId ?? null,
+        };
+    }
+    async deliverToTarget(event, target, connectorMap, batchId, payload) {
+        if (target.connectorId) {
+            return this.deliverToConnector(event, target, connectorMap, batchId, payload);
+        }
+        const channel = target.projectChannel;
+        const base = {
+            organizationId: event.organization_id,
+            eventId: event.id,
+            connectorId: null,
+            routeId: null,
+            batchId,
+            status: 'pending',
+            responseStatusCode: null,
+            errorMessage: null,
+            errorCategory: null,
+            latencyMs: null,
+            externalMessageId: null,
+            projectAlertChannelId: channel?.channelId ?? null,
+            recipientUserId: channel?.userId ?? null,
+        };
+        if (!channel || channel.channelType !== 'email' || !channel.destination) {
+            return {
+                log: { ...base, status: 'failed', errorMessage: 'Unsupported direct project channel', errorCategory: 'config' },
+                delivered: false,
+            };
+        }
+        try {
+            const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+            const jobId = await this.enqueueConnectorJob(`${CONNECTOR_JOBS.send}-email`, {
+                organizationId: event.organization_id,
+                connectorId: MANAGED_EMAIL_FALLBACK_CONNECTOR_ID,
+                payload,
+                routeId: null,
+                projectChannel: channel,
+            }, {
+                priority,
+                retryLimit: 0,
+                retryDelay: 60,
+                retryBackoff: true,
+                expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
+            });
+            return {
+                log: {
+                    ...base,
+                    status: 'queued',
+                    externalMessageId: typeof jobId === 'string' ? jobId : null,
+                },
+                delivered: true,
+            };
+        }
+        catch (err) {
+            return {
+                log: {
+                    ...base,
+                    status: 'failed',
+                    errorMessage: (err instanceof Error ? err.message : 'Managed email enqueue failed').slice(0, 2000),
+                    errorCategory: 'queue',
+                },
+                delivered: false,
+            };
+        }
+    }
+    async deliverToConnector(event, target, connectorMap, batchId, payload) {
+        const { connectorId, routeId } = target;
+        const base = {
+            organizationId: event.organization_id,
+            eventId: event.id,
+            connectorId,
+            routeId,
+            batchId,
+            status: 'pending',
+            responseStatusCode: null,
+            errorMessage: null,
+            errorCategory: null,
+            latencyMs: null,
+            externalMessageId: null,
+            projectAlertChannelId: target.projectChannel?.channelId ?? null,
+            recipientUserId: target.projectChannel?.userId ?? null,
+        };
+        if (!connectorId) {
+            return { log: { ...base, status: 'failed', errorMessage: 'Connector target is missing an id', errorCategory: 'config' }, delivered: false };
+        }
+        const connector = connectorMap.get(connectorId);
+        if (!connector) {
+            return { log: { ...base, status: 'failed', errorMessage: 'Connector not found or deleted', errorCategory: 'config' }, delivered: false };
+        }
+        try {
+            const queueName = `${CONNECTOR_JOBS.send}-${connector.type}`;
+            const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+            const projectChannel = target.projectChannel;
+            const targetPayload = projectChannel ? {
+                ...payload,
+                metadata: {
+                    ...(payload.metadata ?? {}),
+                    projectChannel: {
+                        channelId: projectChannel.channelId,
+                        userId: projectChannel.userId,
+                        channelType: projectChannel.channelType,
+                        ...projectChannel.metadata,
+                        destination: projectChannel.destination,
+                    },
+                },
+            } : payload;
+            const jobId = await this.enqueueConnectorJob(queueName, {
+                organizationId: event.organization_id,
+                connectorId,
+                payload: targetPayload,
+                routeId,
+                ...(projectChannel ? { projectChannel } : {}),
+            }, {
+                priority,
+                retryLimit: 0,
+                retryDelay: 60,
+                retryBackoff: true,
+                expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
+            });
+            return {
+                log: {
+                    ...base,
+                    status: 'queued',
+                    externalMessageId: typeof jobId === 'string' ? jobId : null,
+                },
+                delivered: true,
+            };
+        }
+        catch (err) {
+            return {
+                log: {
+                    ...base,
+                    status: 'failed',
+                    errorMessage: (err instanceof Error ? err.message : 'Connector enqueue failed').slice(0, 2000),
+                    errorCategory: 'queue',
+                },
+                delivered: false,
+            };
+        }
+    }
+    /**
+     * Re-verify, straight from the database on every run (never cached), that
+     * the organization still exists and that every event's project still exists,
+     * belongs to the organization and is active. Events failing the check are
+     * suppressed instead of delivered, with a cancelled delivery attempt
+     * (error_category 'authz') recorded for audit.
+     *
+     * NOTE: delivery targets in this pipeline are connectors, not individual
+     * users — there is no per-user recipient materialization, so organization +
+     * project eligibility is the maximal recipient-level filter available here.
+     */
+    async verifyBatchAuthorization(events, batchId, organizationId, log) {
+        const orgResult = await pool.query('SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL', [organizationId]);
+        const orgEligible = (orgResult.rowCount ?? 0) > 0;
+        const projectIds = [...new Set(events.map((e) => e.project_id).filter((id) => id !== null))];
+        const activeProjects = new Set();
+        if (orgEligible && projectIds.length > 0) {
+            const projectsResult = await pool.query(`SELECT id FROM projects
+          WHERE id = ANY($2::uuid[]) AND org_id = $1 AND deleted_at IS NULL AND status = 'active'`, [organizationId, projectIds]);
+            for (const row of projectsResult.rows)
+                activeProjects.add(row.id);
+        }
+        const eligible = [];
+        const suppressedUpdates = [];
+        const suppressedAttempts = [];
+        for (const event of events) {
+            if (orgEligible && (event.project_id === null || activeProjects.has(event.project_id))) {
+                eligible.push(event);
+                continue;
+            }
+            suppressedUpdates.push({ id: event.id, status: 'suppressed' });
+            suppressedAttempts.push({
+                organizationId: event.organization_id,
+                eventId: event.id,
+                connectorId: null,
+                routeId: null,
+                batchId,
+                status: 'cancelled',
+                responseStatusCode: null,
+                errorMessage: 'delivery dropped: organization or project no longer eligible',
+                errorCategory: 'authz',
+                latencyMs: null,
+                externalMessageId: null,
+            });
+        }
+        if (suppressedUpdates.length > 0) {
+            log.info({ dropped: suppressedUpdates.length, total: events.length }, 'alert delivery: events suppressed by authorization re-check');
+        }
+        return { eligible, suppressedUpdates, suppressedAttempts };
+    }
+    /**
+     * FUTURE AI INTEGRATION POINT — post-generation, pre-delivery enrichment.
+     * Gated by the per-org/project feature flag `ai_alert_analysis`; runs the
+     * registered analysis hook with a hard 2s budget. Any failure, timeout, or
+     * empty result leaves the payload untouched and delivery proceeds.
+     */
+    async enrichWithAiAnalysis(event, payload) {
+        let timer;
+        try {
+            const enabled = await isEnabled(FEATURE_FLAGS.AI_ALERT_ANALYSIS, {
+                organizationId: event.organization_id,
+                projectId: event.project_id,
+            });
+            if (!enabled)
+                return;
+            const result = await Promise.race([
+                getAlertAnalysisHook().analyze({
+                    alertEventId: event.id,
+                    organizationId: event.organization_id,
+                    projectId: event.project_id,
+                    payload: event.payload,
+                }),
+                new Promise((resolve) => {
+                    timer = setTimeout(() => resolve(null), 2000);
+                }),
+            ]);
+            if (result !== null) {
+                payload.metadata = { ...payload.metadata, ai: result };
+            }
+        }
+        catch (err) {
+            this.logger.debug({ err, alertEventId: event.id }, 'AI alert analysis skipped (non-fatal)');
+        }
+        finally {
+            if (timer !== undefined)
+                clearTimeout(timer);
+        }
+    }
+    toPayload(event, templateId) {
+        const p = event.payload;
+        const title = typeof p.title === 'string' ? p.title : `Alert: ${event.source}`;
+        const body = typeof p.message === 'string' ? p.message
+            : typeof p.body === 'string' ? p.body
+                : `Severity ${event.severity} alert from ${event.source}`;
+        return {
+            notificationType: 'alert',
+            severity: event.severity,
+            title,
+            body,
+            correlationId: event.id,
+            dedupKey: event.fingerprint,
+            metadata: { eventId: event.id, ruleId: event.rule_id, source: event.source, labels: event.labels, templateId },
+        };
+    }
+    uniqueConnectorIds(events, routingRules, actionsByRuleId, connectorRoutes) {
+        const ids = new Set();
+        for (const event of events) {
+            const decision = resolveRouting({ severity: event.severity, source: event.source, labels: event.labels }, routingRules);
+            const actions = event.rule_id ? actionsByRuleId.get(event.rule_id) ?? [] : [];
+            this.resolveDeliveryTargets(event, decision, actions.filter((a) => this.isDeliverAction(a)), connectorRoutes)
+                .forEach((target) => {
+                if (target.connectorId)
+                    ids.add(target.connectorId);
+            });
+        }
+        return [...ids];
+    }
+    uniqueRouteIds(routingRules, ruleActions) {
+        const ids = new Set();
+        for (const rule of routingRules) {
+            for (const routeId of rule.target_route_ids ?? [])
+                ids.add(routeId);
+        }
+        for (const action of ruleActions) {
+            if (action.route_id)
+                ids.add(action.route_id);
+        }
+        return [...ids];
+    }
+    /**
+     * Merge routing-rule targets and rule-action targets, deduplicated per
+     * connector+route pair. Rule-action targets win the dedup so throttle
+     * accounting stays attached to the action.
+     */
+    resolveDeliveryTargets(event, decision, actions, connectorRoutes) {
+        const targets = new Map();
+        for (const connectorId of decision.connectorIds) {
+            targets.set(`${connectorId}:direct`, { connectorId, routeId: null, actionId: null });
+        }
+        const context = this.routeMatchContext(event);
+        const routeIdSet = new Set(decision.routeIds);
+        for (const route of connectorRoutes) {
+            if (!routeIdSet.has(route.id))
+                continue;
+            if (!this.routeMatches(route, context))
+                continue;
+            targets.set(`${route.connector_id}:${route.id}`, {
+                connectorId: route.connector_id,
+                routeId: route.id,
+                actionId: null,
+            });
+        }
+        for (const action of actions) {
+            for (const target of this.actionTargets(event, action, connectorRoutes)) {
+                targets.set(`${target.connectorId}:${target.routeId ?? 'direct'}`, target);
+            }
+        }
+        return [...targets.values()];
+    }
+    /** Targets produced by a single rule action (direct connector and/or route). */
+    actionTargets(event, action, connectorRoutes) {
+        const targets = [];
+        if (action.connector_id) {
+            targets.push({ connectorId: action.connector_id, routeId: null, actionId: action.id });
+        }
+        if (action.route_id) {
+            const route = connectorRoutes.find((r) => r.id === action.route_id);
+            if (route && this.routeMatches(route, this.routeMatchContext(event))) {
+                targets.push({ connectorId: route.connector_id, routeId: route.id, actionId: action.id });
+            }
+        }
+        return targets;
+    }
+    routeMatches(route, context) {
+        if (route.project_id !== null && route.project_id !== context.projectId)
+            return false;
+        if (route.environment !== null && route.environment !== context.environment)
+            return false;
+        if (route.severity !== null && route.severity !== context.severity)
+            return false;
+        return route.event_type === context.eventType;
+    }
+    routeMatchContext(event) {
+        const payload = event.payload;
+        const projectId = this.firstString(payload.projectId, payload.project_id, event.labels.projectId, event.labels.project_id);
+        const environment = this.toRouteEnvironment(this.firstString(payload.environment, payload.env, event.labels.environment, event.labels.env));
+        const eventType = this.firstString(payload.eventType, payload.event_type, payload.notificationType, payload.type, event.source) ?? event.source;
+        return {
+            projectId,
+            environment,
+            eventType,
+            severity: event.severity,
+        };
+    }
+    firstString(...values) {
+        for (const value of values) {
+            if (typeof value === 'string' && value.trim().length > 0)
+                return value.trim();
+        }
+        return null;
+    }
+    toRouteEnvironment(value) {
+        return value === 'development' || value === 'staging' || value === 'production' ? value : null;
+    }
+    eventCategory(event) {
+        const payload = event.payload;
+        return this.firstString(payload.category, event.labels.category, event.source) ?? event.source;
+    }
+    channelEligibilityKey(request) {
+        return JSON.stringify([
+            request.organizationId,
+            request.projectId,
+            request.category,
+            request.severity,
+        ]);
+    }
+    /**
+     * Organization-level events retain the existing routing behavior. Project
+     * events fail closed unless the resolver confirms the same tenant/project,
+     * active members, and an eligible connector subscription. When the optional
+     * authoritative channel resolver is configured, a connector must also have
+     * at least one eligible recipient/channel row for the exact event tuple.
+     */
+    filterTargetsBySubscriptions(event, targets, projectSubscriptions, projectChannelEligibility, allowChannelMaterialization = true) {
+        if (!event.project_id)
+            return targets;
+        if (!this.projectSubscriptionResolver)
+            return [];
+        const routing = projectSubscriptions.get(event.project_id);
+        if (!routing || routing.projectId !== event.project_id || routing.organizationId !== event.organization_id)
+            return [];
+        const activeMemberIds = new Set(routing.members.map((member) => member.userId));
+        if (activeMemberIds.size === 0)
+            return [];
+        const category = this.eventCategory(event);
+        const allowedConnectorIds = new Set(routing.subscriptions
+            .filter((subscription) => subscription.enabled
+            && subscription.alertCategories.some((candidate) => candidate === 'all' || candidate === category)
+            && this.meetsSeverityThreshold(event.severity, subscription.severityThreshold)
+            && (subscription.memberIds.length === 0
+                || subscription.memberIds.some((memberId) => activeMemberIds.has(memberId))))
+            .map((subscription) => subscription.connectorId));
+        if (!this.projectSubscriptionResolver.resolveImmediateDeliveryTargets) {
+            return targets.filter((target) => target.connectorId !== null && allowedConnectorIds.has(target.connectorId));
+        }
+        const channelTargets = projectChannelEligibility.get(this.channelEligibilityKey({
+            organizationId: event.organization_id,
+            projectId: event.project_id,
+            category,
+            severity: event.severity,
+        })) ?? [];
+        const materialized = new Map();
+        for (const channel of channelTargets) {
+            if (!activeMemberIds.has(channel.userId) || !channel.channelId)
+                continue;
+            const projectChannel = {
+                userId: channel.userId,
+                channelId: channel.channelId,
+                channelType: channel.channelType ?? 'connector',
+                destination: channel.memberDestination ?? null,
+                metadata: channel.channelMetadata ?? {},
+            };
+            if (channel.channelConnectorId === null) {
+                if (allowChannelMaterialization && projectChannel.channelType === 'email' && projectChannel.destination) {
+                    materialized.set(`direct:${channel.userId}:${channel.channelId}`, {
+                        connectorId: null, routeId: null, actionId: null, projectChannel,
+                    });
+                }
+                continue;
+            }
+            if (channel.channelConnectorId !== channel.subscriptionConnectorId
+                || !allowedConnectorIds.has(channel.channelConnectorId))
+                continue;
+            const baseTargets = targets.filter((target) => target.connectorId === channel.channelConnectorId);
+            if (baseTargets.length === 0 && allowChannelMaterialization) {
+                materialized.set(`${channel.channelConnectorId}:${channel.userId}:${channel.channelId}:direct`, {
+                    connectorId: channel.channelConnectorId,
+                    routeId: null,
+                    actionId: null,
+                    projectChannel,
+                });
+            }
+            else {
+                for (const target of baseTargets) {
+                    materialized.set(`${channel.channelConnectorId}:${channel.userId}:${channel.channelId}:${target.routeId ?? 'direct'}`, {
+                        ...target,
+                        projectChannel,
+                    });
+                }
+            }
+        }
+        return [...materialized.values()];
+    }
+    meetsSeverityThreshold(severity, threshold) {
+        const order = { info: 0, warning: 1, error: 2, critical: 3 };
+        const severityRank = order[severity];
+        const thresholdRank = order[threshold];
+        return severityRank !== undefined && thresholdRank !== undefined && severityRank >= thresholdRank;
+    }
+}
+//# sourceMappingURL=batch-processor.js.map

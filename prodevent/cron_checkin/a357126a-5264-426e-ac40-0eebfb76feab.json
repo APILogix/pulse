@@ -1,0 +1,51 @@
+{
+  "events": [
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "cron_checkin",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "status": "error",
+      "eventId": "bc349329-df8c-47ff-97be-f37a2431abec",
+      "duration": 110,
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "dd3fe9e9-34d1-4a5c-b8a0-d5b2a1c76c3b",
+      "sessionId": "e938702d-7a51-4130-aa36-36396498ef17",
+      "timestamp": 1785610770629,
+      "environment": "production",
+      "monitorSlug": "demo-cron-failure"
+    }
+  ],
+  "metadata": {
+    "batchId": "65f43fc0-1b66-4f38-b95a-a2427166f163",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 1,
+    "receivedAt": "2026-08-01T19:00:03.070Z",
+    "environment": "production"
+  },
+  "eventType": "cron_checkin",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

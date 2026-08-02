@@ -1,0 +1,305 @@
+{
+  "events": [
+    {
+      "avg": 20,
+      "max": 20,
+      "min": 20,
+      "sum": 20,
+      "rate": 0,
+      "tags": {
+        "path": "/users",
+        "method": "POST"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1835",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1531"
+      },
+      "count": 1,
+      "value": 20,
+      "eventId": "55558a12-7d35-45e3-91ba-99bb52a0e720",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610444669,
+      "metricName": "http.requests.total",
+      "metricType": "counter"
+    },
+    {
+      "avg": 20,
+      "max": 20,
+      "min": 20,
+      "sum": 20,
+      "rate": 0,
+      "tags": {
+        "path": "/scope/user",
+        "method": "POST"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1835",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1531"
+      },
+      "count": 1,
+      "value": 20,
+      "eventId": "73a880d6-c2a2-42a8-8204-71dbf8e770bf",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610444669,
+      "metricName": "http.requests.total",
+      "metricType": "counter"
+    },
+    {
+      "avg": 0.5,
+      "max": 2,
+      "min": 0,
+      "sum": 10,
+      "rate": 0,
+      "tags": {
+        "table": "users",
+        "operation": "insert"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1835",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1531"
+      },
+      "count": 20,
+      "value": 0.5,
+      "eventId": "dad9229c-2715-4763-b496-e19c32117532",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610444669,
+      "metricName": "db.query.duration_ms",
+      "metricType": "histogram"
+    },
+    {
+      "avg": 20,
+      "max": 20,
+      "min": 20,
+      "sum": 20,
+      "rate": 0,
+      "tags": {},
+      "type": "metric",
+      "user": {
+        "id": "user-1835",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1531"
+      },
+      "count": 1,
+      "value": 20,
+      "eventId": "e80a5049-c68d-4ccf-8e3c-46e2b0007e5f",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610444669,
+      "metricName": "db.users.created",
+      "metricType": "counter"
+    },
+    {
+      "avg": 20,
+      "max": 20,
+      "min": 20,
+      "sum": 20,
+      "rate": 0,
+      "tags": {
+        "path": "/users",
+        "method": "POST"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1856",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1552"
+      },
+      "count": 1,
+      "value": 20,
+      "eventId": "ba161081-f6e8-4c0b-9fb6-b[phone]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610454861,
+      "metricName": "http.requests.total",
+      "metricType": "counter"
+    },
+    {
+      "avg": 21,
+      "max": 21,
+      "min": 21,
+      "sum": 21,
+      "rate": 0,
+      "tags": {
+        "path": "/scope/user",
+        "method": "POST"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1856",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1552"
+      },
+      "count": 1,
+      "value": 21,
+      "eventId": "7bf97a71-0a25-4c7e-b3d3-02b246aa0e7c",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610454861,
+      "metricName": "http.requests.total",
+      "metricType": "counter"
+    },
+    {
+      "avg": 2.3,
+      "max": 24,
+      "min": 0,
+      "sum": 46,
+      "rate": 0,
+      "tags": {
+        "table": "users",
+        "operation": "insert"
+      },
+      "type": "metric",
+      "user": {
+        "id": "user-1856",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1552"
+      },
+      "count": 20,
+      "value": 2.3,
+      "eventId": "721bdbf5-1fb2-4abf-ae36-3005dd1e2d8d",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610454861,
+      "metricName": "db.query.duration_ms",
+      "metricType": "histogram"
+    },
+    {
+      "avg": 20,
+      "max": 20,
+      "min": 20,
+      "sum": 20,
+      "rate": 0,
+      "tags": {},
+      "type": "metric",
+      "user": {
+        "id": "user-1856",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser1552"
+      },
+      "count": 1,
+      "value": 20,
+      "eventId": "fe01b75f-be8d-4f12-8158-28e8295a5e8a",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610454861,
+      "metricName": "db.users.created",
+      "metricType": "counter"
+    }
+  ],
+  "metadata": {
+    "batchId": "730b8bb6-b53d-4474-966e-18e84e6b13a9",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 0,
+    "receivedAt": "2026-08-01T18:54:24.718Z",
+    "environment": "production"
+  },
+  "eventType": "metric",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

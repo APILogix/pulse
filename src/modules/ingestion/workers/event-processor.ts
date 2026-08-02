@@ -179,6 +179,9 @@ export class EventProcessor {
       },
       'ingestion event type picked',
     );
+    console.log('--- INCOMING PAYLOAD ---');
+    console.log(JSON.stringify(rawEvents, null, 2));
+    console.log('------------------------');
 
     // 1) Validate + 2) assign deterministic identity.
     const scoped: ScopedEvent[] = [];

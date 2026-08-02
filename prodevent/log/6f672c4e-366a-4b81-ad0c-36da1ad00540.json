@@ -1,0 +1,3539 @@
+{
+  "events": [
+    {
+      "args": [
+        {
+          "userId": "user-1222"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1222",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser918"
+      },
+      "level": "info",
+      "eventId": "9cdc69e7-dfa7-41a1-a9de-fc1e3621cce3",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3f3edc46-0b69-4d41-8665-7c69518650b0",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610138708
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1222",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser918"
+      },
+      "level": "info",
+      "spanId": "7ceefdd750977d1f",
+      "eventId": "987b5c1b-d03c-4f09-8cf7-bd73b0bf9c34",
+      "message": "[consumer-app] POST /scope/user -> 200 (3ms)",
+      "traceId": "fb767e6fe5ab2fa465cb590e077fed06",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3f3edc46-0b69-4d41-8665-7c69518650b0",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610138710
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1226
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1222",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser918"
+      },
+      "level": "info",
+      "eventId": "583faa16-342a-4299-b953-ac0a6c4edee1",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f49907d7-aa87-4622-84ca-f32c5171ebde",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610138757
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1222",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser918"
+      },
+      "level": "info",
+      "spanId": "d7936faa1d8c07ba",
+      "eventId": "f0a6f62b-d279-4d1e-a22a-d0ebd792decd",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "0c47af85da5ca7cb611a40d2c8ef507b",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f49907d7-aa87-4622-84ca-f32c5171ebde",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610138758
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1224"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1224",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser920"
+      },
+      "level": "info",
+      "eventId": "dcc27252-c559-48f6-beef-6dde89196b42",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "06595f93-e19c-4050-a4a0-1a2951f65dc6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139154
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1224",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser920"
+      },
+      "level": "info",
+      "spanId": "5ce37350848daeb2",
+      "eventId": "72f001a9-9073-48a1-8268-49378e6d5022",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "808112ad35fead8b1d3b7af037cb4160",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "06595f93-e19c-4050-a4a0-1a2951f65dc6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139156
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1227
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1224",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser920"
+      },
+      "level": "info",
+      "eventId": "4667f9b7-24ae-490a-9ae5-a2ac89d6d5f6",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9859e3bb-0c12-441c-8457-1c8ed0e843d1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139251
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1224",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser920"
+      },
+      "level": "info",
+      "spanId": "a16f88f19cb78496",
+      "eventId": "96b58460-e257-4fb6-8905-7fcc849804f8",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "47794e9750ee6db3830f2cc3399d09f0",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9859e3bb-0c12-441c-8457-1c8ed0e843d1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139252
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1226"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1226",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser922"
+      },
+      "level": "info",
+      "eventId": "ad[phone]-4caa-ba17-c321fc8fcdeb",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "993e1a83-e2f2-4ba9-9341-e3d6fa34fa62",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139581
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1226",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser922"
+      },
+      "level": "info",
+      "spanId": "297ad635e9eea076",
+      "eventId": "2541313e-5f96-45d3-a433-da4e4a66f235",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "695b9a55901a1e225946419d5c7d6ef7",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "993e1a83-e2f2-4ba9-9341-e3d6fa34fa62",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139582
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1228
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1226",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser922"
+      },
+      "level": "info",
+      "eventId": "5a496b18-1dce-4f98-a844-d3584b58fd5b",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4b5560aa-a4a0-45a5-902a-eff3f0923a8a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139758
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1226",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser922"
+      },
+      "level": "info",
+      "spanId": "3b5bf691d6e0f610",
+      "eventId": "b8b15c46-de0c-4336-a7ea-4b8ebba3bb25",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "8f7a18b8b5346a0623b059eb527c1aa8",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4b5560aa-a4a0-45a5-902a-eff3f0923a8a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610139764
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1227"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1227",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser923"
+      },
+      "level": "info",
+      "eventId": "726ffffd-579d-4566-b8af-03fb3ac24ca6",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f927a91b-1362-4724-883c-b582982e78ac",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140045
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1227",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser923"
+      },
+      "level": "info",
+      "spanId": "78d69b3b2a916432",
+      "eventId": "0d339415-d651-4cbf-af6c-23b334fcdf3b",
+      "message": "[consumer-app] POST /scope/user -> 200 (3ms)",
+      "traceId": "77a6df8b02c0de948a41c3fc86a4fdfe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f927a91b-1362-4724-883c-b582982e78ac",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140050
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1225"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "eventId": "8cc6ac81-4854-458d-8435-98e5f2b8e229",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "03dfcf57-5312-4fc5-b227-d507201d5f0d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140301
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "spanId": "79dee72810fb923b",
+      "eventId": "3e72941b-494d-480c-b8e3-3655762a4338",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "ad41dc0ee7680c71db5b083dd18fd7bb",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "03dfcf57-5312-4fc5-b227-d507201d5f0d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140302
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1229
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "eventId": "be4bb6ae-c49f-4d50-b635-3f0d7bb87fb3",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "bfa06d9b-b656-4d64-b879-57a7e1e54d9d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140307
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "spanId": "d54815c5477b337f",
+      "eventId": "a1511230-462e-49aa-9fb4-b3d30a40ee07",
+      "message": "[consumer-app] POST /users -> 201 (1ms)",
+      "traceId": "66b653e93b206a371602ba807e4c9559",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "bfa06d9b-b656-4d64-b879-57a7e1e54d9d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140309
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1230
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "eventId": "6e8fc18f-7cf3-4673-91f1-8548da7fd3c8",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "890ebb38-4902-45f9-a121-b0b53b20658a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140752
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "spanId": "e884ffb7bd158104",
+      "eventId": "c6d13933-e08b-44d6-86bf-11d215985081",
+      "message": "[consumer-app] POST /users -> 201 (1ms)",
+      "traceId": "a935ef56ce222fc4d9560d986da80bdb",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "890ebb38-4902-45f9-a121-b0b53b20658a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610140755
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1231
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "eventId": "4bb4f0cf-4e53-4915-b680-0db4aa808bd5",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "797a84e5-ad75-4404-8d57-0c3ad9359cdb",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141239
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1225",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser921"
+      },
+      "level": "info",
+      "spanId": "bde3ba51ce07ed3b",
+      "eventId": "2873470e-b6a8-4b36-a3ff-d5c004774ebc",
+      "message": "[consumer-app] POST /users -> 201 (1ms)",
+      "traceId": "8c10b8f73b6d74f46726a57254c23252",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "797a84e5-ad75-4404-8d57-0c3ad9359cdb",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141244
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1228"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1228",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser924"
+      },
+      "level": "info",
+      "eventId": "10981cde-3ee5-4fab-848c-edcb2aa45b8e",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4757b7f4-e5ec-4e54-b334-1aeae7f20507",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141246
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1228",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser924"
+      },
+      "level": "info",
+      "spanId": "cbdfc1798b348a85",
+      "eventId": "c7c9350a-34b4-42ce-b[phone]c78ee",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "38a1c91073c8cf90082f9295bcdccb90",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4757b7f4-e5ec-4e54-b334-1aeae7f20507",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141250
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1230"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1230",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser926"
+      },
+      "level": "info",
+      "eventId": "33928048-ee64-4825-adbe[phone]4b",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "fdcb4763-a2d4-40d3-9eb8-e96b180d23b4",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141470
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1230",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser926"
+      },
+      "level": "info",
+      "spanId": "728b4b83baed180a",
+      "eventId": "b14c1797-c57a-4ed8-9eac-4cf7f759cb8c",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "0ee7117294d63739f1e71aa761d789ce",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "fdcb4763-a2d4-40d3-9eb8-e96b180d23b4",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141472
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1232
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1230",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser926"
+      },
+      "level": "info",
+      "eventId": "d8cdca31-8bb3-482e-aefa-18caaf219738",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "92db2844-bb1f-42e3-9d6f-a66ae9ca9262",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141752
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1230",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser926"
+      },
+      "level": "info",
+      "spanId": "8c3c3a3f1e3fb418",
+      "eventId": "08852daa-ee75-4916-b82f-83a26ff569a3",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "ca2861889cc931e9d3c1650820bae6b9",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "92db2844-bb1f-42e3-9d6f-a66ae9ca9262",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141754
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1231"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1231",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser927"
+      },
+      "level": "info",
+      "eventId": "904e1897-88db-45db-aa35-1e5aa22520ca",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "783c1e99-e89d-4166-8a07-e8a0b76e1cdd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141985
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1231",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser927"
+      },
+      "level": "info",
+      "spanId": "452a2443a4542ea5",
+      "eventId": "327124fa-f381-4b30-bbf1-56443a378e2c",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "b1d216e6cb42d19c648c569ec5dd52a6",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "783c1e99-e89d-4166-8a07-e8a0b76e1cdd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610141987
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1233
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1231",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser927"
+      },
+      "level": "info",
+      "eventId": "551b99ac-0a9d-4b76-a93f-3fd11a435d56",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "d2628e1c-e569-439f-b830-6a30be8e2656",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142253
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1231",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser927"
+      },
+      "level": "info",
+      "spanId": "af47b24cd74c4b63",
+      "eventId": "834ebeed-a8d1-48c6-951e-8d9b6d4699e7",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "7828e2fd66e1748cb745b46ac1624af9",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "d2628e1c-e569-439f-b830-6a30be8e2656",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142254
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1229"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1229",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser925"
+      },
+      "level": "info",
+      "eventId": "d25965db-908e-443f-bef4-d935a8207870",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "096d6a19-1f23-4f0e-9ed3-bdf2c0821d7d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142299
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1229",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser925"
+      },
+      "level": "info",
+      "spanId": "1f724f3e1800f31d",
+      "eventId": "e2d7afd6-9713-47b9-8940-32f1a1c75743",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "d57e9c66f35b168c8206cbc877305a2e",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "096d6a19-1f23-4f0e-9ed3-bdf2c0821d7d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142301
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1234
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1229",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser925"
+      },
+      "level": "info",
+      "eventId": "3a9bd180-8143-448c-aac9-ef278f0c0f1e",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "001e313f-01e6-4949-a46b-d18f27ef4fe8",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142752
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1229",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser925"
+      },
+      "level": "info",
+      "spanId": "[phone]14e3aa",
+      "eventId": "af33a40d-ccf0-4e4b-8aec-9ec1766dbb0c",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "8d3265bd751e13c7ee8e260936050e7b",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "001e313f-01e6-4949-a46b-d18f27ef4fe8",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142753
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1233"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1233",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser929"
+      },
+      "level": "info",
+      "eventId": "12468b72-7f9e-4f1c-85ab-40d38175fbaa",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8cc9f857-6187-43d2-83c1-fb8fad0740b1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142888
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1233",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser929"
+      },
+      "level": "info",
+      "spanId": "7af28fb1cdd25705",
+      "eventId": "4ed13316-0509-475d-ae72-f4f377e53afe",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "2420371cb0ac7aa8fca38a60159f7c5c",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8cc9f857-6187-43d2-83c1-fb8fad0740b1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610142889
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1235
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1233",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser929"
+      },
+      "level": "info",
+      "eventId": "f0fe4108-33e8-4b93-94a4-096b057c90e7",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3ee21385-a60f-40b3-8c4f-3ea68047b50f",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143254
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1233",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser929"
+      },
+      "level": "info",
+      "spanId": "cef1e69c71f91d92",
+      "eventId": "1e9c13fa-942d-4c27-b04b-f68bad71d72f",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "aac52bb0bb94fd03843e8af6dce9ada6",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3ee21385-a60f-40b3-8c4f-3ea68047b50f",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143256
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1232"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1232",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser928"
+      },
+      "level": "info",
+      "eventId": "5846ccd7-c4ed-428e-b5ff-6fb37872aa44",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f8973ef1-0ed3-430e-aaa3-476b6a2a6a82",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143403
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1232",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser928"
+      },
+      "level": "info",
+      "spanId": "929434be25b331df",
+      "eventId": "6717b5ec-956d-4988-9c6c-ea3c37ba2559",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "bddbdda70f8527325b5773ec50f45006",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f8973ef1-0ed3-430e-aaa3-476b6a2a6a82",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143408
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1236
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1232",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser928"
+      },
+      "level": "info",
+      "eventId": "5291219f-038e-4e70-985b-b008e1ac75d4",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8c883acd-6df2-4f84-a271-f5ef983c8368",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143745
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1232",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser928"
+      },
+      "level": "info",
+      "spanId": "b92e8db997ba0aa1",
+      "eventId": "1b7853df-6245-45fd-956a-b9112c1b739c",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "d94705ec21c257bf8348de8d0c2e2eb3",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8c883acd-6df2-4f84-a271-f5ef983c8368",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143746
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1235"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1235",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser931"
+      },
+      "level": "info",
+      "eventId": "2358381a-30d2-4d96-b67e-15eca4486b56",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "7f8919ad-027e-4871-a338-9f1401d6fc78",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143921
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1235",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser931"
+      },
+      "level": "info",
+      "spanId": "7883a5486e486fa9",
+      "eventId": "1a8d9a9e-36a8-4b61-8749-76242e3f19f3",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "59bbbdc8e0fb61d23d51a51331e3d766",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "7f8919ad-027e-4871-a338-9f1401d6fc78",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610143922
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1237
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1235",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser931"
+      },
+      "level": "info",
+      "eventId": "6b49e806-1ec9-4490-859b-637d4bc34ebc",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "411af413-7578-4b8e-a24a-8f4fa2f5bfee",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144252
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1235",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser931"
+      },
+      "level": "info",
+      "spanId": "70ed29069cacf4c4",
+      "eventId": "d1e67d06-528e-4d4e-8def-288c2ce55e50",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "bad9b0d[phone]240116dbfc07377",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "411af413-7578-4b8e-a24a-8f4fa2f5bfee",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144253
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1234"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "eventId": "e981e020-9507-4d2a-bb6a-d3e63e73bbd0",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "fd1ae9ba-88ab-49c5-a5d5-25c5f6e74d61",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144724
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "spanId": "f742853db15b8678",
+      "eventId": "112109ff-53c0-4c51-8e2d-45f33bcb8e1f",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "c1b0adef8156e81e94e4126612bade00",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "fd1ae9ba-88ab-49c5-a5d5-25c5f6e74d61",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144726
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1238
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "eventId": "818cd96d-5d09-471c-ad50-bec979b86be3",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5bcdc4a3-f42d-44f5-bf6d-3cba2d8bd09b",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144743
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "spanId": "6dc0245f56dff9d7",
+      "eventId": "31dd6e60-1abf-4f0c-a42f-5ef18efa887c",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "0a9b13bdb34257ff2acfd1062e302f6f",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5bcdc4a3-f42d-44f5-bf6d-3cba2d8bd09b",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610144745
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1239
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "eventId": "08f7031b-0ade-455a-8c12-894f9a3ff774",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5995f7e0-98e1-486e-9f39-211cd0c02815",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145410
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1234",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser930"
+      },
+      "level": "info",
+      "spanId": "dc457e1bb2b06391",
+      "eventId": "e33bdedd-8420-48a0-937c-46bb2aabf7c6",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "d38ac40736c1be1ced099b11305ef2cb",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5995f7e0-98e1-486e-9f39-211cd0c02815",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145412
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1236"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1236",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser932"
+      },
+      "level": "info",
+      "eventId": "d0f06a7c-03a4-4fce-b582-59e8b0b6223d",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "0fdbd082-5980-4711-a9c9-bc785b007946",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145480
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1236",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser932"
+      },
+      "level": "info",
+      "spanId": "cde1cbaadfc35a3b",
+      "eventId": "f8217b23-052e-47fd-9e94-365f3e9c6658",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "59ce9b700d25c432146f34b8760e1d10",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "0fdbd082-5980-4711-a9c9-bc785b007946",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145483
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1240
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1236",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser932"
+      },
+      "level": "info",
+      "eventId": "9f7b3292-8b72-41fc-83eb-0e93cd9477cc",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "eb576723-15d5-4787-91d0-358db2be1f91",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145780
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1236",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser932"
+      },
+      "level": "info",
+      "spanId": "b84cdf2a1e0fae47",
+      "eventId": "1cecb4c0-b5b4-452c-bb69-d50a3ca59fa4",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "0689ab3e84db2ea9508dae4cef91c838",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "eb576723-15d5-4787-91d0-358db2be1f91",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145782
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1238"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1238",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser934"
+      },
+      "level": "info",
+      "eventId": "02b40e24-7eea-4f6d-b39f-58195bf97259",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9d5a0458-b2b9-4223-836b-33a9d8dab904",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145880
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1238",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser934"
+      },
+      "level": "info",
+      "spanId": "213a02721f90949f",
+      "eventId": "f88719e4-8a0e-4251-b8f6-ca72e6a6f79f",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "c7bfc2f28b8c73bac7b08008e92d3166",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9d5a0458-b2b9-4223-836b-33a9d8dab904",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610145881
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1237"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1237",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser933"
+      },
+      "level": "info",
+      "eventId": "1c61936e-19b7-4a08-8d81-1add5207fd18",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "10c6d57f-e3a4-4a03-8d11-93375d21f4a6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146001
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1237",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser933"
+      },
+      "level": "info",
+      "spanId": "dedf8099920c213c",
+      "eventId": "aa5f815c-9e0d-4d8a-a8c2-e73aa1a567ad",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "c431f7860d18c22553cfa3e99958fc8a",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "10c6d57f-e3a4-4a03-8d11-93375d21f4a6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146002
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1241
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1237",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser933"
+      },
+      "level": "info",
+      "eventId": "64b05f06-159b-4130-9b9b-9c4a0c34e87a",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "96b917f8-d773-43eb-b4c8-ac9f59af700a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146268
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (17ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1237",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser933"
+      },
+      "level": "info",
+      "spanId": "c404d4fd7a032f61",
+      "eventId": "54dd8b18-f593-4dc0-838a-906ad9c7bc23",
+      "message": "[consumer-app] POST /users -> 201 (17ms)",
+      "traceId": "43341add1da8eba821411af10e88ca6a",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "96b917f8-d773-43eb-b4c8-ac9f59af700a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146270
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1239"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1239",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser935"
+      },
+      "level": "info",
+      "eventId": "cfdcd2bd-037a-40c7-a38a-e1a5b7591849",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9e1f0384-0993-4e21-9b8a-e30a07abf9ba",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146634
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1239",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser935"
+      },
+      "level": "info",
+      "spanId": "f3c9b4980767c555",
+      "eventId": "55c5d708-ddf5-4b8b-961a-22df7012df2a",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "87b79958e85ab94fedaa6d2917e1fc29",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "9e1f0384-0993-4e21-9b8a-e30a07abf9ba",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146636
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1242
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1239",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser935"
+      },
+      "level": "info",
+      "eventId": "0642c68b-fd26-4dfc-9b86-e24cf23802b0",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8eea0ab5-a7ef-42c0-a7ac-d988ced6a419",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146756
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1239",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser935"
+      },
+      "level": "info",
+      "spanId": "ee00e49781310d31",
+      "eventId": "569b0bfb-9aa0-4d0b-9bad-265bf94a0c33",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "0fe059012f46bb3e097f5e2a2fa6612b",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "8eea0ab5-a7ef-42c0-a7ac-d988ced6a419",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146758
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1240"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "eventId": "9624549e-1021-4782-941c-7da998faf31a",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "44b87211-17f4-4137-9d5a-e0752fa0da31",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146978
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "spanId": "569c5d634729c2b2",
+      "eventId": "09980613-a08f-4748-9f05-c25eb5f67563",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "49743c71ead40b3d94004b96a160200f",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "44b87211-17f4-4137-9d5a-e0752fa0da31",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610146979
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1243
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "eventId": "6de9f6a3-c5dd-4210-93bd-a8fdad0b6089",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f89bf4bd-c821-4c4f-98c2-e40be30653cf",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147253
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "spanId": "4a726a8277ac5c1c",
+      "eventId": "0626dec4-0d82-4412-aadc-5927aa35d7fc",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "a62b48f1d77ac0d5c98af72f98f3bb48",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f89bf4bd-c821-4c4f-98c2-e40be30653cf",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147254
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1244
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "eventId": "ee742c9a-066a-4877-bf67-68a16f9b0a3d",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "86be19e3-886b-4e42-9ded-c36c0abf934d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147751
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1240",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser936"
+      },
+      "level": "info",
+      "spanId": "4fe4ab26be7998e7",
+      "eventId": "583ced48-60bc-4dbe-bef5-7fc076df38f4",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "af08b48502d80c1b2aef684e6295c8f6",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "86be19e3-886b-4e42-9ded-c36c0abf934d",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147752
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1241"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1241",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser937"
+      },
+      "level": "info",
+      "eventId": "76[phone]-46d2-aae7-2bd3758ae8c1",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "7aaf6fcf-74e7-492b-9ed4-d2e7d39f0669",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147871
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1241",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser937"
+      },
+      "level": "info",
+      "spanId": "bd68dbd58f3624b0",
+      "eventId": "870d4593-f8b3-41ba-a9fd-25f029510add",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "497a410f6ed837e9118a9ae83de87ac7",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "7aaf6fcf-74e7-492b-9ed4-d2e7d39f0669",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610147873
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1242"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1242",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser938"
+      },
+      "level": "info",
+      "eventId": "c098ac95-fbdb-42c0-9643-ef062897c228",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "6926336c-ea40-4e8d-8a2f-0eaa91cbe0e4",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148219
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1242",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser938"
+      },
+      "level": "info",
+      "spanId": "4e011ebd456c0e65",
+      "eventId": "faea861d-2763-4833-9ab1-ad764032c9f0",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "dd8ae22db953aa3e337d30503c7fff89",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "6926336c-ea40-4e8d-8a2f-0eaa91cbe0e4",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148221
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1245
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1242",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser938"
+      },
+      "level": "info",
+      "eventId": "3f6e7cc4-c507-41a1-8d79-f47a6cb71441",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "6cc52ca8-e8f9-44d1-9b03-a340a1b965a6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148253
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (3ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1242",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser938"
+      },
+      "level": "info",
+      "spanId": "6b8067259a538b57",
+      "eventId": "b9f88c24-345f-4ecc-b836-aed27022b7bf",
+      "message": "[consumer-app] POST /users -> 201 (3ms)",
+      "traceId": "b1e[phone]c7b44ae613f1863ee9c",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "6cc52ca8-e8f9-44d1-9b03-a340a1b965a6",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148254
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1244"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1244",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser940"
+      },
+      "level": "info",
+      "eventId": "53a44e65-4d49-4376-86df-a0c1e6dfd409",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "b00f4270-0db6-4c88-be00[phone]d1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148550
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1244",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser940"
+      },
+      "level": "info",
+      "spanId": "333b8dab6345769c",
+      "eventId": "859ebf65-2fb9-4654-9eee-0912aae78562",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "c6c3f2af9b22c66fd5c599faee1abb67",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "b00f4270-0db6-4c88-be00[phone]d1",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148551
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1243"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "eventId": "e393684f-8a50-4b0d-b386-5d9a2f813d80",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "c3682b90-1988-4e13-8691-d84fe3f6221a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148638
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "spanId": "b722ab3a2982833f",
+      "eventId": "2f3562f4-f3ff-4c6e-81d9-20f11db970be",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "192f67b6480740b0e1f76979c9728a58",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "c3682b90-1988-4e13-8691-d84fe3f6221a",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148639
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1246
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "eventId": "7cebd8e7-e48b-4e24-bd9c-9b4463683a18",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "eff92013-603f-4bf2-bc81-fbee61fbdcd5",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148756
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "spanId": "d48b[phone]98",
+      "eventId": "57af3726-4ef6-42a5-919d-f84ea3fa5c27",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "0f519174094c80feb87d6080cef9c8c0",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "eff92013-603f-4bf2-bc81-fbee61fbdcd5",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610148757
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1247
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "eventId": "b9089e4f-032c-4146-aeff-161ec98adf8b",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3ca2b49d-278c-4531-b72a-bbd0b98b9a08",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149251
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "spanId": "b0a3e80403f3e9d8",
+      "eventId": "6c3553c6-10c7-4837-af73-ed71023b6592",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "ff371eb879c662fd0db9baa248882667",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "3ca2b49d-278c-4531-b72a-bbd0b98b9a08",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149253
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1248
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "eventId": "1d02ea08-26cb-4248-b027-746b041bfbef",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "71d6b12a-7f98-4eb2-a7a0-2044d28056a3",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149751
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1243",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser939"
+      },
+      "level": "info",
+      "spanId": "0b9ec94dd463c5d0",
+      "eventId": "a6fb8837-a8a7-4d83-afd3-11b0e90e9b45",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "4b2054fc1223b829c9f50e0241b15dd4",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "71d6b12a-7f98-4eb2-a7a0-2044d28056a3",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149753
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1247"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1247",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser943"
+      },
+      "level": "info",
+      "eventId": "5638d260-099d-4422-927a-8d60a0d9582e",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "cd2c0dc1-90e4-43be-92d9-b270bfbc1e04",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149977
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1247",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser943"
+      },
+      "level": "info",
+      "spanId": "615451c24696115c",
+      "eventId": "e87868a8-f8d6-4fc5-84d3-26e6064ad731",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "ca0af1ce3ca82395d335a6406a901108",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "cd2c0dc1-90e4-43be-92d9-b270bfbc1e04",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610149978
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1246"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1246",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser942"
+      },
+      "level": "info",
+      "eventId": "be8883b4-31a5-4f60-a7b6-b90aaa381d70",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f89f7597-5946-4ec5-a38f-7a023e1e1ff7",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150124
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1246",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser942"
+      },
+      "level": "info",
+      "spanId": "64ae395e0f0d2de5",
+      "eventId": "fc1a7a5a-7729-4ba5-9b5c-7546c7f23610",
+      "message": "[consumer-app] POST /scope/user -> 200 (2ms)",
+      "traceId": "93a12431cb[phone]e94483016f59",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "f89f7597-5946-4ec5-a38f-7a023e1e1ff7",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150125
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1245"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1245",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser941"
+      },
+      "level": "info",
+      "eventId": "9463e072-e84a-4852-bf44-9042f24ca9e9",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "bfd4b755-ee29-4de5-a1fb-b5f69693fdcd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150127
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1245",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser941"
+      },
+      "level": "info",
+      "spanId": "75736ce7a2369360",
+      "eventId": "6d64400b-f8b1-43ce-b109-6de01b1bebd1",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "af4a7f01aac12f07974a912846b6a914",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "bfd4b755-ee29-4de5-a1fb-b5f69693fdcd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150128
+    },
+    {
+      "args": [
+        {
+          "email": "[email]",
+          "userId": 1249
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1245",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser941"
+      },
+      "level": "info",
+      "eventId": "4e8e87cf-45ce-4634-856c-4212cbf32333",
+      "message": "User created",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "e8401939-d2a9-4e9e-be8f-265acf969ebe",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150257
+    },
+    {
+      "args": [
+        "[consumer-app] POST /users -> 201 (2ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1245",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser941"
+      },
+      "level": "info",
+      "spanId": "20dfe1208b66ed20",
+      "eventId": "d0e5f41a-0304-4c3d-a362-02d6a2d32643",
+      "message": "[consumer-app] POST /users -> 201 (2ms)",
+      "traceId": "dc51bce33fe3c9a29e76588ace664d20",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "e8401939-d2a9-4e9e-be8f-265acf969ebe",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150258
+    },
+    {
+      "args": [
+        {
+          "userId": "user-1248"
+        }
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1248",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser944"
+      },
+      "level": "info",
+      "eventId": "e5e3e13e-81c8-4fb4-8f20-8801e790e807",
+      "message": "User identity set in scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "37da4712-a3e4-4e06-9499-af600143bddd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150775
+    },
+    {
+      "args": [
+        "[consumer-app] POST /scope/user -> 200 (1ms)"
+      ],
+      "tags": {
+        "framework": "express"
+      },
+      "type": "log",
+      "user": {
+        "id": "user-1248",
+        "data": {
+          "segment": "trial",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "SimUser944"
+      },
+      "level": "info",
+      "spanId": "557a10a1c6679e5b",
+      "eventId": "510a0536-ca61-41dd-8d78-02f4f6f22373",
+      "message": "[consumer-app] POST /scope/user -> 200 (1ms)",
+      "traceId": "a9f18661559bf8e483ef70b1f22fe488",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "37da4712-a3e4-4e06-9499-af600143bddd",
+      "sessionId": "bb[phone]-4651-aa97-e6908dd3d671",
+      "timestamp": 1785610150776
+    }
+  ],
+  "metadata": {
+    "batchId": "cee2f169-0247-4e82-bf46-d5a56165bf16",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 0,
+    "receivedAt": "2026-08-01T18:49:10.980Z",
+    "environment": "production"
+  },
+  "eventType": "log",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

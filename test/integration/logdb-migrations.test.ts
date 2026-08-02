@@ -12,6 +12,8 @@ const MIGRATIONS = [
   "03_observability/001_canonical_events.up.sql",
   "03_observability/002_typed_event_runtime.up.sql",
   "03_observability/003_add_events_metrics_request_id.up.sql",
+  "03_observability/004_align_event_fields_and_ai.up.sql",
+  "03_observability/005_create_sdk_event_tables_if_missing.up.sql",
   "04_analytics/001_analytics_runtime.up.sql",
   "04_analytics/002_typed_analytics_runtime.up.sql",
   "05_connectors_runtime/001_connector_runtime.up.sql",

@@ -1,0 +1,555 @@
+{
+  "events": [
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "fb9757b6683cfdcb",
+      "eventId": "2e45777c-434b-4538-a415-c1902a1f1874",
+      "latency": 63,
+      "traceId": "d5404cd00bea904de706175ecca939e1",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "062b7991-e52c-4525-931c-8a92ae8fb50d",
+      "timestamp": 1785644413626,
+      "statusCode": 500,
+      "responseSize": 372
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "fb09d242d339e2aa",
+      "eventId": "94953a91-d036-4482-9526-be84eeb9afd5",
+      "latency": 8,
+      "traceId": "f2115c3ca93ae4d4d4ae1b3a7cdf0832",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "2b525319-a92b-4dc1-8ad6-59fb74aa7e77",
+      "timestamp": 1785644413861,
+      "statusCode": 500,
+      "responseSize": 343
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "2c44e2f85beb81e7",
+      "eventId": "fecebcdc-eab4-48e2-835c-255b263524bb",
+      "latency": 6,
+      "traceId": "3c26ae67f44024d8db4f9dd6460677c1",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "1096e33e-77df-46f9-975b-b6d20afe8572",
+      "timestamp": 1785644414029,
+      "statusCode": 500,
+      "responseSize": 352
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "048b47b410158d9a",
+      "eventId": "2035ee6d-5a01-4b49-8047-2c8fef539075",
+      "latency": 4,
+      "traceId": "789fcf6535df5fabc681e816c46b67a8",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4223ceea-3ef3-4856-b8b4-b89eb83f2bfd",
+      "timestamp": 1785644414196,
+      "statusCode": 500,
+      "responseSize": 347
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "ff0bc5fe8a2c875d",
+      "eventId": "9044e320-83bc-4b97-8fff[phone]0f",
+      "latency": 5,
+      "traceId": "2f32b347ec568d365d1b42c099c82a2a",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5b474500-7a27-46b7-98ee-c3ed44c24d04",
+      "timestamp": 1785644414367,
+      "statusCode": 500,
+      "responseSize": 344
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "9670a32fd77ab291",
+      "eventId": "aac1e7b7-5a0e-4e09-864a-90a4b04f506c",
+      "latency": 5,
+      "traceId": "12ea69a29a86cf4d91ae467bda1acb53",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5bb40475-6818-47d5-9add-76952b73a66a",
+      "timestamp": 1785644414537,
+      "statusCode": 500,
+      "responseSize": 362
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "334b6751edcfef08",
+      "eventId": "f60fa2af-3ad1-4da1-ba37-b748c882745c",
+      "latency": 3,
+      "traceId": "aa499bd84369332a5b8f7587ef1596d4",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "b6fbc205-eaf9-471b-b1ba-a2d8a2959c59",
+      "timestamp": 1785644414705,
+      "statusCode": 500,
+      "responseSize": 368
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "a6f11fddbb48f416",
+      "eventId": "40c87e00-8c1d-4f6d-98d2-3e5bb7feccb5",
+      "latency": 6,
+      "traceId": "1759ba05af0d313c3b6d8d[phone]",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "cf40cd3f-d936-4128-9cf7-11601275bdeb",
+      "timestamp": 1785644414876,
+      "statusCode": 500,
+      "responseSize": 338
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "3be32317657a7ea7",
+      "eventId": "36e21df3-ee6b-49fc-b915-1a7795272a47",
+      "latency": 4,
+      "traceId": "d1c712cf13a3188a8d4712dad58958b7",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "68fbc1ab-0696-4d19-a25e-75e6b9f4f22b",
+      "timestamp": 1785644415049,
+      "statusCode": 500,
+      "responseSize": 343
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "1d5bd1a94a9467ed",
+      "eventId": "890f866a-41a2-4b9e-9403-ddcc6ae35af8",
+      "latency": 3,
+      "traceId": "bcebeda0c47bed53a23d8744e6b0a096",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "b7469019-7ebd-4167-8972-a7935f47838c",
+      "timestamp": 1785644415216,
+      "statusCode": 500,
+      "responseSize": 350
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "b14484dd22034a4d",
+      "eventId": "ddf30221-e39b-48d2-b[phone]5dc2b",
+      "latency": 3,
+      "traceId": "c3ad34ead30bf4adc9c9a49ce5046de2",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "60d3dc58-6683-4abc-96ac-e3e514413ac4",
+      "timestamp": 1785644415372,
+      "statusCode": 500,
+      "responseSize": 348
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "cf5f5e5a387dc4a3",
+      "eventId": "db8c9dd3-2e1a-4c2e-9f9d-2b19cdb169bf",
+      "latency": 2,
+      "traceId": "bf8f422d10932aeaa9b22f10236bf4c8",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "a442be05-37dd-492b-a5b9-a7324aaddc98",
+      "timestamp": 1785644415527,
+      "statusCode": 500,
+      "responseSize": 357
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "4b981f5adbbc3566",
+      "eventId": "20b140f8-e899-4d75-b282-e9358f9df1a4",
+      "latency": 4,
+      "traceId": "c6420a706c50c6fa[phone]38b4cf",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "e77b2ecb-f28a-40e3-b2f3-41d269ba2bb7",
+      "timestamp": 1785644415682,
+      "statusCode": 500,
+      "responseSize": 362
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "5da62ca9befd0899",
+      "eventId": "8a3d0c3e-d68f-4b18-a80b-80bc3db2f94f",
+      "latency": 2,
+      "traceId": "5526e818b4d43e46a40ce888d2853bb9",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "5a5d12fa-dc4f-43fc-8f3b-a5cc1c02fc11",
+      "timestamp": 1785644415839,
+      "statusCode": 500,
+      "responseSize": 377
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "c6a23fcf199e34ce",
+      "eventId": "2c94b91b-e5dd-453d-828c-cb780deb6f57",
+      "latency": 3,
+      "traceId": "623f61ee0658048ddab497abde109813",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4d4f5fad-6f57-424e-960e-097c5b6d4896",
+      "timestamp": 1785644416007,
+      "statusCode": 500,
+      "responseSize": 364
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "f61f57e301411a2e",
+      "eventId": "c3d713b8-510a-43c1-83a8-58726adc6162",
+      "latency": 3,
+      "traceId": "74c1732d535ebfb7aa6e0ba97dc17e5b",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "895e8f47-59d3-4b6c-84f4-88d8e6484611",
+      "timestamp": 1785644416162,
+      "statusCode": 500,
+      "responseSize": 375
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "282de369ee0cb959",
+      "eventId": "0cdd03f9-ca01-4e6e-b011-15d8f111d997",
+      "latency": 3,
+      "traceId": "a2042238a7ca4cecaa6e[phone]eb",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "c78a944e-fd30-4cb3-a012-c917c5967bd7",
+      "timestamp": 1785644416316,
+      "statusCode": 500,
+      "responseSize": 344
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "a044355b5d4fac56",
+      "eventId": "6a370d8c-6df6-45c6-9e1b-312be15f1555",
+      "latency": 4,
+      "traceId": "68d5a515476da268fd8e43a4e966b765",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "593be365-266e-4c5c-9e29-3fc327e56c71",
+      "timestamp": 1785644416473,
+      "statusCode": 500,
+      "responseSize": 343
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "43afd72f370a28b9",
+      "eventId": "57c093fb-b0ac-4041-b113-5ad268452924",
+      "latency": 3,
+      "traceId": "11ce20be93bc328dfc783f1b1e88bcb4",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "68c2ba2c-b5a7-48ff-b0d2-6d57102743b9",
+      "timestamp": 1785644416642,
+      "statusCode": 500,
+      "responseSize": 371
+    },
+    {
+      "url": "/error-gen/",
+      "tags": {
+        "framework": "express"
+      },
+      "type": "request",
+      "route": "/error-gen/",
+      "method": "GET",
+      "spanId": "f551b762332a68b8",
+      "eventId": "1da3bd2a-ac5e-4fb3-8452-ef510bb96cc0",
+      "latency": 3,
+      "traceId": "d6c5cd129a73364e5e02c8b5fe97a611",
+      "clientIp": "eff8e7ca506627fe",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "requestId": "4d75a1bf-a2b3-4b36-a22b-2dc735ec9401",
+      "timestamp": 1785644416798,
+      "statusCode": 500,
+      "responseSize": 350
+    }
+  ],
+  "metadata": {
+    "batchId": "da97dbbb-3ab0-4c7d-bb94-9453f4fb84df",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 0,
+    "receivedAt": "2026-08-02T04:20:18.746Z",
+    "environment": "production"
+  },
+  "eventType": "request",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

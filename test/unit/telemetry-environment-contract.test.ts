@@ -124,7 +124,7 @@ describe("TelemetryWriter environment contract", () => {
     } as unknown as Pool;
   });
 
-  it("persists exactly { environment } for all ten event families", async () => {
+  it("persists the server environment and lossless event document for all ten event families", async () => {
     const result = await new TelemetryWriter(pool).writeBatchDetailed(events.map(scoped));
     expect(result.totalInserted).toBe(10);
     expect(queries).toHaveLength(10);
@@ -134,15 +134,19 @@ describe("TelemetryWriter environment contract", () => {
       const columns = insertColumns(query.text);
       expect(columns).toContain("environment");
       expect(columns).toContain("metadata");
+      expect(columns).toContain("payload");
+      expect(columns).toContain("ai_response");
       expect(columns).toContain("timestamp");
       expect(columns).toContain("occurred_at");
 
       const environment = query.values[columns.indexOf("environment")];
       const metadata = query.values[columns.indexOf("metadata")];
+      const payload = query.values[columns.indexOf("payload")];
       const timestamp = query.values[columns.indexOf("timestamp")];
       const occurredAt = query.values[columns.indexOf("occurred_at")];
       expect(environment).toBe(ENVIRONMENT);
       expect(JSON.parse(String(metadata))).toEqual({ environment: ENVIRONMENT });
+      expect(JSON.parse(String(payload)).type).toBeDefined();
       expect(occurredAt).toBe(timestamp);
     }
   });

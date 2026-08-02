@@ -34,6 +34,10 @@ BEGIN
         release TEXT,
         sdk_name TEXT,
         sdk_version TEXT,
+        application_name TEXT,
+        application_version TEXT,
+        server_name TEXT,
+        request_id TEXT,
         severity logdb_severity,
         status_code INTEGER,
         duration_ms NUMERIC(14,3),
@@ -42,7 +46,10 @@ BEGIN
         attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ai_response JSONB,
+        timestamp TIMESTAMPTZ NOT NULL,
         occurred_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (id, occurred_at)
       ) PARTITION BY RANGE (occurred_at)
@@ -57,6 +64,7 @@ BEGIN
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (attributes)', 'idx_' || table_name || '_attributes_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (metadata)', 'idx_' || table_name || '_metadata_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (payload)', 'idx_' || table_name || '_payload_gin', table_name);
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING GIN (ai_response)', 'idx_' || table_name || '_ai_response_gin', table_name);
     EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I USING BRIN (occurred_at)', 'idx_' || table_name || '_occurred_brin', table_name);
   END LOOP;
 END $$;
