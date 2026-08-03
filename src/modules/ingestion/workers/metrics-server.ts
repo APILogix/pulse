@@ -96,6 +96,16 @@ export class WorkerMetrics {
     return q;
   }
 
+  // Error Grouping Metrics
+  errorGroupsCreated = 0;
+  errorGroupsReused = 0;
+  errorRegressions = 0;
+  errorDuplicates = 0;
+  private readonly errorGroupLookupMs = new Map<string, LatencyStat>();
+  private readonly errorGroupUpsertMs = new Map<string, LatencyStat>();
+  private readonly errorTransactionMs = new Map<string, LatencyStat>();
+  private readonly errorDomainEventMs = new Map<string, LatencyStat>();
+
   private observe(map: Map<string, LatencyStat>, key: string, ms: number): void {
     if (!Number.isFinite(ms) || ms < 0) return;
     let s = map.get(key);
@@ -150,6 +160,23 @@ export class WorkerMetrics {
     else this.orgInFlight.set(orgId, count);
   }
 
+  recordErrorGroup(isNew: boolean, isRegression: boolean): void {
+    if (isNew) this.errorGroupsCreated += 1;
+    else this.errorGroupsReused += 1;
+    if (isRegression) this.errorRegressions += 1;
+  }
+
+  recordErrorDuplicate(): void {
+    this.errorDuplicates += 1;
+  }
+
+  recordErrorLatencies(lookup: number | null, upsert: number | null, transaction: number | null, domain: number | null): void {
+    if (lookup !== null) this.observe(this.errorGroupLookupMs, 'lookup', lookup);
+    if (upsert !== null) this.observe(this.errorGroupUpsertMs, 'upsert', upsert);
+    if (transaction !== null) this.observe(this.errorTransactionMs, 'transaction', transaction);
+    if (domain !== null) this.observe(this.errorDomainEventMs, 'domain_event', domain);
+  }
+
   recordRollupSuccess(stats: RollupRunStats): void {
     this.rollupRuns += 1;
     this.rollupLastRunAt = new Date().toISOString();
@@ -180,6 +207,12 @@ export class WorkerMetrics {
       out.push(`# TYPE ${name} gauge`);
       out.push(formatSample(name, value, labels));
     };
+
+    // Error Grouping output
+    counter('ingest_error_groups_created_total', 'New error groups created.', this.errorGroupsCreated);
+    counter('ingest_error_groups_reused_total', 'Existing error groups reused.', this.errorGroupsReused);
+    counter('ingest_error_regressions_total', 'Resolved error groups regressed to open.', this.errorRegressions);
+    counter('ingest_error_duplicates_total', 'Duplicate error events rejected.', this.errorDuplicates);
 
     const queueMetrics: Array<[keyof QueueCounters, string, string]> = [
       ['jobsProcessed', 'ingest_jobs_processed_total', 'Jobs completed by the ingestion workers.'],
@@ -219,6 +252,10 @@ export class WorkerMetrics {
     };
     latency('ingest_processing_latency_ms', 'Worker-side job processing latency', this.processingMs);
     latency('ingest_e2e_latency_ms', 'End-to-end latency (now minus gateway receivedAt)', this.e2eMs);
+    latency('ingest_error_group_lookup_ms', 'Error Group lookup latency', this.errorGroupLookupMs);
+    latency('ingest_error_group_upsert_ms', 'Error Group upsert latency', this.errorGroupUpsertMs);
+    latency('ingest_error_transaction_ms', 'Error Group total transaction latency', this.errorTransactionMs);
+    latency('ingest_error_domain_event_ms', 'Error Group domain event dispatch latency', this.errorDomainEventMs);
 
     counter('ingest_rollup_runs_total', 'Usage rollup executions.', this.rollupRuns);
     counter('ingest_rollup_failures_total', 'Usage rollup executions that failed (transaction rolled back).', this.rollupFailures);

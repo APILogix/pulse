@@ -7,7 +7,7 @@ export class ErrorRepository {
   /**
    * Inserts an error event using a given client (for transactions).
    */
-  async insert(client: PoolClient, record: ErrorGroupEventRecord): Promise<void> {
+  async insert(client: PoolClient, record: ErrorGroupEventRecord): Promise<boolean> {
     const query = `
       INSERT INTO events_errors (
         id,
@@ -20,14 +20,16 @@ export class ErrorRepository {
         error_name,
         severity,
         timestamp,
+        occurred_at,
         payload
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11
       )
-      ON CONFLICT (project_id, event_id) DO NOTHING
+      ON CONFLICT (organization_id, event_id, occurred_at) DO NOTHING
+      RETURNING id
     `;
 
-    await client.query(query, [
+    const result = await client.query(query, [
       record.id,
       record.organization_id,
       record.project_id,
@@ -40,6 +42,8 @@ export class ErrorRepository {
       record.timestamp,
       record.payload
     ]);
+
+    return result.rowCount !== null && result.rowCount > 0;
   }
 
   async find(projectId: string, eventId: string): Promise<ErrorGroupEventRecord | null> {

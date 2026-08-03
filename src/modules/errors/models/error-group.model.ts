@@ -18,6 +18,17 @@ export interface ErrorGroup {
   latestRelease: string | null;
   latestSdkVersion: string | null;
   latestApplicationVersion: string | null;
+
+  lastErrorMessage: string | null;
+  lastErrorName: string | null;
+  lastStatusCode: number | null;
+  lastTraceId: string | null;
+  lastRequestId: string | null;
+
+  mergedInto: string | null;
+  isMerged: boolean;
+  version: number;
+
   createdAt: Date;
   updatedAt: Date;
 }

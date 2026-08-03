@@ -151,7 +151,7 @@ export class EventProcessor {
     const errorGroupRepo = new ErrorGroupRepository(pool);
     const errorRepo = new ErrorRepository(pool);
     const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
-    this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo);
+    this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics);
   }
 
   start(): void {
@@ -239,6 +239,11 @@ export class EventProcessor {
             release: typeof e.release === 'string' ? e.release : undefined,
             sdkVersion: typeof e.sdk?.version === 'string' ? e.sdk.version : undefined,
             applicationVersion: undefined,
+            message: e.message,
+            errorName,
+            statusCode: undefined,
+            traceId: typeof e.traceId === 'string' ? e.traceId : undefined,
+            requestId: typeof e.requestId === 'string' ? e.requestId : undefined,
           },
           eventRecord: {
             id: typeof e.id === 'string' ? e.id : require('crypto').randomUUID(),

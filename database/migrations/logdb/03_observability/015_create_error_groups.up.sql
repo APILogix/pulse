@@ -18,6 +18,20 @@ CREATE TABLE IF NOT EXISTS error_groups (
   latest_release VARCHAR(100),
   latest_sdk_version VARCHAR(50),
   latest_application_version VARCHAR(50),
+
+  -- Group Snapshot
+  last_error_message TEXT,
+  last_error_name VARCHAR(255),
+  last_status_code INTEGER,
+  last_trace_id VARCHAR(64),
+  last_request_id VARCHAR(64),
+
+  -- Merge Support
+  merged_into UUID NULL,
+  is_merged BOOLEAN DEFAULT FALSE,
+
+  -- Versioning (Optimistic Locking)
+  version INTEGER NOT NULL DEFAULT 1,
   
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

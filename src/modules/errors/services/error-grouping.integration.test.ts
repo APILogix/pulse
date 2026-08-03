@@ -66,7 +66,7 @@ describe('Error Grouping System Integration', () => {
 
   it('Concurrency: Simulate many simultaneous ingestions with the same fingerprint', async () => {
     vi.mocked(mockClient.query)
-      .mockResolvedValue({ rows: [{ id: 'concurrent-group-id' }] }); 
+      .mockResolvedValue({ rowCount: 1, rows: [{ id: 'concurrent-group-id', is_new: false, is_regression: false, status: 'OPEN' }] }); 
       
     // 10 concurrent requests
     const promises = Array.from({ length: 10 }).map((_, i) => 
@@ -80,5 +80,27 @@ describe('Error Grouping System Integration', () => {
 
     expect(mockClient.query).toHaveBeenCalledTimes(10 * 4); // BEGIN, upsert, insert, COMMIT for each
     expect(domainEventBus.publish).toHaveBeenCalledTimes(10);
+  });
+
+  it('Idempotency: Duplicate event_id ignores insertion and rolls back group counter bump', async () => {
+    // Clear the mocks from previous tests to observe exactly this test
+    vi.mocked(mockClient.query).mockClear();
+    vi.mocked(domainEventBus.publish).mockClear();
+
+    // Setup: Return a valid group from handleGroup (simulating real DB upsert)
+    vi.mocked(mockClient.query)
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 'group-id', is_new: false, is_regression: false, status: 'OPEN' }] }) // Upsert Group
+      .mockResolvedValueOnce({ rowCount: 0 }) // Insert Event (simulate DO NOTHING by returning 0 rows)
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+
+    await errorIngestionService.ingestError(
+      { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-dup', severity: 'error' },
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+    );
+
+    // It should rollback and NOT publish
+    expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+    expect(domainEventBus.publish).not.toHaveBeenCalled();
   });
 });

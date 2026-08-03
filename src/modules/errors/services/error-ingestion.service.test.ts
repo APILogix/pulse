@@ -36,7 +36,8 @@ describe('ErrorIngestionService', () => {
   });
 
   it('should successfully ingest an error transactionally', async () => {
-    vi.mocked(mockGroupingService.handleGroup).mockResolvedValue('group-id');
+    vi.mocked(mockGroupingService.handleGroup).mockResolvedValue({ id: 'group-id', isNew: true, isRegression: false, status: 'OPEN' });
+    vi.mocked(mockErrorRepo.insert).mockResolvedValue(true);
     
     await errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
@@ -48,7 +49,7 @@ describe('ErrorIngestionService', () => {
     expect(mockErrorRepo.insert).toHaveBeenCalled();
     expect(mockClient.query).toHaveBeenCalledWith('COMMIT');
     expect(mockClient.release).toHaveBeenCalled();
-    expect(domainEventBus.publish).toHaveBeenCalledWith('ErrorGrouped', expect.any(Object));
+    expect(domainEventBus.publish).toHaveBeenCalledWith('ErrorGroupCreated', expect.any(Object));
   });
 
   it('should rollback transaction on failure', async () => {

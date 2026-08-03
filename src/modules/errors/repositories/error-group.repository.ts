@@ -1,6 +1,16 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ErrorGroup, CreateErrorGroupParams, UpdateErrorGroupParams } from '../models/error-group.model.ts';
 
+export interface SnapshotParams {
+  message?: string;
+  errorName?: string;
+  statusCode?: number;
+  traceId?: string;
+  requestId?: string;
+}
+
+export type UpsertErrorGroupParams = CreateErrorGroupParams & SnapshotParams;
+
 export class ErrorGroupRepository {
   constructor(private readonly pool: Pool) {}
 
@@ -11,8 +21,8 @@ export class ErrorGroupRepository {
    */
   async upsertGroup(
     client: PoolClient,
-    params: CreateErrorGroupParams
-  ): Promise<string> {
+    params: UpsertErrorGroupParams
+  ): Promise<{ id: string; isNew: boolean; status: string; isRegression: boolean }> {
     const {
       projectId,
       fingerprint,
@@ -21,6 +31,11 @@ export class ErrorGroupRepository {
       release,
       sdkVersion,
       applicationVersion,
+      message,
+      errorName,
+      statusCode,
+      traceId,
+      requestId
     } = params;
 
     const query = `
@@ -40,10 +55,16 @@ export class ErrorGroupRepository {
         last_regressed_at,
         latest_release,
         latest_sdk_version,
-        latest_application_version
+        latest_application_version,
+        last_error_message,
+        last_error_name,
+        last_status_code,
+        last_trace_id,
+        last_request_id,
+        version
       )
       VALUES (
-        $1, $2, 'OPEN', 1, NOW(), NOW(), $3, $3, $4, $4, FALSE, 0, NULL, $5, $6, $7
+        $1, $2, 'OPEN', 1, NOW(), NOW(), $3, $3, $4, $4, FALSE, 0, NULL, $5, $6, $7, $8, $9, $10, $11, $12, 1
       )
       ON CONFLICT (project_id, fingerprint) DO UPDATE SET
         occurrence_count = error_groups.occurrence_count + 1,
@@ -53,6 +74,12 @@ export class ErrorGroupRepository {
         latest_release = COALESCE(EXCLUDED.latest_release, error_groups.latest_release),
         latest_sdk_version = COALESCE(EXCLUDED.latest_sdk_version, error_groups.latest_sdk_version),
         latest_application_version = COALESCE(EXCLUDED.latest_application_version, error_groups.latest_application_version),
+        last_error_message = COALESCE(EXCLUDED.last_error_message, error_groups.last_error_message),
+        last_error_name = COALESCE(EXCLUDED.last_error_name, error_groups.last_error_name),
+        last_status_code = COALESCE(EXCLUDED.last_status_code, error_groups.last_status_code),
+        last_trace_id = COALESCE(EXCLUDED.last_trace_id, error_groups.last_trace_id),
+        last_request_id = COALESCE(EXCLUDED.last_request_id, error_groups.last_request_id),
+        version = error_groups.version + 1,
         updated_at = NOW(),
         
         -- Handle Regressions
@@ -72,7 +99,7 @@ export class ErrorGroupRepository {
           WHEN error_groups.status = 'RESOLVED' THEN NOW()
           ELSE error_groups.last_regressed_at 
         END
-      RETURNING id
+      RETURNING id, (xmax = 0) AS is_new, status, is_regression
     `;
 
     const result = await client.query(query, [
@@ -83,9 +110,20 @@ export class ErrorGroupRepository {
       release || null,
       sdkVersion || null,
       applicationVersion || null,
+      message || null,
+      errorName || null,
+      statusCode || null,
+      traceId || null,
+      requestId || null,
     ]);
 
-    return result.rows[0].id;
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      isNew: row.is_new,
+      status: row.status,
+      isRegression: row.is_regression
+    };
   }
 
   async findByFingerprint(projectId: string, fingerprint: string): Promise<ErrorGroup | null> {
@@ -98,23 +136,36 @@ export class ErrorGroupRepository {
     return this.mapToDomain(result.rows[0]);
   }
 
-  async resolve(projectId: string, id: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE error_groups SET status = 'RESOLVED', updated_at = NOW() WHERE project_id = $1 AND id = $2`,
+  async resolve(client: PoolClient, projectId: string, id: string): Promise<void> {
+    await client.query(
+      `UPDATE error_groups SET status = 'RESOLVED', version = version + 1, updated_at = NOW() WHERE project_id = $1 AND id = $2`,
       [projectId, id]
     );
   }
 
-  async ignore(projectId: string, id: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE error_groups SET status = 'IGNORED', updated_at = NOW() WHERE project_id = $1 AND id = $2`,
+  async ignore(client: PoolClient, projectId: string, id: string): Promise<void> {
+    await client.query(
+      `UPDATE error_groups SET status = 'IGNORED', version = version + 1, updated_at = NOW() WHERE project_id = $1 AND id = $2`,
       [projectId, id]
     );
   }
 
-  async assign(projectId: string, id: string, userId: string): Promise<void> {
-    // Note: To be fully aligned with future phases (e.g. Issue Assignment)
-    // We would alter error_groups to include assigned_to field or separate table.
+  async reopen(client: PoolClient, projectId: string, id: string): Promise<void> {
+    await client.query(
+      `UPDATE error_groups SET status = 'OPEN', version = version + 1, updated_at = NOW() WHERE project_id = $1 AND id = $2`,
+      [projectId, id]
+    );
+  }
+
+  async archive(client: PoolClient, projectId: string, id: string): Promise<void> {
+    await client.query(
+      `UPDATE error_groups SET status = 'ARCHIVED', version = version + 1, updated_at = NOW() WHERE project_id = $1 AND id = $2`,
+      [projectId, id]
+    );
+  }
+
+  async assign(client: PoolClient, projectId: string, id: string, userId: string): Promise<void> {
+    // Phase 14 future compatibility placeholder
   }
 
   private mapToDomain(row: any): ErrorGroup {
@@ -136,6 +187,14 @@ export class ErrorGroupRepository {
       latestRelease: row.latest_release,
       latestSdkVersion: row.latest_sdk_version,
       latestApplicationVersion: row.latest_application_version,
+      lastErrorMessage: row.last_error_message,
+      lastErrorName: row.last_error_name,
+      lastStatusCode: row.last_status_code,
+      lastTraceId: row.last_trace_id,
+      lastRequestId: row.last_request_id,
+      mergedInto: row.merged_into,
+      isMerged: row.is_merged,
+      version: row.version,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
