@@ -4,13 +4,13 @@ BEGIN;
 -- Range-partitioned by occurred_at for retention pruning and time-window dashboards.
 -- Tenant/time btree indexes support high-selectivity dashboard filters.
 CREATE TABLE IF NOT EXISTS events_requests (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+ -- Identity
+  id UUID PRIMARY KEY,
   organization_id UUID NOT NULL,
-  project_id UUID,
-  environment TEXT NOT NULL,
-  api_key_id UUID,
+  project_id UUID NOT NULL,
+  api_key_name TEXT NOT NULL,
 
-  -- Identity & correlation
+  -- Correlation
   event_id TEXT NOT NULL,
   request_id TEXT,
   trace_id TEXT,
@@ -20,63 +20,67 @@ CREATE TABLE IF NOT EXISTS events_requests (
   user_id TEXT,
   tenant_id TEXT,
 
-  -- Request details
+  -- Request
   endpoint TEXT,
   name TEXT,
   method TEXT,
   status_code INTEGER,
   duration_ms NUMERIC(14,3),
-  total_duration_ms NUMERIC(14,3),
-  framework TEXT,
-  headers JSONB NOT NULL DEFAULT '{}'::jsonb,
-  query_params JSONB NOT NULL DEFAULT '{}'::jsonb,
-  body JSONB,
   body_size BIGINT,
   response_size BIGINT,
+
+  -- Trace summary
   span_count INTEGER,
-  span_kind TEXT,
   root_span_status TEXT,
   is_partial BOOLEAN,
-  message TEXT,
 
-  -- Client / geo enrichment
-  client_ip INET,
+  -- Client
+  client_ip_hash TEXT,
   user_agent TEXT,
   referer TEXT,
-  client_ip_hash TEXT,
+
+  -- Geo
   geo_country_code CHAR(2),
   geo_region TEXT,
   geo_asn BIGINT,
+
+  -- Device
   browser_family TEXT,
   browser_version_major TEXT,
   os_name TEXT,
   os_version_major TEXT,
   device_type TEXT,
   is_bot BOOLEAN,
-  is_slow BOOLEAN GENERATED ALWAYS AS (COALESCE(duration_ms, 0) >= 1000) STORED,
-  is_error BOOLEAN GENERATED ALWAYS AS (COALESCE(status_code, 0) >= 500) STORED,
 
-  -- SDK / service context
+  -- Service
   service TEXT,
+  framework TEXT,
   release TEXT,
+  server_name TEXT,
+
+  -- SDK
   sdk_name TEXT,
   sdk_version TEXT,
-  application_name TEXT,
-  application_version TEXT,
-  server_name TEXT,
+
+  -- Severity
   severity logdb_severity,
 
-  -- Flexible storage
-  attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Flags
+  is_slow BOOLEAN GENERATED ALWAYS AS (COALESCE(duration_ms,0) >= 1000) STORED,
+  is_error BOOLEAN GENERATED ALWAYS AS (COALESCE(status_code,0) >= 500) STORED,
+
+  -- Flexible
+  attributes JSONB NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  payload JSONB NOT NULL DEFAULT '{}',
+
+  -- AI
   ai_response JSONB,
 
-  -- Timekeeping
-  timestamp TIMESTAMPTZ NOT NULL,
+  -- Time
   occurred_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 
   PRIMARY KEY (id, occurred_at)
 ) PARTITION BY RANGE (occurred_at);

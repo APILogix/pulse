@@ -121,6 +121,7 @@ export interface IngestJobMetadata {
   /** Gateway batch id (one per HTTP request). */
   batchId: string;
   apiKeyId: string;
+  apiKeyName?: string;
   planTier: PlanTier;
   /** ISO timestamp when the gateway accepted the batch (e2e latency anchor). */
   receivedAt: string;

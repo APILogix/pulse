@@ -24,6 +24,7 @@ export interface CachedProjectConfig {
   allowedSdks: string[];
   isActive: boolean;
   apiKeyId: string;
+  apiKeyName: string;
   /** Billing plan tier resolved at key-lookup time; drives queue priority. */
   planTier?: 'free' | 'starter' | 'growth' | 'business' | 'enterprise';
   /** Optional org-wide rate limits overriding the platform defaults. */

@@ -21,6 +21,7 @@ export interface ProjectAuthResult {
   environmentName: string;
   environmentSlug: string;
   apiKeyId: string;
+  apiKeyName: string;
   /**
    * Ingestion-side policy defaults. These are NOT credential columns: the API
    * key only selects a project/environment, so authorization, endpoint/event
@@ -84,6 +85,7 @@ export class PostgresWriter {
         p.name as project_name,
         p.status as project_status,
         k.id as key_id,
+        k.name as api_key_name,
         k.environment_id,
         e.name as environment_name,
         e.slug as environment_slug,
@@ -136,6 +138,7 @@ export class PostgresWriter {
         environmentName: row.environment_name as string,
         environmentSlug: row.environment_slug as string,
         apiKeyId: row.key_id as string,
+        apiKeyName: row.api_key_name as string,
         // A credential only proves identity. Ingestion authorization and rate
         // limits come from organization/platform configuration, so an
         // authenticated key resolves to the permissive ingestion defaults.

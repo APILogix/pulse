@@ -133,6 +133,7 @@ interface ResolvedProject {
   rateLimitPerHour: number | null;
   isActive: boolean;
   apiKeyId: string;
+  apiKeyName: string;
   keyType: string;
   rotationVersion: number;
   permissions: string[];
@@ -246,6 +247,7 @@ export class IngestionService {
         rateLimitPerHour: cached.rateLimitPerHour ?? null,
         isActive: cached.isActive,
         apiKeyId: cached.apiKeyId,
+        apiKeyName: cached.apiKeyName,
         keyType: 'read_write',
         rotationVersion: 1,
         permissions: cached.permissions ?? [],
@@ -278,6 +280,7 @@ export class IngestionService {
       rateLimitPerHour: auth.rateLimitPerHour ?? null,
       isActive: auth.isActive && auth.projectStatus === 'active',
       apiKeyId: auth.apiKeyId,
+      apiKeyName: auth.apiKeyName,
       keyType: auth.keyType,
       rotationVersion: auth.rotationVersion,
       permissions: auth.permissions,
@@ -315,6 +318,7 @@ export class IngestionService {
       allowedSdks: resolved.allowedSdks,
       isActive: resolved.isActive,
       apiKeyId: resolved.apiKeyId,
+      apiKeyName: resolved.apiKeyName,
       planTier: resolved.planTier,
       orgRateLimitPerSecond: resolved.orgRateLimitPerSecond,
       orgRateLimitPerMinute: resolved.orgRateLimitPerMinute,
@@ -614,6 +618,7 @@ export class IngestionService {
         organizationId: project.orgId,
         projectId: project.id,
         apiKeyId: project.apiKeyId,
+        apiKeyName: project.apiKeyName,
         planTier: project.planTier,
         environment,
         batchId,
@@ -703,6 +708,7 @@ export class IngestionService {
     organizationId: string;
     projectId: string;
     apiKeyId: string;
+    apiKeyName: string;
     planTier: PlanTier;
     environment: string;
     batchId: string;
@@ -716,6 +722,7 @@ export class IngestionService {
         const metadata: IngestJobMetadata = {
           batchId: params.batchId,
           apiKeyId: params.apiKeyId,
+          apiKeyName: params.apiKeyName,
           planTier: params.planTier,
           receivedAt: params.receivedAt,
           environment: params.environment,
@@ -1078,6 +1085,7 @@ export class IngestionService {
         organizationId,
         projectId: req.projectId,
         apiKeyId: '',
+        apiKeyName: 'unknown',
         planTier,
         environment,
         batchId: replayId,

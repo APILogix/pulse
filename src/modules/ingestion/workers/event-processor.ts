@@ -129,6 +129,7 @@ export class EventProcessor {
     const type = payload?.eventType;
     const projectId = payload?.projectId ?? '';
     const orgId = payload?.organizationId ?? '';
+    const apiKeyName = payload?.metadata?.apiKeyName;
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
@@ -164,7 +165,7 @@ export class EventProcessor {
           event,
         );
       }
-      scoped.push({ projectId, orgId, environment, event });
+      scoped.push({ projectId, orgId, environment, apiKeyName, event });
     }
 
     // Route validation rejects to the DLQ intake queue (one message per job).

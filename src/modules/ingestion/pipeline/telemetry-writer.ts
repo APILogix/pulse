@@ -44,6 +44,7 @@ export interface ScopedEvent {
   projectId: string;
   /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
   orgId: string | null;
+  apiKeyName?: string | undefined;
   /** Normalized string supplied by the SDK envelope; never an environment UUID. */
   environment: string;
   event: NormalizedEvent;
@@ -631,7 +632,7 @@ export class TelemetryWriter {
   private async writeRequests(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     // Open the GeoIP databases once (no-op after first call; never throws).
     await this.enricher.init();
-    const rows = list.map(({ projectId, orgId, environment, event }) => {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'request' }>;
       const r = rec(event);
       const endpoint = str(r.route, 500) ?? str(e.url, 8192);
@@ -645,7 +646,7 @@ export class TelemetryWriter {
       // 14_observability/015 columns; missing data resolves to null ("Unknown").
       const g = this.enricher.enrich(rawClientIp, rawUserAgent);
       return [
-        orgId, projectId, this.eventId(event), e.requestId, endpoint, name, e.method,
+        orgId, projectId, apiKeyName ?? 'unknown', this.eventId(event), e.requestId, endpoint, name, e.method,
         // duration_ms preserves fractional milliseconds.
         e.statusCode, num(e.latency), str(r.framework, 50),
         JSON.stringify(e.headers ?? {}), JSON.stringify(e.query ?? {}),
@@ -666,7 +667,7 @@ export class TelemetryWriter {
     // is_slow / is_error are GENERATED columns — do NOT insert them.
     const { text, values } = buildInsert(
       'events_requests',
-      ['organization_id', 'project_id', 'event_id', 'request_id', 'endpoint', 'name', 'method',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'endpoint', 'name', 'method',
        'status_code', 'duration_ms', 'framework', 'headers', 'query_params',
        'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
        'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
