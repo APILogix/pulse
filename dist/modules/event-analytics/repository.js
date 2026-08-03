@@ -223,7 +223,7 @@ export class EventAnalyticsRepository {
         return r.rows[0] ?? null;
     }
     async getSpansByTrace(orgId, traceId, projectId, environment) {
-        const r = await this.db.query(`SELECT id, span_id, trace_id, parent_span_id, name, kind, status, start_time, end_time, duration_ms,
+        const r = await this.db.query(`SELECT id, span_id, trace_id, parent_span_id, name, span_kind, span_status, start_time, end_time, duration_ms,
               http_method, http_route, http_status_code, db_system, db_operation, environment
        FROM events_spans
        WHERE organization_id=$1 AND trace_id=$2 AND project_id=$3 AND environment=$4
@@ -270,7 +270,7 @@ export class EventAnalyticsRepository {
         const errorPredicate = `EXISTS (
       SELECT 1 FROM events_spans s
       WHERE s.organization_id=t.organization_id AND s.project_id=t.project_id
-        AND s.trace_id=t.trace_id AND s.environment=t.environment AND s.status='error'
+        AND s.trace_id=t.trace_id AND s.environment=t.environment AND s.span_status='error'
     )`;
         if (filters.errorOnly)
             conditions.push(errorPredicate);

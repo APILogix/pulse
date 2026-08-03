@@ -717,24 +717,31 @@ export class TelemetryWriter {
             const statusCode = num(attrValue(rootAttrs, 'http.status_code'));
             const responseSize = num(attrValue(rootAttrs, 'http.response.body.size'));
             const rootSpanId = str(root.spanId ?? root.id, 64);
+            const parentSpanId = str(root.parentSpanId ?? root.parentId, 64);
+            const headers = plainObject(r.headers) ?? {};
+            const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? attrValue(rootAttrs, 'http.user_agent') ?? null;
+            const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['X-Forwarded-For'] ?? attrValue(rootAttrs, 'http.client_ip') ?? null;
+            const occurredAt = iso(resolveTimestamp(event));
             return [
-                orgId, projectId, this.eventId(event), e.traceId, rootSpanId,
+                orgId, projectId, this.eventId(event), e.traceId, rootSpanId, parentSpanId,
                 str(root.name, 500), rootSpanId, str(root.kind, 32), spanStatus(root.status), endpoint, httpMethod, statusCode,
-                num(root.duration), num(e.totalDuration), responseSize, e.spanCount, e.isPartial ?? false,
+                num(root.duration) ?? 0, num(e.totalDuration) ?? 0, responseSize, e.spanCount ?? 0, e.isPartial ?? false,
                 e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
                 e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
                 str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
                 str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-                str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+                str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt, occurredAt,
+                str(rawUserAgent, 1024), str(rawClientIp, 255),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'event_id', 'trace_id', 'span_id',
+        const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'event_id', 'trace_id', 'span_id', 'parent_span_id',
             'root_span_name', 'root_span_id', 'span_kind', 'root_span_status', 'endpoint', 'http_method', 'status_code',
             'duration_ms', 'total_duration_ms', 'response_size', 'span_count', 'is_partial',
             'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'], rows);
+            'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp', 'occurred_at',
+            'user_agent', 'client_ip_hash', 'payload', 'ai_response'], rows);
         const res = await db.query(text, values);
         await this.writeTraceSpanTree(list, db);
         return { inserted: res.rowCount ?? 0 };
@@ -750,7 +757,7 @@ export class TelemetryWriter {
         if (rows.length === 0)
             return;
         const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
-            'name', 'kind', 'span_kind', 'span_type', 'status', 'span_status', 'status_message', 'message', 'endpoint',
+            'name', 'span_kind', 'span_type', 'span_status', 'message', 'endpoint',
             'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'start_time', 'end_time', 'duration_ms', 'exclusive_duration_ms', 'occurred_at',
             'attributes', 'events', 'links', 'depth',
@@ -785,7 +792,7 @@ export class TelemetryWriter {
         const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
         rows.push([
             scoped.orgId, scoped.projectId, eventId, spanId, event.traceId, parentSpanId,
-            name, kind, kind, spanType, status, status, str(s.statusMessage, 1024), str(s.statusMessage, 1024), endpoint,
+            name, kind, spanType, status, str(s.statusMessage, 1024), endpoint,
             parentSpanId == null, isHttp, isDb, isCache, isMessaging,
             s.startTime != null ? iso(Number(s.startTime)) : null,
             s.endTime != null ? iso(Number(s.endTime)) : null,
