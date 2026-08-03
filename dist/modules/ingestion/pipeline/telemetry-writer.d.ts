@@ -59,7 +59,7 @@ export declare class TelemetryWriter {
      * at-least-once retries are never billed twice.
      */
     writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
-    writeBatchDetailedWithOutbox(scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
+    writeBatchDetailedWithOutbox(client: PoolClient, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
     private writeBatchDetailedUsing;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;

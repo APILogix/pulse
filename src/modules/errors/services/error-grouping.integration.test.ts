@@ -33,7 +33,7 @@ describe('Error Grouping System Integration', () => {
   });
 
   it('Group Creation: First occurrence creates exactly one group', async () => {
-    vi.mocked(mockClient.query)
+    (mockClient.query as any)
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: 'new-group-id' }] }) // upsertGroup
       .mockResolvedValueOnce({ rows: [] }) // insert
@@ -44,13 +44,13 @@ describe('Error Grouping System Integration', () => {
       { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
     );
 
-    const upsertCall = vi.mocked(mockClient.query).mock.calls[1][0] as string;
+    const upsertCall = (mockClient.query as any).mock.calls[1][0] as string;
     expect(upsertCall).toContain('INSERT INTO error_groups');
     expect(upsertCall).toContain('ON CONFLICT (project_id, fingerprint) DO UPDATE');
   });
 
   it('Transactions: If event insertion fails, no orphaned group should remain', async () => {
-    vi.mocked(mockClient.query)
+    (mockClient.query as any)
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: 'group-id' }] }) // upsertGroup
       .mockRejectedValueOnce(new Error('Insertion failed')); // insert
@@ -65,7 +65,7 @@ describe('Error Grouping System Integration', () => {
   });
 
   it('Concurrency: Simulate many simultaneous ingestions with the same fingerprint', async () => {
-    vi.mocked(mockClient.query)
+    (mockClient.query as any)
       .mockResolvedValue({ rowCount: 1, rows: [{ id: 'concurrent-group-id', is_new: false, is_regression: false, status: 'OPEN' }] }); 
       
     // 10 concurrent requests
@@ -88,7 +88,7 @@ describe('Error Grouping System Integration', () => {
     vi.mocked(domainEventBus.publish).mockClear();
 
     // Setup: Return a valid group from handleGroup (simulating real DB upsert)
-    vi.mocked(mockClient.query)
+    (mockClient.query as any)
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ id: 'group-id', is_new: false, is_regression: false, status: 'OPEN' }] }) // Upsert Group
       .mockResolvedValueOnce({ rowCount: 0 }) // Insert Event (simulate DO NOTHING by returning 0 rows)

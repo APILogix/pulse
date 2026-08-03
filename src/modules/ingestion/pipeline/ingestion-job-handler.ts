@@ -45,7 +45,7 @@ export function createIngestionJobHandler(writer: TelemetryWriter, usage?: Usage
       throw new Error('NO_PERSISTABLE_EVENTS');
     }
 
-    const writeResult = await writer.writeBatchDetailedWithOutbox(scoped);
+    const writeResult = await writer.writeBatchDetailed(scoped);
     if (writeResult.totalInserted > 0) {
       await enqueueFastAlertEvaluations(scoped);
     }

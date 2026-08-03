@@ -29,6 +29,14 @@ export declare class WorkerMetrics {
     rollupLastOrgs: number;
     rollupLastProjects: number;
     private queue;
+    errorGroupsCreated: number;
+    errorGroupsReused: number;
+    errorRegressions: number;
+    errorDuplicates: number;
+    private readonly errorGroupLookupMs;
+    private readonly errorGroupUpsertMs;
+    private readonly errorTransactionMs;
+    private readonly errorDomainEventMs;
     private observe;
     recordProcessed(queue: string, type: string, eventsReceived: number, inserted: number, rejected: number, processingMs: number, e2eMsVal: number | null): void;
     recordFailed(queue: string, eventsReceived: number): void;
@@ -36,6 +44,9 @@ export declare class WorkerMetrics {
     recordFairnessProcessed(): void;
     recordDlqIntake(count?: number): void;
     setOrgInFlight(orgId: string, count: number): void;
+    recordErrorGroup(isNew: boolean, isRegression: boolean): void;
+    recordErrorDuplicate(): void;
+    recordErrorLatencies(lookup: number | null, upsert: number | null, transaction: number | null, domain: number | null): void;
     recordRollupSuccess(stats: RollupRunStats): void;
     recordRollupFailure(durationMs: number): void;
     /** Render the Prometheus text exposition format (v0.0.4). */

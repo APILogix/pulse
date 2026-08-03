@@ -419,22 +419,12 @@ export class TelemetryWriter {
     return this.writeBatchDetailedUsing(this.pool, scoped);
   }
 
-  async writeBatchDetailedWithOutbox(scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      const result = await this.writeBatchDetailedUsing(client, scoped);
-      if (result.totalInserted > 0) {
-        await this.appendTelemetryOutbox(scoped, client);
-      }
-      await client.query('COMMIT');
-      return result;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
+  async writeBatchDetailedWithOutbox(client: PoolClient, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
+    const result = await this.writeBatchDetailedUsing(client, scoped);
+    if (result.totalInserted > 0) {
+      await this.appendTelemetryOutbox(scoped, client);
     }
+    return result;
   }
 
   private async writeBatchDetailedUsing(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
@@ -646,9 +636,14 @@ export class TelemetryWriter {
       const r = rec(event);
       const endpoint = str(r.route, 500) ?? str(e.url, 8192);
       const name = endpoint ? `${e.method} ${endpoint}`.slice(0, 1024) : e.method;
+      
+      const headers = (e.headers && typeof e.headers === 'object') ? (e.headers as Record<string, unknown>) : {};
+      const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? null;
+      const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['x-real-ip'] ?? null;
+      
       // Enrich clientIp -> geo, userAgent -> browser/os/device. Populates the
       // 14_observability/015 columns; missing data resolves to null ("Unknown").
-      const g = this.enricher.enrich(r.clientIp, r.userAgent);
+      const g = this.enricher.enrich(rawClientIp, rawUserAgent);
       return [
         orgId, projectId, this.eventId(event), e.requestId, endpoint, name, e.method,
         // duration_ms preserves fractional milliseconds.
@@ -657,7 +652,7 @@ export class TelemetryWriter {
         e.body != null ? JSON.stringify(e.body) : null,
         num(e.bodySize), num(r.responseSize),
         str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
-        inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
+        inet(rawClientIp), str(rawUserAgent, 1024), str(r.referer, 1024),
         e.traceId ?? null, e.spanId ?? null,
         str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
         str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
@@ -753,20 +748,6 @@ export class TelemetryWriter {
 
   // ── events_traces ─────────────────────────────────────────────────────────
   private async writeTraces(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
-    if ('connect' in db) {
-      const client = await db.connect() as PoolClient;
-      try {
-        await client.query('BEGIN');
-        const result = await this.writeTracesInTransaction(list, client);
-        await client.query('COMMIT');
-        return result;
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => undefined);
-        throw err;
-      } finally {
-        client.release();
-      }
-    }
     return this.writeTracesInTransaction(list, db);
   }
 

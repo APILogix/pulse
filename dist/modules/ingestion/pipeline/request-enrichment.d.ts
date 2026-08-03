@@ -29,8 +29,5 @@ export declare class RequestEnricher {
     enrich(clientIp: unknown, userAgent: unknown): EnrichedRequestFields;
     private resolveGeo;
     private parseUserAgent;
-    private matchOs;
-    private matchBrowser;
-    private matchDevice;
 }
 //# sourceMappingURL=request-enrichment.d.ts.map

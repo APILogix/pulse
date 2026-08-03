@@ -13,7 +13,7 @@ export class ErrorGroupingService {
   async handleGroup(
     client: PoolClient,
     params: CreateErrorGroupParams
-  ): Promise<string> {
+  ): Promise<{ id: string; isNew: boolean; status: string; isRegression: boolean; }> {
     // The repository method upsertGroup handles:
     // 1. Finding or creating the group atomically.
     // 2. Updating occurrence counters and last_seen_at.

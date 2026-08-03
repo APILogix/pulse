@@ -203,7 +203,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.addHook("preHandler", async (request) => {
     if (request.method !== "POST") return;
     const summary = ingestBodySummary(request.body);
-    console.log("[PULSE INGEST DEBUG] event types received:", summary.eventTypes);
+    // console.log("[PULSE INGEST DEBUG] event types received:", summary.eventTypes);
 
     if (request.body && typeof request.body === "object") {
       const ingest = request.body as Partial<IngestRequest>;
@@ -217,30 +217,30 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
         console.log(event);
       }
     }
-
-    request.log.info(
-      {
-        method: request.method,
-        url: request.url,
-        contentEncoding: request.headers["content-encoding"],
-        decompressed: request.headers["content-encoding"] === "gzip",
-        body: summary,
-      },
-      "Ingestion request body after decompression",
-    );
+console.log("[PULSE INGEST DEBUG] event types received:", summary);
+    // request.log.info(
+    //   {
+    //     method: request.method,
+    //     url: request.url,
+    //     contentEncoding: request.headers["content-encoding"],
+    //     decompressed: request.headers["content-encoding"] === "gzip",
+    //     body: summary,
+    //   },
+    //   "Ingestion request body after decompression",
+    // );
   });
 
-  fastify.addHook("onResponse", async (request, reply) => {
-    request.log.info(
-      {
-        method: request.method,
-        url: request.url,
-        statusCode: reply.statusCode,
-        contentEncoding: request.headers["content-encoding"],
-      },
-      "Ingestion request completed",
-    );
-  });
+  // fastify.addHook("onResponse", async (request, reply) => {
+  //   request.log.info(
+  //     {
+  //       method: request.method,
+  //       url: request.url,
+  //       statusCode: reply.statusCode,
+  //       contentEncoding: request.headers["content-encoding"],
+  //     },
+  //     "Ingestion request completed",
+  //   );
+  // });
 
   fastify.addHook("onError", async (request, _reply, error) => {
     request.log.warn(

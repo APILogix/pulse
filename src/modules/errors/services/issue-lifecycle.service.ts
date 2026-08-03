@@ -46,19 +46,19 @@ export class IssueLifecycleService {
 
   async assign(projectId: string, id: string, assigneeId: string, actorId?: string): Promise<void> {
     // Phase 14 future compatibility placeholder for Assignment table / fields
-    domainEventBus.publish('ErrorAssigned', { projectId, groupId: id, assigneeId, actorId });
+    domainEventBus.publish('ErrorAssigned', { projectId, groupId: id, assigneeId, ...(actorId ? { actorId } : {}) });
   }
 
   async unassign(projectId: string, id: string, actorId?: string): Promise<void> {
-    domainEventBus.publish('ErrorUnassigned', { projectId, groupId: id, actorId });
+    domainEventBus.publish('ErrorUnassigned', { projectId, groupId: id, ...(actorId ? { actorId } : {}) });
   }
 
   async mute(projectId: string, id: string, actorId?: string): Promise<void> {
-    domainEventBus.publish('ErrorMuted', { projectId, groupId: id, actorId });
+    domainEventBus.publish('ErrorMuted', { projectId, groupId: id, ...(actorId ? { actorId } : {}) });
   }
 
   async unmute(projectId: string, id: string, actorId?: string): Promise<void> {
-    domainEventBus.publish('ErrorUnmuted', { projectId, groupId: id, actorId });
+    domainEventBus.publish('ErrorUnmuted', { projectId, groupId: id, ...(actorId ? { actorId } : {}) });
   }
 
   private async executeTransition(projectId: string, id: string, targetStatus: string, actorId?: string) {
@@ -104,12 +104,12 @@ export class IssueLifecycleService {
         action: 'STATUS_CHANGED',
         oldValue: { status: currentStatus },
         newValue: { status: targetStatus },
-        actorId
+        ...(actorId ? { actorId } : {})
       });
       
       await client.query('COMMIT');
       
-      const payload = { projectId, groupId: id, actorId };
+      const payload = { projectId, groupId: id, ...(actorId ? { actorId } : {}) };
       if (targetStatus === 'RESOLVED') domainEventBus.publish('ErrorResolved', payload);
       else if (targetStatus === 'IGNORED') domainEventBus.publish('ErrorIgnored', payload);
       else if (targetStatus === 'ARCHIVED') domainEventBus.publish('ErrorArchived', payload);

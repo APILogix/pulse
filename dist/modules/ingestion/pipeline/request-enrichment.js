@@ -24,6 +24,7 @@
  *   PULSE_IP_HASH_SALT   salt for client_ip_hash (defaults to a static dev salt)
  */
 import { createHash } from 'crypto';
+import { UAParser } from 'ua-parser-js';
 const EMPTY = {
     geoCountryCode: null,
     geoRegion: null,
@@ -120,70 +121,80 @@ export class RequestEnricher {
             /* geo lookup failure is non-fatal */
         }
     }
-    // ── User-Agent parsing (dependency-free) ─────────────────────────────────────
+    // ── User-Agent parsing (ua-parser-js) ────────────────────────────────────────
     parseUserAgent(ua, out) {
         const s = ua.slice(0, 1024);
-        // Bots first (also covers headless + common crawlers).
-        if (/bot|crawler|spider|crawling|slurp|mediapartners|headlesschrome|facebookexternalhit|preview/i.test(s)) {
-            out.isBot = true;
-            out.deviceType = 'bot';
-            out.browserFamily = 'Bot';
-            return;
+        try {
+            // Fast heuristic for common bots to save parser overhead for simple cases
+            if (/bot|crawler|spider|crawling|slurp|mediapartners|headlesschrome|facebookexternalhit|preview/i.test(s)) {
+                out.isBot = true;
+                out.deviceType = 'bot';
+                out.browserFamily = 'Bot';
+                return;
+            }
+            const parser = new UAParser(s);
+            const parsed = parser.getResult();
+            // Bot detection from ua-parser-js (if any)
+            if (parsed.browser.name?.toLowerCase().includes('bot') || parsed.browser.name?.toLowerCase().includes('crawler')) {
+                out.isBot = true;
+                out.deviceType = 'bot';
+                out.browserFamily = 'Bot';
+                return;
+            }
+            out.isBot = false;
+            // Browser
+            out.browserFamily = parsed.browser.name ?? null;
+            if (parsed.browser.version) {
+                const major = parseInt(parsed.browser.version.split('.')[0], 10);
+                out.browserVersionMajor = Number.isFinite(major) && !Number.isNaN(major) ? major : null;
+            }
+            else {
+                out.browserVersionMajor = null;
+            }
+            // OS
+            out.osName = parsed.os.name ?? null;
+            if (parsed.os.version) {
+                // macOS could be 10.15, iOS 18.0
+                const major = parseInt(parsed.os.version.split(/[._]/)[0], 10);
+                out.osVersionMajor = Number.isFinite(major) && !Number.isNaN(major) ? major : null;
+            }
+            else {
+                out.osVersionMajor = null;
+            }
+            // iOS WebView/App Fallback (often lacks "Safari" in UA string)
+            if (out.osName === 'iOS' && !out.browserFamily) {
+                out.browserFamily = 'Safari';
+                out.browserVersionMajor = out.osVersionMajor;
+            }
+            // Standardize OS naming to match previous normalization (for backwards compat in querying)
+            if (out.osName === 'Mac OS')
+                out.osName = 'macOS';
+            if (out.osName === 'Chrome OS' || out.osName === 'Chromium OS')
+                out.osName = 'ChromeOS';
+            // Device Type
+            if (parsed.device.type === 'mobile') {
+                out.deviceType = 'mobile';
+            }
+            else if (parsed.device.type === 'tablet') {
+                out.deviceType = 'tablet';
+            }
+            else if (parsed.device.type === 'smarttv' || parsed.device.type === 'console' || parsed.device.type === 'wearable' || parsed.device.type === 'embedded') {
+                out.deviceType = 'unknown'; // we only support desktop/mobile/tablet/bot/unknown
+            }
+            else {
+                // UAParser often leaves device.type empty for desktop, so we infer it from the OS
+                if (out.osName === 'Windows' || out.osName === 'macOS' || out.osName === 'Linux' || out.osName === 'ChromeOS' || out.osName === 'Ubuntu') {
+                    out.deviceType = 'desktop';
+                }
+                else {
+                    out.deviceType = 'unknown';
+                }
+            }
         }
-        out.isBot = false;
-        // OS.
-        const os = this.matchOs(s);
-        out.osName = os.name;
-        out.osVersionMajor = os.major;
-        // Browser (order matters: Edge/Opera/Brave masquerade as Chrome).
-        const br = this.matchBrowser(s);
-        out.browserFamily = br.name;
-        out.browserVersionMajor = br.major;
-        // Device class.
-        out.deviceType = this.matchDevice(s, os.name);
-    }
-    matchOs(s) {
-        let m;
-        if ((m = s.match(/Windows NT (\d+)/i))) {
-            // NT 10.0 -> Windows 10/11; we store the NT major as-is for fidelity.
-            return { name: 'Windows', major: parseInt(m[1], 10) };
+        catch (err) {
+            // In case of parsing failure, we fail gracefully and leave fields as NULL.
+            // This strictly follows the requirement: "Never prevent insertion into event_requests"
         }
-        if ((m = s.match(/Android (\d+)/i)))
-            return { name: 'Android', major: parseInt(m[1], 10) };
-        if ((m = s.match(/(?:iPhone OS|CPU OS) (\d+)/i)))
-            return { name: 'iOS', major: parseInt(m[1], 10) };
-        if ((m = s.match(/Mac OS X (\d+)[._](\d+)/i)))
-            return { name: 'macOS', major: parseInt(m[1], 10) };
-        if (/CrOS/i.test(s))
-            return { name: 'ChromeOS', major: null };
-        if (/Linux/i.test(s))
-            return { name: 'Linux', major: null };
-        return { name: null, major: null };
-    }
-    matchBrowser(s) {
-        const pick = (re, name) => {
-            const m = s.match(re);
-            return m ? { name, major: m[1] ? parseInt(m[1], 10) : null } : null;
-        };
-        return (pick(/Edg(?:e|A|iOS)?\/(\d+)/i, 'Edge') ??
-            pick(/OPR\/(\d+)/i, 'Opera') ??
-            pick(/(?:Opera)\/(\d+)/i, 'Opera') ??
-            pick(/SamsungBrowser\/(\d+)/i, 'Samsung Internet') ??
-            pick(/Firefox\/(\d+)/i, 'Firefox') ??
-            // Chrome must come before Safari (Chrome UA also contains "Safari").
-            pick(/Chrome\/(\d+)/i, 'Chrome') ??
-            pick(/Version\/(\d+)[.\d]* Safari/i, 'Safari') ??
-            pick(/Safari\/(\d+)/i, 'Safari') ??
-            { name: null, major: null });
-    }
-    matchDevice(s, osName) {
-        if (/iPad|Tablet/i.test(s) || (osName === 'Android' && !/Mobile/i.test(s)))
-            return 'tablet';
-        if (/Mobi|iPhone|Android.+Mobile|Windows Phone/i.test(s))
-            return 'mobile';
-        if (osName === 'Windows' || osName === 'macOS' || osName === 'Linux' || osName === 'ChromeOS')
-            return 'desktop';
-        return 'unknown';
     }
 }
 //# sourceMappingURL=request-enrichment.js.map

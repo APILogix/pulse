@@ -22,7 +22,7 @@ describe('ErrorGroupingService', () => {
   });
 
   it('should create or find group successfully', async () => {
-    vi.mocked(mockRepo.upsertGroup).mockResolvedValue('group-uuid');
+    vi.mocked(mockRepo.upsertGroup).mockResolvedValue({ id: 'group-uuid', isNew: true, status: 'OPEN', isRegression: false });
 
     const result = await errorGroupingService.handleGroup(mockClient, {
       projectId: 'proj-1',
@@ -31,7 +31,7 @@ describe('ErrorGroupingService', () => {
       severity: 'error'
     });
 
-    expect(result).toBe('group-uuid');
+    expect(result).toEqual({ id: 'group-uuid', isNew: true, status: 'OPEN', isRegression: false });
     expect(mockRepo.upsertGroup).toHaveBeenCalledWith(mockClient, expect.objectContaining({
       projectId: 'proj-1',
       fingerprint: 'hash'

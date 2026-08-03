@@ -30,6 +30,7 @@ import { registerEventAnalyticsModule } from './modules/event-analytics/event-an
 import { registerAIModule } from './modules/ai/ai.module.js';
 import { registerAutomationModule } from './modules/automation/automation.module.js';
 import { registerObservabilityModule } from './modules/observability/observability.module.js';
+import { registerErrorsModule } from './modules/errors/errors.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
@@ -181,6 +182,7 @@ export async function buildApp() {
     await app.register(registerAIModule);
     await app.register(registerAutomationModule);
     await app.register(registerObservabilityModule);
+    await app.register(registerErrorsModule);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {

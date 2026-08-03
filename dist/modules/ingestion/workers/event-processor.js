@@ -25,13 +25,17 @@
  *   6. METRICS: per-type processing latency and e2e latency
  *      (now − metadata.receivedAt).
  */
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { env } from '../../../config/env.js';
 import { pgboss } from '../../../lib/pgboss.js';
 import { normalizeEvent, normalizeSdkEnvironment, } from '../pipeline/event-normalizer.js';
 import { TelemetryWriter, errorFingerprint, errorNameOf, } from '../pipeline/telemetry-writer.js';
 import { UsageCounter } from '../usage/usage-counter.js';
 import { INGEST_DLQ_INTAKE_QUEUE, } from '../queue/ingest-queues.js';
+import { ErrorIngestionService } from '../../errors/services/error-ingestion.service.js';
+import { ErrorGroupingService } from '../../errors/services/error-grouping.service.js';
+import { ErrorGroupRepository } from '../../errors/repositories/error-group.repository.js';
+import { ErrorRepository } from '../../errors/repositories/error.repository.js';
 /** Deterministic JSON: object keys sorted recursively, undefined dropped. */
 export function stableStringify(value) {
     if (value === null || typeof value === 'number' || typeof value === 'boolean') {
@@ -63,47 +67,13 @@ function deterministicEventId(projectId, environment, type, event) {
 function str(v, max = 255) {
     return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
 }
-/**
- * Error-group upsert. Insert: first_seen/last_seen = now, counts = the
- * occurrence count, status default ('unresolved'). Conflict: bump occurrence
- * counters + last_seen, refresh name/template, merge service/environment/
- * release tag arrays, and flip 'resolved' back to 'unresolved' (regression
- * detection).
- */
-const UPSERT_ERROR_GROUP_SQL = `
-  INSERT INTO analytics_error_groups
-    (organization_id, project_id, fingerprint, error_name, message_template,
-     first_seen_at, last_seen_at, total_count, today_count, week_count, month_count,
-     status, services, environments, releases)
-  VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $6, $6, $6,
-          'unresolved', $7::text[], $8::text[], $9::text[])
-  ON CONFLICT (organization_id, project_id, fingerprint) DO UPDATE SET
-    last_seen_at = NOW(),
-    total_count = analytics_error_groups.total_count + EXCLUDED.total_count,
-    today_count = analytics_error_groups.today_count + EXCLUDED.today_count,
-    week_count = analytics_error_groups.week_count + EXCLUDED.week_count,
-    month_count = analytics_error_groups.month_count + EXCLUDED.month_count,
-    status = CASE WHEN analytics_error_groups.status = 'resolved'
-                  THEN 'unresolved'
-                  ELSE analytics_error_groups.status END,
-    resolved_at = CASE WHEN analytics_error_groups.status = 'resolved'
-                       THEN NULL ELSE analytics_error_groups.resolved_at END,
-    resolved_by = CASE WHEN analytics_error_groups.status = 'resolved'
-                       THEN NULL ELSE analytics_error_groups.resolved_by END,
-    error_name = EXCLUDED.error_name,
-    message_template = EXCLUDED.message_template,
-    services = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.services, '{}'::text[]) || COALESCE(EXCLUDED.services, '{}'::text[])) AS u(v)),
-    environments = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.environments, '{}'::text[]) || COALESCE(EXCLUDED.environments, '{}'::text[])) AS u(v)),
-    releases = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.releases, '{}'::text[]) || COALESCE(EXCLUDED.releases, '{}'::text[])) AS u(v))`;
 export class EventProcessor {
     pool;
     metrics;
     log;
     writer;
     usage;
+    errorIngestionService;
     constructor(pool, metrics, log, usagePool = pool) {
         this.pool = pool;
         this.metrics = metrics;
@@ -116,6 +86,10 @@ export class EventProcessor {
             bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
             driveRollup: false,
         });
+        const errorGroupRepo = new ErrorGroupRepository(pool);
+        const errorRepo = new ErrorRepository(pool);
+        const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
+        this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics);
     }
     start() {
         this.usage.start();
@@ -173,10 +147,65 @@ export class EventProcessor {
             };
             await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {});
         }
-        // 3) Idempotent persistence + telemetry outbox in the same telemetry DB
-        // transaction. The alert relay owns enqueueing, so ingestion does not block
-        // on primary-DB alert configuration or connector lookups.
-        const result = await this.writer.writeBatchDetailedWithOutbox(scoped);
+        // 3) Persist all writes for this job through one checked-out client and one transaction.
+        let result = { totalInserted: 0, totalReceived: rawEvents.length, insertedErrors: [] };
+        let errorDomainEvents = [];
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            if (type === 'error') {
+                const errorBatch = scoped.map(s => {
+                    const e = s.event;
+                    const errorName = errorNameOf(s.event);
+                    const fingerprint = errorFingerprint(s.event, errorName);
+                    return {
+                        groupParams: {
+                            projectId: s.projectId,
+                            fingerprint,
+                            eventId: e.eventId,
+                            severity: e.level || e.severity || 'error',
+                            message: e.message,
+                            errorName,
+                            ...(typeof e.release === 'string' ? { release: e.release } : {}),
+                            ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
+                            ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
+                            ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
+                        },
+                        eventRecord: {
+                            id: typeof e.id === 'string' ? e.id : randomUUID(),
+                            organization_id: s.orgId,
+                            project_id: s.projectId,
+                            event_id: e.eventId,
+                            fingerprint,
+                            message: e.message || errorName,
+                            error_name: errorName,
+                            severity: e.level || e.severity || 'error',
+                            timestamp: new Date(e.timestamp),
+                            payload: e
+                        }
+                    };
+                });
+                const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
+                result.totalInserted = errorResult.inserted;
+                result.totalReceived = errorBatch.length;
+                errorDomainEvents = errorResult.domainEvents;
+            }
+            else {
+                result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
+            }
+            await client.query('COMMIT');
+            if (errorDomainEvents.length > 0) {
+                this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+            }
+        }
+        catch (err) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            this.log.error({ err, queue, batchId: payload?.metadata?.batchId }, 'ingestion batch transaction failed');
+            throw err;
+        }
+        finally {
+            client.release();
+        }
         this.log.info({
             queue,
             eventType: type ?? 'unknown',
@@ -185,10 +214,6 @@ export class EventProcessor {
             rejected: rejected.length,
             inserted: result.totalInserted,
         }, 'ingestion event type stored');
-        // 4) Error grouping for confirmed-inserted errors only.
-        if (result.insertedErrors.length > 0) {
-            await this.upsertErrorGroups(result.insertedErrors);
-        }
         // 5) Usage accounting (inserted rows only — duplicates are never billed).
         if (result.totalInserted > 0 && orgId && projectId) {
             this.usage.increment(projectId, orgId, `billing:events:${type}`, result.totalInserted);
@@ -206,54 +231,6 @@ export class EventProcessor {
                 queue, type, received: rawEvents.length, inserted: result.totalInserted,
                 rejected: rejected.length, duplicates: result.totalReceived - result.totalInserted,
             }, 'ingest job processed with drops');
-        }
-    }
-    /**
-     * Upsert analytics_error_groups for inserted error events. Aggregated per
-     * (org, project, fingerprint) so a batch of N identical errors costs one
-     * statement. Retried jobs contribute nothing here because their rows were
-     * already inserted by the first attempt (writeBatchDetailed returns them as
-     * duplicates, excluded from insertedErrors).
-     */
-    async upsertErrorGroups(insertedErrors) {
-        const groups = new Map();
-        for (const { orgId, projectId, environment, event } of insertedErrors) {
-            if (!orgId)
-                continue;
-            const e = event;
-            const r = event;
-            const errorName = errorNameOf(event);
-            const fingerprint = errorFingerprint(event, errorName);
-            const key = `${orgId}|${projectId}|${fingerprint}`;
-            let acc = groups.get(key);
-            if (!acc) {
-                acc = {
-                    orgId,
-                    projectId,
-                    fingerprint,
-                    errorName,
-                    messageTemplate: e.message.slice(0, 500),
-                    service: str(r.service, 100),
-                    environment,
-                    release: str(r.release, 100),
-                    count: 0,
-                };
-                groups.set(key, acc);
-            }
-            acc.count += 1;
-        }
-        for (const g of groups.values()) {
-            await this.pool.query(UPSERT_ERROR_GROUP_SQL, [
-                g.orgId,
-                g.projectId,
-                g.fingerprint,
-                g.errorName,
-                g.messageTemplate,
-                g.count,
-                g.service ? [g.service] : '{}',
-                g.environment ? [g.environment] : '{}',
-                g.release ? [g.release] : '{}',
-            ]);
         }
     }
 }

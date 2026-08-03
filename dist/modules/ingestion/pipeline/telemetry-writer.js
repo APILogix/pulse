@@ -411,24 +411,12 @@ export class TelemetryWriter {
     async writeBatchDetailed(scoped) {
         return this.writeBatchDetailedUsing(this.pool, scoped);
     }
-    async writeBatchDetailedWithOutbox(scoped) {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            const result = await this.writeBatchDetailedUsing(client, scoped);
-            if (result.totalInserted > 0) {
-                await this.appendTelemetryOutbox(scoped, client);
-            }
-            await client.query('COMMIT');
-            return result;
+    async writeBatchDetailedWithOutbox(client, scoped) {
+        const result = await this.writeBatchDetailedUsing(client, scoped);
+        if (result.totalInserted > 0) {
+            await this.appendTelemetryOutbox(scoped, client);
         }
-        catch (err) {
-            await client.query('ROLLBACK').catch(() => undefined);
-            throw err;
-        }
-        finally {
-            client.release();
-        }
+        return result;
     }
     async writeBatchDetailedUsing(db, scoped) {
         const result = {
@@ -616,9 +604,12 @@ export class TelemetryWriter {
             const r = rec(event);
             const endpoint = str(r.route, 500) ?? str(e.url, 8192);
             const name = endpoint ? `${e.method} ${endpoint}`.slice(0, 1024) : e.method;
+            const headers = (e.headers && typeof e.headers === 'object') ? e.headers : {};
+            const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? null;
+            const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['x-real-ip'] ?? null;
             // Enrich clientIp -> geo, userAgent -> browser/os/device. Populates the
             // 14_observability/015 columns; missing data resolves to null ("Unknown").
-            const g = this.enricher.enrich(r.clientIp, r.userAgent);
+            const g = this.enricher.enrich(rawClientIp, rawUserAgent);
             return [
                 orgId, projectId, this.eventId(event), e.requestId, endpoint, name, e.method,
                 // duration_ms preserves fractional milliseconds.
@@ -627,7 +618,7 @@ export class TelemetryWriter {
                 e.body != null ? JSON.stringify(e.body) : null,
                 num(e.bodySize), num(r.responseSize),
                 str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
-                inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
+                inet(rawClientIp), str(rawUserAgent, 1024), str(r.referer, 1024),
                 e.traceId ?? null, e.spanId ?? null,
                 str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
                 str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
@@ -669,7 +660,7 @@ export class TelemetryWriter {
             const tenantId = str(r.tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255);
             return [
                 orgId, projectId, this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
-                kind, kind, spanType, status, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
+                kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
                 e.name, e.statusMessage ?? null, endpoint,
                 iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
                 num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)), iso(resolveTimestamp(event)),
@@ -697,8 +688,8 @@ export class TelemetryWriter {
             ];
         });
         const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
-            'kind', 'span_kind', 'span_type', 'status', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
-            'name', 'status_message', 'endpoint', 'start_time', 'end_time',
+            'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
+            'name', 'message', 'endpoint', 'start_time', 'end_time',
             'duration_ms', 'exclusive_duration_ms', 'occurred_at', 'timestamp',
             'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
             'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',
@@ -713,22 +704,6 @@ export class TelemetryWriter {
     }
     // ── events_traces ─────────────────────────────────────────────────────────
     async writeTraces(list, db) {
-        if ('connect' in db) {
-            const client = await db.connect();
-            try {
-                await client.query('BEGIN');
-                const result = await this.writeTracesInTransaction(list, client);
-                await client.query('COMMIT');
-                return result;
-            }
-            catch (err) {
-                await client.query('ROLLBACK').catch(() => undefined);
-                throw err;
-            }
-            finally {
-                client.release();
-            }
-        }
         return this.writeTracesInTransaction(list, db);
     }
     async writeTracesInTransaction(list, db) {

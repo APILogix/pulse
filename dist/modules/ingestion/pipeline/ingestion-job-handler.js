@@ -21,7 +21,7 @@ export function createIngestionJobHandler(writer, usage) {
         if (scoped.length === 0) {
             throw new Error('NO_PERSISTABLE_EVENTS');
         }
-        const writeResult = await writer.writeBatchDetailedWithOutbox(scoped);
+        const writeResult = await writer.writeBatchDetailed(scoped);
         if (writeResult.totalInserted > 0) {
             await enqueueFastAlertEvaluations(scoped);
         }

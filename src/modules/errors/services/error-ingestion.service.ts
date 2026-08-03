@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import type { ErrorGroupingService } from './error-grouping.service.ts';
 import type { ErrorRepository } from '../repositories/error.repository.ts';
-import { domainEventBus } from '../../../shared/events/domain-event-bus.ts';
+import { domainEventBus } from '../../../shared/events/domain-event-bus.js';
 import type { CreateErrorGroupParams, ErrorGroupEventRecord } from '../models/error-group.model.ts';
 import type { UpsertErrorGroupParams } from '../repositories/error-group.repository.ts';
 import type { WorkerMetrics } from '../../ingestion/workers/metrics-server.ts';
@@ -24,48 +24,64 @@ export class ErrorIngestionService {
     eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>
   ): Promise<void> {
     const client = await this.pool.connect();
-    let groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean };
-
-    const startTime = Date.now();
     try {
       await client.query('BEGIN');
-
-      // 1. Upsert group
-      const t1 = Date.now();
-      groupResult = await this.errorGroupingService.handleGroup(client, groupParams);
-      const t2 = Date.now();
-      if (this.metrics) {
-        this.metrics.recordErrorLatencies(null, t2 - t1, null, null);
-      }
-
-      // 2. Insert error event
-      const fullEventRecord: ErrorGroupEventRecord = {
-        ...eventRecord,
-        error_group_id: groupResult.id,
-      };
-      const inserted = await this.errorRepository.insert(client, fullEventRecord);
-
-      if (!inserted) {
-        // If event already exists, it's a duplicate retry. Rollback to undo the group counter bump.
+      const result = await this.ingestErrorWithClient(client, groupParams, eventRecord);
+      if (!result.inserted) {
         await client.query('ROLLBACK');
-        if (this.metrics) this.metrics.recordErrorDuplicate();
         return;
       }
-
       await client.query('COMMIT');
-      
-      const t3 = Date.now();
-      if (this.metrics) {
-        this.metrics.recordErrorGroup(groupResult.isNew, groupResult.isRegression);
-        this.metrics.recordErrorLatencies(null, null, t3 - startTime, null);
-      }
+      this.publishDomainEvents(result.groupResult, eventRecord);
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
     } finally {
       client.release();
     }
+  }
 
+  private async ingestErrorWithClient(
+    client: PoolClient,
+    groupParams: UpsertErrorGroupParams,
+    eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>
+  ): Promise<{ inserted: boolean; groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean } }> {
+    const startTime = Date.now();
+
+    // 1. Upsert group
+    const t1 = Date.now();
+    const groupResult = await this.errorGroupingService.handleGroup(client, groupParams);
+    const t2 = Date.now();
+    if (this.metrics) {
+      this.metrics.recordErrorLatencies(null, t2 - t1, null, null);
+    }
+
+    // 2. Insert error event
+    const fullEventRecord: ErrorGroupEventRecord = {
+      ...eventRecord,
+      error_group_id: groupResult.id,
+    };
+    const inserted = await this.errorRepository.insert(client, fullEventRecord);
+
+    if (!inserted) {
+      // If event already exists, it's a duplicate retry. The caller-owned
+      // transaction must roll back to undo the group counter bump.
+      if (this.metrics) this.metrics.recordErrorDuplicate();
+      return { inserted: false, groupResult };
+    }
+
+    if (this.metrics) {
+      this.metrics.recordErrorGroup(groupResult.isNew, groupResult.isRegression);
+      this.metrics.recordErrorLatencies(null, null, Date.now() - startTime, null);
+    }
+
+    return { inserted: true, groupResult };
+  }
+
+  private publishDomainEvents(
+    groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean },
+    eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>
+  ): void {
     const eventStart = Date.now();
     // Publish internal domain events outside of transaction
     if (groupResult.isNew) {
@@ -100,10 +116,34 @@ export class ErrorIngestionService {
   }
 
   async ingestBatch(
+    client: PoolClient,
     errors: Array<{ groupParams: UpsertErrorGroupParams; eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'> }>
-  ): Promise<void> {
+  ): Promise<{ inserted: number; domainEvents: Array<{
+    groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean };
+    eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
+  }> }> {
+    let inserted = 0;
+    const domainEvents: Array<{
+      groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean };
+      eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
+    }> = [];
     for (const error of errors) {
-      await this.ingestError(error.groupParams, error.eventRecord);
+      const result = await this.ingestErrorWithClient(client, error.groupParams, error.eventRecord);
+      if (!result.inserted) {
+        throw new Error('DUPLICATE_ERROR_EVENT');
+      }
+      inserted++;
+      domainEvents.push({ groupResult: result.groupResult, eventRecord: error.eventRecord });
+    }
+    return { inserted, domainEvents };
+  }
+
+  publishBatchDomainEvents(events: Array<{
+    groupResult: { id: string; isNew: boolean; status: string; isRegression: boolean };
+    eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
+  }>): void {
+    for (const event of events) {
+      this.publishDomainEvents(event.groupResult, event.eventRecord);
     }
   }
 }
