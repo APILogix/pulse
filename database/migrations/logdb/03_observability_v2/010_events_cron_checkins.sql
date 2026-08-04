@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS events_cron_checkins (
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
-  api_key_id UUID,
+  api_key_name TEXT NOT NULL,
 
   -- Identity & correlation
   event_id TEXT NOT NULL,

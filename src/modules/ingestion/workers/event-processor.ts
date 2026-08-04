@@ -196,6 +196,7 @@ export class EventProcessor {
           const e = s.event as any;
           const errorName = errorNameOf(s.event);
           const fingerprint = errorFingerprint(s.event, errorName);
+          const req = (e.context?.request as any) || e.context || {};
           return {
             groupParams: {
               projectId: s.projectId,
@@ -213,11 +214,40 @@ export class EventProcessor {
               id: typeof e.id === 'string' ? e.id : randomUUID(),
               organization_id: s.orgId as string,
               project_id: s.projectId,
+              api_key_name: s.apiKeyName ?? '',
+              environment: s.environment,
               event_id: e.eventId,
+              request_id: e.requestId ?? null,
+              trace_id: e.traceId ?? null,
+              span_id: e.spanId ?? null,
+              parent_span_id: e.parentSpanId ?? null,
+              session_id: e.sessionId ?? null,
+              user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
               fingerprint,
               message: e.message || errorName,
               error_name: errorName,
               severity: e.level || e.severity || 'error',
+              mechanism: e.mechanism ?? null,
+              handled: typeof e.handled === 'boolean' ? e.handled : null,
+              method: e.method ?? req.method ?? null,
+              route: e.route ?? req.route ?? null,
+              url: e.url ?? req.url ?? null,
+              status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
+              status_text: e.statusText ?? req.statusText ?? null,
+              stack_frames: e.stack ?? [],
+              breadcrumbs: e.breadcrumbs ?? [],
+              context: e.context ?? {},
+              service: e.service ?? null,
+              server_name: e.serverName ?? e.metadata?.serverName ?? null,
+              release: e.release ?? e.metadata?.release ?? null,
+              sdk_name: e.sdkName ?? e.sdk?.name ?? e.metadata?.sdkName ?? null,
+              sdk_version: e.sdkVersion ?? e.sdk?.version ?? e.metadata?.sdkVersion ?? null,
+              application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
+              application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
+              tags: e.tags ?? {},
+              extra: e.extra ?? {},
+              metadata: e.metadata ?? {},
+              ai_response: e.aiResponse ?? null,
               timestamp: new Date(e.timestamp),
               payload: e
             }

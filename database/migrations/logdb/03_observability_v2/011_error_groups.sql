@@ -4,6 +4,7 @@ BEGIN;
 -- Mutable projection rebuilt from events_errors; unique per project + fingerprint.
 CREATE TABLE IF NOT EXISTS error_groups (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL,
   project_id UUID NOT NULL,
   fingerprint VARCHAR(64) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'OPEN',

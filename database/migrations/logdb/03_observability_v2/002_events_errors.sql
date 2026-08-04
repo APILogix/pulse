@@ -4,12 +4,16 @@ BEGIN;
 -- JSONB GIN indexes support issue triage filters; trace index joins errors to traces.
 CREATE TABLE IF NOT EXISTS events_errors (
   id UUID NOT NULL DEFAULT gen_random_uuid(),
+
+  -- Tenant / ownership
   organization_id UUID NOT NULL,
   project_id UUID,
-  environment TEXT NOT NULL,
-  api_key_id UUID,
+  api_key_name TEXT NOT NULL,
 
-  -- Identity & correlation
+  -- Environment
+  environment TEXT NOT NULL,
+
+  -- Event identity
   event_id TEXT NOT NULL,
   request_id TEXT,
   trace_id TEXT,
@@ -18,93 +22,248 @@ CREATE TABLE IF NOT EXISTS events_errors (
   session_id TEXT,
   user_id TEXT,
 
-  -- Error identity
+  -- Error grouping
   fingerprint TEXT,
   error_group_id UUID,
-  error_name TEXT,
-  severity logdb_severity,
-  status_code INTEGER,
-  status_text TEXT,
+
+  -- Error classification
+  error_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  severity logdb_severity NOT NULL,
+  mechanism TEXT,
   handled BOOLEAN,
 
-  -- Error content
-  message TEXT,
-  name TEXT,
+  -- HTTP context
+  method TEXT,
+  route TEXT,
+  url TEXT,
+  status_code INTEGER,
+  status_text TEXT,
+
+  -- Stack & debugging
   stack_frames JSONB,
   breadcrumbs JSONB,
-  contexts JSONB,
+  context JSONB NOT NULL DEFAULT '{}'::jsonb,
 
-  -- SDK / service context
+  -- Runtime / service metadata
   service TEXT,
-  endpoint TEXT,
+  server_name TEXT,
   release TEXT,
+
   sdk_name TEXT,
   sdk_version TEXT,
+
   application_name TEXT,
   application_version TEXT,
-  server_name TEXT,
-  duration_ms NUMERIC(14,3),
 
-  -- Flexible storage
-  attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Flexible extension objects
+  tags JSONB NOT NULL DEFAULT '{}'::jsonb,
+  extra JSONB NOT NULL DEFAULT '{}'::jsonb,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   ai_response JSONB,
 
-  -- Timekeeping
+  -- Timing
   timestamp TIMESTAMPTZ NOT NULL,
   occurred_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   PRIMARY KEY (id, occurred_at)
-) PARTITION BY RANGE (occurred_at);
+)
+PARTITION BY RANGE (occurred_at);
 
-CREATE TABLE IF NOT EXISTS events_errors_default PARTITION OF events_errors DEFAULT;
+-- ============================================================================
+-- DEFAULT PARTITION
+-- ============================================================================
 
--- Unique event guard
-CREATE UNIQUE INDEX IF NOT EXISTS idx_events_errors_event_unique
-  ON events_errors (organization_id, event_id, occurred_at);
+CREATE TABLE IF NOT EXISTS events_errors_default
+PARTITION OF events_errors DEFAULT;
 
--- Tenant / time filters
-CREATE INDEX IF NOT EXISTS idx_events_errors_tenant_time
-  ON events_errors (organization_id, project_id, occurred_at DESC);
-CREATE INDEX IF NOT EXISTS idx_events_errors_tenant_env_time
-  ON events_errors (organization_id, project_id, environment, occurred_at DESC);
+-- ============================================================================
+-- UNIQUE / DEDUPLICATION
+-- ============================================================================
 
--- Trace / service joins
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_errors_event_id
+ON events_errors (organization_id, event_id);
+
+-- ============================================================================
+-- PRIMARY QUERY PATHS
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_org_project_time
+ON events_errors (
+    organization_id,
+    project_id,
+    occurred_at DESC
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_org_env_time
+ON events_errors (
+    organization_id,
+    project_id,
+    environment,
+    occurred_at DESC
+);
+
+-- ============================================================================
+-- TRACE CORRELATION
+-- ============================================================================
+
 CREATE INDEX IF NOT EXISTS idx_events_errors_trace
-  ON events_errors (trace_id, occurred_at DESC)
-  WHERE trace_id IS NOT NULL;
+ON events_errors (
+    organization_id,
+    trace_id
+)
+WHERE trace_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_span
+ON events_errors (
+    organization_id,
+    span_id
+)
+WHERE span_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_parent_span
+ON events_errors (
+    organization_id,
+    parent_span_id
+)
+WHERE parent_span_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_request
+ON events_errors (
+    organization_id,
+    request_id
+)
+WHERE request_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_session
+ON events_errors (
+    organization_id,
+    session_id
+)
+WHERE session_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_user
+ON events_errors (
+    organization_id,
+    user_id
+)
+WHERE user_id IS NOT NULL;
+
+-- ============================================================================
+-- ERROR GROUPING
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_group
+ON events_errors (
+    organization_id,
+    error_group_id
+)
+WHERE error_group_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint
+ON events_errors (
+    organization_id,
+    project_id,
+    fingerprint,
+    occurred_at DESC
+)
+WHERE fingerprint IS NOT NULL;
+
+-- ============================================================================
+-- ERROR FILTERS
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_severity
+ON events_errors (
+    organization_id,
+    project_id,
+    severity,
+    occurred_at DESC
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_status
+ON events_errors (
+    organization_id,
+    project_id,
+    status_code,
+    occurred_at DESC
+)
+WHERE status_code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_handled
+ON events_errors (
+    organization_id,
+    project_id,
+    handled,
+    occurred_at DESC
+)
+WHERE handled IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_events_errors_service
-  ON events_errors (service, occurred_at DESC)
-  WHERE service IS NOT NULL;
+ON events_errors (
+    organization_id,
+    project_id,
+    service,
+    occurred_at DESC
+)
+WHERE service IS NOT NULL;
 
--- Error-specific filters
-CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint_time
-  ON events_errors (organization_id, project_id, fingerprint, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_events_errors_project_status_time
-  ON events_errors (organization_id, project_id, status_code, occurred_at DESC)
-  WHERE status_code IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_errors_project_handled_time
-  ON events_errors (organization_id, project_id, handled, occurred_at DESC)
-  WHERE handled IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_events_errors_group_id
-  ON events_errors (error_group_id);
+CREATE INDEX IF NOT EXISTS idx_events_errors_route
+ON events_errors (
+    organization_id,
+    project_id,
+    route,
+    occurred_at DESC
+)
+WHERE route IS NOT NULL;
 
--- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_errors_attributes_gin
-  ON events_errors USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_errors_metadata_gin
-  ON events_errors USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_errors_payload_gin
-  ON events_errors USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_errors_ai_response_gin
-  ON events_errors USING GIN (ai_response);
+CREATE INDEX IF NOT EXISTS idx_events_errors_method
+ON events_errors (
+    organization_id,
+    project_id,
+    method,
+    occurred_at DESC
+)
+WHERE method IS NOT NULL;
 
--- Time-scan (append-heavy)
+-- ============================================================================
+-- TIME SERIES
+-- ============================================================================
+
 CREATE INDEX IF NOT EXISTS idx_events_errors_occurred_brin
-  ON events_errors USING BRIN (occurred_at);
+ON events_errors
+USING BRIN (occurred_at);
+
+-- ============================================================================
+-- JSONB SEARCH
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_context_gin
+ON events_errors
+USING GIN (context);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_tags_gin
+ON events_errors
+USING GIN (tags);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_extra_gin
+ON events_errors
+USING GIN (extra);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_metadata_gin
+ON events_errors
+USING GIN (metadata);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_payload_gin
+ON events_errors
+USING GIN (payload);
+
+CREATE INDEX IF NOT EXISTS idx_events_errors_ai_response_gin
+ON events_errors
+USING GIN (ai_response);
 
 COMMENT ON TABLE events_errors IS 'Canonical error telemetry. JSONB GIN indexes support issue triage filters; trace index joins errors to traces without cross-database constraints.';
 
