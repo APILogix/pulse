@@ -39,7 +39,15 @@ function pgCode(e: unknown): string | undefined {
 }
 
 export class MetricsRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /**
+   * ADR-0006: pools are injected explicitly. Reads the LEGACY alert metric and
+   * event tables; the typed v2 equivalents live in AlertRuntimeRepository.
+   */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();

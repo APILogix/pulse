@@ -1,20 +1,23 @@
 import type { OrganizationAuditService } from "../audit-logs/audit-logs.service.js";
 import type { OrganizationRepository } from "../repository.js";
+import type { RemoteSdkConfigService } from "../../projects/sdk-config/sdk-config.service.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
 import { type CursorPaginationQuery, type RequestMeta } from "../types.js";
 import type { SdkConfigDto, SdkConfigResolvedDto, SdkConfigVersionDto } from "./sdk-config.types.js";
 export interface UpdateConfigInput {
-    configValue: Record<string, unknown>;
-    schemaVersion?: string | null;
+    editableConfig: Record<string, unknown>;
     changeSummary?: string;
 }
+/** Admin facade. Compilation, validation, hashing, and revision writes are delegated to the canonical service. */
 export declare class SdkConfigService {
     private readonly repo;
     private readonly orgRepo;
     private readonly auditService;
-    constructor(repo: SdkConfigRepository, orgRepo: OrganizationRepository, auditService: OrganizationAuditService);
+    private readonly canonical;
+    constructor(repo: SdkConfigRepository, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, canonical: RemoteSdkConfigService);
     private requireAdmin;
     private requireMember;
+    private scope;
     private audit;
     listConfigs(orgId: string, userId: string, filters: {
         projectId?: string;

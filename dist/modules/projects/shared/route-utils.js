@@ -37,6 +37,9 @@ export function withErrorHandling(handler) {
         }
         catch (error) {
             request.log.error({ err: error, path: request.url }, "Projects route failed");
+            if (reply.sent) {
+                return;
+            }
             return handleProjectError(error, reply);
         }
     };

@@ -1,6 +1,9 @@
+import { pool } from '../../../config/database.js';
 import type { ConnectorOAuthStateRow, ConnectorRouteRow, CreateConnectorRouteBody, UpdateConnectorRouteBody } from '../types.js';
 export declare class ConnectorRoutesRepository {
     private readonly db;
+    /** ADR-0006: connector routes are control-plane configuration. */
+    constructor(db?: typeof pool);
     createRoute(organizationId: string, connectorId: string, input: CreateConnectorRouteBody): Promise<ConnectorRouteRow>;
     updateRoute(organizationId: string, connectorId: string, routeId: string, input: UpdateConnectorRouteBody): Promise<ConnectorRouteRow | null>;
     deleteRoute(organizationId: string, connectorId: string, routeId: string): Promise<boolean>;

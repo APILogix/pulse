@@ -1,5 +1,6 @@
 /** Project environment lifecycle and authorization service. */
 import type { FastifyBaseLogger } from "fastify";
+import { apiKeyCache } from "../../../config/lrucashe.js";
 import type { OrganizationRepository } from "../../organization/repository.js";
 import type { OrganizationAuditService } from "../../organization/audit-logs/audit-logs.service.js";
 import { ProjectsRepository } from "../repository.js";
@@ -16,6 +17,7 @@ import {
 import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService, type RequestMeta } from "../shared/base.service.js";
 import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+import { syncEnvironmentLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 
 export class EnvironmentService extends BaseProjectService {
   constructor(
@@ -104,6 +106,7 @@ export class EnvironmentService extends BaseProjectService {
       slug: environment.slug,
       type: environment.type,
     });
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.created");
     return environment;
   }
 
@@ -133,6 +136,7 @@ export class EnvironmentService extends BaseProjectService {
       newValues: { ...updated },
       changedFields: Object.keys(body),
     });
+    syncEnvironmentLookupToLogDbBestEffort(updated.id, "environment.updated");
     return updated;
   }
 
@@ -153,6 +157,7 @@ export class EnvironmentService extends BaseProjectService {
       entityId: environmentId,
       isSensitive: true,
     });
+    syncEnvironmentLookupToLogDbBestEffort(environmentId, "environment.deleted");
   }
 
   async restoreEnvironment(
@@ -165,7 +170,62 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const restored = await this.environmentRepository.restoreEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.restored", restored);
+    syncEnvironmentLookupToLogDbBestEffort(restored.id, "environment.restored");
     return restored;
+  }
+
+  /**
+   * Irreversibly delete a soft-deleted environment and every API key,
+   * rotation record, and release scoped to it. SDK configuration head +
+   * revisions cascade automatically via their FK to the environment.
+   *
+   * Requires the environment to already be soft-deleted (via
+   * `deleteEnvironment`) so this destructive action is always a deliberate
+   * confirmation step, never triggered by a single click.
+   */
+  async permanentlyDeleteEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<void> {
+    await this.requireProjectAccess(orgId, projectId, userId, "owner");
+
+    const { deletedApiKeySecretHashes, deletedActiveApiKeyCount } =
+      await this.environmentRepository.permanentlyDeleteEnvironment(projectId, environmentId);
+
+    // Evict every purged credential from the ingestion LRU immediately; the
+    // rows are gone, so a stale cache entry would otherwise keep authenticating.
+    for (const secretHash of deletedApiKeySecretHashes) {
+      try {
+        apiKeyCache.delete(secretHash);
+      } catch (err) {
+        this.logger.warn({ err }, "Failed to evict purged API key from cache");
+      }
+    }
+
+    // The environment's active API keys are gone permanently, so the org-level
+    // fast-path counter must shrink by that count. Best-effort: the live
+    // COUNT(*) enforcement path remains authoritative for limits.
+    if (deletedActiveApiKeyCount > 0) {
+      try {
+        await this.orgRepo.adjustApiKeyUsageCounter(orgId, -deletedActiveApiKeyCount);
+      } catch (err) {
+        this.logger.warn({ err, orgId }, "Failed to adjust organization api_keys_used counter after environment purge");
+      }
+    }
+
+    await this.audit(meta, {
+      orgId,
+      projectId,
+      action: "environment.permanently_deleted",
+      entityType: "project_environment",
+      entityId: environmentId,
+      isSensitive: true,
+      newValues: { deletedApiKeyCount: deletedApiKeySecretHashes.length },
+    });
+    syncEnvironmentLookupToLogDbBestEffort(environmentId, "environment.permanently_deleted");
   }
 
   async setDefaultEnvironment(
@@ -178,6 +238,7 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const environment = await this.environmentRepository.setDefaultEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.default_set", environment);
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.default_set");
     return environment;
   }
 
@@ -191,6 +252,7 @@ export class EnvironmentService extends BaseProjectService {
     await this.requireProjectAccess(orgId, projectId, userId, "admin");
     const environment = await this.environmentRepository.deactivateEnvironment(projectId, environmentId);
     await this.writeAudit(meta, orgId, "environment.deactivated", environment);
+    syncEnvironmentLookupToLogDbBestEffort(environment.id, "environment.deactivated");
     return environment;
   }
 

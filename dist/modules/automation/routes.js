@@ -88,9 +88,6 @@ export async function automationRoutes(fastify) {
     // ── Events (rate limited, 256KB validation) ───────────────────────
     fastify.post('/events', {
         schema: { body: IngestEventSchema, params: OrgIdParamsSchema },
-        config: {
-            rateLimit: { max: 200, timeWindow: '1 minute' },
-        },
         bodyLimit: LIMITS.MAX_PAYLOAD_SIZE_BYTES,
     }, (req, reply) => controller.ingestEvent(req, reply));
 }

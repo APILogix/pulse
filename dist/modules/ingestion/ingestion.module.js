@@ -14,16 +14,18 @@
  */
 import fp from 'fastify-plugin';
 import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { ingestionRoutes } from './routes.js';
 import { PostgresWriter } from './postgress.writter.js';
 const ingestionLogger = logger.child({ component: 'ingestion-module' });
 export const ingestionModule = fp(async function ingestionPlugin(fastify) {
-    const postgresWriter = new PostgresWriter(pool);
+    const postgresWriter = new PostgresWriter(pool, logDB.getPrimaryPool());
     fastify.decorate('postgresWriter', postgresWriter);
     await fastify.register(ingestionRoutes, { prefix: '/api' });
     ingestionLogger.info('Ingestion module registered (pg-boss gateway)');
 }, {
     name: 'ingestion-module',
+    dependencies: ['sdk-config-delivery-module'],
 });
 //# sourceMappingURL=ingestion.module.js.map

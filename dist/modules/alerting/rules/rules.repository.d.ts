@@ -11,6 +11,7 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertRuleActionRow, type AlertRuleConditionRow, type AlertRuleRow, type ListRulesQuery } from '../types.js';
 export interface RuleConditionInsert {
     conditionType: string;
@@ -65,6 +66,12 @@ export interface CreateRuleInput {
 }
 export declare class RulesRepository {
     private readonly db;
+    /**
+     * ADR-0006: pools are injected explicitly. Alert RULE definition is
+     * control-plane owned, so this defaults to the primary pool and callers that
+     * want the boundary enforced pass it in from AlertConfigRepository.
+     */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createRule(input: CreateRuleInput): Promise<AlertRuleRow>;
     private insertConditions;

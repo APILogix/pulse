@@ -67,7 +67,13 @@ export declare class ApiKeyService extends BaseProjectService {
     publicApiKey(apiKey: ProjectApiKeyRecord | ProjectApiKey): ProjectApiKey;
     summarizeUsage(series: ApiKeyUsageSeriesPoint[]): ApiKeyUsage["summary"];
     summarizeBulk(results: BulkOperationResult["results"]): BulkOperationResult;
-    private configObject;
     evictApiKeyConfig(secretHash: string): void;
+    /**
+     * Best-effort adjustment of the organization's fast-path `api_keys_used`
+     * counter. Failures are logged and swallowed: the counter only backs
+     * dashboards/quota display, while the actual limit gate is the live
+     * COUNT(*) enforced in `enforceProjectModuleLimit` before this is called.
+     */
+    private adjustOrgApiKeyUsage;
 }
 //# sourceMappingURL=api-key.service.d.ts.map

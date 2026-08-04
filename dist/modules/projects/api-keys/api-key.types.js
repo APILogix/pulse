@@ -41,6 +41,8 @@ export const UpdateApiKeyBodySchema = z.preprocess(normalizeObjectKeys, z
     .object({
     name: z.string().trim().min(1).max(255).optional(),
     expiresAt: OptionalDateSchema,
+    /** Move this credential to a different environment within the same project. */
+    environmentId: z.string().uuid().optional(),
 })
     .strict()
     .refine((value) => Object.keys(value).length > 0, {

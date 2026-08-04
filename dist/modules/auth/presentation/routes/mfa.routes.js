@@ -9,7 +9,6 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
-import { forgotPasswordRateLimit, loginMfaRateLimit, loginRateLimit, mfaEmailResendRateLimit, refreshSessionRateLimit, registerRateLimit, resendVerificationRateLimit, resetPasswordRateLimit, tokenConfirmRateLimit, verifyEmailRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -170,7 +169,7 @@ export async function mfaRoutes(fastify) {
     });
     // POST /auth/mfa/email/resend — resend email OTP for setup or step-up.
     // Authenticated users only. Generates a fresh OTP and emails it.
-    fastify.post('/mfa/email/resend', { preHandler: [authenticate, mfaEmailResendRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/email/resend', { preHandler: [authenticate] }, async (request, reply) => {
         try {
             const r = request;
             const body = EmailMfaResendSchema.parse(r.body);
@@ -289,7 +288,7 @@ export async function mfaRoutes(fastify) {
     });
     // POST /auth/mfa/disable/confirm — step 2 of MFA disable.
     // Consumes the email-confirmation token and actually disables MFA.
-    fastify.post('/mfa/disable/confirm', { preHandler: [tokenConfirmRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/disable/confirm', {}, async (request, reply) => {
         try {
             return reply.status(410).send({
                 error: {

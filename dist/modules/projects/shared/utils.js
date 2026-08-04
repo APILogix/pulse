@@ -35,6 +35,7 @@ export const ProjectErrorCodes = {
     INSUFFICIENT_PERMISSIONS: 403,
     ENVIRONMENT_NOT_FOUND: 404,
     ENVIRONMENT_EXISTS: 409,
+    ENVIRONMENT_NOT_SOFT_DELETED: 409,
     API_KEY_NOT_FOUND: 404,
     API_KEY_LIMIT_EXCEEDED: 400,
     API_KEY_REVOKED: 400,
@@ -114,15 +115,20 @@ export function slugifyProjectName(name) {
         .slice(0, 48);
     return slug || `project-${randomBytes(3).toString("hex")}`;
 }
-/** Public prefix for keys minted in a given environment slug. */
+export const API_KEY_PREFIXES = {
+    live: "pv_live_",
+    test: "pv_test_",
+};
+const LEGACY_API_KEY_PREFIXES = [
+    "pulsiv_",
+];
+function isProductionEnvironment(environment) {
+    const normalized = environment.toLowerCase().trim();
+    return normalized === "production" || normalized === "prod" || normalized === "live";
+}
+/** Public prefix for keys minted in a given environment. */
 export function environmentKeyPrefix(environment) {
-    const slug = environment
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 20);
-    return `pk_${slug}_`;
+    return isProductionEnvironment(environment) ? API_KEY_PREFIXES.live : API_KEY_PREFIXES.test;
 }
 export function buildApiPrefixes() {
     throw new Error("buildApiPrefixes is obsolete; project rows no longer store API prefixes");
@@ -141,18 +147,14 @@ export function hashApiKey(rawKey) {
 /**
  * Mint a new API key.
  *
- * Format: `pk_{env_slug}_{8 hex}.{32 hex}` (>= 20 bytes of entropy). The
+ * Format: `pv_live_{24 hex}.{64 hex}` for Production and
+ * `pv_test_{24 hex}.{64 hex}` for every non-production environment. The
  * segment before the dot is the public identifier; the full string is hashed
- * for persistence.
+ * for persistence. Environment identity is stored in
+ * project_api_keys.environment_id, not leaked into the public credential prefix.
  */
 export function createApiKey(environment) {
-    const envSlug = environment
-        .toLowerCase()
-        .trim()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 20);
-    const publicKey = `pulsiv_${envSlug}_${randomBytes(8).toString("hex")}`;
+    const publicKey = `${environmentKeyPrefix(environment)}${randomBytes(12).toString("hex")}`;
     const secretSuffix = randomBytes(32).toString("hex");
     const fullKey = `${publicKey}.${secretSuffix}`;
     return {
@@ -165,10 +167,13 @@ export function extractApiKeyPrefix(rawKey) {
     const value = rawKey.trim();
     const dotIndex = value.indexOf(".");
     const prefix = dotIndex >= 0 ? value.slice(0, dotIndex) : value;
-    if (!prefix.startsWith("pulsiv_")) {
+    const isCurrentPrefix = prefix.startsWith(API_KEY_PREFIXES.live) ||
+        prefix.startsWith(API_KEY_PREFIXES.test);
+    const isLegacyPrefix = LEGACY_API_KEY_PREFIXES.some((legacyPrefix) => prefix.startsWith(legacyPrefix));
+    if (!isCurrentPrefix && !isLegacyPrefix) {
         return null;
     }
-    return prefix.length >= 12 ? prefix : null;
+    return prefix.length >= 16 ? prefix : null;
 }
 export function constantTimeEqualHex(left, right) {
     const leftBuffer = Buffer.from(left, "hex");

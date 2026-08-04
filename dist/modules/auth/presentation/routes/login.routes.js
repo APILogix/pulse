@@ -1,15 +1,8 @@
-import { authenticate, requireAdmin, requireStepUp, } from '../../../../shared/middleware/auth.js';
 import { getClientInfo } from '../../../../shared/utils/request.js';
 import * as service from '../../application/services/index.js';
-import { AuthError, AdminLockUserSchema, AuthErrorCodes, BackupCodeLoginSchema, ChangePasswordSchema, CreateUserSchema, DeleteUserSchema, ForgotPasswordSchema, ListUsersQuerySchema, LoginMFAVerifySchema, LoginSchema, MFADeviceRemoveSchema, MFADisableRequestSchema, MFASetupSchema, MFAToggleSchema, MFAVerifySchema, MFAVerifySetupSchema, EmailMfaResendSchema, RegenerateBackupCodesSchema, ResendVerificationSchema, ResetPasswordSchema, SuspendUserSchema, UpdateUserSchema, VerifyEmailConfirmSchema, VerifyEmailQuerySchema, } from '../../domain/types.js';
-import identityRoutes from './identity.routes.js';
-import ssoOidcRoutes from './sso-oidc.routes.js';
+import { AuthError, AuthErrorCodes, BackupCodeLoginSchema, LoginMFAVerifySchema, LoginSchema, } from '../../domain/types.js';
 import { OrganizationRepository } from '../../../organization/repository.js';
 import * as authRepo from '../../infrastructure/repositories/index.js';
-import accountAdministrationRoutes from './account-administration.routes.js';
-import samlIdentityRoutes from './saml-identity.routes.js';
-import provisioningRoutes from './provisioning.routes.js';
-import { forgotPasswordRateLimit, loginMfaRateLimit, loginRateLimit, mfaEmailResendRateLimit, refreshSessionRateLimit, registerRateLimit, resendVerificationRateLimit, resetPasswordRateLimit, tokenConfirmRateLimit, verifyEmailRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -93,7 +86,7 @@ function preventSensitiveResponseCaching(reply) {
 // ============================================================================
 export async function credentialRoutes(fastify) {
     // POST /auth/login
-    fastify.post('/login', { preHandler: [loginRateLimit] }, async (request, reply) => {
+    fastify.post('/login', async (request, reply) => {
         try {
             const body = LoginSchema.parse(request.body);
             const ci = getClientInfo(request);
@@ -116,7 +109,7 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/mfa
-    fastify.post('/login/mfa', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/login/mfa', async (request, reply) => {
         try {
             const body = LoginMFAVerifySchema.parse(request.body);
             const ci = getClientInfo(request);
@@ -128,7 +121,7 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/mfa/switch
-    fastify.post('/login/mfa/switch', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/login/mfa/switch', async (request, reply) => {
         try {
             const { z } = await import('zod');
             const body = z.object({
@@ -143,7 +136,7 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/backup-code
-    fastify.post('/login/backup-code', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/login/backup-code', async (request, reply) => {
         try {
             const body = BackupCodeLoginSchema.parse(request.body);
             const ci = getClientInfo(request);

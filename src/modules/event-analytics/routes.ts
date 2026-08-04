@@ -28,6 +28,8 @@ import {
   PaginationSchema,
   ResolveGroupSchema,
   RoutePerfQuerySchema,
+  TelemetryIdentityQuerySchema,
+  TelemetryScopeQuerySchema,
   TimeRangeQuerySchema,
   TrendsQuerySchema,
   UpdateDashboardSchema,
@@ -48,9 +50,22 @@ function meta(request: FastifyRequest): RequestMeta {
 }
 
 function handleError(error: unknown, reply: FastifyReply) {
-  console.log('[eventAnalytics.handleError]', error);
   if (error instanceof AppError) {
     return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message, ...(error.details ? { details: error.details } : {}) } });
+  }
+  if (
+    error instanceof Error
+    && error.name === 'ZodError'
+    && 'issues' in error
+  ) {
+    return reply.code(422).send({
+      success: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid analytics request',
+        details: (error as Error & { issues: unknown }).issues,
+      },
+    });
   }
   return reply.code(500).send({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Unexpected analytics error' } });
 }
@@ -93,20 +108,24 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   }));
   fastify.get('/errors/groups/:fingerprint', guard, wrap(async (req, reply) => {
     const { fingerprint } = req.params as { fingerprint: string };
-    return reply.send({ success: true, data: await svc.getErrorGroup(orgId(req), fingerprint) });
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getErrorGroup(orgId(req), fingerprint, scope.projectId, scope.environment) });
   }));
   fastify.post('/errors/groups/:fingerprint/resolve', guard, wrap(async (req, reply) => {
     const { fingerprint } = req.params as { fingerprint: string };
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
     const body = ResolveGroupSchema.parse(req.body ?? {});
-    return reply.send({ success: true, data: await svc.setErrorGroupStatus(orgId(req), meta(req), fingerprint, 'resolved', body.actorId ?? null) });
+    return reply.send({ success: true, data: await svc.setErrorGroupStatus(orgId(req), meta(req), fingerprint, scope.projectId, scope.environment, 'resolved', body.actorId ?? null) });
   }));
   fastify.post('/errors/groups/:fingerprint/ignore', guard, wrap(async (req, reply) => {
     const { fingerprint } = req.params as { fingerprint: string };
-    return reply.send({ success: true, data: await svc.setErrorGroupStatus(orgId(req), meta(req), fingerprint, 'ignored', null) });
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.setErrorGroupStatus(orgId(req), meta(req), fingerprint, scope.projectId, scope.environment, 'ignored', null) });
   }));
   fastify.get('/errors/:id', guard, wrap(async (req, reply) => {
     const { id } = req.params as { id: string };
-    return reply.send({ success: true, data: await svc.getError(orgId(req), UuidSchema.parse(id)) });
+    const scope = TelemetryScopeQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getError(orgId(req), UuidSchema.parse(id), scope.projectId, scope.environment) });
   }));
 
   // ═══════════ PERFORMANCE ═══════════
@@ -126,11 +145,13 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   }));
   fastify.get('/requests/waterfall/:traceId', guard, wrap(async (req, reply) => {
     const { traceId } = req.params as { traceId: string };
-    return reply.send({ success: true, data: await svc.getTraceWaterfall(orgId(req), traceId) });
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getTraceWaterfall(orgId(req), traceId, scope.projectId, scope.environment) });
   }));
   fastify.get('/requests/:id', guard, wrap(async (req, reply) => {
     const { id } = req.params as { id: string };
-    return reply.send({ success: true, data: await svc.getRequest(orgId(req), UuidSchema.parse(id)) });
+    const scope = TelemetryScopeQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getRequest(orgId(req), UuidSchema.parse(id), scope.projectId, scope.environment) });
   }));
 
   // ═══════════ TRACES ═══════════
@@ -139,7 +160,8 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   }));
   fastify.get('/traces/:traceId', guard, wrap(async (req, reply) => {
     const { traceId } = req.params as { traceId: string };
-    return reply.send({ success: true, data: await svc.getTrace(orgId(req), traceId) });
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getTrace(orgId(req), traceId, scope.projectId, scope.environment) });
   }));
 
   // ═══════════ METRICS ═══════════
@@ -161,7 +183,7 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   }));
   fastify.get('/logs/stream', guard, wrap(async (req, reply) => {
     const q = TimeRangeQuerySchema.parse(req.query ?? {});
-    return streamPoll(req, reply, (since) => svc.pollLogsSince(orgId(req), since, q.projectId));
+    return streamPoll(req, reply, (since) => svc.pollLogsSince(orgId(req), since, q.projectId, q.environment));
   }));
 
   // ═══════════ SESSIONS / USERS ═══════════
@@ -170,7 +192,8 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   }));
   fastify.get('/sessions/:sessionId', guard, wrap(async (req, reply) => {
     const { sessionId } = req.params as { sessionId: string };
-    return reply.send({ success: true, data: await svc.getSession(orgId(req), sessionId) });
+    const scope = TelemetryIdentityQuerySchema.parse(req.query ?? {});
+    return reply.send({ success: true, data: await svc.getSession(orgId(req), sessionId, scope.projectId, scope.environment) });
   }));
   fastify.get('/users', guard, wrap(async (req, reply) => {
     const q = TimeRangeQuerySchema.parse(req.query ?? {});
@@ -185,23 +208,24 @@ export async function eventAnalyticsRoutes(fastify: FastifyInstance): Promise<vo
   // ═══════════ CRONS ═══════════
   fastify.get('/crons', guard, wrap(async (req, reply) => {
     const q = TimeRangeQuerySchema.parse(req.query ?? {});
-    return reply.send({ success: true, data: await svc.listCrons(orgId(req), q.projectId) });
+    return reply.send({ success: true, data: await svc.listCrons(orgId(req), q.projectId, q.environment) });
   }));
   fastify.get('/crons/:slug/history', guard, wrap(async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const page = CronHistoryQuerySchema.parse(req.query ?? {});
-    return reply.send({ success: true, data: await svc.getCronHistory(orgId(req), slug, page.limit, page.offset) });
+    return reply.send({ success: true, data: await svc.getCronHistory(orgId(req), slug, page.projectId, page.environment, page.limit, page.offset) });
   }));
   fastify.get('/crons/:slug', guard, wrap(async (req, reply) => {
     const { slug } = req.params as { slug: string };
-    const history = await svc.getCronHistory(orgId(req), slug, 1, 0);
+    const q = CronHistoryQuerySchema.parse(req.query ?? {});
+    const history = await svc.getCronHistory(orgId(req), slug, q.projectId, q.environment, 1, 0);
     return reply.send({ success: true, data: { slug, latest: history[0] ?? null } });
   }));
 
   // ═══════════ LIVE (SSE) ═══════════
   fastify.get('/live/errors', guard, wrap(async (req, reply) => {
     const q = TimeRangeQuerySchema.parse(req.query ?? {});
-    return streamPoll(req, reply, (since) => svc.pollErrorsSince(orgId(req), since, q.projectId));
+    return streamPoll(req, reply, (since) => svc.pollErrorsSince(orgId(req), since, q.projectId, q.environment));
   }));
 
   // ═══════════ DASHBOARDS ═══════════

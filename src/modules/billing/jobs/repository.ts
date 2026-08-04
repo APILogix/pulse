@@ -160,7 +160,7 @@ export class BillingJobsRepository {
         cancelled AS (
           UPDATE organization_subscriptions os
           SET status = 'cancelled',
-              cancelled_at = COALESCE(cancelled_at, current_period_end, NOW()),
+              cancelled_at = COALESCE(os.cancelled_at, os.current_period_end, NOW()),
               updated_at = NOW()
           FROM due d
           WHERE os.id = d.id
@@ -252,7 +252,10 @@ export class BillingJobsRepository {
         renewed AS (
           UPDATE organization_subscriptions os
           SET current_period_start = d.current_period_end,
-              current_period_end = ${nextPeriodEndSql()},
+              current_period_end = CASE
+                WHEN d.billing_interval = 'annual' THEN d.current_period_end + INTERVAL '1 year'
+                ELSE d.current_period_end + INTERVAL '1 month'
+              END,
               updated_at = NOW()
           FROM due d
           WHERE os.id = d.id
@@ -486,19 +489,23 @@ export class BillingJobsRepository {
     return this.withTransaction(async (client) => {
       const paidResult = await client.query(
         `
-        WITH totals AS (
-          SELECT i.id, i.organization_id, i.subscription_id, COALESCE(SUM(p.amount - p.refunded_amount), 0) AS paid
+        WITH candidates AS (
+          SELECT i.id, i.organization_id, i.subscription_id, i.total_amount
           FROM invoices i
-          JOIN payments p ON p.invoice_id = i.id
           WHERE i.status IN ('open','uncollectible')
-            AND p.status = 'succeeded'
             AND i.deleted_at IS NULL
-            AND p.deleted_at IS NULL
-          GROUP BY i.id, i.organization_id, i.subscription_id, i.total_amount
-          HAVING COALESCE(SUM(p.amount - p.refunded_amount), 0) >= i.total_amount
           ORDER BY i.id
           LIMIT $1
           FOR UPDATE OF i SKIP LOCKED
+        ),
+        totals AS (
+          SELECT c.id, c.organization_id, c.subscription_id, COALESCE(SUM(p.amount - p.refunded_amount), 0) AS paid
+          FROM candidates c
+          JOIN payments p ON p.invoice_id = c.id
+          WHERE p.status = 'succeeded'
+            AND p.deleted_at IS NULL
+          GROUP BY c.id, c.organization_id, c.subscription_id, c.total_amount
+          HAVING COALESCE(SUM(p.amount - p.refunded_amount), 0) >= c.total_amount
         ),
         fixed AS (
           UPDATE invoices i
@@ -1509,8 +1516,14 @@ export class BillingJobsRepository {
         ),
         ent AS (
           SELECT organization_id,
-                 SUM(integer_value) FILTER (WHERE feature_key = 'monthly_events') AS event_limit,
-                 SUM(integer_value) FILTER (WHERE feature_key = 'module_ai_insights_monthly_credits') AS ai_credit_limit
+                 COALESCE(
+                   SUM(integer_value) FILTER (WHERE feature_key = 'quota.monthly_events'),
+                   SUM(integer_value) FILTER (WHERE feature_key = 'monthly_events')
+                 ) AS event_limit,
+                 COALESCE(
+                   SUM(integer_value) FILTER (WHERE feature_key = 'quota.ai_credits'),
+                   SUM(integer_value) FILTER (WHERE feature_key IN ('ai_credits', 'module_ai_insights_monthly_credits'))
+                 ) AS ai_credit_limit
           FROM (
             SELECT * FROM plan_entitlements
             UNION ALL

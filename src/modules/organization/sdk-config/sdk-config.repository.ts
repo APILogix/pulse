@@ -1,11 +1,7 @@
-/** Persistence for one published SDK configuration head per environment. */
-import type { PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
-import { NotFoundError } from "../types.js";
 import { cursorPage } from "../shared/base.repository.js";
 import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 import type {
-  SdkConfigChangeType,
   SdkConfigResolvedDto,
   SdkConfigRow,
   SdkConfigVersionRow,
@@ -14,48 +10,27 @@ import type {
 const CONFIG_COLS = `
   h.id,h.organization_id,h.project_id,h.environment_id,h.published_revision_id,
   h.current_revision,h.current_hash,h.schema_version,h.created_by,h.updated_by,
-  h.created_at,h.updated_at,h.version,r.config_value,r.published_at
+  h.created_at,h.updated_at,h.version,r.compiled_snapshot,r.published_at,
+  e.name AS environment_name,e.slug AS environment_slug
 `;
 
 const VERSION_COLS = `
-  id,config_id,organization_id,project_id,environment_id,revision_number,
-  config_value,config_hash,schema_version,change_type,change_summary,
-  rolled_back_to_revision,published_by,published_at
+  r.id,r.config_id,r.organization_id,r.project_id,r.environment_id,
+  e.name AS environment_name,e.slug AS environment_slug,
+  r.revision_number,r.compiled_snapshot,r.config_hash,r.schema_version,r.change_type,
+  r.change_summary,r.rolled_back_to_revision,r.published_by,r.published_at
 `;
 
-export interface PublishSdkConfigData {
-  configValue: Record<string, unknown>;
-  configHash: string;
-  schemaVersion: string | null;
-  changeType: SdkConfigChangeType;
-  changeSummary: string | null;
-  rolledBackToRevision?: number | null;
-  publishedBy: string;
-}
-
+/** Read-only admin projection. All mutations go through RemoteSdkConfigService. */
 export class SdkConfigRepository {
   private readonly db = pool;
-
-  private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await fn(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
 
   async findById(orgId: string, configId: string): Promise<SdkConfigRow | null> {
     const result = await this.db.query<SdkConfigRow>(
       `SELECT ${CONFIG_COLS}
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+         JOIN project_environments e ON e.id=h.environment_id
         WHERE h.organization_id=$1 AND h.id=$2`,
       [orgId, configId],
     );
@@ -90,74 +65,20 @@ export class SdkConfigRepository {
       `SELECT ${CONFIG_COLS}
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
+         JOIN project_environments e ON e.id=h.environment_id
         WHERE ${where.join(" AND ")}
         ORDER BY h.created_at DESC LIMIT $${params.length}`,
       params,
     );
     return cursorPage(rows.rows, query.limit, Number(count.rows[0]?.count ?? 0));
   }
-  async publish(orgId: string, configId: string, data: PublishSdkConfigData): Promise<SdkConfigRow> {
-    return this.withTransaction(async (client) => {
-      const current = await client.query<{
-        id: string;
-        organization_id: string;
-        project_id: string;
-        environment_id: string;
-        current_revision: number;
-      }>(
-        `SELECT id,organization_id,project_id,environment_id,current_revision
-           FROM project_environment_sdk_configs
-          WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
-        [orgId, configId],
-      );
-      const head = current.rows[0];
-      if (!head) throw new NotFoundError("SDK config");
-      const revision = head.current_revision + 1;
-      const inserted = await client.query<{ id: string }>(
-        `INSERT INTO project_environment_sdk_config_revisions(
-           config_id,organization_id,project_id,environment_id,revision_number,
-           config_value,config_hash,schema_version,change_type,change_summary,
-           rolled_back_to_revision,published_by
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-         RETURNING id`,
-        [
-          head.id,
-          head.organization_id,
-          head.project_id,
-          head.environment_id,
-          revision,
-          JSON.stringify(data.configValue),
-          data.configHash,
-          data.schemaVersion,
-          data.changeType,
-          data.changeSummary,
-          data.rolledBackToRevision ?? null,
-          data.publishedBy,
-        ],
-      );
-      await client.query(
-        `UPDATE project_environment_sdk_configs
-            SET published_revision_id=$3,current_revision=$4,current_hash=$5,
-                schema_version=$6,updated_by=$7,version=version+1
-          WHERE organization_id=$1 AND id=$2`,
-        [orgId, configId, inserted.rows[0]!.id, revision, data.configHash, data.schemaVersion, data.publishedBy],
-      );
-      const result = await client.query<SdkConfigRow>(
-        `SELECT ${CONFIG_COLS}
-           FROM project_environment_sdk_configs h
-           JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
-          WHERE h.organization_id=$1 AND h.id=$2`,
-        [orgId, configId],
-      );
-      return result.rows[0]!;
-    });
-  }
 
   async listVersions(configId: string): Promise<SdkConfigVersionRow[]> {
     const result = await this.db.query<SdkConfigVersionRow>(
       `SELECT ${VERSION_COLS}
-         FROM project_environment_sdk_config_revisions
-        WHERE config_id=$1 ORDER BY revision_number DESC`,
+         FROM project_environment_sdk_config_revisions r
+         JOIN project_environments e ON e.id=r.environment_id
+        WHERE r.config_id=$1 ORDER BY r.revision_number DESC`,
       [configId],
     );
     return result.rows;
@@ -166,23 +87,27 @@ export class SdkConfigRepository {
   async getVersion(configId: string, revision: number): Promise<SdkConfigVersionRow | null> {
     const result = await this.db.query<SdkConfigVersionRow>(
       `SELECT ${VERSION_COLS}
-         FROM project_environment_sdk_config_revisions
-        WHERE config_id=$1 AND revision_number=$2`,
+         FROM project_environment_sdk_config_revisions r
+         JOIN project_environments e ON e.id=r.environment_id
+        WHERE r.config_id=$1 AND r.revision_number=$2`,
       [configId, revision],
     );
     return result.rows[0] ?? null;
   }
+
   async resolveForEnvironment(orgId: string, environmentId: string): Promise<SdkConfigResolvedDto | null> {
     const result = await this.db.query<{
       environment_id: string;
+      environment_name: string;
+      environment_slug: string;
       current_revision: number;
       current_hash: string;
-      schema_version: string | null;
-      config_value: Record<string, unknown>;
+      compiled_snapshot: SdkConfigResolvedDto["compiledSnapshot"];
       published_at: Date;
     }>(
-      `SELECT h.environment_id,h.current_revision,h.current_hash,h.schema_version,
-              r.config_value,r.published_at
+      `SELECT h.environment_id,e.name AS environment_name,e.slug AS environment_slug,
+              h.current_revision,h.current_hash,
+              r.compiled_snapshot,r.published_at
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id=h.published_revision_id
          JOIN project_environments e
@@ -196,10 +121,12 @@ export class SdkConfigRepository {
     return row
       ? {
           environmentId: row.environment_id,
+          environmentName: row.environment_name,
+          environmentSlug: row.environment_slug,
           revision: row.current_revision,
           revisionHash: row.current_hash,
-          schemaVersion: row.schema_version,
-          configValue: row.config_value,
+          schemaVersion: 1,
+          compiledSnapshot: row.compiled_snapshot,
           publishedAt: row.published_at,
         }
       : null;

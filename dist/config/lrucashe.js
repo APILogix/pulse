@@ -19,6 +19,7 @@ export function alertThresholdCacheKey(orgId, projectId) {
 export function evictAlertThresholdCache(orgId, projectId) {
     alertThresholdCache.delete(alertThresholdCacheKey(orgId, projectId));
 }
+/** Published SDK configuration cache, keyed only by environment ID. */
 export const sdkConfigCache = new LRUCache({
     max: 20000,
     ttl: 1000 * 30,

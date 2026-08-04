@@ -4,6 +4,12 @@ vi.mock('../../../src/config/database.js', () => ({
   pool: { query: vi.fn(), connect: vi.fn() },
 }));
 
+// The api-key service now syncs best-effort Log DB lookup snapshots, which
+// transitively imports the Log DB manager. Stub it to keep this test hermetic.
+vi.mock('../../../src/config/log-database.js', () => ({
+  logDB: { queryWithRetry: vi.fn() },
+}));
+
 import {
   ApiKeyUsageQuerySchema,
   CreateApiKeyBodySchema,
@@ -42,6 +48,12 @@ describe('API key request contract', () => {
     expect(CreateApiKeyBodySchema.parse({ environmentId, name: 'Web SDK' })).toMatchObject({
       environmentId, name: 'Web SDK',
     });
+  });
+
+  it('treats missing, null, or blank expiry as never expires', () => {
+    expect(CreateApiKeyBodySchema.parse({ environmentId, name: 'Web SDK' }).expiresAt).toBeUndefined();
+    expect(CreateApiKeyBodySchema.parse({ environmentId, name: 'Web SDK', expiresAt: null }).expiresAt).toBeNull();
+    expect(CreateApiKeyBodySchema.parse({ environmentId, name: 'Web SDK', expiresAt: '' }).expiresAt).toBeNull();
   });
 
   it('rejects credential-owned policy, rate limits, and key types', () => {
@@ -96,6 +108,7 @@ describe('API key lifecycle uses status as the only source of truth', () => {
       oldKeyId: apiKeyId, newKeyId: 'new-key', initiatedBy: userId,
     });
     expect(result.fullKey.startsWith(`${result.apiKey.publicKey}.`)).toBe(true);
+    expect(result.fullKey.startsWith('pv_live_')).toBe(true);
     expect(result.apiKey).not.toHaveProperty('secretHash');
   });
 

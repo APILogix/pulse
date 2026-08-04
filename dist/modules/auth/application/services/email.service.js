@@ -304,7 +304,10 @@ export async function resetPasswordWithToken(input, ipAddress, requestId) {
         if (!consumed) {
             throw new AuthError('Invalid password reset link', AuthErrorCodes.PASSWORD_RESET_INVALID, 400);
         }
-        const userRes = await client.query(`SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`, [consumed.user_id]);
+        const userRes = await client.query(`SELECT *, email_verified AS email_is_verified
+         FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+        FOR UPDATE`, [consumed.user_id]);
         const user = userRes.rows[0];
         if (!user ||
             user.status !== 'active' ||

@@ -1,20 +1,32 @@
 import { createHash, randomBytes } from 'crypto';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
+import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
 import { CONNECTOR_JOBS } from './job.constants.js';
 import { createConnector as factoryCreate, ephemeralContext, getTypeCapabilities, isConnectorTypeRegistered, listConnectorTypes, } from './registry.js';
 import { assertPubliclyResolvable } from './shared/url-safety.js';
 import { ConnectorConfigError, ConnectorError, ConnectorNotFoundError, ConnectorTypeUnsupportedError, } from './types.js';
+const CONNECTOR_TYPE_FEATURE_KEYS = {
+    email: 'integrations.email',
+    slack: 'integrations.slack',
+    discord: 'integrations.discord',
+    teams: 'integrations.microsoft_teams',
+    pagerduty: 'integrations.pagerduty',
+    webhook: 'integrations.webhook',
+    sms: 'integrations.sms',
+};
 export class ConnectorService {
     repository;
     dispatcher;
+    entitlements;
     logger;
     emitEvent;
     enqueueConnectorJob;
     constructor(deps) {
         this.repository = deps.repository;
         this.dispatcher = deps.dispatcher;
+        this.entitlements = deps.entitlements ?? new EntitlementsRepository();
         this.logger = deps.logger;
         this.emitEvent = deps.emitEvent ?? (async () => undefined);
         this.enqueueConnectorJob = deps.enqueueConnectorJob;
@@ -28,6 +40,7 @@ export class ConnectorService {
         if (!isConnectorTypeRegistered(body.type)) {
             throw new ConnectorTypeUnsupportedError(body.type);
         }
+        await this.assertConnectorEntitled(orgId, body.type);
         const normalized = this.validateConfigOrThrow(body.type, body.config);
         await this.assertSafeUrls(body.type, normalized);
         const capabilities = getTypeCapabilities(body.type);
@@ -404,6 +417,41 @@ export class ConnectorService {
         if (!row)
             throw new ConnectorNotFoundError(id);
         return row;
+    }
+    async assertConnectorEntitled(orgId, type) {
+        const featureKey = CONNECTOR_TYPE_FEATURE_KEYS[type];
+        const [moduleEnabled, providerEnabled, connectorLimit, integrationLimit, used] = await Promise.all([
+            this.entitlements.hasFeature(orgId, 'alerting.enabled'),
+            this.entitlements.hasFeature(orgId, featureKey),
+            this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.connectors'),
+            this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.integrations'),
+            this.repository.countActiveConnectors(orgId),
+        ]);
+        if (!moduleEnabled) {
+            throw new ConnectorError('Alerting and notification integrations are not enabled for this organization', 'CONNECTOR_ENTITLEMENT_DENIED', 403, {
+                featureKey: 'alerting.enabled',
+            });
+        }
+        if (!providerEnabled) {
+            throw new ConnectorError(`Connector type '${type}' is not included in this organization's plan`, 'CONNECTOR_ENTITLEMENT_DENIED', 403, {
+                featureKey,
+            });
+        }
+        const effectiveLimit = connectorLimit > 0 ? connectorLimit : integrationLimit;
+        if (effectiveLimit !== -1 && effectiveLimit > 0 && used >= effectiveLimit) {
+            throw new ConnectorError('Connector quota exceeded', 'CONNECTOR_QUOTA_EXCEEDED', 409, {
+                featureKey: connectorLimit > 0 ? 'quota.connectors' : 'quota.integrations',
+                used,
+                limit: effectiveLimit,
+            });
+        }
+        if (effectiveLimit === 0) {
+            throw new ConnectorError('Connector quota is not included in this organization plan', 'CONNECTOR_QUOTA_EXCEEDED', 409, {
+                featureKey: 'quota.connectors',
+                used,
+                limit: 0,
+            });
+        }
     }
     validateConfigOrThrow(type, config) {
         const probe = factoryCreate(type, ephemeralContext(type, config, this.logger));

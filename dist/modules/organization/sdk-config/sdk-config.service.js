@@ -1,30 +1,25 @@
-/** Business logic for environment-owned published SDK configuration. */
-import { createHash } from "crypto";
 import { evictSdkConfigCache, sdkConfigCache, sdkConfigCacheKey } from "../../../config/lrucashe.js";
+import { syncEnvironmentSdkConfigLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
+import { validateSchemaV1 } from "../../projects/sdk-config/validator.js";
 import { SdkConfigRepository } from "./sdk-config.repository.js";
 import { ForbiddenError, NotFoundError, ValidationError, hasMinRole, } from "../types.js";
-function canonicalize(value) {
-    if (value === null || typeof value !== "object")
-        return JSON.stringify(value);
-    if (Array.isArray(value))
-        return `[${value.map(canonicalize).join(",")}]`;
-    const object = value;
-    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(object[key])}`).join(",")}}`;
-}
-function configHash(value) {
-    return createHash("sha256").update(canonicalize(value)).digest("hex");
+function assertStoredConfig(row) {
+    validateSchemaV1(row.compiled_snapshot);
 }
 function toConfigDto(row) {
+    assertStoredConfig(row);
     return {
         id: row.id,
         orgId: row.organization_id,
         projectId: row.project_id,
         environmentId: row.environment_id,
+        environmentName: row.environment_name,
+        environmentSlug: row.environment_slug,
         publishedRevisionId: row.published_revision_id,
         revision: row.current_revision,
         revisionHash: row.current_hash,
-        configValue: row.config_value,
-        schemaVersion: row.schema_version,
+        compiledSnapshot: row.compiled_snapshot,
+        schemaVersion: 1,
         publishedAt: row.published_at,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
@@ -32,16 +27,19 @@ function toConfigDto(row) {
     };
 }
 function toVersionDto(row) {
+    assertStoredConfig(row);
     return {
         id: row.id,
         configId: row.config_id,
         orgId: row.organization_id,
         projectId: row.project_id,
         environmentId: row.environment_id,
+        environmentName: row.environment_name,
+        environmentSlug: row.environment_slug,
         revision: row.revision_number,
         revisionHash: row.config_hash,
-        configValue: row.config_value,
-        schemaVersion: row.schema_version,
+        compiledSnapshot: row.compiled_snapshot,
+        schemaVersion: 1,
         changeType: row.change_type,
         changeSummary: row.change_summary,
         rolledBackToRevision: row.rolled_back_to_revision,
@@ -49,14 +47,17 @@ function toVersionDto(row) {
         publishedAt: row.published_at,
     };
 }
+/** Admin facade. Compilation, validation, hashing, and revision writes are delegated to the canonical service. */
 export class SdkConfigService {
     repo;
     orgRepo;
     auditService;
-    constructor(repo, orgRepo, auditService) {
+    canonical;
+    constructor(repo, orgRepo, auditService, canonical) {
         this.repo = repo;
         this.orgRepo = orgRepo;
         this.auditService = auditService;
+        this.canonical = canonical;
     }
     async requireAdmin(orgId, userId) {
         const member = await this.orgRepo.findActiveMember(orgId, userId);
@@ -68,6 +69,14 @@ export class SdkConfigService {
         if (!(await this.orgRepo.findActiveMember(orgId, userId))) {
             throw new ForbiddenError("Not a member of this organization");
         }
+    }
+    scope(row) {
+        return {
+            organizationId: row.organization_id,
+            projectId: row.project_id,
+            environmentId: row.environment_id,
+            environmentKey: row.environment_slug,
+        };
     }
     async audit(meta, orgId, projectId, action, entityId, newValues) {
         await this.auditService.audit(meta, {
@@ -100,29 +109,27 @@ export class SdkConfigService {
         const current = await this.repo.findById(orgId, configId);
         if (!current || current.project_id !== projectId)
             throw new NotFoundError("SDK config");
-        return this.publish(meta, orgId, configId, input);
+        return this.publish(meta, orgId, configId, input, current);
     }
-    async publish(meta, orgId, configId, input) {
-        const current = await this.repo.findById(orgId, configId);
+    async publish(meta, orgId, configId, input, loaded) {
+        const current = loaded ?? await this.repo.findById(orgId, configId);
         if (!current)
             throw new NotFoundError("SDK config");
-        const hash = configHash(input.configValue);
-        if (hash === current.current_hash && (input.schemaVersion ?? current.schema_version) === current.schema_version) {
-            throw new ValidationError("Published configuration is unchanged");
-        }
-        const row = await this.repo.publish(orgId, configId, {
-            configValue: input.configValue,
-            configHash: hash,
-            schemaVersion: input.schemaVersion === undefined ? current.schema_version : input.schemaVersion,
-            changeType: "publish",
-            changeSummary: input.changeSummary ?? null,
-            publishedBy: meta.actorUserId,
+        await this.canonical.publish(this.scope(current), {
+            method: "PUT",
+            body: { editableConfig: input.editableConfig },
+            actorId: meta.actorUserId,
         });
-        evictSdkConfigCache(row.environment_id);
+        evictSdkConfigCache(current.environment_id);
+        syncEnvironmentSdkConfigLookupToLogDbBestEffort(current.environment_id, "sdk_config.published");
+        const row = await this.repo.findById(orgId, configId);
+        if (!row)
+            throw new NotFoundError("SDK config");
         await this.audit(meta, orgId, row.project_id, "sdk_config.published", configId, {
             environmentId: row.environment_id,
             revision: row.current_revision,
             revisionHash: row.current_hash,
+            changeSummary: input.changeSummary ?? null,
         });
         return toConfigDto(row);
     }
@@ -134,23 +141,17 @@ export class SdkConfigService {
         if (toRevision >= current.current_revision) {
             throw new ValidationError("Rollback target must be an earlier revision");
         }
-        const target = await this.repo.getVersion(configId, toRevision);
-        if (!target)
-            throw new NotFoundError(`Revision ${toRevision}`);
-        const row = await this.repo.publish(orgId, configId, {
-            configValue: target.config_value,
-            configHash: target.config_hash,
-            schemaVersion: target.schema_version,
-            changeType: "rollback",
-            changeSummary: reason,
-            rolledBackToRevision: toRevision,
-            publishedBy: meta.actorUserId,
-        });
-        evictSdkConfigCache(row.environment_id);
+        await this.canonical.rollback(this.scope(current), toRevision, meta.actorUserId);
+        evictSdkConfigCache(current.environment_id);
+        syncEnvironmentSdkConfigLookupToLogDbBestEffort(current.environment_id, "sdk_config.rolled_back");
+        const row = await this.repo.findById(orgId, configId);
+        if (!row)
+            throw new NotFoundError("SDK config");
         await this.audit(meta, orgId, row.project_id, "sdk_config.rolled_back", configId, {
             environmentId: row.environment_id,
             revision: row.current_revision,
             rolledBackToRevision: toRevision,
+            reason,
         });
         return toConfigDto(row);
     }
@@ -174,6 +175,7 @@ export class SdkConfigService {
         const resolved = await this.repo.resolveForEnvironment(orgId, query.environmentId);
         if (!resolved)
             throw new NotFoundError("SDK config");
+        validateSchemaV1(resolved.compiledSnapshot);
         sdkConfigCache.set(key, resolved);
         return resolved;
     }

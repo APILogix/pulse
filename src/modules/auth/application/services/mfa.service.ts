@@ -867,7 +867,10 @@ export async function confirmMfaDisable(
     }
 
     const userRes = await client.query<User>(
-      `SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      `SELECT *, email_verified AS email_is_verified
+         FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+        FOR UPDATE`,
       [consumed.user_id],
     );
     const user = userRes.rows[0];

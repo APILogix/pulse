@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from "fastify";
 import { authenticate } from "../../shared/middleware/auth.js";
 import { requireProjectMembership } from "../../shared/middleware/tenant.js";
-import type { ErrorGroupUpdate, EventListQuery, SortDirection, TimeRange } from "./types.js";
+import type { ErrorGroupListQuery, ErrorGroupUpdate, EventListQuery, SortDirection, TimeRange } from "./types.js";
 
 interface ProjectParams {
   projectId: string;
@@ -97,10 +97,12 @@ export async function analyticsRoutes(
   fastify.get("/:projectId/error-groups", { preHandler: [authenticate, requireProjectMembership] }, async (request, reply) => {
     const { projectId } = request.params as ProjectParams;
     const query = request.query as Record<string, QueryValue>;
-    const errorGroupQuery = {
+    const errorGroupQuery: ErrorGroupListQuery = {
       status: parseStatus(query.status),
       limit: parseLimit(query.limit, 25),
     };
+    const environment = parseEnvironment(query.environment);
+    if (environment !== undefined) errorGroupQuery.environment = environment;
     const priority = parseOptionalInt(query.priority);
     if (priority !== undefined) {
       Object.assign(errorGroupQuery, { priority });
@@ -215,7 +217,10 @@ function parseTimeRange(query: Record<string, QueryValue>, fallbackMs: number): 
   // dashboard/list calls can actually reuse LRU/Redis entries.
   const to = explicitTo ?? floorDate(new Date(), DEFAULT_CACHE_WINDOW_MS);
   const from = parseDate(query.from) ?? new Date(to.getTime() - fallbackMs);
-  return { from, to };
+  const range: TimeRange = { from, to };
+  const environment = parseEnvironment(query.environment);
+  if (environment !== undefined) range.environment = environment;
+  return range;
 }
 
 function floorDate(date: Date, bucketMs: number): Date {
@@ -241,6 +246,23 @@ function parseOptionalInt(value: QueryValue): number | undefined {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+
+function parseEnvironment(value: QueryValue): string | undefined {
+  if (value === undefined) return undefined;
+  const environment = value.trim();
+  if (
+    environment.length === 0 ||
+    environment.length > 64 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(environment)
+  ) {
+    const error = new Error('Invalid environment') as Error & { statusCode: number; code: string };
+    error.statusCode = 400;
+    error.code = 'INVALID_ENVIRONMENT';
+    throw error;
+  }
+  return environment;
 }
 
 function parseSort(value: QueryValue): SortDirection {

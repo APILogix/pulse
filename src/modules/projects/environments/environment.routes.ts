@@ -5,7 +5,7 @@ import {
   ListSdkConfigsQuerySchema,
   ResolveSdkConfigQuerySchema,
   UpdateSdkConfigSchema,
-} from "../../organization/sdk-config.types.js";
+} from "../../organization/sdk-config/sdk-config.types.js";
 import {
   CreateEnvironmentBodySchema,
   EnvironmentParamsSchema,
@@ -87,11 +87,9 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
       await service.getProject(orgId, projectId, userId);
       const body = UpdateSdkConfigSchema.parse(request.body);
       const update: {
-        configValue: Record<string, unknown>;
-        schemaVersion?: string | null;
+        editableConfig: Record<string, unknown>;
         changeSummary?: string;
-      } = { configValue: body.configValue };
-      if (body.schemaVersion !== undefined) update.schemaVersion = body.schemaVersion;
+      } = { editableConfig: body.editableConfig };
       if (body.changeSummary !== undefined) update.changeSummary = body.changeSummary;
       const config = await sdkConfigService.updateProjectConfig(
         organizationRequestMeta(request), orgId, projectId, configId, update,
@@ -192,6 +190,21 @@ export async function projectEnvironmentRoutes(fastify: FastifyInstance): Promis
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
       await service.deleteEnvironment(
+        orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request),
+      );
+      return reply.code(204).send();
+    }),
+  );
+
+  // Irreversible: permanently removes the (already soft-deleted) environment,
+  // every API key scoped to it, their rotation history, and its SDK
+  // configuration. Requires owner role and a prior soft-delete.
+  fastify.delete(
+    "/:projectId/environments/:environmentId/permanent",
+    { preHandler: [authenticate] },
+    withErrorHandling(async (request, reply) => {
+      const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+      await service.permanentlyDeleteEnvironment(
         orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request),
       );
       return reply.code(204).send();

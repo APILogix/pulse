@@ -1,5 +1,6 @@
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
+import { toUser } from './user.repository.js';
 const repositoryLogger = logger.child({ component: 'auth-repository' });
 const MFA_DEVICE_SELECT = `
   id,
@@ -60,7 +61,7 @@ export async function scheduleAccountDeletion(userId, scheduledAt, client) {
      SET deletion_scheduled_at = $2, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`, [userId, scheduledAt]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function clearScheduledAccountDeletion(userId, client) {
     const db = client || pool;
@@ -68,7 +69,7 @@ export async function clearScheduledAccountDeletion(userId, client) {
      SET deletion_scheduled_at = NULL, updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`, [userId]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function listUsersDueForDeletion(client) {
     const db = client || pool;
@@ -76,7 +77,7 @@ export async function listUsersDueForDeletion(client) {
      WHERE deleted_at IS NULL
        AND deletion_scheduled_at IS NOT NULL
        AND deletion_scheduled_at <= NOW()`);
-    return result.rows;
+    return result.rows.map((row) => toUser(row));
 }
 export async function listOrgAuthPoliciesForUser(userId, client) {
     const db = client || pool;
@@ -201,7 +202,7 @@ export async function createSsoJitUser(data, client) {
        data_processing_consent
      ) VALUES ($1, $2, $3, NULL, 'active', TRUE, NOW(), TRUE)
      RETURNING *`, [data.id, data.email, data.full_name]);
-    return result.rows[0];
+    return toUser(result.rows[0]);
 }
 export async function addOrgMemberSsoProvision(orgId, userId, role, client) {
     const db = client || pool;

@@ -22,7 +22,10 @@ import { createIngestionJobHandler } from '../../modules/ingestion/pipeline/inge
 const workerLogger = logger.child({ component: 'worker-registry' });
 
 export interface WorkerDependencies {
+  /** Primary/control-plane pool for legacy queue claims. */
   pool: Pool;
+  /** Log DB pool for telemetry event persistence. Defaults to pool for tests only. */
+  telemetryPool?: Pool;
   /** Number of concurrent PgQueueWorkers in this process. */
   concurrency?: number;
   shutdown?: () => Promise<void>;
@@ -36,7 +39,7 @@ export interface RunningWorkers {
 
 export function initializeWorkers(deps: WorkerDependencies): RunningWorkers {
   const queue = new PgQueue(deps.pool, { queue: 'ingestion' });
-  const writer = new TelemetryWriter(deps.pool);
+  const writer = new TelemetryWriter(deps.telemetryPool ?? deps.pool);
   const handler = createIngestionJobHandler(writer);
 
   const concurrency = deps.concurrency ?? 4;

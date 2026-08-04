@@ -1,4 +1,5 @@
 import { BillingError } from '../shared/errors.js';
+import type { Pool, PoolClient } from 'pg';
 import { InternalBillingRepository } from './repository.js';
 import type {
   AiCreditUsageBody,
@@ -25,15 +26,38 @@ function getResolvedValue(row: any) {
   return row.boolean_value ?? row.integer_value ?? row.decimal_value ?? row.string_value ?? null;
 }
 
-function allowsOverage(entitlements: any[]): boolean {
-  return entitlements.some((row) => {
-    const key = String(row.feature_key ?? '').toLowerCase();
-    return key.includes('overage') && row.boolean_value === true;
-  });
+type Db = Pool | PoolClient;
+type UsageBehavior = 'none' | 'hard_limit' | 'soft_limit' | 'overage' | 'throttle';
+
+const RESOURCE_FEATURE_KEYS = {
+  projects: { canonical: 'quota.projects', legacy: 'projects' },
+  members: { canonical: 'quota.members', legacy: 'organization_members' },
+  apiKeys: { canonical: 'quota.api_keys', legacy: 'api_keys' },
+  connectors: { canonical: 'quota.connectors', legacy: 'connectors' },
+  alertRules: { canonical: 'quota.alert_rules', legacy: 'alert_rules' },
+  dashboards: { canonical: 'quota.dashboards', legacy: 'dashboards' },
+} as const;
+
+function numericLimit(row: any): number {
+  const value = Number(row?.integer_value ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function isUnlimited(limit: number): boolean {
+  return limit === -1;
+}
+
+function allowsUsageBeyondLimit(usageBehavior: UsageBehavior | null | undefined): boolean {
+  return usageBehavior === 'soft_limit' || usageBehavior === 'overage';
 }
 
 export class InternalBillingService {
   constructor(private readonly repository: InternalBillingRepository) {}
+
+  private async getQuotaFeature(orgId: string, canonicalKey: string, legacyKey: string, db?: Db) {
+    const canonical = await this.repository.getFeatureValue(orgId, canonicalKey, db);
+    return canonical ?? this.repository.getFeatureValue(orgId, legacyKey, db);
+  }
 
   async getEntitlements(orgId: string) {
     const rows = await this.repository.getResolvedEntitlements(orgId);
@@ -84,15 +108,15 @@ export class InternalBillingService {
       const usage = await this.repository.getCurrentUsageForUpdate(body.organizationId, db);
       if (!usage) throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
 
-      const entitlements = await this.repository.getResolvedEntitlements(body.organizationId, db);
-      const eventLimit = Number(usage.event_limit ?? 0);
+      const eventEntitlement = await this.getQuotaFeature(body.organizationId, 'quota.monthly_events', 'monthly_events', db);
+      const eventLimit = numericLimit(eventEntitlement);
       const used = Number(usage.events_used ?? 0);
-      const remainingBefore = Math.max(eventLimit - used, 0);
+      const remainingBefore = isUnlimited(eventLimit) ? Number.POSITIVE_INFINITY : Math.max(eventLimit - used, 0);
       const requested = body.count;
       const overageRequested = Math.max(requested - remainingBefore, 0);
-      const canOverage = overageRequested > 0 && allowsOverage(entitlements);
+      const canExceedLimit = overageRequested > 0 && allowsUsageBeyondLimit(eventEntitlement?.usage_behavior);
 
-      if (overageRequested > 0 && !canOverage) {
+      if (overageRequested > 0 && !canExceedLimit) {
         const result = {
           accepted: false,
           remaining: remainingBefore,
@@ -108,10 +132,12 @@ export class InternalBillingService {
       await this.repository.incrementEventUsage(body, requested, overageRequested, db);
       const result = {
         accepted: true,
-        remaining: Math.max(remainingBefore - requested, 0),
+        remaining: Number.isFinite(remainingBefore) ? Math.max(remainingBefore - requested, 0) : null,
         overage: overageRequested > 0,
         overageEvents: overageRequested,
-        code: overageRequested > 0 ? ERROR_CODES.QUOTA_OVERAGE_ALLOWED : undefined,
+        code: overageRequested > 0 && eventEntitlement?.usage_behavior === 'overage'
+          ? ERROR_CODES.QUOTA_OVERAGE_ALLOWED
+          : undefined,
       };
       if (body.requestId) {
         await this.repository.recordProcessedEventUsage(body.organizationId, body.requestId, result, db);
@@ -138,8 +164,12 @@ export class InternalBillingService {
       const usage = await this.repository.getCurrentUsageForUpdate(body.organizationId, db);
       if (!usage) throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
 
-      const remainingBefore = Math.max(Number(usage.ai_credit_limit ?? 0) - Number(usage.ai_credits_used ?? 0), 0);
-      if (body.credits > remainingBefore) {
+      const creditEntitlement = await this.getQuotaFeature(body.organizationId, 'quota.ai_credits', 'ai_credits', db);
+      const creditLimit = numericLimit(creditEntitlement);
+      const remainingBefore = isUnlimited(creditLimit)
+        ? Number.POSITIVE_INFINITY
+        : Math.max(creditLimit - Number(usage.ai_credits_used ?? 0), 0);
+      if (body.credits > remainingBefore && !allowsUsageBeyondLimit(creditEntitlement?.usage_behavior)) {
         return {
           accepted: false,
           remaining: remainingBefore,
@@ -150,7 +180,7 @@ export class InternalBillingService {
       await this.repository.incrementAiCredits(body, db);
       return {
         accepted: true,
-        remaining: Math.max(remainingBefore - body.credits, 0),
+        remaining: Number.isFinite(remainingBefore) ? Math.max(remainingBefore - body.credits, 0) : null,
         creditsUsed: body.credits,
         idempotent: false,
       };
@@ -159,44 +189,76 @@ export class InternalBillingService {
 
   async adjustResource(body: ResourceUsageBody, direction: 1 | -1) {
     return this.repository.withTransaction(async (db) => {
+      const featureKey = RESOURCE_FEATURE_KEYS[body.resourceType];
+      const entitlement = await this.getQuotaFeature(
+        body.organizationId,
+        featureKey.canonical,
+        featureKey.legacy,
+        db,
+      );
+      const entitlementLimit = numericLimit(entitlement);
       const row = await this.repository.adjustResourceUsage(body, direction, db);
       if (!row) throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
 
       const used = Number(row.used ?? 0);
-      const limit = Number(row.limit ?? 0);
-      if (direction > 0 && limit > 0 && used > limit) {
+      if (
+        direction > 0
+        && !isUnlimited(entitlementLimit)
+        && used > entitlementLimit
+        && !allowsUsageBeyondLimit(entitlement?.usage_behavior)
+      ) {
         throw new BillingError('Quota exceeded', ERROR_CODES.QUOTA_HARD_LIMIT, 409, {
           resourceType: body.resourceType,
           used,
-          limit,
+          limit: entitlementLimit,
         });
       }
-      return { resourceType: body.resourceType, used, limit, remaining: Math.max(limit - used, 0) };
+      return {
+        resourceType: body.resourceType,
+        used,
+        limit: entitlementLimit,
+        remaining: isUnlimited(entitlementLimit) ? null : Math.max(entitlementLimit - used, 0),
+      };
     });
   }
 
   async getEventQuota(orgId: string) {
     const usage = await this.repository.getCurrentUsage(orgId);
     if (!usage) throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
-    const limit = Number(usage.event_limit ?? 0);
+    const entitlement = await this.getQuotaFeature(orgId, 'quota.monthly_events', 'monthly_events');
+    const limit = numericLimit(entitlement);
     const used = Number(usage.events_used ?? 0);
-    return { limit, used, remaining: Math.max(limit - used, 0), overageEvents: Number(usage.overage_events ?? 0) };
+    return {
+      limit,
+      used,
+      remaining: isUnlimited(limit) ? null : Math.max(limit - used, 0),
+      usageBehavior: entitlement?.usage_behavior ?? 'hard_limit',
+      overageEvents: Number(usage.overage_events ?? 0),
+    };
   }
 
   async getAiCreditQuota(orgId: string) {
     const usage = await this.repository.getCurrentUsage(orgId);
     if (!usage) throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
-    const limit = Number(usage.ai_credit_limit ?? 0);
+    const entitlement = await this.getQuotaFeature(orgId, 'quota.ai_credits', 'ai_credits');
+    const limit = numericLimit(entitlement);
     const used = Number(usage.ai_credits_used ?? 0);
-    return { limit, used, remaining: Math.max(limit - used, 0), overageAiCredits: Number(usage.overage_ai_credits ?? 0) };
+    return {
+      limit,
+      used,
+      remaining: isUnlimited(limit) ? null : Math.max(limit - used, 0),
+      overageAiCredits: Number(usage.overage_ai_credits ?? 0),
+    };
   }
 
   async checkEventQuota(orgId: string, requestedCount: number) {
     const quota = await this.getEventQuota(orgId);
+    const wouldExceedLimit = quota.remaining !== null && requestedCount > quota.remaining;
     return {
-      allowed: requestedCount <= quota.remaining,
+      allowed: !wouldExceedLimit || allowsUsageBeyondLimit(quota.usageBehavior),
       remaining: quota.remaining,
-      wouldOverage: requestedCount > quota.remaining,
+      wouldOverage: wouldExceedLimit,
+      usageBehavior: quota.usageBehavior,
     };
   }
 

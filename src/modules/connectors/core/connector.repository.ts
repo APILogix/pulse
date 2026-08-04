@@ -8,6 +8,7 @@
  */
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
+import { encryptConfig } from '../secrets/secret.service.js';
 import {
   ConnectorConflictError,
   ConnectorNotFoundError,
@@ -81,7 +82,15 @@ export interface ConnectorCredentialRow {
 }
 
 export class ConnectorRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /**
+   * ADR-0006: connector configuration and credentials are control-plane owned,
+   * so this defaults to the primary pool and never accepts the Log DB pool.
+   */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();
@@ -173,6 +182,94 @@ export class ConnectorRepository {
     return r.rows;
   }
 
+  async findFirstActiveByType(
+    organizationId: string,
+    type: ConnectorType,
+  ): Promise<ConnectorConfigRow | null> {
+    const r = await this.db.query<ConnectorConfigRow>(
+      `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs
+       WHERE organization_id=$1
+         AND provider=$2
+         AND status='active'
+         AND deleted_at IS NULL
+       ORDER BY
+         CASE WHEN provider_metadata->>'managedBy' = 'pulse' THEN 1 ELSE 0 END,
+         last_successful_delivery_at DESC NULLS LAST,
+         created_at ASC
+       LIMIT 1`,
+      [organizationId, type],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async getOrCreateManagedEmailConnector(organizationId: string): Promise<ConnectorConfigRow> {
+    const existing = await this.db.query<ConnectorConfigRow>(
+      `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs
+       WHERE organization_id=$1
+         AND provider='email'
+         AND provider_metadata->>'managedBy' = 'pulse'
+         AND provider_metadata->>'managedPurpose' = 'alert_fallback'
+         AND deleted_at IS NULL
+       ORDER BY created_at ASC
+       LIMIT 1`,
+      [organizationId],
+    );
+    if (existing.rows[0]) return existing.rows[0];
+
+    return this.withTransaction(async (client) => {
+      const raced = await client.query<ConnectorConfigRow>(
+        `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs
+         WHERE organization_id=$1
+           AND provider='email'
+           AND provider_metadata->>'managedBy' = 'pulse'
+           AND provider_metadata->>'managedPurpose' = 'alert_fallback'
+           AND deleted_at IS NULL
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE`,
+        [organizationId],
+      );
+      if (raced.rows[0]) return raced.rows[0];
+
+      const created = await client.query<{ id: string }>(
+        `INSERT INTO connector_configs
+           (organization_id, name, provider, status, description, public_config,
+            supports_rich_formatting, supports_threading, supports_attachments,
+            rate_limit_requests, rate_limit_window_seconds, max_retries, failure_threshold,
+            provider_metadata, created_by)
+         VALUES (
+            $1, 'Pulse Managed Email', 'email', 'active',
+            'Platform-managed SMTP fallback for alert notifications',
+            '{"managed":true,"provider":"pulse"}'::jsonb,
+            TRUE, FALSE, TRUE,
+            1000, 60, 3, 10,
+            '{"managed":true,"managedBy":"pulse","managedPurpose":"alert_fallback"}'::jsonb,
+            NULL
+         )
+         RETURNING id`,
+        [organizationId],
+      );
+      const connectorId = created.rows[0]!.id;
+      await client.query(
+        `INSERT INTO connector_credentials
+           (connector_id, credential_type, key_name, encrypted_value, algorithm, version, created_by)
+         VALUES ($1, 'config', 'config', $2, 'aes-256-gcm', 1, NULL)`,
+        [
+          connectorId,
+          encryptConfig({
+            to: ['alerts@pulse.local'],
+            fromName: 'Pulse Alerts',
+          }),
+        ],
+      );
+      const r = await client.query<ConnectorConfigRow>(
+        `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs WHERE id=$1`,
+        [connectorId],
+      );
+      return r.rows[0]!;
+    });
+  }
+
   async list(
     organizationId: string,
     query: ListConnectorsQuery,
@@ -201,6 +298,17 @@ export class ConnectorRepository {
       params,
     );
     return { data: r.rows, total };
+  }
+
+  async countActiveConnectors(organizationId: string): Promise<number> {
+    const r = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM connector_configs
+       WHERE organization_id=$1
+         AND deleted_at IS NULL`,
+      [organizationId],
+    );
+    return Number(r.rows[0]?.count ?? 0);
   }
 
   /** All non-deleted connectors in an active/error state (for health sweeps). */

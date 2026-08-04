@@ -109,9 +109,9 @@ export class PgConfigStore implements ConfigStore {
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO project_environment_sdk_config_revisions(
            config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_value, config_hash,
+           requested_config, compiled_snapshot, config_hash,
            change_type, rolled_back_to_revision, published_by
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11)
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING id`,
         [
           headRow.id,
@@ -200,8 +200,8 @@ export class PgConfigStore implements ConfigStore {
       await client.query(
         `INSERT INTO project_environment_sdk_config_revisions(
            id, config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_value, config_hash, change_type
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,'initial')`,
+           requested_config, compiled_snapshot, config_hash, change_type
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'initial')`,
         [
           revisionId,
           headId,
@@ -225,7 +225,10 @@ export class PgConfigStore implements ConfigStore {
     organizationId: string,
     environmentId: string,
   ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config } | null> {
-    const result = await this.db.query<{ revision_number: number; compiled_snapshot: SchemaV1Config }>(
+    const result = await this.db.query<{
+      revision_number: number;
+      compiled_snapshot: SchemaV1Config;
+    }>(
       `SELECT r.revision_number, r.compiled_snapshot
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
@@ -236,6 +239,45 @@ export class PgConfigStore implements ConfigStore {
       [organizationId, environmentId],
     );
     const row = result.rows[0];
-    return row ? { revisionNo: row.revision_number, compiledSnapshot: row.compiled_snapshot } : null;
+    return row
+      ? {
+          revisionNo: row.revision_number,
+          compiledSnapshot: row.compiled_snapshot,
+        }
+      : null;
+  }
+
+  async loadCompiledBySdkMetadata(
+    organizationId: string,
+    projectId: string,
+    environment: string,
+  ): Promise<{ revisionNo: number; environmentId: string; compiledSnapshot: SchemaV1Config } | null> {
+    const result = await this.db.query<{
+      revision_number: number;
+      environment_id: string;
+      compiled_snapshot: SchemaV1Config;
+    }>(
+      `SELECT r.revision_number, h.environment_id, r.compiled_snapshot
+         FROM project_environment_sdk_configs h
+         JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
+         JOIN projects p
+           ON p.id = h.project_id AND p.org_id = h.organization_id
+         JOIN project_environments e
+           ON e.id = h.environment_id AND e.project_id = h.project_id AND e.organization_id = h.organization_id
+        WHERE h.organization_id = $1
+          AND h.project_id = $2
+          AND e.slug = $3
+          AND p.status = 'active' AND p.deleted_at IS NULL
+          AND e.is_active = TRUE AND e.deleted_at IS NULL`,
+      [organizationId, projectId, environment],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          revisionNo: row.revision_number,
+          environmentId: row.environment_id,
+          compiledSnapshot: row.compiled_snapshot,
+        }
+      : null;
   }
 }

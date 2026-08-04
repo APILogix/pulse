@@ -1,7 +1,11 @@
 import { pool } from '../../../config/database.js';
 import { ConnectorConflictError, ConnectorNotFoundError, } from '../types.js';
 export class ConnectorMetricsRepository {
-    db = pool;
+    db;
+    /** ADR-0006: pools are injected explicitly. */
+    constructor(db = pool) {
+        this.db = db;
+    }
     // ── Connector CRUD ─────────────────────────────────────────────────────
     // ── Health / failure bookkeeping ───────────────────────────────────────
     async recordSuccess(connectorId) {

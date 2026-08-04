@@ -15,6 +15,7 @@
  */
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { registerAlertingWorkers } from '../../modules/alerting/queue.js';
 import { registerAuthAutomationWorkers } from '../../modules/auth/infrastructure/jobs/queue.js';
@@ -26,6 +27,8 @@ import { registerUserDataExportWorker } from '../../modules/user-account/queue.j
 import { registerAIWorkers } from '../../modules/ai/queue.js';
 import { registerAutomationWorkers } from '../../modules/automation/workers.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
+import { AlertRuntimeRepository } from '../../modules/alerting/runtime/alert-runtime.repository.js';
+import { AlertConfigRepository } from '../../modules/alerting/config/alert-config.repository.js';
 import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
 import { AlertChannelRepository } from '../../modules/projects/alerts/channels/channel.repository.js';
 import type { ProjectSubscriptionResolver } from '../../modules/alerting/batch-processor.js';
@@ -53,6 +56,22 @@ async function bootstrapWorkers(): Promise<void> {
   });
 
   await pgPool.query('SELECT 1');
+  await logDB.connect();
+
+  // ── ADR-0006 pool ownership assertion ──────────────────────────────────────
+  // docs/alerting-redesign/adr/0006-database-ownership.md
+  //
+  // Prove BEFORE any worker starts that each alerting pool is attached to the
+  // database that owns its tables. Audit finding B1: the evaluator read telemetry
+  // through the control-plane pool while ingestion wrote it through the Log DB pool,
+  // so whenever LOG_DB_PRIMARY was a genuinely separate database, telemetry-driven
+  // alerts silently never fired. This turns that into a startup crash.
+  //
+  // Deployment prerequisite (07-migration-plan.md §7 step 1 before step 2): the Log DB
+  // alerting migrations must be applied first. Set ALERTING_RUNTIME_POOL_ASSERT=false
+  // only for local bootstrap.
+  await new AlertRuntimeRepository(logDB.getPrimaryPool()).assertRuntimePool(workerLogger);
+  await new AlertConfigRepository().assertConfigPool(workerLogger);
 
   const maintenance = new TelemetryMaintenanceWorker(pgPool, workerLogger);
   maintenance.start();
@@ -90,6 +109,7 @@ async function bootstrapWorkers(): Promise<void> {
     if (aiWorkers) await aiWorkers.stop();
     if (automationWorkers) await automationWorkers.stop();
     await stopPgBoss();
+    await logDB.close();
     await pgPool.end();
     process.exit(0);
   };
@@ -109,7 +129,14 @@ async function bootstrapWorkers(): Promise<void> {
     resolveByProjectId: (projectId) => connectorSubRepo.resolveAlertRoutingTargetByProjectId(projectId),
     resolveImmediateDeliveryTargets: (request) => alertChannelRepo.resolveImmediateDeliveryTargets(request),
   };
-  alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver);
+  // ADR-0006 / DEV-002: the evaluators must read `events_*` through the pool that ingestion
+  // writes them with. Injected here so the alerting module never imports the Log DB singleton.
+  alertingWorkers = await registerAlertingWorkers(
+    workerLogger,
+    {},
+    projectSubscriptionResolver,
+    logDB.getPrimaryPool(),
+  );
   analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
   userDataExportWorker = await registerUserDataExportWorker(workerLogger);
   aiWorkers = await registerAIWorkers(workerLogger);

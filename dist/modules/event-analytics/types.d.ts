@@ -33,9 +33,20 @@ export interface TimeRange {
     to: Date;
 }
 export declare const UuidSchema: z.ZodString;
+export declare const EnvironmentSchema: z.ZodString;
 export declare const OrgIdParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
 }, z.core.$strip>;
+export declare const TelemetryScopeQuerySchema: z.ZodObject<{
+    projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type TelemetryScopeQuery = z.infer<typeof TelemetryScopeQuerySchema>;
+export declare const TelemetryIdentityQuerySchema: z.ZodObject<{
+    projectId: z.ZodString;
+    environment: z.ZodString;
+}, z.core.$strip>;
+export type TelemetryIdentityQuery = z.infer<typeof TelemetryIdentityQuerySchema>;
 export declare const TimeRangeQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
@@ -47,6 +58,7 @@ export declare const TimeRangeQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type TimeRangeQuery = z.infer<typeof TimeRangeQuerySchema>;
 export declare const TrendsQuerySchema: z.ZodObject<{
@@ -60,6 +72,7 @@ export declare const TrendsQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     granularity: z.ZodDefault<z.ZodEnum<{
         week: "week";
         day: "day";
@@ -89,6 +102,7 @@ export declare const ListErrorsQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     severity: z.ZodOptional<z.ZodEnum<{
@@ -108,17 +122,18 @@ export declare const ListErrorGroupsQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     status: z.ZodOptional<z.ZodEnum<{
+        muted: "muted";
         ignored: "ignored";
         resolved: "resolved";
         unresolved: "unresolved";
-        muted: "muted";
     }>>;
     search: z.ZodOptional<z.ZodString>;
     sortBy: z.ZodDefault<z.ZodEnum<{
+        total_count: "total_count";
         last_seen_at: "last_seen_at";
         first_seen_at: "first_seen_at";
-        total_count: "total_count";
     }>>;
     sortOrder: z.ZodDefault<z.ZodEnum<{
         asc: "asc";
@@ -131,6 +146,7 @@ export declare const ResolveGroupSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const RoutePerfQuerySchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     days: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
@@ -146,6 +162,7 @@ export declare const ListRequestsQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     method: z.ZodOptional<z.ZodString>;
@@ -166,6 +183,7 @@ export declare const ListTracesQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     traceId: z.ZodOptional<z.ZodString>;
@@ -187,6 +205,7 @@ export declare const MetricSeriesQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     granularity: z.ZodDefault<z.ZodEnum<{
         week: "week";
         day: "day";
@@ -196,8 +215,8 @@ export declare const MetricSeriesQuerySchema: z.ZodObject<{
         max: "max";
         min: "min";
         count: "count";
-        avg: "avg";
         sum: "sum";
+        avg: "avg";
     }>>;
 }, z.core.$strip>;
 export type MetricSeriesQuery = z.infer<typeof MetricSeriesQuerySchema>;
@@ -212,6 +231,7 @@ export declare const ListLogsQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     level: z.ZodOptional<z.ZodEnum<{
@@ -236,6 +256,7 @@ export declare const ListSessionsQuerySchema: z.ZodObject<{
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     userId: z.ZodOptional<z.ZodString>;
@@ -246,6 +267,7 @@ export declare const CronHistoryQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const CreateDashboardSchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
@@ -304,10 +326,10 @@ export declare const CreateAnalyticsAlertSchema: z.ZodObject<{
 export type CreateAnalyticsAlertBody = z.infer<typeof CreateAnalyticsAlertSchema>;
 export declare const ExportSchema: z.ZodObject<{
     dataset: z.ZodEnum<{
-        logs: "logs";
-        metrics: "metrics";
         errors: "errors";
         requests: "requests";
+        metrics: "metrics";
+        logs: "logs";
     }>;
     format: z.ZodDefault<z.ZodEnum<{
         csv: "csv";
@@ -321,6 +343,7 @@ export declare const ExportSchema: z.ZodObject<{
         "90d": "90d";
     }>>;
     projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export type ExportBody = z.infer<typeof ExportSchema>;

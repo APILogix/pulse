@@ -1,10 +1,12 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
     projectId: string;
     /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
     orgId: string | null;
+    /** Normalized string supplied by the SDK envelope; never an environment UUID. */
+    environment: string;
     event: NormalizedEvent;
 }
 /** Storage error_name for an error event (shared with the error grouper). */
@@ -34,8 +36,10 @@ export interface DetailedWriteResult {
     /** Error events confirmed inserted (drives analytics_error_groups). */
     insertedErrors: ScopedEvent[];
 }
+type Queryable = Pool | PoolClient;
 export declare class TelemetryWriter {
     private readonly pool;
+    private readonly enricher;
     constructor(pool: Pool);
     /**
      * Route a batch of scoped events to the correct events_* table(s). Mixed
@@ -55,6 +59,9 @@ export declare class TelemetryWriter {
      * at-least-once retries are never billed twice.
      */
     writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
+    writeBatchDetailedWithOutbox(client: PoolClient, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
+    private writeBatchDetailedUsing;
+    appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;
     /** Best-effort event id (events_*.event_id is NOT NULL). */
     private eventId;
@@ -63,10 +70,14 @@ export declare class TelemetryWriter {
     private writeRequests;
     private writeSpans;
     private writeTraces;
+    private writeTracesInTransaction;
+    private writeTraceSpanTree;
+    private collectTraceSpanRows;
     private writeMetrics;
     private writeLogs;
     private writeProfiles;
     private writeCronCheckins;
     private writeReplays;
 }
+export {};
 //# sourceMappingURL=telemetry-writer.d.ts.map

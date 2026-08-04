@@ -9,7 +9,6 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
-import { forgotPasswordRateLimit, loginMfaRateLimit, loginRateLimit, mfaEmailResendRateLimit, refreshSessionRateLimit, registerRateLimit, resendVerificationRateLimit, resetPasswordRateLimit, tokenConfirmRateLimit, verifyEmailRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -106,8 +105,8 @@ export async function userRoutes(fastify) {
             return handleAuthError(error, reply, request);
         }
     };
-    fastify.post('/register', { preHandler: [registerRateLimit] }, register);
-    fastify.post('/users', { preHandler: [registerRateLimit] }, register);
+    fastify.post('/register', register);
+    fastify.post('/users', register);
     // GET /auth/users/me
     fastify.get('/users/me', { preHandler: [authenticate] }, async (request, reply) => {
         try {

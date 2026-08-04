@@ -4,7 +4,11 @@ function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
 export class SilencesRepository {
-    db = pool;
+    db;
+    /** ADR-0006: silences are control-plane configuration (primary pool). */
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         const client = await this.db.connect();
         try {

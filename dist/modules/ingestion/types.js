@@ -26,35 +26,71 @@ export const IngestSchema = {
                         name: { type: 'string' },
                         metricType: { type: 'string', enum: ['counter', 'gauge', 'histogram'] },
                         url: { type: 'string' },
+                        route: { type: 'string', maxLength: 2048 },
                         method: {
                             type: 'string',
                             enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']
                         },
                         statusCode: { type: 'integer' },
+                        statusText: { type: 'string', maxLength: 128 },
+                        handled: { type: 'boolean' },
                         latency: { type: 'integer', minimum: 0 },
                         bodySize: { type: 'integer', minimum: 0 },
+                        responseSize: { type: 'integer', minimum: 0 },
+                        traceId: { type: 'string', maxLength: 128 },
+                        spanId: { type: 'string', maxLength: 128 },
+                        rootSpan: { type: 'object' },
+                        spanCount: { type: 'integer', minimum: 0 },
+                        totalDuration: { type: 'number', minimum: 0 },
+                        isPartial: { type: 'boolean' },
                         userId: { type: ['string', 'null'] },
                         message: { type: 'string' },
                         fingerprint: { type: 'string' },
-                        stack: { type: 'array', items: { type: 'string' } },
+                        stack: {
+                            type: 'array',
+                            maxItems: 200,
+                            items: {
+                                anyOf: [
+                                    { type: 'string' },
+                                    { type: 'object' },
+                                    { type: 'array' },
+                                    { type: 'number' },
+                                    { type: 'boolean' },
+                                    { type: 'null' },
+                                ],
+                            },
+                        },
                         context: { type: 'object' },
                         level: { type: 'string', enum: ['debug', 'info', 'warn', 'error'] },
                         headers: { type: 'object' },
                         query: { type: 'object' },
+                        attributes: { type: 'object' },
+                        metadata: { type: 'object' },
                     }
                 }
             },
-            metadata: { type: 'object' }
+            metadata: {
+                type: 'object',
+                required: [],
+                properties: {
+                    environment: {
+                        type: 'string',
+                        minLength: 1,
+                        maxLength: 128,
+                        pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+                    },
+                    sdkVersion: { type: 'string', maxLength: 64 },
+                    sdkName: { type: 'string', maxLength: 64 },
+                    applicationName: { type: 'string', maxLength: 128 },
+                    applicationVersion: { type: 'string', maxLength: 64 },
+                    release: { type: 'string', maxLength: 128 },
+                    compression: { type: 'string', enum: ['gzip', 'none'] },
+                    batchId: { type: 'string', maxLength: 128 },
+                },
+                additionalProperties: false,
+            }
         }
     }
-};
-export const InitSchema = {
-    body: {
-        type: 'object',
-        properties: {
-            apiKey: { type: 'string', minLength: 32, maxLength: 128 },
-        },
-    },
 };
 export const ReplaySchema = {
     body: {
@@ -64,6 +100,12 @@ export const ReplaySchema = {
             projectId: { type: 'string', format: 'uuid' },
             startTime: { type: 'string', format: 'date-time' },
             endTime: { type: 'string', format: 'date-time' },
+            environment: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+                pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+            },
             eventTypes: {
                 type: 'array',
                 items: { type: 'string', enum: sdkTypeEnum },
@@ -78,6 +120,12 @@ export const ErrorListSchema = {
         required: ['projectId'],
         properties: {
             projectId: { type: 'string', format: 'uuid' },
+            environment: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 128,
+                pattern: '^\\s*[A-Za-z0-9][A-Za-z0-9._-]*\\s*$',
+            },
             limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
             offset: { type: 'integer', minimum: 0, default: 0 },
             from: { type: 'string', format: 'date-time' },

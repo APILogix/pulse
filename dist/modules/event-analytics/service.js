@@ -14,9 +14,9 @@ export class EventAnalyticsService {
     async getOverview(orgId, q) {
         const range = resolveTimeRange(q);
         const [errors, requests, uniqueUsers] = await Promise.all([
-            this.repo.getErrorStats(orgId, q.projectId, range),
-            this.repo.getRequestStats(orgId, q.projectId, range),
-            this.repo.getUniqueUserCount(orgId, q.projectId, range),
+            this.repo.getErrorStats(orgId, q.projectId, q.environment, range),
+            this.repo.getRequestStats(orgId, q.projectId, q.environment, range),
+            this.repo.getUniqueUserCount(orgId, q.projectId, q.environment, range),
         ]);
         return {
             errors,
@@ -30,8 +30,8 @@ export class EventAnalyticsService {
         const range = resolveTimeRange(q);
         const bucket = q.granularity;
         const [errorSeries, requestSeries] = await Promise.all([
-            this.repo.getEventTrend('errors', orgId, q.projectId, range, bucket, `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal, COUNT(*) FILTER (WHERE severity='error')::bigint AS error`),
-            this.repo.getEventTrend('requests', orgId, q.projectId, range, bucket, `COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS errors, AVG(latency_ms)::int AS avg_latency`),
+            this.repo.getEventTrend('errors', orgId, q.projectId, q.environment, range, bucket, `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal, COUNT(*) FILTER (WHERE severity='error')::bigint AS error`),
+            this.repo.getEventTrend('requests', orgId, q.projectId, q.environment, range, bucket, `COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS errors, AVG(latency_ms)::int AS avg_latency`),
         ]);
         return { errors: errorSeries, requests: requestSeries, granularity: bucket };
     }
@@ -39,7 +39,7 @@ export class EventAnalyticsService {
         const range = resolveTimeRange(q);
         const [dbOk, requests] = await Promise.all([
             this.repo.ping(),
-            this.repo.getRequestStats(orgId, q.projectId, range),
+            this.repo.getRequestStats(orgId, q.projectId, q.environment, range),
         ]);
         // Simple health score: 100 minus error-rate penalty.
         const score = Math.max(0, Math.round(100 - requests.errorRate * 100));
@@ -57,6 +57,7 @@ export class EventAnalyticsService {
         const start = Date.now();
         const { rows, total } = await this.repo.listErrors(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.severity !== undefined ? { severity: q.severity } : {}),
             ...(q.service !== undefined ? { service: q.service } : {}),
             ...(q.release !== undefined ? { release: q.release } : {}),
@@ -66,8 +67,8 @@ export class EventAnalyticsService {
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset, queryTimeMs: Date.now() - start } };
     }
-    async getError(orgId, id) {
-        const row = await this.repo.getErrorById(orgId, id);
+    async getError(orgId, id, projectId, environment) {
+        const row = await this.repo.getErrorById(orgId, id, projectId, environment);
         if (!row)
             throw new AnalyticsNotFoundError('Error event');
         return row;
@@ -75,40 +76,41 @@ export class EventAnalyticsService {
     async listErrorGroups(orgId, q) {
         const { rows, total } = await this.repo.listErrorGroups(orgId, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.status !== undefined ? { status: q.status } : {}),
             ...(q.search !== undefined ? { search: q.search } : {}),
             sortBy: q.sortBy, sortOrder: q.sortOrder, limit: q.limit, offset: q.offset,
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
     }
-    async getErrorGroup(orgId, fingerprint) {
-        const group = await this.repo.getErrorGroup(orgId, fingerprint);
+    async getErrorGroup(orgId, fingerprint, projectId, environment) {
+        const group = await this.repo.getErrorGroup(orgId, projectId, fingerprint, environment);
         if (!group)
             throw new AnalyticsNotFoundError('Error group');
         return group;
     }
-    async setErrorGroupStatus(orgId, meta, fingerprint, status, assignedTo) {
-        const updated = await this.repo.updateErrorGroupStatus(orgId, fingerprint, status, assignedTo);
+    async setErrorGroupStatus(orgId, meta, fingerprint, projectId, environment, status, assignedTo) {
+        const updated = await this.repo.updateErrorGroupStatus(orgId, projectId, fingerprint, environment, status, assignedTo);
         if (!updated)
             throw new AnalyticsNotFoundError('Error group');
-        this.audit(orgId, meta, `analytics.error_group.${status}`, 'analytics_error_group', fingerprint);
+        this.audit(orgId, meta, `analytics.error_group.${status}`, 'analytics_error_group', `${projectId}:${fingerprint}`);
         return updated;
     }
     async getErrorTrends(orgId, q) {
         const range = resolveTimeRange(q);
-        return this.repo.getEventTrend('errors', orgId, q.projectId, range, q.granularity, `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal`);
+        return this.repo.getEventTrend('errors', orgId, q.projectId, q.environment, range, q.granularity, `COUNT(*) FILTER (WHERE severity='fatal')::bigint AS fatal`);
     }
     // ── Performance ──────────────────────────────────────────────────────────
     async getRoutePerformance(orgId, q) {
         const since = new Date(Date.now() - q.days * 24 * 60 * 60 * 1000);
-        return this.repo.getRoutePerformance(orgId, q.projectId, since, q.limit);
+        return this.repo.getRoutePerformance(orgId, q.projectId, q.environment, since, q.limit);
     }
     async getLatencyDistribution(orgId, q) {
-        return this.repo.getLatencyDistribution(orgId, q.projectId, resolveTimeRange(q));
+        return this.repo.getLatencyDistribution(orgId, q.projectId, q.environment, resolveTimeRange(q));
     }
     async getApdex(orgId, q) {
         const range = resolveTimeRange(q);
-        const counts = await this.repo.getApdexCounts(orgId, q.projectId, range, APDEX_THRESHOLD_MS);
+        const counts = await this.repo.getApdexCounts(orgId, q.projectId, q.environment, range, APDEX_THRESHOLD_MS);
         return { apdex: computeApdex(counts.satisfied, counts.tolerating, counts.total), thresholdMs: APDEX_THRESHOLD_MS, ...counts };
     }
     // ── Requests / traces ──────────────────────────────────────────────────
@@ -116,6 +118,7 @@ export class EventAnalyticsService {
         const range = resolveTimeRange(q);
         const { rows, total } = await this.repo.listRequests(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.method !== undefined ? { method: q.method } : {}),
             ...(q.statusCode !== undefined ? { statusCode: q.statusCode } : {}),
             ...(q.route !== undefined ? { route: q.route } : {}),
@@ -125,16 +128,16 @@ export class EventAnalyticsService {
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
     }
-    async getRequest(orgId, id) {
-        const row = await this.repo.getRequestById(orgId, id);
+    async getRequest(orgId, id, projectId, environment) {
+        const row = await this.repo.getRequestById(orgId, id, projectId, environment);
         if (!row)
             throw new AnalyticsNotFoundError('Request event');
         return row;
     }
-    async getTraceWaterfall(orgId, traceId) {
+    async getTraceWaterfall(orgId, traceId, projectId, environment) {
         const [trace, spans] = await Promise.all([
-            this.repo.getTraceById(orgId, traceId),
-            this.repo.getSpansByTrace(orgId, traceId),
+            this.repo.getTraceById(orgId, traceId, projectId, environment),
+            this.repo.getSpansByTrace(orgId, traceId, projectId, environment),
         ]);
         if (!trace && spans.length === 0)
             throw new AnalyticsNotFoundError('Trace');
@@ -145,6 +148,7 @@ export class EventAnalyticsService {
         const range = resolveTimeRange(q);
         const { rows, total } = await this.repo.listTraces(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.traceId !== undefined ? { traceId: q.traceId } : {}),
             ...(q.requestId !== undefined ? { requestId: q.requestId } : {}),
             ...(q.service !== undefined ? { service: q.service } : {}),
@@ -156,18 +160,18 @@ export class EventAnalyticsService {
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
     }
-    async getTrace(orgId, traceId) {
-        return this.getTraceWaterfall(orgId, traceId);
+    async getTrace(orgId, traceId, projectId, environment) {
+        return this.getTraceWaterfall(orgId, traceId, projectId, environment);
     }
     // ── Metrics ─────────────────────────────────────────────────────────────
     async listMetricNames(orgId, q) {
-        return this.repo.listMetricNames(orgId, q.projectId, resolveTimeRange(q));
+        return this.repo.listMetricNames(orgId, q.projectId, q.environment, resolveTimeRange(q));
     }
     async getMetricSeries(orgId, name, q) {
-        return this.repo.getMetricSeries(orgId, name, resolveTimeRange(q), q.granularity, q.aggregate, q.projectId);
+        return this.repo.getMetricSeries(orgId, name, resolveTimeRange(q), q.granularity, q.aggregate, q.projectId, q.environment);
     }
     async getMetricStats(orgId, name, q) {
-        const stats = await this.repo.getMetricStats(orgId, name, resolveTimeRange(q), q.projectId);
+        const stats = await this.repo.getMetricStats(orgId, name, resolveTimeRange(q), q.projectId, q.environment);
         if (!stats)
             throw new AnalyticsNotFoundError('Metric');
         return stats;
@@ -177,6 +181,7 @@ export class EventAnalyticsService {
         const range = resolveTimeRange(q);
         const { rows, total } = await this.repo.listLogs(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.level !== undefined ? { level: q.level } : {}),
             ...(q.service !== undefined ? { service: q.service } : {}),
             ...(q.search !== undefined ? { search: q.search } : {}),
@@ -192,11 +197,12 @@ export class EventAnalyticsService {
         return log;
     }
     async listObservedServices(orgId, q, limit = 50) {
-        return this.repo.listObservedServices(orgId, resolveTimeRange(q), q.projectId, limit);
+        return this.repo.listObservedServices(orgId, resolveTimeRange(q), q.projectId, q.environment, limit);
     }
     async summarizeLogs(orgId, q, filters) {
         return this.repo.summarizeLogs(orgId, resolveTimeRange(q), {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(filters.level !== undefined ? { level: filters.level } : {}),
             ...(filters.service !== undefined ? { service: filters.service } : {}),
             ...(filters.search !== undefined ? { search: filters.search } : {}),
@@ -204,44 +210,45 @@ export class EventAnalyticsService {
         });
     }
     async listServiceEndpoints(orgId, service, q, limit = 50) {
-        return this.repo.listServiceEndpoints(orgId, service, resolveTimeRange(q), q.projectId, limit);
+        return this.repo.listServiceEndpoints(orgId, service, resolveTimeRange(q), q.projectId, q.environment, limit);
     }
-    async pollLogsSince(orgId, since, projectId) {
-        return this.repo.listLogsSince(orgId, since, projectId, 100);
+    async pollLogsSince(orgId, since, projectId, environment) {
+        return this.repo.listLogsSince(orgId, since, projectId, environment, 100);
     }
-    async pollErrorsSince(orgId, since, projectId) {
-        return this.repo.listErrorsSince(orgId, since, projectId, 100);
+    async pollErrorsSince(orgId, since, projectId, environment) {
+        return this.repo.listErrorsSince(orgId, since, projectId, environment, 100);
     }
     // ── Sessions / users ───────────────────────────────────────────────────
     async listSessions(orgId, q) {
         const range = resolveTimeRange(q);
         const { rows, total } = await this.repo.listSessions(orgId, range, {
             ...(q.projectId !== undefined ? { projectId: q.projectId } : {}),
+            ...(q.environment !== undefined ? { environment: q.environment } : {}),
             ...(q.userId !== undefined ? { userId: q.userId } : {}),
             ...(q.crashedOnly !== undefined ? { crashedOnly: q.crashedOnly } : {}),
             limit: q.limit, offset: q.offset,
         });
         return { data: rows, meta: { total, limit: q.limit, offset: q.offset } };
     }
-    async getSession(orgId, sessionId) {
-        const row = await this.repo.getSession(orgId, sessionId);
+    async getSession(orgId, sessionId, projectId, environment) {
+        const row = await this.repo.getSession(orgId, sessionId, projectId, environment);
         if (!row)
             throw new AnalyticsNotFoundError('Session');
         return row;
     }
     async listUsers(orgId, q) {
-        return this.repo.listUsers(orgId, resolveTimeRange(q), q.projectId, q.limit, q.offset);
+        return this.repo.listUsers(orgId, resolveTimeRange(q), q.projectId, q.environment, q.limit, q.offset);
     }
     async getUserJourney(orgId, userId, q) {
         const range = resolveTimeRange(q);
-        return this.repo.getUserJourney(orgId, userId, range, 200);
+        return this.repo.getUserJourney(orgId, userId, range, q.projectId, q.environment, 200);
     }
     // ── Crons ────────────────────────────────────────────────────────────────
-    async listCrons(orgId, projectId) {
-        return this.repo.listCrons(orgId, projectId);
+    async listCrons(orgId, projectId, environment) {
+        return this.repo.listCrons(orgId, projectId, environment);
     }
-    async getCronHistory(orgId, slug, limit, offset) {
-        return this.repo.getCronHistory(orgId, slug, limit, offset);
+    async getCronHistory(orgId, slug, projectId, environment, limit, offset) {
+        return this.repo.getCronHistory(orgId, slug, projectId, environment, limit, offset);
     }
     // ── Dashboards ──────────────────────────────────────────────────────────
     async createDashboard(orgId, meta, body) {
@@ -345,7 +352,7 @@ export class EventAnalyticsService {
     // ── Export ─────────────────────────────────────────────────────────────
     async exportData(orgId, body) {
         const range = resolveTimeRange({ range: body.range });
-        const rows = await this.repo.exportDataset(orgId, body.dataset, range, body.projectId, body.limit);
+        const rows = await this.repo.exportDataset(orgId, body.dataset, range, body.projectId, body.environment, body.limit);
         return { rows, format: body.format };
     }
     // ── Internals ──────────────────────────────────────────────────────────

@@ -4,7 +4,14 @@ function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
 export class MetricsRepository {
-    db = pool;
+    db;
+    /**
+     * ADR-0006: pools are injected explicitly. Reads the LEGACY alert metric and
+     * event tables; the typed v2 equivalents live in AlertRuntimeRepository.
+     */
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         const client = await this.db.connect();
         try {

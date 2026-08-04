@@ -1,0 +1,1114 @@
+{
+  "events": [
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "e97c4187-988b-4e5a-bac7-640cee295c53",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "73eb41a9-3bef-4f2c-a13c-42ce5219f1ea",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610882794
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "b95d03f0-ffc1-4dcd-9f4a-f8f7141d41da",
+      "message": "User completed settings change",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "33a9c32f-abba-43bd-964a-3ef310a48a01",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610882917,
+      "breadcrumbs": [
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User opened dashboard",
+          "category": "navigation",
+          "timestamp": "2026-08-01T19:01:22.917Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User clicked settings",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:22.917Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Fetched user preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:22.917Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User changed theme to dark",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:22.917Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Saved preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:22.917Z"
+        }
+      ]
+    },
+    {
+      "tags": {
+        "inner": "yes",
+        "outer": "true",
+        "isolated": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "isolated-user",
+        "email": "[email]"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant",
+        "isolatedData": {
+          "timestamp": 1785610882926
+        }
+      },
+      "eventId": "06ff41b6-3b7d-4187-a327-e720a23d5bf5",
+      "message": "Message from isolated scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "8aa7a197-35e2-4699-9ec7-0636de8533a1",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610882926
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "5ef89e7d-785b-4825-86a8-03bd178c334c",
+      "message": "Burst message 1/3 [debug]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "debug",
+      "requestId": "895348ae-6f4b-47f9-b34d-8f9744b0bf2c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883060
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "18027b5f-df10-4069-be86-342fae6d263f",
+      "message": "Burst message 2/3 [info]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "895348ae-6f4b-47f9-b34d-8f9744b0bf2c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883060
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "5504775d-c4ce-4fba-9c2c-0befe0cd67be",
+      "message": "Burst message 3/3 [warning]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "warning",
+      "requestId": "895348ae-6f4b-47f9-b34d-8f9744b0bf2c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883060
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "fa33d4b0-48b8-40e9-9cd6-ae3f05d536fe",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "1fd57cb7-4524-455d-a6ff-f072d5ae92c1",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883326
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "a8f3292c-5990-4c5a-896a-f8b853a70418",
+      "message": "Burst message 1/3 [debug]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "debug",
+      "requestId": "32f751d2-549d-4db0-ba05-bb18fb7db5f5",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883332
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "b0e7e52f-6743-4816-941d-5638fa549552",
+      "message": "Burst message 2/3 [info]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "32f751d2-549d-4db0-ba05-bb18fb7db5f5",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883332
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "3bef1c67-7f32-41bd-ba95-aaa6cc379e25",
+      "message": "Burst message 3/3 [warning]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "warning",
+      "requestId": "32f751d2-549d-4db0-ba05-bb18fb7db5f5",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883332
+    },
+    {
+      "tags": {
+        "inner": "yes",
+        "outer": "true",
+        "isolated": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "isolated-user",
+        "email": "[email]"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant",
+        "isolatedData": {
+          "timestamp": 1785610883401
+        }
+      },
+      "eventId": "2687c213-7840-4228-82b2-e4f45de47272",
+      "message": "Message from isolated scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "8b315b73-f68d-4a29-949e-f042da4a1f3e",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883401
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "ab49416c-b9bb-4a6d-955f-98433aa82c27",
+      "message": "User completed settings change",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "78ecb33a-e8e4-420d-ba17-9b5505db3936",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883410,
+      "breadcrumbs": [
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User opened dashboard",
+          "category": "navigation",
+          "timestamp": "2026-08-01T19:01:23.410Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User clicked settings",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.410Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Fetched user preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.410Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User changed theme to dark",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.410Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Saved preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.410Z"
+        }
+      ]
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "e0a82782-cbc3-46fa-b972-fdd66200e8d6",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "cf533aaa-bdbc-4d4f-a502-2dad1ad1064a",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883414
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "6982f7e7-c3f2-44be-8c2e-a8c48b29bd47",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "33c408ab-19f7-467b-8d9f-264a5dc3e908",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883461
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "2b25841e-18d7-4b9e-846f-6dcf3a70bf73",
+      "message": "Burst message 1/3 [debug]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "debug",
+      "requestId": "5ad39506-738c-4588-be97-6f593a0637de",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883470
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "5f792a8f-5009-488b-8a76-e3803a996e3c",
+      "message": "Burst message 2/3 [info]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "5ad39506-738c-4588-be97-6f593a0637de",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883470
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "e3f4031a-8a1f-44a3-889b-2fcc7b71ef7d",
+      "message": "Burst message 3/3 [warning]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "warning",
+      "requestId": "5ad39506-738c-4588-be97-6f593a0637de",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883470
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "6aa50dcb-a295-4de8-9303-49d4313183fa",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "7267bb59-a21d-45b1-8f0b-46fb77bf858d",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883512
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "4ee12c78-3268-4413-aa2e-a0ea964e2643",
+      "message": "User completed settings change",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "934a6823-5dfe-46a3-9680-c81b1a5d9694",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883613,
+      "breadcrumbs": [
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User opened dashboard",
+          "category": "navigation",
+          "timestamp": "2026-08-01T19:01:23.613Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User clicked settings",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.613Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Fetched user preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.613Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User changed theme to dark",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.613Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Saved preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.613Z"
+        }
+      ]
+    },
+    {
+      "tags": {
+        "inner": "yes",
+        "outer": "true",
+        "isolated": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "isolated-user",
+        "email": "[email]"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant",
+        "isolatedData": {
+          "timestamp": 1785610883724
+        }
+      },
+      "eventId": "735cd113-cb5c-4f74-bf78-a3556d211b58",
+      "message": "Message from isolated scope",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "826a9bd9-6f36-4083-a6d2-fb959bff8463",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883724
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "463cb98a-2cb2-40be-8a62-28e398061503",
+      "message": "Informational message from /messages/info",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "e390467c-c7e5-430f-acfb[phone]b4",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883747
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "a0800e67-84c8-4e19-8ba7-04b3967bdd29",
+      "message": "User completed settings change",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "79c74273-8869-43d4-9ad6-7c26e2161418",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883779,
+      "breadcrumbs": [
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User opened dashboard",
+          "category": "navigation",
+          "timestamp": "2026-08-01T19:01:23.779Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User clicked settings",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.779Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Fetched user preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.779Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User changed theme to dark",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.779Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Saved preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.779Z"
+        }
+      ]
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "86b2a042-4f63-43d1-8b4e-808750b595aa",
+      "message": "User completed settings change",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "5ee2f07e-f168-4001-95c7-81cc364a76d0",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883804,
+      "breadcrumbs": [
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User opened dashboard",
+          "category": "navigation",
+          "timestamp": "2026-08-01T19:01:23.803Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User clicked settings",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.803Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Fetched user preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.803Z"
+        },
+        {
+          "type": "default",
+          "level": "info",
+          "message": "User changed theme to dark",
+          "category": "action",
+          "timestamp": "2026-08-01T19:01:23.803Z"
+        },
+        {
+          "data": {
+            "status": 200
+          },
+          "type": "default",
+          "level": "debug",
+          "message": "Saved preferences",
+          "category": "network",
+          "timestamp": "2026-08-01T19:01:23.803Z"
+        }
+      ]
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "ac988916-b442-488f-a92c-5c27bdafd037",
+      "message": "Burst message 1/3 [debug]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "debug",
+      "requestId": "f182e38f-d7d0-4805-94dd-862ad94f0d1c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883818
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "feef5653-8c6c-4e84-8365-0bb75a040f5a",
+      "message": "Burst message 2/3 [info]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "info",
+      "requestId": "f182e38f-d7d0-4805-94dd-862ad94f0d1c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883818
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "message",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "eventId": "81828483-1d25-4c41-a25f-e23714244b70",
+      "message": "Burst message 3/3 [warning]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "severity": "warning",
+      "requestId": "f182e38f-d7d0-4805-94dd-862ad94f0d1c",
+      "sessionId": "d07a334a-12ad-44e6-a30b-b2d7fbd3ae09",
+      "timestamp": 1785610883818
+    }
+  ],
+  "metadata": {
+    "batchId": "b31941fe-1ff2-4ebd-9474-ad0875b3856d",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 0,
+    "receivedAt": "2026-08-01T19:01:55.920Z",
+    "environment": "production"
+  },
+  "eventType": "message",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

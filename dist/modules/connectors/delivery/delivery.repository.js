@@ -1,7 +1,14 @@
 import { pool } from '../../../config/database.js';
 import { ConnectorConflictError, ConnectorNotFoundError, } from '../types.js';
 export class DeliveryRepository {
-    db = pool;
+    db;
+    /**
+     * ADR-0006: pools are injected explicitly. Reads/writes the LEGACY connector
+     * delivery tables and stays on the primary pool until the L9 view swap.
+     */
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         const client = await this.db.connect();
         try {
@@ -174,6 +181,174 @@ export class DeliveryRepository {
          AND created_at > now() - ($3 || ' minutes')::interval
        LIMIT 1`, [connectorId, dedupKey, windowMinutes]);
         return r.rows[0] ?? null;
+    }
+    async consumeRateLimitToken(connectorId, limit, windowSeconds) {
+        return this.withTransaction(async (client) => {
+            await client.query(`INSERT INTO connector_rate_buckets (connector_id, window_start, window_seconds, consumed)
+         VALUES ($1, NOW(), $2, 0)
+         ON CONFLICT (connector_id) DO NOTHING`, [connectorId, windowSeconds]);
+            const locked = await client.query(`SELECT window_start, window_seconds, consumed
+           FROM connector_rate_buckets
+          WHERE connector_id = $1
+          FOR UPDATE`, [connectorId]);
+            const bucket = locked.rows[0];
+            if (!bucket)
+                return { allowed: true, retryAfterMs: 0 };
+            const nowMs = Date.now();
+            const bucketWindowMs = bucket.window_seconds * 1000;
+            const expired = nowMs - new Date(bucket.window_start).getTime() >= bucketWindowMs;
+            const windowChanged = bucket.window_seconds !== windowSeconds;
+            if (expired || windowChanged) {
+                await client.query(`UPDATE connector_rate_buckets
+              SET window_start = NOW(),
+                  window_seconds = $2,
+                  consumed = 1
+            WHERE connector_id = $1`, [connectorId, windowSeconds]);
+                return { allowed: true, retryAfterMs: 0 };
+            }
+            if (bucket.consumed >= limit) {
+                const retryAfterMs = Math.max(250, new Date(bucket.window_start).getTime() + bucketWindowMs - nowMs);
+                return { allowed: false, retryAfterMs };
+            }
+            await client.query(`UPDATE connector_rate_buckets
+            SET consumed = consumed + 1
+          WHERE connector_id = $1`, [connectorId]);
+            return { allowed: true, retryAfterMs: 0 };
+        });
+    }
+    async circuitAllows(connectorId, resetTimeoutMs) {
+        return this.withTransaction(async (client) => {
+            await client.query(`INSERT INTO connector_circuit_state (connector_id, state, consecutive_failures)
+         VALUES ($1, 'closed', 0)
+         ON CONFLICT (connector_id) DO NOTHING`, [connectorId]);
+            const r = await client.query(`SELECT state, opened_at, half_open_at
+           FROM connector_circuit_state
+          WHERE connector_id = $1
+          FOR UPDATE`, [connectorId]);
+            const state = r.rows[0];
+            if (!state || state.state === 'closed')
+                return true;
+            const nowMs = Date.now();
+            if (state.state === 'open') {
+                const openedAtMs = state.opened_at ? new Date(state.opened_at).getTime() : 0;
+                if (nowMs - openedAtMs >= resetTimeoutMs) {
+                    await client.query(`UPDATE connector_circuit_state
+                SET state = 'half_open',
+                    half_open_at = NOW()
+              WHERE connector_id = $1`, [connectorId]);
+                    return true;
+                }
+                return false;
+            }
+            const halfOpenAtMs = state.half_open_at ? new Date(state.half_open_at).getTime() : 0;
+            if (nowMs - halfOpenAtMs >= resetTimeoutMs) {
+                await client.query(`UPDATE connector_circuit_state
+              SET half_open_at = NOW()
+            WHERE connector_id = $1`, [connectorId]);
+                return true;
+            }
+            return false;
+        });
+    }
+    async recordCircuitSuccess(connectorId) {
+        await this.db.query(`INSERT INTO connector_circuit_state (
+         connector_id, state, consecutive_failures, opened_at, half_open_at, last_success_at
+       )
+       VALUES ($1, 'closed', 0, NULL, NULL, NOW())
+       ON CONFLICT (connector_id) DO UPDATE SET
+         state = 'closed',
+         consecutive_failures = 0,
+         opened_at = NULL,
+         half_open_at = NULL,
+         last_success_at = NOW()`, [connectorId]);
+    }
+    async recordCircuitFailure(connectorId, failureThreshold) {
+        const result = await this.db.query(`INSERT INTO connector_circuit_state (
+         connector_id, state, consecutive_failures, opened_at, half_open_at, last_failure_at
+       )
+       VALUES (
+         $1,
+         CASE WHEN $2 <= 1 THEN 'open' ELSE 'closed' END,
+         1,
+         CASE WHEN $2 <= 1 THEN NOW() ELSE NULL END,
+         NULL,
+         NOW()
+       )
+       ON CONFLICT (connector_id) DO UPDATE SET
+         consecutive_failures = connector_circuit_state.consecutive_failures + 1,
+         state = CASE
+           WHEN connector_circuit_state.state = 'half_open'
+             OR connector_circuit_state.consecutive_failures + 1 >= $2 THEN 'open'
+           ELSE connector_circuit_state.state
+         END,
+         opened_at = CASE
+           WHEN connector_circuit_state.state = 'half_open'
+             OR connector_circuit_state.consecutive_failures + 1 >= $2 THEN NOW()
+           ELSE connector_circuit_state.opened_at
+         END,
+         half_open_at = CASE
+           WHEN connector_circuit_state.state = 'half_open'
+             OR connector_circuit_state.consecutive_failures + 1 >= $2 THEN NULL
+           ELSE connector_circuit_state.half_open_at
+         END,
+         last_failure_at = NOW()
+       RETURNING state`, [connectorId, failureThreshold]);
+        return result.rows[0]?.state ?? 'closed';
+    }
+    async recordSuccessfulDeliveryUsage(organizationId, projectId, connectorType) {
+        const email = connectorType === 'email' ? 1 : 0;
+        const slack = connectorType === 'slack' ? 1 : 0;
+        const sms = connectorType === 'sms' ? 1 : 0;
+        const webhook = connectorType === 'webhook' ? 1 : 0;
+        await this.withTransaction(async (client) => {
+            await client.query(`UPDATE organization_usage_current_period
+            SET alert_notifications_used = alert_notifications_used + 1,
+                connector_sends_used = connector_sends_used + 1,
+                email_sends_used = email_sends_used + $2,
+                slack_sends_used = slack_sends_used + $3,
+                sms_sends_used = sms_sends_used + $4,
+                webhook_sends_used = webhook_sends_used + $5,
+                last_alert_notification_at = NOW(),
+                last_connector_send_at = NOW()
+          WHERE organization_id = $1`, [organizationId, email, slack, sms, webhook]);
+            if (projectId) {
+                await client.query(`INSERT INTO usage_daily_counters (
+             id, organization_id, project_id, usage_date,
+             alert_notifications_count, connector_sends_count,
+             email_sends_count, slack_sends_count, sms_sends_count, webhook_sends_count,
+             created_at, updated_at
+           ) VALUES (gen_random_uuid(), $1, $2, CURRENT_DATE, 1, 1, $3, $4, $5, $6, NOW(), NOW())
+           ON CONFLICT (organization_id, project_id, usage_date)
+           DO UPDATE SET
+             alert_notifications_count = usage_daily_counters.alert_notifications_count + 1,
+             connector_sends_count = usage_daily_counters.connector_sends_count + 1,
+             email_sends_count = usage_daily_counters.email_sends_count + EXCLUDED.email_sends_count,
+             slack_sends_count = usage_daily_counters.slack_sends_count + EXCLUDED.slack_sends_count,
+             sms_sends_count = usage_daily_counters.sms_sends_count + EXCLUDED.sms_sends_count,
+             webhook_sends_count = usage_daily_counters.webhook_sends_count + EXCLUDED.webhook_sends_count,
+             updated_at = NOW()`, [organizationId, projectId, email, slack, sms, webhook]);
+                return;
+            }
+            const updated = await client.query(`UPDATE usage_daily_counters
+            SET alert_notifications_count = alert_notifications_count + 1,
+                connector_sends_count = connector_sends_count + 1,
+                email_sends_count = email_sends_count + $2,
+                slack_sends_count = slack_sends_count + $3,
+                sms_sends_count = sms_sends_count + $4,
+                webhook_sends_count = webhook_sends_count + $5,
+                updated_at = NOW()
+          WHERE organization_id = $1
+            AND project_id IS NULL
+            AND usage_date = CURRENT_DATE`, [organizationId, email, slack, sms, webhook]);
+            if ((updated.rowCount ?? 0) === 0) {
+                await client.query(`INSERT INTO usage_daily_counters (
+             id, organization_id, project_id, usage_date,
+             alert_notifications_count, connector_sends_count,
+             email_sends_count, slack_sends_count, sms_sends_count, webhook_sends_count,
+             created_at, updated_at
+           ) VALUES (gen_random_uuid(), $1, NULL, CURRENT_DATE, 1, 1, $2, $3, $4, $5, NOW(), NOW())`, [organizationId, email, slack, sms, webhook]);
+            }
+        });
     }
     async listAttempts(organizationId, connectorId, deliveryId, filters) {
         const count = await this.db.query(`SELECT COUNT(*)::text AS count

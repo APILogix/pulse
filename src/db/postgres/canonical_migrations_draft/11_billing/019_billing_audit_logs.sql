@@ -67,33 +67,99 @@ CREATE TABLE IF NOT EXISTS billing_audit_logs_2026_07
 PARTITION OF billing_audit_logs
 FOR VALUES FROM ('2026-07-01') TO ('2026-08-01');
 
+CREATE TABLE IF NOT EXISTS billing_audit_logs_2026_08
+PARTITION OF billing_audit_logs
+FOR VALUES FROM ('2026-08-01') TO ('2026-09-01');
+
+CREATE TABLE IF NOT EXISTS billing_audit_logs_default
+PARTITION OF billing_audit_logs
+DEFAULT;
+
 CREATE INDEX IF NOT EXISTS idx_bal_2026_07_org_time
 ON billing_audit_logs_2026_07(organization_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bal_2026_08_org_time
+ON billing_audit_logs_2026_08(organization_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bal_default_org_time
+ON billing_audit_logs_default(organization_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_bal_2026_07_action
 ON billing_audit_logs_2026_07(action, occurred_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_bal_2026_08_action
+ON billing_audit_logs_2026_08(action, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bal_default_action
+ON billing_audit_logs_default(action, occurred_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_bal_2026_07_actor
 ON billing_audit_logs_2026_07(actor_type, occurred_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_bal_2026_08_actor
+ON billing_audit_logs_2026_08(actor_type, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bal_default_actor
+ON billing_audit_logs_default(actor_type, occurred_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_bal_2026_07_request
 ON billing_audit_logs_2026_07(request_id)
+WHERE request_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bal_2026_08_request
+ON billing_audit_logs_2026_08(request_id)
+WHERE request_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bal_default_request
+ON billing_audit_logs_default(request_id)
 WHERE request_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS brin_bal_2026_07_time
 ON billing_audit_logs_2026_07
 USING BRIN(occurred_at);
 
+CREATE INDEX IF NOT EXISTS brin_bal_2026_08_time
+ON billing_audit_logs_2026_08
+USING BRIN(occurred_at);
+
+CREATE INDEX IF NOT EXISTS brin_bal_default_time
+ON billing_audit_logs_default
+USING BRIN(occurred_at);
+
 CREATE INDEX IF NOT EXISTS gin_bal_2026_07_metadata
 ON billing_audit_logs_2026_07
+USING GIN(metadata);
+
+CREATE INDEX IF NOT EXISTS gin_bal_2026_08_metadata
+ON billing_audit_logs_2026_08
+USING GIN(metadata);
+
+CREATE INDEX IF NOT EXISTS gin_bal_default_metadata
+ON billing_audit_logs_default
 USING GIN(metadata);
 
 CREATE INDEX IF NOT EXISTS gin_bal_2026_07_previous
 ON billing_audit_logs_2026_07
 USING GIN(previous_state);
 
+CREATE INDEX IF NOT EXISTS gin_bal_2026_08_previous
+ON billing_audit_logs_2026_08
+USING GIN(previous_state);
+
+CREATE INDEX IF NOT EXISTS gin_bal_default_previous
+ON billing_audit_logs_default
+USING GIN(previous_state);
+
 CREATE INDEX IF NOT EXISTS gin_bal_2026_07_new
 ON billing_audit_logs_2026_07
+USING GIN(new_state);
+
+CREATE INDEX IF NOT EXISTS gin_bal_2026_08_new
+ON billing_audit_logs_2026_08
+USING GIN(new_state);
+
+CREATE INDEX IF NOT EXISTS gin_bal_default_new
+ON billing_audit_logs_default
 USING GIN(new_state);
 
 COMMIT;
@@ -101,4 +167,5 @@ COMMIT;
 -- Notes:
 -- * Treat this table as append-only.
 -- * Create monthly partitions automatically (pg_partman or scheduler).
+-- * Keep the default partition as an outage guard when a monthly partition is missing.
 -- * Archive/drop partitions according to retention policy.

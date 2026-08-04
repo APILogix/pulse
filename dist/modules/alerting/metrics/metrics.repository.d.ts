@@ -11,9 +11,15 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertMetricRow, type MetricGranularity } from '../types.js';
 export declare class MetricsRepository {
     private readonly db;
+    /**
+     * ADR-0006: pools are injected explicitly. Reads the LEGACY alert metric and
+     * event tables; the typed v2 equivalents live in AlertRuntimeRepository.
+     */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     queryMetrics(organizationId: string, filters: {
         metricType?: string;

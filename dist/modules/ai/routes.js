@@ -64,15 +64,6 @@ function idempotencyKey(request) {
     }
     return value;
 }
-function aiRateLimitKey(request) {
-    const params = (request.params ?? {});
-    const orgId = typeof params.orgId === 'string' ? params.orgId : 'unknown-org';
-    const credential = request.headers.authorization
-        ?? request.headers['x-api-key']
-        ?? request.headers.cookie
-        ?? request.ip;
-    return `${orgId}:${sha256(credential).slice(0, 24)}`;
-}
 function statusCode(status) {
     if (status === 'LOCKED')
         return 403;
@@ -131,7 +122,6 @@ export async function aiRoutes(fastify) {
     });
     const analyzeOptions = {
         preHandler: [authenticate, requireOrgAccess],
-        config: { rateLimit: { max: aiConfig.rateLimitPerMinute, timeWindow: '1 minute', keyGenerator: aiRateLimitKey } },
     };
     const analyze = (forcedMode) => async (request, reply) => {
         try {
@@ -165,13 +155,6 @@ export async function aiRoutes(fastify) {
     fastify.post('/analyze', analyzeOptions, analyze());
     fastify.post('/chat', {
         preHandler: [authenticate, requireOrgAccess],
-        config: {
-            rateLimit: {
-                max: Math.max(2, Math.floor(aiConfig.rateLimitPerMinute / 2)),
-                timeWindow: '1 minute',
-                keyGenerator: aiRateLimitKey,
-            },
-        },
     }, async (request, reply) => {
         try {
             const { orgId } = orgParamsSchema.parse(request.params);
@@ -191,7 +174,6 @@ export async function aiRoutes(fastify) {
     });
     fastify.post('/jobs', {
         preHandler: [authenticate, requireOrgAccess],
-        config: { rateLimit: { max: Math.max(2, Math.floor(aiConfig.rateLimitPerMinute / 4)), timeWindow: '1 minute', keyGenerator: aiRateLimitKey } },
     }, async (request, reply) => {
         try {
             const { orgId } = orgParamsSchema.parse(request.params);

@@ -1,22 +1,7 @@
-BEGIN;
+﻿BEGIN;
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ingestion_job_state') THEN
-    CREATE TYPE ingestion_job_state AS ENUM (
-      'pending',
-      'active',
-      'completed',
-      'failed',
-      'cancelled'
-    );
-  END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ingestion_job_priority') THEN
-    CREATE TYPE ingestion_job_priority AS ENUM (
-      'critical', 'high', 'normal', 'low', 'background'
-    );
-  END IF;
-END $$;
+-- Log DB schema moved to database/migrations/logdb. This primary DB migration is intentionally a no-op to prevent duplicate runtime table definitions.
+-- Original file: src/db/postgres/canonical_migrations_draft/13_ingestion/001_create_ingestion_job_types.up.sql
 
 COMMIT;
+

@@ -15,18 +15,23 @@ function shouldDestroyTransactionClient(error) {
         message.includes('Connection ended unexpectedly') ||
         message.includes('Connection terminated unexpectedly'));
 }
-// ============================================================================
-// USER QUERIES
-// ============================================================================
+export function toUser(row) {
+    if (!row)
+        return null;
+    return {
+        ...row,
+        email_is_verified: Boolean(row.email_verified ?? row.email_is_verified),
+    };
+}
 export async function findUserById(id, client) {
     const db = client || pool;
     const result = await db.query(`SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`, [id]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function findUserByEmailHash(emailHash, client) {
     const db = client || pool;
     const result = await db.query(`SELECT * FROM users WHERE email_hash = $1 AND deleted_at IS NULL`, [emailHash]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 /**
  * Find a user even when soft-deleted. Used by admin restore flows.
@@ -34,7 +39,7 @@ export async function findUserByEmailHash(emailHash, client) {
 export async function findUserByIdIncludingDeleted(id, client) {
     const db = client || pool;
     const result = await db.query(`SELECT * FROM users WHERE id = $1`, [id]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function createUser(data, client) {
     const db = client || pool;
@@ -64,7 +69,7 @@ export async function createUser(data, client) {
         data.accepted_privacy_version ?? null,
         data.marketing_consent ?? false,
     ]);
-    return result.rows[0];
+    return toUser(result.rows[0]);
 }
 export async function updateUser(id, requestingUserId, data, client) {
     const db = client || pool;
@@ -98,7 +103,7 @@ export async function updateUser(id, requestingUserId, data, client) {
     const result = await db.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
      WHERE id = $${idx++} AND deleted_at IS NULL AND id = $${idx}
      RETURNING *`, values);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function softDeleteUser(id, reason, deletedBy, client) {
     const db = client || pool;
@@ -115,7 +120,7 @@ export async function restoreUser(id, client) {
          status = 'active', updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NOT NULL
      RETURNING *`, [id]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 /**
  * Suspend a user. Records the suspending admin in dedicated columns so
@@ -131,7 +136,7 @@ export async function suspendUser(id, reason, suspendedBy, client) {
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`, [id, reason, suspendedBy]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 /**
  * Restore a suspended user to active status. Does not revive soft-deleted users.
@@ -148,7 +153,7 @@ export async function unsuspendUser(id, client) {
        AND deleted_at IS NULL
        AND status = 'suspended'
      RETURNING *`, [id]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 /**
  * Admin-initiated account lock (distinct from brute-force lockout).
@@ -164,7 +169,7 @@ export async function adminLockUser(id, reason, lockedBy, client) {
        AND deleted_at IS NULL
        AND status != 'deleted'
      RETURNING *`, [id, `[admin_lock:${lockedBy}] ${reason}`]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 /**
  * Clear admin/brute-force lock state and failed-login counters.
@@ -177,7 +182,7 @@ export async function adminUnlockUser(id, client) {
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`, [id]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 export async function listUsers(options, client) {
     const db = client || pool;
@@ -200,7 +205,7 @@ export async function listUsers(options, client) {
      ORDER BY created_at DESC, id DESC
      LIMIT $${idx++} OFFSET $${idx++}`, [...params, limit, offset]);
     return {
-        users: usersResult.rows,
+        users: usersResult.rows.map((row) => toUser(row)),
         total: parseInt(countResult.rows[0].count, 10),
     };
 }
@@ -259,6 +264,6 @@ export async function updateUserPassword(id, passwordHash, passwordHistory, clie
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`, [id, passwordHash, JSON.stringify(passwordHistory)]);
-    return result.rows[0] || null;
+    return toUser(result.rows[0]);
 }
 //# sourceMappingURL=user.repository.js.map

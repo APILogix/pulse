@@ -22,7 +22,10 @@ export class ConnectorRepository {
     async findById(organizationId, id) { return this.core.findById(organizationId, id); }
     async findByIdInternal(id) { return this.core.findByIdInternal(id); }
     async getByIds(ids) { return this.core.getByIds(ids); }
+    async findFirstActiveByType(organizationId, type) { return this.core.findFirstActiveByType(organizationId, type); }
+    async getOrCreateManagedEmailConnector(organizationId) { return this.core.getOrCreateManagedEmailConnector(organizationId); }
     async list(organizationId, query) { return this.core.list(organizationId, query); }
+    async countActiveConnectors(organizationId) { return this.core.countActiveConnectors(organizationId); }
     async listMonitorable() { return this.core.listMonitorable(); }
     async update(organizationId, id, fields) { return this.core.update(organizationId, id, fields); }
     async upsertCredential(input) { return this.core.upsertCredential(input); }
@@ -39,6 +42,11 @@ export class ConnectorRepository {
     async getDelivery(organizationId, id) { return this.delivery.getDelivery(organizationId, id); }
     async insertDeliveryIdempotent(input) { return this.delivery.insertDeliveryIdempotent(input); }
     async findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes) { return this.delivery.findDeliveryByDedupKey(connectorId, dedupKey, windowMinutes); }
+    async consumeRateLimitToken(connectorId, limit, windowSeconds) { return this.delivery.consumeRateLimitToken(connectorId, limit, windowSeconds); }
+    async circuitAllows(connectorId, resetTimeoutMs) { return this.delivery.circuitAllows(connectorId, resetTimeoutMs); }
+    async recordCircuitSuccess(connectorId) { return this.delivery.recordCircuitSuccess(connectorId); }
+    async recordCircuitFailure(connectorId, failureThreshold) { return this.delivery.recordCircuitFailure(connectorId, failureThreshold); }
+    async recordSuccessfulDeliveryUsage(organizationId, projectId, connectorType) { return this.delivery.recordSuccessfulDeliveryUsage(organizationId, projectId, connectorType); }
     async listAttempts(organizationId, connectorId, deliveryId, filters) { return this.delivery.listAttempts(organizationId, connectorId, deliveryId, filters); }
     async retryDelivery(organizationId, id) { return this.delivery.retryDelivery(organizationId, id); }
     async getDlqGrowth(windowMinutes) { return this.delivery.getDlqGrowth(windowMinutes); }

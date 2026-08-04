@@ -3,7 +3,6 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
 import cookie from '@fastify/cookie';
-import fastifyRateLimit from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
 import underPressure from '@fastify/under-pressure';
 import { serializerCompiler, validatorCompiler, } from 'fastify-type-provider-zod';
@@ -21,13 +20,17 @@ import { registerUserAccountModule } from './modules/user-account/user-account.m
 import { registerBillingModule } from './modules/billing/billing.module.js';
 import registerOrganizationModule from './modules/organization/organization.module.js';
 import { registerProjectsModule } from './modules/projects/projects.module.js';
+import { registerSdkConfigDeliveryModule } from './modules/projects/sdk-config/sdk-config.module.js';
 import { ingestionModule } from './modules/ingestion/ingestion.module.js';
 import { registerAnalyticsModule } from './modules/analytics/analytics.module.js';
+import { registerAnalyticsEngineModule } from './modules/analytics-engine/analytics-engine.module.js';
 import { registerConnectorsModule } from './modules/connectors/connectors.module.js';
 import { registerAlertingModule } from './modules/alerting/alerting.module.js';
 import { registerEventAnalyticsModule } from './modules/event-analytics/event-analytics.module.js';
 import { registerAIModule } from './modules/ai/ai.module.js';
 import { registerAutomationModule } from './modules/automation/automation.module.js';
+import { registerObservabilityModule } from './modules/observability/observability.module.js';
+import { registerErrorsModule } from './modules/errors/errors.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
@@ -47,6 +50,7 @@ function buildCorsOrigin() {
         return [
             'http://localhost:3000',
             'http://localhost:4000',
+            'http://localhost:5173',
             'http://localhost:5173',
             'http://127.0.0.1:3000',
             'http://127.0.0.1:5173',
@@ -119,8 +123,8 @@ export async function buildApp() {
         origin: buildCorsOrigin(),
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
-        exposedHeaders: ['X-Request-ID'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
+        exposedHeaders: ['X-Request-ID', 'ETag', 'X-Config-Revision'],
     });
     await app.register(compress, {
         threshold: 1024, // Only compress responses > 1KB
@@ -134,17 +138,6 @@ export async function buildApp() {
         global: false,
         encoding: 'utf8',
         runFirst: true,
-    });
-    await app.register(fastifyRateLimit, {
-        max: 100,
-        timeWindow: '1 minute',
-        keyGenerator: (req) => req.ip || 'unknown',
-        skipOnError: false,
-        errorResponseBuilder: (_req, context) => ({
-            statusCode: 429,
-            error: 'Too Many Requests',
-            message: `Rate limit exceeded, retry in ${context.after}`,
-        }),
     });
     await app.register(sensible);
     // ── Health & Readiness Probes ──────────────────────────────────────
@@ -166,25 +159,30 @@ export async function buildApp() {
     // ── Prometheus Metrics ─────────────────────────────────────────────
     await app.register(registerMetricsPlugin);
     // ── Business Modules ───────────────────────────────────────────────
-    // Registration order matters: modules that provide decorators consumed
-    // by later modules must be registered first. The dependency chain is:
-    //
-    //   ingestion (provides redisCache)
-    //       └── projects (consumes redisCache)
-    //
-    // All other modules are independent.
+    // Registration order matters only for explicit Fastify decorators. SDK
+    // delivery is registered before ingestion because ingestion delegates SDK
+    // initialization to the canonical RemoteSdkConfigService. Organization is
+    // registered before projects because project services consume its decorators.
+    // All control-plane caching is in-process LRU; no module depends on Redis.
     await app.register(registerAuthModule);
     await app.register(registerUserAccountModule);
+    await app.register(registerSdkConfigDeliveryModule); // Canonical compiler/delivery used by init + admin
     await app.register(registerOrganizationModule);
     await app.register(registerBillingModule);
-    await app.register(ingestionModule); // Must be before projects
-    await app.register(registerProjectsModule); // Depends on ingestion.redisCache
+    await app.register(ingestionModule); // Depends on sdk-config delivery
+    await app.register(registerProjectsModule);
     await app.register(registerAnalyticsModule);
+    // Analytics engine (v2) reads precomputed rollups only. Registered alongside
+    // the v1 analytics module during the frontend migration; v1 is removed in
+    // Wave 7 of docs/analytics/14-implementation-roadmap.md.
+    await app.register(registerAnalyticsEngineModule);
     await app.register(registerConnectorsModule);
     await app.register(registerAlertingModule);
     await app.register(registerEventAnalyticsModule);
     await app.register(registerAIModule);
     await app.register(registerAutomationModule);
+    await app.register(registerObservabilityModule);
+    await app.register(registerErrorsModule);
     appLogger.info('All modules registered');
     // ── Global Request Timing Hook ──────────────────────────────────────
     app.addHook('onRequest', async (request) => {

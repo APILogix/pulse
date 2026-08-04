@@ -17,10 +17,10 @@ export declare const JoinMethodSchema: z.ZodEnum<{
 }>;
 export { BillingSummaryResponseSchema, QuotaRequestStatusSchema, QuotaTypeSchema, UsageLimitsResponseSchema } from "./quotas/quotas.schema.js";
 export declare const SecurityEventSeveritySchema: z.ZodEnum<{
+    critical: "critical";
     low: "low";
     medium: "medium";
     high: "high";
-    critical: "critical";
 }>;
 export type JoinMethod = z.infer<typeof JoinMethodSchema>;
 export type { BillingSummaryResponse, QuotaRequestStatus, QuotaType, UsageLimitsResponse } from "./quotas/quotas.schema.js";
@@ -104,10 +104,10 @@ export declare const SecurityEventsQuerySchema: z.ZodObject<{
         desc: "desc";
     }>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         low: "low";
         medium: "medium";
         high: "high";
-        critical: "critical";
     }>>;
     eventType: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;

@@ -535,6 +535,14 @@ class LogDatabaseManager {
     };
   }
 
+  /**
+   * Standard pg Pool used by typed telemetry persistence and analytics SQL.
+   * Control-plane repositories must continue using config/database.ts.
+   */
+  getPrimaryPool(): Pool {
+    return this.primaryPool;
+  }
+
   /** Graceful shutdown — drains both pools. */
   async close(): Promise<void> {
     this.isShuttingDown = true;

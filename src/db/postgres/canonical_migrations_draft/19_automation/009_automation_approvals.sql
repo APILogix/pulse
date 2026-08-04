@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS automation_approvals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   workflow_id UUID NOT NULL REFERENCES automation_workflows(id) ON DELETE CASCADE,
-  run_id UUID NOT NULL REFERENCES automation_runs(id) ON DELETE CASCADE,
-  step_id UUID NULL REFERENCES automation_run_steps(id) ON DELETE SET NULL,
+  run_id UUID NOT NULL,
+  step_id UUID NULL,
   requested_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
   approved_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
   rejected_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
@@ -61,12 +61,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_automation_approvals_step_pending_unique
   ON automation_approvals(step_id)
   WHERE status = 'pending' AND step_id IS NOT NULL;
 
--- Add FK from run_steps.approval_id -> automation_approvals.id
-ALTER TABLE automation_run_steps
-  DROP CONSTRAINT IF EXISTS fk_run_steps_approval;
-ALTER TABLE automation_run_steps
-  ADD CONSTRAINT fk_run_steps_approval
-  FOREIGN KEY (approval_id) REFERENCES automation_approvals(id) ON DELETE SET NULL;
+-- automation_runs and automation_run_steps moved to database/migrations/logdb;
+-- run_id and step_id are identifiers only.
 
 -- Updated-at trigger
 DROP TRIGGER IF EXISTS trg_automation_approvals_updated_at ON automation_approvals;

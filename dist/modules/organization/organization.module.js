@@ -32,7 +32,7 @@ async function organizationModule(fastify, _options) {
     // SDK Remote Config: its own repository, but reuses the organization
     // repository for membership/RBAC checks and audit-log writes.
     const sdkConfigRepository = new SdkConfigRepository();
-    const sdkConfigService = new SdkConfigService(sdkConfigRepository, repository, service.auditLogs);
+    const sdkConfigService = new SdkConfigService(sdkConfigRepository, repository, service.auditLogs, fastify.sdkConfigDelivery);
     fastify.decorate('organization', {
         repository,
         service,
@@ -46,7 +46,8 @@ async function organizationModule(fastify, _options) {
     orgLogger.info('Organization module registered');
 }
 export const registerOrganizationModule = fp(organizationModule, {
-    name: 'organization-module'
+    name: 'organization-module',
+    dependencies: ['sdk-config-delivery-module'],
 });
 export default registerOrganizationModule;
 //# sourceMappingURL=organization.module.js.map

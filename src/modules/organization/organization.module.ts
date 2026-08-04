@@ -56,6 +56,7 @@ async function organizationModule(
     sdkConfigRepository,
     repository,
     service.auditLogs,
+    fastify.sdkConfigDelivery,
   );
 
   fastify.decorate('organization', {
@@ -75,7 +76,8 @@ async function organizationModule(
 }
 
 export const registerOrganizationModule = fp(organizationModule, {
-  name: 'organization-module'
+  name: 'organization-module',
+  dependencies: ['sdk-config-delivery-module'],
 });
 
 export default registerOrganizationModule;

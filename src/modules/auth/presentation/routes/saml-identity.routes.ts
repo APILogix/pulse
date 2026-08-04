@@ -9,9 +9,7 @@ import { handleAuthError } from './index.js';
 import * as saml from '../../application/services/saml.service.js';
 import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from '../../presentation/cookies.js';
 import { env } from '../../../../config/env.js';
-import {
-  ssoCallbackRateLimit,
-} from '../../presentation/middleware/rate-limits.js';
+
 
 function setRefreshCookie(
   reply: FastifyReply,
@@ -40,7 +38,7 @@ export default async function samlIdentityRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/saml/acs',
     {
-      preHandler: [ssoCallbackRateLimit],
+      preHandler: [],
       config: { rawBody: true },
     },
     async (request, reply) => {

@@ -3,10 +3,9 @@ import { getClientInfo } from '../../../../shared/utils/request.js';
 import { handleAuthError } from './index.js';
 import * as service from '../../application/services/index.js';
 import * as webauthn from '../../application/services/webauthn.service.js';
-import { loginMfaRateLimit, webauthnRateLimit } from '../../presentation/middleware/rate-limits.js';
 import { AdminForcePasswordResetSchema, MFADeviceRenameSchema, WebAuthnStepUpOptionsSchema, WebAuthnStepUpVerifySchema, } from '../../domain/types.js';
 export default async function accountAdministrationRoutes(fastify) {
-    fastify.post('/mfa/step-up/webauthn/options', { preHandler: [authenticate, webauthnRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/step-up/webauthn/options', { preHandler: [authenticate] }, async (request, reply) => {
         try {
             const r = request;
             const body = WebAuthnStepUpOptionsSchema.parse(request.body);
@@ -17,7 +16,7 @@ export default async function accountAdministrationRoutes(fastify) {
             return handleAuthError(error, reply, request);
         }
     });
-    fastify.post('/mfa/step-up/webauthn/verify', { preHandler: [authenticate, loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/step-up/webauthn/verify', { preHandler: [authenticate] }, async (request, reply) => {
         try {
             const r = request;
             const body = WebAuthnStepUpVerifySchema.parse(request.body);

@@ -55,6 +55,7 @@ export type CreateApiKeyBody = z.infer<typeof CreateApiKeyBodySchema>;
 export declare const UpdateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
     expiresAt: z.ZodPipe<z.ZodTransform<{} | null | undefined, unknown>, z.ZodOptional<z.ZodNullable<z.ZodDate>>>;
+    environmentId: z.ZodOptional<z.ZodString>;
 }, z.core.$strict>>;
 export type UpdateApiKeyBody = z.infer<typeof UpdateApiKeyBodySchema>;
 export declare const RotateApiKeyBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
@@ -141,9 +142,6 @@ export interface ValidatedApiKey {
     environmentId: string;
     environmentName: string;
     environmentSlug: string;
-    samplingRules: Record<string, unknown>;
-    featureFlags: Record<string, unknown>;
-    sdkConfig: Record<string, unknown>;
 }
 export interface ApiKeyUsageSeriesPoint {
     bucket: string;
@@ -187,5 +185,6 @@ export interface BulkOperationResult {
 export interface ApiKeyUpdateInput {
     name?: string;
     expiresAt?: Date | null;
+    environmentId?: string;
 }
 //# sourceMappingURL=api-key.types.d.ts.map

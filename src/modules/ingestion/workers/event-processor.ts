@@ -25,13 +25,14 @@
  *   6. METRICS: per-type processing latency and e2e latency
  *      (now − metadata.receivedAt).
  */
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { env } from '../../../config/env.js';
 import { pgboss } from '../../../lib/pgboss.js';
 import {
   normalizeEvent,
+  normalizeSdkEnvironment,
   type NormalizedEvent,
 } from '../pipeline/event-normalizer.js';
 import {
@@ -47,6 +48,10 @@ import {
   type IngestJobPayload,
 } from '../queue/ingest-queues.js';
 import type { WorkerMetrics } from './metrics-server.js';
+import { ErrorIngestionService } from '../../errors/services/error-ingestion.service.js';
+import { ErrorGroupingService } from '../../errors/services/error-grouping.service.js';
+import { ErrorGroupRepository } from '../../errors/repositories/error-group.repository.js';
+import { ErrorRepository } from '../../errors/repositories/error.repository.js';
 
 /** Deterministic JSON: object keys sorted recursively, undefined dropped. */
 export function stableStringify(value: unknown): string {
@@ -68,9 +73,14 @@ export function stableStringify(value: unknown): string {
 }
 
 /** Deterministic storage identity for events that arrive without one. */
-function deterministicEventId(projectId: string, type: string, event: NormalizedEvent): string {
+function deterministicEventId(
+  projectId: string,
+  environment: string,
+  type: string,
+  event: NormalizedEvent,
+): string {
   return createHash('sha256')
-    .update(`${projectId}:${type}:${stableStringify(event)}`)
+    .update(`${projectId}:${environment}:${type}:${stableStringify(event)}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -79,67 +89,30 @@ function str(v: unknown, max = 255): string | null {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
 }
 
-interface ErrorGroupAcc {
-  orgId: string;
-  projectId: string;
-  fingerprint: string;
-  errorName: string;
-  messageTemplate: string;
-  service: string | null;
-  environment: string | null;
-  release: string | null;
-  count: number;
-}
-
-/**
- * Error-group upsert. Insert: first_seen/last_seen = now, counts = the
- * occurrence count, status default ('unresolved'). Conflict: bump occurrence
- * counters + last_seen, refresh name/template, merge service/environment/
- * release tag arrays, and flip 'resolved' back to 'unresolved' (regression
- * detection).
- */
-const UPSERT_ERROR_GROUP_SQL = `
-  INSERT INTO analytics_error_groups
-    (organization_id, project_id, fingerprint, error_name, message_template,
-     first_seen_at, last_seen_at, total_count, today_count, week_count, month_count,
-     status, services, environments, releases)
-  VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $6, $6, $6,
-          'unresolved', $7::text[], $8::text[], $9::text[])
-  ON CONFLICT (organization_id, project_id, fingerprint) DO UPDATE SET
-    last_seen_at = NOW(),
-    total_count = analytics_error_groups.total_count + EXCLUDED.total_count,
-    today_count = analytics_error_groups.today_count + EXCLUDED.today_count,
-    week_count = analytics_error_groups.week_count + EXCLUDED.week_count,
-    month_count = analytics_error_groups.month_count + EXCLUDED.month_count,
-    status = CASE WHEN analytics_error_groups.status = 'resolved'
-                  THEN 'unresolved'::error_group_status
-                  ELSE analytics_error_groups.status END,
-    error_name = EXCLUDED.error_name,
-    message_template = EXCLUDED.message_template,
-    services = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.services, '{}'::text[]) || COALESCE(EXCLUDED.services, '{}'::text[])) AS u(v)),
-    environments = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.environments, '{}'::text[]) || COALESCE(EXCLUDED.environments, '{}'::text[])) AS u(v)),
-    releases = (SELECT array_agg(DISTINCT v) FROM unnest(
-      COALESCE(analytics_error_groups.releases, '{}'::text[]) || COALESCE(EXCLUDED.releases, '{}'::text[])) AS u(v))`;
-
 export class EventProcessor {
   private readonly writer: TelemetryWriter;
   private readonly usage: UsageCounter;
+  private readonly errorIngestionService: ErrorIngestionService;
 
   constructor(
     private readonly pool: Pool,
     private readonly metrics: WorkerMetrics,
     private readonly log: Logger,
+    usagePool: Pool = pool,
   ) {
     this.writer = new TelemetryWriter(pool);
     // The usage-rollup cron job is the ONLY rollup driver (driveRollup: false)
     // — this instance just drains tier-1 memory into usage_counter_staging.
-    this.usage = new UsageCounter(pool, log, {
+    this.usage = new UsageCounter(usagePool, log, {
       flushIntervalMs: env.INGESTION_USAGE_FLUSH_MS,
       bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
       driveRollup: false,
     });
+    
+    const errorGroupRepo = new ErrorGroupRepository(pool);
+    const errorRepo = new ErrorRepository(pool);
+    const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
+    this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics);
   }
 
   start(): void {
@@ -156,7 +129,22 @@ export class EventProcessor {
     const type = payload?.eventType;
     const projectId = payload?.projectId ?? '';
     const orgId = payload?.organizationId ?? '';
+    const apiKeyName = payload?.metadata?.apiKeyName;
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
+    const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
+    if (!environment) throw new Error('INVALID_ENVIRONMENT');
+    this.log.info(
+      {
+        queue,
+        eventType: type ?? 'unknown',
+        batchId: payload?.metadata?.batchId,
+        received: rawEvents.length,
+      },
+      'ingestion event type picked',
+    );
+    console.log('--- INCOMING PAYLOAD ---');
+    console.log(JSON.stringify(rawEvents, null, 2));
+    console.log('------------------------');
 
     // 1) Validate + 2) assign deterministic identity.
     const scoped: ScopedEvent[] = [];
@@ -170,9 +158,14 @@ export class EventProcessor {
       const event = r.event;
       const eventId = (event as { eventId?: unknown }).eventId;
       if (typeof eventId !== 'string' || eventId.length === 0) {
-        (event as { eventId?: string }).eventId = deterministicEventId(projectId, type, event);
+        (event as { eventId?: string }).eventId = deterministicEventId(
+          projectId,
+          environment,
+          type,
+          event,
+        );
       }
-      scoped.push({ projectId, orgId, event });
+      scoped.push({ projectId, orgId, environment, apiKeyName, event });
     }
 
     // Route validation rejects to the DLQ intake queue (one message per job).
@@ -182,6 +175,7 @@ export class EventProcessor {
         sourceQueue: queue,
         organizationId: orgId,
         projectId,
+        environment,
         eventType: type ?? 'unknown',
         payload: rejected,
         failedAt: new Date().toISOString(),
@@ -190,13 +184,107 @@ export class EventProcessor {
       await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {} as never);
     }
 
-    // 3) Idempotent persistence — learn what was ACTUALLY inserted.
-    const result = await this.writer.writeBatchDetailed(scoped);
+    // 3) Persist all writes for this job through one checked-out client and one transaction.
+    let result = { totalInserted: 0, totalReceived: rawEvents.length, insertedErrors: [] as any[] };
+    let errorDomainEvents: Parameters<ErrorIngestionService['publishBatchDomainEvents']>[0] = [];
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    // 4) Error grouping for confirmed-inserted errors only.
-    if (result.insertedErrors.length > 0) {
-      await this.upsertErrorGroups(result.insertedErrors);
+      if (type === 'error') {
+        const errorBatch = scoped.map(s => {
+          const e = s.event as any;
+          const errorName = errorNameOf(s.event);
+          const fingerprint = errorFingerprint(s.event, errorName);
+          const req = (e.context?.request as any) || e.context || {};
+          return {
+            groupParams: {
+              projectId: s.projectId,
+              fingerprint,
+              eventId: e.eventId,
+              severity: e.level || e.severity || 'error',
+              message: e.message,
+              errorName,
+              ...(typeof e.release === 'string' ? { release: e.release } : {}),
+              ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
+              ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
+              ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
+            },
+            eventRecord: {
+              id: typeof e.id === 'string' ? e.id : randomUUID(),
+              organization_id: s.orgId as string,
+              project_id: s.projectId,
+              api_key_name: s.apiKeyName ?? '',
+              environment: s.environment,
+              event_id: e.eventId,
+              request_id: e.requestId ?? null,
+              trace_id: e.traceId ?? null,
+              span_id: e.spanId ?? null,
+              parent_span_id: e.parentSpanId ?? null,
+              session_id: e.sessionId ?? null,
+              user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
+              fingerprint,
+              message: e.message || errorName,
+              error_name: errorName,
+              severity: e.level || e.severity || 'error',
+              mechanism: e.mechanism ?? null,
+              handled: typeof e.handled === 'boolean' ? e.handled : null,
+              method: e.method ?? req.method ?? null,
+              route: e.route ?? req.route ?? null,
+              url: e.url ?? req.url ?? null,
+              status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
+              status_text: e.statusText ?? req.statusText ?? null,
+              stack_frames: e.stack ?? [],
+              breadcrumbs: e.breadcrumbs ?? [],
+              context: e.context ?? {},
+              service: e.service ?? null,
+              server_name: e.serverName ?? e.metadata?.serverName ?? null,
+              release: e.release ?? e.metadata?.release ?? null,
+              sdk_name: e.sdkName ?? e.sdk?.name ?? e.metadata?.sdkName ?? null,
+              sdk_version: e.sdkVersion ?? e.sdk?.version ?? e.metadata?.sdkVersion ?? null,
+              application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
+              application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
+              tags: e.tags ?? {},
+              extra: e.extra ?? {},
+              metadata: e.metadata ?? {},
+              ai_response: e.aiResponse ?? null,
+              timestamp: new Date(e.timestamp),
+              payload: e
+            }
+          };
+        });
+
+        const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
+        result.totalInserted = errorResult.inserted;
+        result.totalReceived = errorBatch.length;
+        errorDomainEvents = errorResult.domainEvents;
+      } else {
+        result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
+      }
+
+      await client.query('COMMIT');
+      if (errorDomainEvents.length > 0) {
+        this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+      }
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      this.log.error({ err, queue, batchId: payload?.metadata?.batchId }, 'ingestion batch transaction failed');
+      throw err;
+    } finally {
+      client.release();
     }
+
+    this.log.info(
+      {
+        queue,
+        eventType: type ?? 'unknown',
+        batchId: payload?.metadata?.batchId,
+        received: rawEvents.length,
+        rejected: rejected.length,
+        inserted: result.totalInserted,
+      },
+      'ingestion event type stored',
+    );
 
     // 5) Usage accounting (inserted rows only — duplicates are never billed).
     if (result.totalInserted > 0 && orgId && projectId) {
@@ -227,55 +315,6 @@ export class EventProcessor {
         },
         'ingest job processed with drops',
       );
-    }
-  }
-
-  /**
-   * Upsert analytics_error_groups for inserted error events. Aggregated per
-   * (org, project, fingerprint) so a batch of N identical errors costs one
-   * statement. Retried jobs contribute nothing here because their rows were
-   * already inserted by the first attempt (writeBatchDetailed returns them as
-   * duplicates, excluded from insertedErrors).
-   */
-  private async upsertErrorGroups(insertedErrors: ScopedEvent[]): Promise<void> {
-    const groups = new Map<string, ErrorGroupAcc>();
-    for (const { orgId, projectId, event } of insertedErrors) {
-      if (!orgId) continue;
-      const e = event as Extract<NormalizedEvent, { type: 'error' }>;
-      const r = event as unknown as Record<string, unknown>;
-      const errorName = errorNameOf(event);
-      const fingerprint = errorFingerprint(event, errorName);
-      const key = `${orgId}|${projectId}|${fingerprint}`;
-      let acc = groups.get(key);
-      if (!acc) {
-        acc = {
-          orgId,
-          projectId,
-          fingerprint,
-          errorName,
-          messageTemplate: e.message.slice(0, 500),
-          service: str(r.service, 100),
-          environment: str(r.environment, 50),
-          release: str(r.release, 100),
-          count: 0,
-        };
-        groups.set(key, acc);
-      }
-      acc.count += 1;
-    }
-
-    for (const g of groups.values()) {
-      await this.pool.query(UPSERT_ERROR_GROUP_SQL, [
-        g.orgId,
-        g.projectId,
-        g.fingerprint,
-        g.errorName,
-        g.messageTemplate,
-        g.count,
-        g.service ? [g.service] : [],
-        g.environment ? [g.environment] : [],
-        g.release ? [g.release] : [],
-      ]);
     }
   }
 }

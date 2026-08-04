@@ -2,7 +2,6 @@ import { authenticate, requireStepUp, } from '../../../../shared/middleware/auth
 import { getClientInfo } from '../../../../shared/utils/request.js';
 import { handleAuthError } from './index.js';
 import { buildConfiguredCallbackUrl, getApiOidcCallbackUrl, } from '../../infrastructure/config/oauth-callback.config.js';
-import { loginMfaRateLimit, ssoCallbackRateLimit, ssoLoginRateLimit, webauthnRateLimit, } from '../../presentation/middleware/rate-limits.js';
 import * as sso from '../../application/services/sso.service.js';
 import * as trusted from '../../application/services/trusted-device.service.js';
 import * as webauthn from '../../application/services/webauthn.service.js';
@@ -21,7 +20,7 @@ function frontendAuthCallbackUrl() {
 }
 export default async function ssoOidcRoutes(fastify) {
     // POST /auth/sso/login
-    fastify.post('/sso/login', { preHandler: [ssoLoginRateLimit] }, async (request, reply) => {
+    fastify.post('/sso/login', {}, async (request, reply) => {
         try {
             const body = SsoLoginSchema.parse(request.body);
             const ci = getClientInfo(request);
@@ -33,7 +32,7 @@ export default async function ssoOidcRoutes(fastify) {
         }
     });
     // GET /auth/sso/callback — OIDC redirect; sets refresh cookie + returns tokens
-    fastify.get('/sso/callback', { preHandler: [ssoCallbackRateLimit] }, async (request, reply) => {
+    fastify.get('/sso/callback', {}, async (request, reply) => {
         try {
             const query = SsoCallbackQuerySchema.parse(request.query);
             if (query.error) {
@@ -55,7 +54,7 @@ export default async function ssoOidcRoutes(fastify) {
         }
     });
     // WebAuthn registration (authenticated)
-    fastify.post('/mfa/webauthn/register/options', { preHandler: [authenticate, webauthnRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/webauthn/register/options', { preHandler: [authenticate] }, async (request, reply) => {
         try {
             const r = request;
             const body = WebAuthnRegisterOptionsSchema.parse(request.body);
@@ -66,7 +65,7 @@ export default async function ssoOidcRoutes(fastify) {
             return handleAuthError(error, reply, request);
         }
     });
-    fastify.post('/mfa/webauthn/register/verify', { preHandler: [authenticate, requireStepUp, webauthnRateLimit] }, async (request, reply) => {
+    fastify.post('/mfa/webauthn/register/verify', { preHandler: [authenticate, requireStepUp] }, async (request, reply) => {
         try {
             const r = request;
             const body = WebAuthnRegisterVerifySchema.parse(request.body);
@@ -79,7 +78,7 @@ export default async function ssoOidcRoutes(fastify) {
         }
     });
     // Login MFA via passkey
-    fastify.post('/login/mfa/webauthn/options', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/login/mfa/webauthn/options', {}, async (request, reply) => {
         try {
             const body = WebAuthnLoginMfaOptionsSchema.parse(request.body);
             const result = await webauthn.createLoginMfaWebAuthnOptions(body.challenge_id);
@@ -89,7 +88,7 @@ export default async function ssoOidcRoutes(fastify) {
             return handleAuthError(error, reply, request);
         }
     });
-    fastify.post('/login/mfa/webauthn/verify', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
+    fastify.post('/login/mfa/webauthn/verify', {}, async (request, reply) => {
         try {
             const body = WebAuthnLoginMfaVerifySchema.parse(request.body);
             const ci = getClientInfo(request);

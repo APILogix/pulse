@@ -12,7 +12,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate } from "../../../../shared/middleware/auth.js";
-import { rateLimit } from "../../../../shared/middleware/rate-limit.js";
+
 import { ProjectParamsSchema } from "../../types.js";
 import { withErrorHandling, authenticatedUser } from "../../shared/route-utils.js";
 
@@ -34,12 +34,12 @@ const DeadLetterParamsSchema = ProjectParamsSchema.extend({
 
 export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promise<void> {
   const service = fastify.projects.deliveryLogService;
-  const deliveryRateLimit = rateLimit({ max: 120, window: 60 });
+
 
   // Alert delivery history
   fastify.get(
     "/:projectId/alert-deliveries",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const query = DeliveryListQuerySchema.parse(request.query ?? {});
@@ -60,7 +60,7 @@ export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promis
   // Dead-letter queue listing
   fastify.get(
     "/:projectId/dead-letters",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const query = DeadLetterListQuerySchema.parse(request.query ?? {});
@@ -83,7 +83,7 @@ export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promis
   // is never captured as a deliveryId.
   fastify.post(
     "/:projectId/dead-letters/reprocess-all",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const reprocessed = await service.reprocessAll(
@@ -98,7 +98,7 @@ export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promis
   // Reprocess a single dead-letter delivery.
   fastify.post(
     "/:projectId/dead-letters/:deliveryId/reprocess",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, deliveryId } = DeadLetterParamsSchema.parse(request.params);
       const ok = await service.reprocessDeadLetter(
@@ -119,7 +119,7 @@ export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promis
   // Purge (discard) the entire dead-letter queue for the project.
   fastify.delete(
     "/:projectId/dead-letters",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId } = ProjectParamsSchema.parse(request.params);
       const discarded = await service.purgeQueue(
@@ -134,7 +134,7 @@ export async function projectDeliveryLogRoutes(fastify: FastifyInstance): Promis
   // Discard a single dead-letter delivery.
   fastify.delete(
     "/:projectId/dead-letters/:deliveryId",
-    { preHandler: [authenticate, deliveryRateLimit] },
+    { preHandler: [authenticate] },
     withErrorHandling(async (request, reply) => {
       const { orgId, projectId, deliveryId } = DeadLetterParamsSchema.parse(request.params);
       const ok = await service.discardDeadLetter(

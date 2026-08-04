@@ -4,7 +4,16 @@ function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
 export class EventsRepository {
-    db = pool;
+    /**
+     * Pool is injected explicitly (ADR-0006). This is the LEGACY runtime repository: it
+     * still targets the control-plane copies of the alert runtime tables and remains
+     * authoritative until ALERTING_V2_READ is enabled. New runtime access goes through
+     * modules/alerting/runtime/alert-runtime.repository.ts on the Log DB pool.
+     */
+    db;
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         const client = await this.db.connect();
         try {

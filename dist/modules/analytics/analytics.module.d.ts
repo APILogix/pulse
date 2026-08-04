@@ -2,7 +2,7 @@
  * Analytics module for Fastify.
  *
  * Flow:
- * 1. Construct repository (with shared pool), cache (with shared Redis), and service.
+ * 1. Construct the Log DB repository, in-process LRU cache, and service.
  * 2. Decorate Fastify with analytics dependencies.
  * 3. Register analytics routes under /analytics.
  */

@@ -5,6 +5,12 @@ vi.mock("../../../src/config/database.js", () => ({
   pool: { query: vi.fn(), connect: vi.fn() },
 }));
 
+// The environment service now syncs best-effort Log DB lookup snapshots, which
+// transitively imports the Log DB manager. Stub it to keep this test hermetic.
+vi.mock("../../../src/config/log-database.js", () => ({
+  logDB: { queryWithRetry: vi.fn() },
+}));
+
 import {
   CreateEnvironmentBodySchema,
   EnvironmentType,

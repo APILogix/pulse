@@ -89,8 +89,13 @@ function makeRepository() {
     markDeliveryRetrying: vi.fn().mockResolvedValue(undefined),
     markDeliveryFailed: vi.fn().mockResolvedValue(undefined),
     insertDeadLetter: vi.fn().mockResolvedValue(undefined),
+    consumeRateLimitToken: vi.fn().mockResolvedValue({ allowed: true, retryAfterMs: 0 }),
+    circuitAllows: vi.fn().mockResolvedValue(true),
+    recordCircuitSuccess: vi.fn().mockResolvedValue(undefined),
+    recordCircuitFailure: vi.fn().mockResolvedValue(undefined),
     recordSuccess: vi.fn().mockResolvedValue(undefined),
     recordFailure: vi.fn().mockResolvedValue(undefined),
+    recordSuccessfulDeliveryUsage: vi.fn().mockResolvedValue(undefined),
     insertAuditLog: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -131,6 +136,11 @@ describe('NotificationDispatcher delivery audit', () => {
         externalMessageId: 'provider-1',
       }),
     }));
+    expect(repository.recordSuccessfulDeliveryUsage).toHaveBeenCalledWith(
+      connectorRow.organization_id,
+      null,
+      connectorRow.type,
+    );
   });
 
   it('audits retry scheduling for retryable failures', async () => {
@@ -146,6 +156,7 @@ describe('NotificationDispatcher delivery audit', () => {
     await dispatcher.dispatch(connectorRow, payload);
 
     expect(repository.markDeliveryRetrying).toHaveBeenCalled();
+    expect(repository.recordSuccessfulDeliveryUsage).not.toHaveBeenCalled();
     expect(repository.insertAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'delivery.retry_scheduled',
       changesSummary: expect.objectContaining({
@@ -173,6 +184,7 @@ describe('NotificationDispatcher delivery audit', () => {
       'invalid credentials',
       { category: 'auth_error' },
     );
+    expect(repository.recordSuccessfulDeliveryUsage).not.toHaveBeenCalled();
     expect(repository.insertAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'delivery.failed',
       changesSummary: expect.objectContaining({

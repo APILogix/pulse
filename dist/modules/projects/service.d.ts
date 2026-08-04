@@ -22,7 +22,7 @@ import { ApiKeyRepository } from "./api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "./environments/environment.repository.js";
 import { UsageRepository } from "./usage/usage.repository.js";
 import type { ApiKeyRotation, ApiKeyUsage, ApiKeyUsageQuery, BulkOperationResult, BulkRevokeBody, BulkRotateBody, CreateApiKeyBody, CreateApiKeyResponse, CreateEnvironmentBody, CreateProjectBody, ListApiKeysQuery, ListProjectsQuery, OrgRole, Project, ProjectApiKey, ProjectEnvironmentConfig, ProjectListItem, ProjectUsageCounter, ProjectWithStats, RotateApiKeyBody, UpdateApiKeyBody, UpdateEnvironmentBody, UpdateProjectBody, ValidatedApiKey } from "./types.js";
-import { ProjectService } from "./core/project.service.js";
+import { ProjectService, type CreateProjectResult } from "./core/project.service.js";
 import { SettingsService } from "./settings/settings.service.js";
 import { EnvironmentService } from "./environments/environment.service.js";
 import { ApiKeyService } from "./api-keys/api-key.service.js";
@@ -65,8 +65,9 @@ export declare class ProjectsService {
         limit: number;
         offset: number;
     }>;
-    createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<Project>;
+    createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<CreateProjectResult>;
     getProject(orgId: string, projectId: string, userId: string): Promise<Project>;
+    getProjectByPublicId(orgId: string, publicId: string, userId: string): Promise<Project>;
     getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings>;
     updateProjectSettings(orgId: string, projectId: string, userId: string, updates: Partial<Omit<ProjectSettings, "id" | "projectId" | "organizationId" | "createdAt" | "updatedAt">>, meta: RequestMeta): Promise<ProjectSettings>;
     getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto>;
@@ -84,6 +85,8 @@ export declare class ProjectsService {
     createEnvironment(orgId: string, projectId: string, userId: string, body: CreateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     updateEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, body: UpdateEnvironmentBody, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     deleteEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<void>;
+    /** Irreversible: permanently deletes an already soft-deleted environment and its API keys. */
+    permanentlyDeleteEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<void>;
     restoreEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     setDefaultEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;
     deactivateEnvironment(orgId: string, projectId: string, environmentId: string, userId: string, meta: RequestMeta): Promise<ProjectEnvironmentConfig>;

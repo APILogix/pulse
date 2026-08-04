@@ -48,7 +48,6 @@ export interface CreateAuditLogRecord {
 export interface AuditLogRow {
     id: string;
     org_id: string;
-    project_id: string | null;
     actor_user_id: string | null;
     actor_email: string | null;
     action: string;

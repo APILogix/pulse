@@ -7,6 +7,6 @@ import { BillingProvisioningRepository, type BillingProvisioningResult } from '.
 export declare class BillingProvisioningService {
     private readonly repository;
     constructor(repository?: BillingProvisioningRepository);
-    provisionFreeSubscription(client: PoolClient, organizationId: string): Promise<BillingProvisioningResult>;
+    provisionDefaultSubscription(client: PoolClient, organizationId: string): Promise<BillingProvisioningResult>;
 }
 //# sourceMappingURL=service.d.ts.map

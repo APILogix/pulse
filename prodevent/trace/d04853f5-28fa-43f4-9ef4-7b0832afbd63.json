@@ -1,0 +1,2140 @@
+{
+  "events": [
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_da31ee1d1e01d4f137580be8baf82dbf",
+      "traceId": "da31ee1d1e01d4f137580be8baf82dbf",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "2c29929a374b6411",
+        "status": "unset",
+        "endTime": 1785611351488.1484,
+        "children": [],
+        "duration": 1.1485,
+        "startTime": 1785611351487,
+        "attributes": {
+          "http.url": "http://[ip]:3000/orders/stats/summary",
+          "http.host": "[ip]:3000",
+          "http.route": "/orders/stats/summary",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/orders/stats/summary",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52348,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1,
+          "pulse.request_id": "45e3b7c1-3941-4f8c-b313-dc175bd1dc37",
+          "http.response.body.size": 30
+        },
+        "exclusiveDuration": 1.1484375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 1.1485
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_ee1e8ffd53101d23c4ca14c018f33ca6",
+      "traceId": "ee1e8ffd53101d23c4ca14c018f33ca6",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "fe103609ed2cdda3",
+        "status": "unset",
+        "endTime": 1785611351493.697,
+        "children": [],
+        "duration": 5.6969,
+        "startTime": 1785611351488,
+        "attributes": {
+          "http.url": "http://[ip]:3000/profiling/cpu",
+          "http.host": "[ip]:3000",
+          "http.route": "/profiling/cpu",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/profiling/cpu",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52355,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 6,
+          "pulse.request_id": "0820fabd-d7f7-4756-b9a5-7e[phone]",
+          "http.response.body.size": 110
+        },
+        "exclusiveDuration": 5.697021484375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 5.6969
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_66d212a6a893c6c03c8ee00d1c2972f2",
+      "traceId": "66d212a6a893c6c03c8ee00d1c2972f2",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "POST",
+        "links": [],
+        "events": [],
+        "spanId": "a34a97215dcd2e79",
+        "status": "unset",
+        "endTime": 1785611351497.1436,
+        "children": [],
+        "duration": 1.1436,
+        "startTime": 1785611351496,
+        "attributes": {
+          "http.url": "http://[ip]:3000/scope/user",
+          "http.host": "[ip]:3000",
+          "http.route": "/scope/user",
+          "http.flavor": "1.1",
+          "http.method": "POST",
+          "http.scheme": "http",
+          "http.target": "/scope/user",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52398,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1,
+          "pulse.request_id": "6d6bb376-01e3-4fde-9ae5-aa2d5d29f61a",
+          "http.response.body.size": 43,
+          "http.request_content_length_uncompressed": 42
+        },
+        "exclusiveDuration": 1.1435546875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 1.1436
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_3ea85be239bb8e9ba9e5f1688751e9fa",
+      "traceId": "3ea85be239bb8e9ba9e5f1688751e9fa",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "155b9a1a436b4310",
+        "status": "unset",
+        "endTime": 1785611351506.2383,
+        "children": [],
+        "duration": 7.2383,
+        "startTime": 1785611351499,
+        "attributes": {
+          "http.url": "http://[ip]:3000/profiling/cpu",
+          "http.host": "[ip]:3000",
+          "http.route": "/profiling/cpu",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/profiling/cpu",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52424,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 7,
+          "pulse.request_id": "8dca7b70-f1d9-4402-aded-6df27959c03c",
+          "http.response.body.size": 110
+        },
+        "exclusiveDuration": 7.23828125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 7.2383
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_0dfd596280507abe1e93a2a8196084f7",
+      "traceId": "0dfd596280507abe1e93a2a8196084f7",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "internal",
+        "name": "db.users.list",
+        "links": [],
+        "events": [],
+        "spanId": "0b7d4cffee637ceb",
+        "status": "ok",
+        "endTime": 1785611351507.4714,
+        "children": [],
+        "duration": 0.4715,
+        "startTime": 1785611351507,
+        "attributes": {
+          "limit": 5,
+          "table": "users",
+          "operation": "SELECT",
+          "pulse.tenant_id": "load-test-tenant",
+          "pulse.request_id": "fc396ea5-d97e-4f76-a201-448a0815a318"
+        },
+        "exclusiveDuration": 0.471435546875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 0.4715
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_e6ecca4c0bcc652e177dd02ba3704eb2",
+      "traceId": "e6ecca4c0bcc652e177dd02ba3704eb2",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "94ae7eae91edc104",
+        "status": "unset",
+        "endTime": 1785611351508.7288,
+        "children": [],
+        "duration": 2.7288,
+        "startTime": 1785611351506,
+        "attributes": {
+          "http.url": "http://[ip]:3000/users",
+          "http.host": "[ip]:3000",
+          "http.route": "/users/",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/users",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52429,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2,
+          "pulse.request_id": "fc396ea5-d97e-4f76-a201-448a0815a318",
+          "http.response.body.size": 556
+        },
+        "exclusiveDuration": 2.728759765625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353385,
+      "totalDuration": 2.7288
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_c5137ab39a0ddaa574184839fc37d1bb",
+      "traceId": "c5137ab39a0ddaa574184839fc37d1bb",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "b2dfbeefce1e1f6a",
+        "status": "unset",
+        "endTime": 1785611351511.4463,
+        "children": [],
+        "duration": 1.4462,
+        "startTime": 1785611351510,
+        "attributes": {
+          "http.url": "http://[ip]:3000/scope/isolated",
+          "http.host": "[ip]:3000",
+          "http.route": "/scope/isolated",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/scope/isolated",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52432,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1,
+          "pulse.request_id": "a0cd56e8-56b9-43df-a44d-235235e0fcc8",
+          "http.response.body.size": 229
+        },
+        "exclusiveDuration": 1.4462890625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 1.4462
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_0c3eb9eef6bf894bdd0e561da510037f",
+      "traceId": "0c3eb9eef6bf894bdd0e561da510037f",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "a48f7db6b7f6031e",
+        "status": "unset",
+        "endTime": 1785611351512.4868,
+        "children": [],
+        "duration": 1.4868,
+        "startTime": 1785611351511,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/context",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/context",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/context",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52433,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1,
+          "pulse.request_id": "4b1b6831-1b4f-4ad8-afb3-b0c39ef601b3",
+          "http.response.body.size": 48
+        },
+        "exclusiveDuration": 1.48681640625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 1.4868
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_2ec8943c3bc9a0cc931e21f69eaa7bb3",
+      "traceId": "2ec8943c3bc9a0cc931e21f69eaa7bb3",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "f8babb73094c9a8b",
+        "status": "unset",
+        "endTime": 1785611351514.6665,
+        "children": [],
+        "duration": 1.6666,
+        "startTime": 1785611351513,
+        "attributes": {
+          "http.url": "http://[ip]:3000/metrics/counter",
+          "http.host": "[ip]:3000",
+          "http.route": "/metrics/counter",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/metrics/counter",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52373,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1,
+          "pulse.request_id": "678ba047-1b8d-466a-8137-a60238edd4fd",
+          "http.response.body.size": 48
+        },
+        "exclusiveDuration": 1.66650390625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 1.6666
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_d73a59809dce1b9a46b9db00689fdd6b",
+      "traceId": "d73a59809dce1b9a46b9db00689fdd6b",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "5f971ad7f6a4e592",
+        "status": "unset",
+        "endTime": 1785611351517.4473,
+        "children": [],
+        "duration": 2.4472,
+        "startTime": 1785611351515,
+        "attributes": {
+          "http.url": "http://[ip]:3000/scope/isolated",
+          "http.host": "[ip]:3000",
+          "http.route": "/scope/isolated",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/scope/isolated",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52443,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2,
+          "pulse.request_id": "8b998a29-11c0-424f-a1d8-e7c8283a428f",
+          "http.response.body.size": 229
+        },
+        "exclusiveDuration": 2.447265625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2.4472
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_a06c111cb73187b2871a44df653bf6f1",
+      "traceId": "a06c111cb73187b2871a44df653bf6f1",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "POST",
+        "links": [],
+        "events": [],
+        "spanId": "41e382404f90590b",
+        "status": "unset",
+        "endTime": 1785611351521.7634,
+        "children": [],
+        "duration": 3.7635,
+        "startTime": 1785611351518,
+        "attributes": {
+          "http.url": "http://[ip]:3000/errors/scoped",
+          "http.host": "[ip]:3000",
+          "http.route": "/errors/scoped",
+          "http.flavor": "1.1",
+          "http.method": "POST",
+          "http.scheme": "http",
+          "http.target": "/errors/scoped",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52449,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 3,
+          "pulse.request_id": "bc1cd9dc-099c-4ef3-8202-aec7517c38bf",
+          "http.response.body.size": 46,
+          "http.request_content_length_uncompressed": 13
+        },
+        "exclusiveDuration": 3.763427734375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 3.7635
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_17075cb5cdde2c5f57ce82462dbb0c58",
+      "traceId": "17075cb5cdde2c5f57ce82462dbb0c58",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "a1a412885b7d2242",
+        "status": "unset",
+        "endTime": 1785611351525.1052,
+        "children": [],
+        "duration": 2.1052,
+        "startTime": 1785611351523,
+        "attributes": {
+          "http.url": "http://[ip]:3000/metrics/histogram",
+          "http.host": "[ip]:3000",
+          "http.route": "/metrics/histogram",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/metrics/histogram",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52452,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2,
+          "pulse.request_id": "0d0c90aa-2f45-4e43-a6f5[phone]95",
+          "http.response.body.size": 65
+        },
+        "exclusiveDuration": 2.105224609375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2.1052
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_4fd94b469b5a72775def71ed0aa7f270",
+      "traceId": "4fd94b469b5a72775def71ed0aa7f270",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "POST",
+        "links": [],
+        "events": [],
+        "spanId": "45195f05f85959a4",
+        "status": "error",
+        "endTime": 1785611351528.7556,
+        "children": [],
+        "duration": 3.7557,
+        "startTime": 1785611351525,
+        "attributes": {
+          "http.url": "http://[ip]:3000/errors/nested",
+          "http.host": "[ip]:3000",
+          "http.route": "/errors/nested",
+          "http.flavor": "1.1",
+          "http.method": "POST",
+          "http.scheme": "http",
+          "http.target": "/errors/nested",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52453,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 500,
+          "http.status_text": "INTERNAL SERVER ERROR",
+          "pulse.latency_ms": 3,
+          "pulse.request_id": "4c77f73b-1864-4470-88ec-9753a99a8281",
+          "http.response.body.size": 47,
+          "http.request_content_length_uncompressed": 0
+        },
+        "exclusiveDuration": 3.755615234375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 3.7557
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_d323b1b4e61171b93a569851aaddf8bb",
+      "traceId": "d323b1b4e61171b93a569851aaddf8bb",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "POST",
+        "links": [],
+        "events": [],
+        "spanId": "605a8dec09fc319d",
+        "status": "unset",
+        "endTime": 1785611351532.6157,
+        "children": [],
+        "duration": 2.6157,
+        "startTime": 1785611351530,
+        "attributes": {
+          "http.url": "http://[ip]:3000/metrics/business",
+          "http.host": "[ip]:3000",
+          "http.route": "/metrics/business",
+          "http.flavor": "1.1",
+          "http.method": "POST",
+          "http.scheme": "http",
+          "http.target": "/metrics/business",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52457,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2,
+          "pulse.request_id": "ac5bc315-c263-4b24-9df2-1b5e13a71501",
+          "http.response.body.size": 49,
+          "http.request_content_length_uncompressed": 33
+        },
+        "exclusiveDuration": 2.61572265625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2.6157
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_7d6a2383724bb33a0e74a4535814a297",
+      "traceId": "7d6a2383724bb33a0e74a4535814a297",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "2eca9e9769ee1b36",
+        "status": "unset",
+        "endTime": 1785611351559.859,
+        "children": [],
+        "duration": 3302.8589,
+        "startTime": 1785611348257,
+        "attributes": {
+          "http.url": "http://[ip]:3000/crons/multi",
+          "http.host": "[ip]:3000",
+          "http.route": "/crons/multi",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/crons/multi",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52015,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 3302,
+          "pulse.request_id": "cdaa270d-d176-495e-a355-ddd9bc496a1f",
+          "http.response.body.size": 272
+        },
+        "exclusiveDuration": 3302.85888671875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 3302.8589
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_a45df81315f8da32565e9cc19081f09f",
+      "traceId": "a45df81315f8da32565e9cc19081f09f",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "24e46ae5bd96ef2a",
+        "status": "unset",
+        "endTime": 1785611351560.7708,
+        "children": [],
+        "duration": 3640.7707,
+        "startTime": 1785611347920,
+        "attributes": {
+          "http.url": "http://[ip]:3000/crons/multi",
+          "http.host": "[ip]:3000",
+          "http.route": "/crons/multi",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/crons/multi",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52456,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 3640,
+          "pulse.request_id": "e77602a1-41e8-4c64-9ed8-3535302cfa63",
+          "http.response.body.size": 273
+        },
+        "exclusiveDuration": 3640.770751953125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 3640.7707
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_00b1c6b9d80d7b460a84bc59c9053cf4",
+      "traceId": "00b1c6b9d80d7b460a84bc59c9053cf4",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "1ed55713845ae331",
+        "status": "unset",
+        "endTime": 1785611351561.6433,
+        "children": [],
+        "duration": 2996.6432999999997,
+        "startTime": 1785611348565,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/pipeline",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/pipeline",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/pipeline",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52043,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2996,
+          "pulse.request_id": "44e0adee-4e87-4ca5-a57c-84d319b3b2e4",
+          "http.response.body.size": 109
+        },
+        "exclusiveDuration": 2996.643310546875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2996.6432999999997
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_7387d376b74f4013bcbd4d15e8bb9434",
+      "traceId": "7387d376b74f4013bcbd4d15e8bb9434",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "80634c72563a61d8",
+        "status": "unset",
+        "endTime": 1785611351562.548,
+        "children": [],
+        "duration": 2867.5481,
+        "startTime": 1785611348695,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/pipeline",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/pipeline",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/pipeline",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52082,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2868,
+          "pulse.request_id": "8eb48d9e-9281-4175-87f7-8448e80a0f16",
+          "http.response.body.size": 109
+        },
+        "exclusiveDuration": 2867.548095703125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2867.5481
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_f66cdde2cb33c0bde1b7bff13b375b29",
+      "traceId": "f66cdde2cb33c0bde1b7bff13b375b29",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "a00b[phone]6b",
+        "status": "unset",
+        "endTime": 1785611351563.869,
+        "children": [],
+        "duration": 2713.8689,
+        "startTime": 1785611348850,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/pipeline",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/pipeline",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/pipeline",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52116,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2713,
+          "pulse.request_id": "577d0f75-a4a3-46cf-8519-581ee147de8e",
+          "http.response.body.size": 109
+        },
+        "exclusiveDuration": 2713.868896484375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2713.8689
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_37f88eb75f8f61478a1716c48be372bc",
+      "traceId": "37f88eb75f8f61478a1716c48be372bc",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "10a3e89774cf380b",
+        "status": "unset",
+        "endTime": 1785611351578.1445,
+        "children": [],
+        "duration": 2719.1446,
+        "startTime": 1785611348859,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/pipeline",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/pipeline",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/pipeline",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52125,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2719,
+          "pulse.request_id": "b79d9f35-5f78-42bd-b5dc-44c4c89894b5",
+          "http.response.body.size": 109
+        },
+        "exclusiveDuration": 2719.14453125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2719.1446
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_d935dc804fd5da4392d3adc81ff6cc35",
+      "traceId": "d935dc804fd5da4392d3adc81ff6cc35",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "0edfb444a756d57d",
+        "status": "unset",
+        "endTime": 1785611351579.2712,
+        "children": [],
+        "duration": 3652.2712,
+        "startTime": 1785611347927,
+        "attributes": {
+          "http.url": "http://[ip]:3000/crons/multi",
+          "http.host": "[ip]:3000",
+          "http.route": "/crons/multi",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/crons/multi",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52462,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 3652,
+          "pulse.request_id": "dd2d4c83-a831-4024-9fd2-80c1263263ed",
+          "http.response.body.size": 272
+        },
+        "exclusiveDuration": 3652.271240234375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 3652.2712
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_dd725da233d1b27a439ad112a4fc4ca1",
+      "traceId": "dd725da233d1b27a439ad112a4fc4ca1",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "b7a01a86e74bad5a",
+        "status": "unset",
+        "endTime": 1785611351580.1453,
+        "children": [],
+        "duration": 2037.1453,
+        "startTime": 1785611349543,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/nested",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/nested",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/nested",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52177,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2036,
+          "pulse.request_id": "97e2d878-2f61-4307-ba1a-6c9e050eef2f",
+          "http.response.body.size": 67
+        },
+        "exclusiveDuration": 2037.145263671875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2037.1453
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_40532b4f09461d4bb8133a1e6d05dcec",
+      "traceId": "40532b4f09461d4bb8133a1e6d05dcec",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "0780439a9067cf6d",
+        "status": "unset",
+        "endTime": 1785611351581.6348,
+        "children": [],
+        "duration": 2014.6347,
+        "startTime": 1785611349567,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/nested",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/nested",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/nested",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52188,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 2014,
+          "pulse.request_id": "eac424d6-e1c4-4a37-a3a8-a10e881d4924",
+          "http.response.body.size": 67
+        },
+        "exclusiveDuration": 2014.634765625
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 2014.6347
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_3f3838832f2d1d717f0ce92256d987f6",
+      "traceId": "3f3838832f2d1d717f0ce92256d987f6",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "d53e6f0456dff311",
+        "status": "unset",
+        "endTime": 1785611351583.0068,
+        "children": [],
+        "duration": 1630.0068,
+        "startTime": 1785611349953,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/nested",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/nested",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/nested",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52282,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 1630,
+          "pulse.request_id": "f9456d74-e840-4878-b7c2-57f5bbe58bf8",
+          "http.response.body.size": 67
+        },
+        "exclusiveDuration": 1630.0068359375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 1630.0068
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_696a7d935a35ec92ffec021acfc5adac",
+      "traceId": "696a7d935a35ec92ffec021acfc5adac",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "internal",
+        "name": "failing-operation",
+        "links": [],
+        "events": [
+          {
+            "name": "exception",
+            "timestamp": 1785611351582.945,
+            "attributes": {
+              "exception.type": "Error",
+              "exception.message": "Intentional span failure for testing",
+              "exception.stacktrace": "Error: Intentional span failure for testing\n    at C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:136:13\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:597:9)\n    at process.processTimers (node:internal/timers:571:7)\n    at async file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist/tracing/tracer.js:544:28\n    at async C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:133:5"
+            }
+          }
+        ],
+        "spanId": "307664a1d4485287",
+        "status": "error",
+        "endTime": 1785611351582.9739,
+        "children": [],
+        "duration": 434.9738,
+        "startTime": 1785611351148,
+        "attributes": {
+          "step": "about-to-fail",
+          "willFail": true,
+          "pulse.tenant_id": "load-test-tenant",
+          "pulse.request_id": "359d3f5f-4f37-430e-badf-fa36e4062a77"
+        },
+        "statusMessage": "Intentional span failure for testing",
+        "exclusiveDuration": 434.973876953125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 434.9738
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_84c752a8d94f7290def46d541fb04c37",
+      "traceId": "84c752a8d94f7290def46d541fb04c37",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "81a1ce79733630d7",
+        "status": "unset",
+        "endTime": 1785611351584.3738,
+        "children": [],
+        "duration": 436.3738,
+        "startTime": 1785611351148,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/error-span",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/error-span",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/error-span",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52381,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 436,
+          "pulse.request_id": "359d3f5f-4f37-430e-badf-fa36e4062a77",
+          "http.response.body.size": 51
+        },
+        "exclusiveDuration": 436.373779296875
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 436.3738
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_d6a[phone]8fa2f607507611e2197",
+      "traceId": "d6a[phone]8fa2f607507611e2197",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "internal",
+        "name": "failing-operation",
+        "links": [],
+        "events": [
+          {
+            "name": "exception",
+            "timestamp": 1785611351584.1548,
+            "attributes": {
+              "exception.type": "Error",
+              "exception.message": "Intentional span failure for testing",
+              "exception.stacktrace": "Error: Intentional span failure for testing\n    at C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:136:13\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:597:9)\n    at process.processTimers (node:internal/timers:571:7)\n    at async file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist/tracing/tracer.js:544:28\n    at async C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:133:5"
+            }
+          }
+        ],
+        "spanId": "36dcb651c9b4fe86",
+        "status": "error",
+        "endTime": 1785611351584.1836,
+        "children": [],
+        "duration": 144.1835,
+        "startTime": 1785611351440,
+        "attributes": {
+          "step": "about-to-fail",
+          "willFail": true,
+          "pulse.tenant_id": "load-test-tenant",
+          "pulse.request_id": "9998e3b5-3ec3-4054-9[phone]59bb3"
+        },
+        "statusMessage": "Intentional span failure for testing",
+        "exclusiveDuration": 144.18359375
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 144.1835
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_7762d0a[phone]02d1f8eafc8051c",
+      "traceId": "7762d0a[phone]02d1f8eafc8051c",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "server",
+        "name": "GET",
+        "links": [],
+        "events": [],
+        "spanId": "ca29e29085f557b3",
+        "status": "unset",
+        "endTime": 1785611351585.641,
+        "children": [],
+        "duration": 145.6411,
+        "startTime": 1785611351440,
+        "attributes": {
+          "http.url": "http://[ip]:3000/tracing/error-span",
+          "http.host": "[ip]:3000",
+          "http.route": "/tracing/error-span",
+          "http.flavor": "1.1",
+          "http.method": "GET",
+          "http.scheme": "http",
+          "http.target": "/tracing/error-span",
+          "net.host.ip": "[ip]",
+          "net.peer.ip": "[ip]",
+          "net.host.name": "[ip]",
+          "net.host.port": 3000,
+          "net.peer.port": 52042,
+          "net.transport": "ip_tcp",
+          "http.client_ip": "3e48ef9d22e096da",
+          "http.user_agent": "node",
+          "pulse.tenant_id": "load-test-tenant",
+          "http.status_code": 200,
+          "http.status_text": "OK",
+          "pulse.latency_ms": 145,
+          "pulse.request_id": "9998e3b5-3ec3-4054-9[phone]59bb3",
+          "http.response.body.size": 51
+        },
+        "exclusiveDuration": 145.64111328125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 145.6411
+    },
+    {
+      "tags": {
+        "outer": "true",
+        "framework": "express"
+      },
+      "type": "trace",
+      "user": {
+        "id": "load-user",
+        "data": {
+          "segment": "free",
+          "loginMethod": "password"
+        },
+        "email": "[email]",
+        "username": "demo-user"
+      },
+      "extra": {
+        "tenantId": "load-test-tenant"
+      },
+      "spanId": "69f9a93bbc363317",
+      "eventId": "trace_5592f184c1a0e88e4348ec[phone]",
+      "traceId": "5592f184c1a0e88e4348ec[phone]",
+      "metadata": {
+        "release": "1.0.0",
+        "sdkName": "@vikasbaplawat1/pulse-sdk",
+        "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+        "sdkVersion": "3.0.0",
+        "environment": "production",
+        "applicationName": "consumer-app",
+        "applicationVersion": "1.0.0"
+      },
+      "rootSpan": {
+        "kind": "internal",
+        "name": "failing-operation",
+        "links": [],
+        "events": [
+          {
+            "name": "pulse.profile.start",
+            "timestamp": 1785611351498.3413,
+            "attributes": {
+              "profile.id": "cpu:5592f184c1a0e88e4348ec[phone]",
+              "profile.type": "cpu"
+            }
+          },
+          {
+            "name": "exception",
+            "timestamp": 1785611351585.8477,
+            "attributes": {
+              "exception.type": "Error",
+              "exception.message": "Intentional span failure for testing",
+              "exception.stacktrace": "Error: Intentional span failure for testing\n    at C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:136:13\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at process.processTimers (node:internal/timers:568:9)\n    at async file:///C:/Users/vikas/OneDrive/Desktop/APITOOLSDK/sdk-node/dist/tracing/tracer.js:544:28\n    at async C:\\Users\\vikas\\OneDrive\\Desktop\\APITOOLSDK\\consumer-app\\src\\routes\\tracing.js:133:5"
+            }
+          }
+        ],
+        "spanId": "3cb28aa95c189b1e",
+        "status": "error",
+        "endTime": 1785611351586.0813,
+        "children": [],
+        "duration": 88.0814,
+        "startTime": 1785611351498,
+        "attributes": {
+          "step": "about-to-fail",
+          "willFail": true,
+          "pulse.tenant_id": "load-test-tenant",
+          "pulse.request_id": "27772470-027d-4444-b422-ec612172b212",
+          "pulse.profile.active": true
+        },
+        "statusMessage": "Intentional span failure for testing",
+        "exclusiveDuration": 88.081298828125
+      },
+      "tenantId": "load-test-tenant",
+      "isPartial": false,
+      "requestId": "e4c7311f-1915-4f83-8d9a-75f67245b9bb",
+      "sessionId": "d25e73a1-dc42-49ef-880b-1e96ed252df6",
+      "spanCount": 1,
+      "timestamp": 1785611353386,
+      "totalDuration": 88.0814
+    }
+  ],
+  "metadata": {
+    "batchId": "dc0e54a0-f95e-4266-9ff4-b8ddf5c06018",
+    "apiKeyId": "50d489be-87df-4431-8dee-083eac94fe89",
+    "planTier": "enterprise",
+    "deferCount": 3,
+    "receivedAt": "2026-08-02T04:12:37.825Z",
+    "environment": "production"
+  },
+  "eventType": "trace",
+  "projectId": "e98a06d7-eadc-4665-b82b-ce2c20791632",
+  "organizationId": "fe444fc7-f15e-4f72-90f2-52f0948bf8ec"
+}

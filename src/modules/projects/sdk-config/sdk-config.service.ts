@@ -71,11 +71,17 @@ export interface ConfigStore {
     organizationId: string,
     environmentId: string,
   ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config } | null>;
+  loadCompiledBySdkMetadata(
+    organizationId: string,
+    projectId: string,
+    environment: string,
+  ): Promise<{ revisionNo: number; environmentId: string; compiledSnapshot: SchemaV1Config } | null>;
 }
 
 export interface ServiceOptions {
   topology: TrustedTopology | ((scope: ConfigScope) => TrustedTopology);
   orgPolicy?: (scope: ConfigScope) => OrgPolicy | undefined;
+  deliveryOverride?: (organizationId: string) => Promise<OperatorOverride | undefined>;
   /** Injected clock for deterministic meta.generatedAt. */
   clock?: () => string;
 }
@@ -97,6 +103,8 @@ export interface DeliveryResult {
 }
 
 export class RemoteSdkConfigService {
+  private lastGeneratedAtMs: number | null = null;
+
   constructor(
     private readonly store: ConfigStore,
     private readonly options: ServiceOptions,
@@ -111,7 +119,18 @@ export class RemoteSdkConfigService {
   }
 
   private now(): string {
-    return this.options.clock ? this.options.clock() : new Date().toISOString();
+    const supplied = this.options.clock ? this.options.clock() : new Date().toISOString();
+    const parsed = Date.parse(supplied);
+    if (!Number.isFinite(parsed)) {
+      throw new SdkConfigError("schema_invalid", "SDK config clock returned an invalid timestamp", 500, [
+        { path: "/meta/generatedAt", rule: "date-time", message: "Clock must return an ISO-8601 timestamp" },
+      ]);
+    }
+    const generatedAtMs = this.lastGeneratedAtMs === null
+      ? parsed
+      : Math.max(parsed, this.lastGeneratedAtMs + 1);
+    this.lastGeneratedAtMs = generatedAtMs;
+    return new Date(generatedAtMs).toISOString();
   }
 
   /** Compile a full snapshot for this scope from validated editable intent. */
@@ -234,20 +253,40 @@ export class RemoteSdkConfigService {
   ): Promise<DeliveryResult> {
     assertSupportedSchemaVersion(hints.schemaVersion);
     const scope = resolveDeliveryScope(mapping, hints);
-    const loaded = await this.store.loadCompiledByEnvironment(scope.organizationId, scope.environmentId);
+    let environmentId: string | null = null;
+    let loaded: { revisionNo: number; compiledSnapshot: SchemaV1Config } | null = null;
+    if (scope.source === "sdk_metadata" && scope.environment) {
+      const sdkLoaded = await this.store.loadCompiledBySdkMetadata(
+        scope.organizationId,
+        scope.projectId,
+        scope.environment,
+      );
+      if (sdkLoaded) {
+        environmentId = sdkLoaded.environmentId;
+        loaded = sdkLoaded;
+      }
+    } else if (scope.environmentId) {
+      environmentId = scope.environmentId;
+      loaded = await this.store.loadCompiledByEnvironment(scope.organizationId, scope.environmentId);
+    }
     if (!loaded) {
       // No safe committed representation -> 503 so the SDK keeps LKG/defaults.
       throw new SdkConfigError("not_found", "No committed configuration available", 503);
     }
+    if (!environmentId) {
+      throw new SdkConfigError("not_found", "No committed configuration available", 503);
+    }
+    const entitlementOverride = this.options.deliveryOverride
+      ? await this.options.deliveryOverride(scope.organizationId)
+      : undefined;
     const snapshot = buildDeliverySnapshot({
       compiled: loaded.compiledSnapshot,
-      ...(hints.capabilities !== undefined ? { capabilities: hints.capabilities } : {}),
-      ...(override !== undefined ? { override } : {}),
+      ...(entitlementOverride !== undefined ? { override: entitlementOverride } : override !== undefined ? { override } : {}),
     });
     return {
       organizationId: scope.organizationId,
       projectId: scope.projectId,
-      environmentId: scope.environmentId,
+      environmentId,
       revisionNo: loaded.revisionNo,
       config: snapshot.config,
       etag: snapshot.etag,

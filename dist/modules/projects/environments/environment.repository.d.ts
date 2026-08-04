@@ -45,6 +45,23 @@ export declare class EnvironmentRepository {
     setDefaultEnvironment(projectId: string, environmentId: string, client?: PoolClient): Promise<ProjectEnvironmentConfig>;
     deactivateEnvironment(projectId: string, environmentId: string, client?: PoolClient): Promise<ProjectEnvironmentConfig>;
     deleteEnvironment(projectId: string, environmentId: string, client?: PoolClient): Promise<void>;
+    /**
+     * Hard-delete an already soft-deleted environment along with every API key
+     * scoped to it (and their rotation history) plus its SDK configuration
+     * (head + immutable revisions cascade via FK). Requires the environment to
+     * already be soft-deleted so the destructive purge is always a deliberate
+     * second step after the reversible delete, never the default action.
+     *
+     * `project_api_keys`/`project_api_key_rotations`/`project_releases` all hold
+     * an `ON DELETE RESTRICT` foreign key to `project_environments`, so they are
+     * removed explicitly before the environment row itself is deleted. SDK
+     * config tables and nullable-environment alert thresholds hold `ON DELETE
+     * CASCADE` and are removed automatically by Postgres.
+     */
+    permanentlyDeleteEnvironment(projectId: string, environmentId: string, client?: PoolClient): Promise<{
+        deletedApiKeySecretHashes: string[];
+        deletedActiveApiKeyCount: number;
+    }>;
     restoreEnvironment(projectId: string, environmentId: string, client?: PoolClient): Promise<ProjectEnvironmentConfig>;
     mapEnv(row: EnvRow): ProjectEnvironmentConfig;
 }

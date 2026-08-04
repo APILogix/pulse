@@ -83,7 +83,6 @@ export declare class ApiKeyRepository {
         project: Project;
         environmentName: string;
         environmentSlug: string;
-        publishedConfig: Record<string, unknown>;
     }>>;
     /**
      * Graph-ready series for one key. Hourly reads the minute-derived view,

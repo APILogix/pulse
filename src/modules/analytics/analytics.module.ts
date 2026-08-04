@@ -2,14 +2,14 @@
  * Analytics module for Fastify.
  *
  * Flow:
- * 1. Construct repository (with shared pool), cache (with shared Redis), and service.
+ * 1. Construct the Log DB repository, in-process LRU cache, and service.
  * 2. Decorate Fastify with analytics dependencies.
  * 3. Register analytics routes under /analytics.
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
-import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
 import { AnalyticsCache } from './cache.js';
 import { AnalyticsRepository } from './repository.js';
@@ -32,7 +32,7 @@ async function analyticsModule(
   fastify: FastifyInstance,
   _options: FastifyPluginOptions,
 ): Promise<void> {
-  const repository = new AnalyticsRepository(pool);
+  const repository = new AnalyticsRepository(logDB.getPrimaryPool());
   // In-process LRU cache only (no Redis dependency).
   const cache = new AnalyticsCache();
   const service = new AnalyticsService(repository, cache);

@@ -7,6 +7,7 @@
  * isolates tenants in the application layer — see module README / migration).
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type ConnectorConfigRow, type ConnectorStatus, type ConnectorType, type ListConnectorsQuery } from '../types.js';
 export interface CreateConnectorInput {
     organizationId: string;
@@ -50,6 +51,11 @@ export interface ConnectorCredentialRow {
 }
 export declare class ConnectorRepository {
     private readonly db;
+    /**
+     * ADR-0006: connector configuration and credentials are control-plane owned,
+     * so this defaults to the primary pool and never accepts the Log DB pool.
+     */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     create(input: CreateConnectorInput): Promise<ConnectorConfigRow>;
     findById(organizationId: string, id: string): Promise<ConnectorConfigRow | null>;
@@ -62,10 +68,13 @@ export declare class ConnectorRepository {
      * the events that reference these connector ids.
      */
     getByIds(ids: string[]): Promise<ConnectorConfigRow[]>;
+    findFirstActiveByType(organizationId: string, type: ConnectorType): Promise<ConnectorConfigRow | null>;
+    getOrCreateManagedEmailConnector(organizationId: string): Promise<ConnectorConfigRow>;
     list(organizationId: string, query: ListConnectorsQuery): Promise<{
         data: ConnectorConfigRow[];
         total: number;
     }>;
+    countActiveConnectors(organizationId: string): Promise<number>;
     /** All non-deleted connectors in an active/error state (for health sweeps). */
     listMonitorable(): Promise<ConnectorConfigRow[]>;
     update(organizationId: string, id: string, fields: Record<string, unknown>): Promise<ConnectorConfigRow>;

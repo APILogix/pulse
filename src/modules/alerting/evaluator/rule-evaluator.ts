@@ -27,6 +27,7 @@
  * try/catch and the tick processes rules with bounded concurrency.
  */
 import type { FastifyBaseLogger } from 'fastify';
+import type { Pool } from 'pg';
 import { pool } from '../../../config/database.js';
 import { AlertingRepository } from '../repository.js';
 import { EventsService } from '../events/events.service.js';
@@ -67,11 +68,45 @@ export class AlertRuleEvaluator {
   private readonly eventsService: EventsService;
   private readonly projectThresholds: ProjectThresholdWorker;
   private readonly log: FastifyBaseLogger;
+  /**
+   * Pool that owns TELEMETRY (`events_*`). ADR-0006 / DEV-002: ingestion persists telemetry
+   * through the Log DB pool, so the evaluator must read it through the same pool. Defaults to
+   * the control-plane pool so single-database deployments behave exactly as before.
+   *
+   * NOTE: `ai_usage_logs`, `alert_rules` and `alert_events` are NOT telemetry — they stay on
+   * the control-plane pool. Only `events_*` reads are routed here.
+   */
+  private readonly telemetry: Pool;
+  /** When true, conditions are evaluated and logged but no alert is fired or auto-resolved. */
+  private readonly dryRun: boolean;
 
-  constructor(logger: FastifyBaseLogger) {
+  /**
+   * @param telemetryPool pool owning `events_*`; defaults to the control-plane pool
+   * @param dryRun explicit override. When omitted it defaults to "dry-run if the telemetry pool
+   *   is a different pool", so single-database deployments keep firing exactly as before.
+   *   The environment-driven value is resolved by the worker registration (see
+   *   `resolveEvaluatorDryRun`) and passed in, keeping this class free of env coupling.
+   */
+  constructor(logger: FastifyBaseLogger, telemetryPool: Pool = pool, dryRun?: boolean) {
     this.log = logger.child({ component: 'alert-rule-evaluator' });
     this.eventsService = new EventsService({ repository: this.repo, logger });
-    this.projectThresholds = new ProjectThresholdWorker(logger);
+    this.telemetry = telemetryPool;
+
+    const poolsDiffer = this.telemetry !== pool;
+    this.dryRun = dryRun ?? poolsDiffer;
+    this.projectThresholds = new ProjectThresholdWorker(logger, telemetryPool, this.dryRun);
+
+    this.log.info(
+      {
+        telemetryPoolIsSeparate: poolsDiffer,
+        dryRun: this.dryRun,
+        dryRunSource: dryRun === undefined ? 'auto' : 'explicit',
+      },
+      this.dryRun
+        ? 'Alert rule evaluator running in DRY-RUN: conditions are evaluated but no alert will '
+          + 'fire or auto-resolve (DEV-002). Set ALERTING_EVAL_DRY_RUN=false after parity validation.'
+        : 'Alert rule evaluator will fire alerts',
+    );
   }
 
   /** One evaluator tick: alert rules, project thresholds, and preset seeding. */
@@ -235,6 +270,26 @@ export class AlertRuleEvaluator {
     }));
     const breaching = outcomes.find((o) => o.evaluated);
 
+    // DEV-002 dry-run: the breach is real and fully evaluated, but no alert event is created,
+    // so no notification can be delivered. This is what prevents an alert storm when the
+    // evaluator starts seeing telemetry it could not previously read.
+    if (this.dryRun) {
+      this.log.warn(
+        {
+          ruleId: rule.id,
+          orgId: rule.organization_id,
+          projectId: rule.project_id,
+          fingerprint,
+          consecutiveBreaches,
+          actual: breaching?.actual ?? null,
+          threshold: breaching?.threshold ?? null,
+          lookbackMinutes,
+        },
+        'DRY-RUN: alert rule would have fired (no alert event created)',
+      );
+      return;
+    }
+
     await this.eventsService.ingestEvent(rule.organization_id, {
       ruleId: rule.id,
       projectId: rule.project_id ?? undefined,
@@ -267,6 +322,12 @@ export class AlertRuleEvaluator {
 
   /** Resolve all active events carrying the rule fingerprint (auto-recovery). */
   private async recover(rule: AlertRuleRow): Promise<number> {
+    // DEV-002 dry-run: auto-resolve is also a state mutation, so it is suppressed too.
+    // Resolving alerts that a dry-run evaluator never fired would corrupt real alert state.
+    if (this.dryRun) return 0;
+
+    // alert_events is control-plane owned in this increment (legacy runtime), so this
+    // deliberately stays on the primary pool — only `events_*` moved to the telemetry pool.
     const active = await pool.query<{ id: string }>(
       `SELECT id FROM alert_events
        WHERE organization_id = $1 AND fingerprint = $2
@@ -454,7 +515,10 @@ export class AlertRuleEvaluator {
         return base;
     }
 
-    const r = await pool.query<{ value: number | null }>(sql, params);
+    // ADR-0006 / DEV-002: `events_*` live in the Log DB; `ai_usage_logs` is control-plane.
+    // Route each condition query to the pool that actually owns its table.
+    const db = kind.name.startsWith('ai_') ? pool : this.telemetry;
+    const r = await db.query<{ value: number | null }>(sql, params);
     return { ...base, evaluated: true, actual: r.rows[0]?.value ?? null, operator, threshold };
   }
 
@@ -465,24 +529,36 @@ export class AlertRuleEvaluator {
    * 24h but zero preset rules. One grouped query, then seed each org.
    */
   private async seedPresetsForActiveOrgs(): Promise<number> {
+    // DEV-002: this was ONE query joining telemetry (`events_*`) to configuration
+    // (`alert_rules`). That is only possible when both live in the same database. With the
+    // Log DB separated it must be two queries — telemetry first, then a configuration filter.
     let orgIds: string[];
     try {
-      const r = await pool.query<{ organization_id: string }>(
+      const active = await this.telemetry.query<{ organization_id: string }>(
         `SELECT t.organization_id
          FROM (
            SELECT organization_id FROM events_requests WHERE timestamp >= now() - interval '24 hours'
            UNION
            SELECT organization_id FROM events_errors WHERE timestamp >= now() - interval '24 hours'
          ) t
+         GROUP BY t.organization_id
+         LIMIT 500`,
+      );
+      const activeOrgIds = active.rows.map((row) => row.organization_id);
+      if (activeOrgIds.length === 0) return 0;
+
+      const unseeded = await pool.query<{ organization_id: string }>(
+        `SELECT candidate.organization_id
+         FROM unnest($1::uuid[]) AS candidate(organization_id)
          WHERE NOT EXISTS (
            SELECT 1 FROM alert_rules ar
-           WHERE ar.organization_id = t.organization_id
+           WHERE ar.organization_id = candidate.organization_id
              AND ar.preset_key IS NOT NULL AND ar.deleted_at IS NULL
          )
-         GROUP BY t.organization_id
          LIMIT 100`,
+        [activeOrgIds],
       );
-      orgIds = r.rows.map((row) => row.organization_id);
+      orgIds = unseeded.rows.map((row) => row.organization_id);
     } catch (err) {
       this.log.error({ err }, 'Preset seed scan failed');
       return 0;

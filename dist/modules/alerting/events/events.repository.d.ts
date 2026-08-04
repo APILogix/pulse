@@ -11,6 +11,7 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertBatchRow, type AlertDeadLetterRow, type AlertDeliveryAttemptRow, type AlertEventRow, type AlertEventStatus, type AlertThrottleWindowRow, type DeliveryAttemptStatus, type ListDeadLettersQuery, type ListEventsQuery } from '../types.js';
 export interface InsertEventInput {
     organizationId: string;
@@ -44,7 +45,14 @@ export interface DeliveryAttemptInsert {
     recipientUserId?: string | null;
 }
 export declare class EventsRepository {
+    /**
+     * Pool is injected explicitly (ADR-0006). This is the LEGACY runtime repository: it
+     * still targets the control-plane copies of the alert runtime tables and remains
+     * authoritative until ALERTING_V2_READ is enabled. New runtime access goes through
+     * modules/alerting/runtime/alert-runtime.repository.ts on the Log DB pool.
+     */
     private readonly db;
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     /** Find an active (firing/acknowledged) event matching a fingerprint within the dedup window. */
     findActiveEventByFingerprint(organizationId: string, fingerprint: string, windowSeconds: number, projectId?: string | null): Promise<AlertEventRow | null>;

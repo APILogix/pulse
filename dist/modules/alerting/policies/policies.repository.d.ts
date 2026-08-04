@@ -11,9 +11,12 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertEscalationPolicyRow, type AlertEscalationStepRow } from '../types.js';
 export declare class PoliciesRepository {
     private readonly db;
+    /** ADR-0006: escalation policies/steps are control-plane configuration. */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createEscalationPolicy(input: {
         organizationId: string;

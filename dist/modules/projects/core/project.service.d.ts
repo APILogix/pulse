@@ -21,8 +21,20 @@ import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
-import type { CreateProjectBody, ListProjectsQuery, Project, ProjectListItem, UpdateProjectBody } from "../types.js";
+import type { CreateProjectBody, ListProjectsQuery, Project, ProjectApiKey, ProjectEnvironmentConfig, ProjectListItem, UpdateProjectBody } from "../types.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+/**
+ * Result of creating a project: the project itself plus the single Production
+ * environment provisioned with it and the initial Production API key. The raw
+ * key (`fullKey`) is returned exactly once and never persisted in plaintext.
+ */
+export interface CreateProjectResult {
+    project: Project;
+    environment: ProjectEnvironmentConfig;
+    apiKey: ProjectApiKey;
+    fullKey: string;
+}
 export interface RequestMeta {
     actorUserId: string;
     actorEmail: string | null;
@@ -34,16 +46,33 @@ export interface RequestMeta {
     endpoint: string;
 }
 export declare class ProjectService extends BaseProjectService {
-    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, usageRepository: UsageRepository);
+    private readonly sdkConfigProvisioner;
+    constructor(repository: ProjectsRepository, logger: FastifyBaseLogger, orgRepo: OrganizationRepository, auditService: OrganizationAuditService, settingsRepository: SettingsRepository, apiKeyRepository: ApiKeyRepository, environmentRepository: EnvironmentRepository, usageRepository: UsageRepository, sdkConfigProvisioner?: SdkConfigProvisioner);
     listProjects(orgId: string, userId: string, query: ListProjectsQuery): Promise<{
         projects: ProjectListItem[];
         total: number;
         limit: number;
         offset: number;
     }>;
-    createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<Project>;
+    /**
+     * Create a project and provision a complete, production-ready runtime in a
+     * single database transaction:
+     *   1. Project row
+     *   2. Owner membership
+     *   3. Project settings
+     *   4. Exactly ONE Production environment (default, active)
+     *   5. SDK configuration head + published revision #1 for that environment
+     *   6. One initial Production API key (shown once)
+     *   7. Usage counters
+     *   8. Notification preferences
+     *
+     * No additional environments (Staging/Development/Testing/Preview/...) are
+     * created here — those exist only when the user explicitly creates them.
+     */
+    createProject(orgId: string, userId: string, body: CreateProjectBody, meta: RequestMeta): Promise<CreateProjectResult>;
     private seedDefaultNotificationPreferences;
     getProject(orgId: string, projectId: string, userId: string): Promise<Project>;
+    getProjectByPublicId(orgId: string, publicId: string, userId: string): Promise<Project>;
     getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto>;
     updateProject(orgId: string, projectId: string, userId: string, body: UpdateProjectBody, meta: RequestMeta): Promise<Project>;
     deleteProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<void>;

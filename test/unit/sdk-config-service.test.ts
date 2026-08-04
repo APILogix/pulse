@@ -1,14 +1,7 @@
-/**
- * RemoteSdkConfigService verification with an in-memory ConfigStore fake.
- *
- * Verifies the integration seams for the strict requirements:
- *  - init is atomic + idempotent and stores a full compiled snapshot (R1)
- *  - publish rejects protected/unknown before persisting; appends a revision (R8/R9/R11)
- *  - rollback APPENDS a new revision and never rewinds the pointer (R11)
- *  - management responses are EditableConfigView only, no compiled leak (R5/R6)
- *  - delivery resolves scope from the key mapping, not body identity (R10)
- */
-import { describe, expect, it, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import type { ApiKeyMapping } from "../../src/modules/projects/sdk-config/delivery.js";
+import { SdkConfigError } from "../../src/modules/projects/sdk-config/errors.js";
 import {
   RemoteSdkConfigService,
   type AppendRevisionInput,
@@ -17,31 +10,32 @@ import {
   type HeadRecord,
   type RevisionRecord,
 } from "../../src/modules/projects/sdk-config/sdk-config.service.js";
-import { SdkConfigError } from "../../src/modules/projects/sdk-config/errors.js";
-import type { ApiKeyMapping } from "../../src/modules/projects/sdk-config/delivery.js";
 
-/** Minimal append-only in-memory store keyed by environmentId. */
 class InMemoryConfigStore implements ConfigStore {
-  private heads = new Map<string, HeadRecord>();
-  private revisions = new Map<string, RevisionRecord[]>();
+  private readonly heads = new Map<string, HeadRecord>();
+  private readonly revisions = new Map<string, RevisionRecord[]>();
+  private readonly environmentKeys = new Map<string, string>();
 
   async loadCurrent(scope: ConfigScope) {
     const head = this.heads.get(scope.environmentId);
     if (!head) return null;
-    const list = this.revisions.get(scope.environmentId) ?? [];
-    const current = list.find((r) => r.revisionNo === head.currentRevisionNo)!;
+    const current = (this.revisions.get(scope.environmentId) ?? []).find(
+      (revision) => revision.revisionNo === head.currentRevisionNo,
+    );
+    if (!current) throw new Error("Corrupt test store head");
     return { head: { ...head }, current };
   }
 
   async loadRevision(scope: ConfigScope, revisionNo: number) {
-    const list = this.revisions.get(scope.environmentId) ?? [];
-    return list.find((r) => r.revisionNo === revisionNo) ?? null;
+    return (this.revisions.get(scope.environmentId) ?? []).find(
+      (revision) => revision.revisionNo === revisionNo,
+    ) ?? null;
   }
 
   async appendRevision(scope: ConfigScope, input: AppendRevisionInput) {
     const head = this.heads.get(scope.environmentId);
-    if (!head) throw new Error("not initialized");
-    const list = this.revisions.get(scope.environmentId)!;
+    const list = this.revisions.get(scope.environmentId);
+    if (!head || !list) throw new Error("Test store is not initialized");
     const revisionNo = head.currentRevisionNo + 1;
     const revision: RevisionRecord = {
       revisionNo,
@@ -52,31 +46,59 @@ class InMemoryConfigStore implements ConfigStore {
       rolledBackToRevision: input.rolledBackToRevision,
     };
     list.push(revision);
-    const newHead: HeadRecord = { currentRevisionNo: revisionNo, draftVersion: head.draftVersion };
-    this.heads.set(scope.environmentId, newHead);
-    return { head: { ...newHead }, revision };
+    const nextHead: HeadRecord = { currentRevisionNo: revisionNo, draftVersion: head.draftVersion };
+    this.heads.set(scope.environmentId, nextHead);
+    return { head: { ...nextHead }, revision };
   }
 
   async initialize(scope: ConfigScope, revision: RevisionRecord) {
     if (!this.heads.has(scope.environmentId)) {
       this.heads.set(scope.environmentId, { currentRevisionNo: revision.revisionNo, draftVersion: 0 });
       this.revisions.set(scope.environmentId, [revision]);
+      this.environmentKeys.set(scope.environmentId, scope.environmentKey);
     }
-    const head = this.heads.get(scope.environmentId)!;
-    const list = this.revisions.get(scope.environmentId)!;
-    const current = list.find((r) => r.revisionNo === head.currentRevisionNo)!;
-    return { head: { ...head }, current };
+    const loaded = await this.loadCurrent(scope);
+    if (!loaded) throw new Error("Test store initialization failed");
+    return loaded;
   }
 
   async loadCompiledByEnvironment(_organizationId: string, environmentId: string) {
     const head = this.heads.get(environmentId);
-    if (!head) return null;
-    const list = this.revisions.get(environmentId) ?? [];
-    const current = list.find((r) => r.revisionNo === head.currentRevisionNo)!;
-    return { revisionNo: current.revisionNo, compiledSnapshot: current.compiledSnapshot };
+    const environment = this.environmentKeys.get(environmentId);
+    if (!head || !environment) return null;
+    const current = (this.revisions.get(environmentId) ?? []).find(
+      (revision) => revision.revisionNo === head.currentRevisionNo,
+    );
+    if (!current) return null;
+    return {
+      revisionNo: current.revisionNo,
+      compiledSnapshot: current.compiledSnapshot,
+      environment,
+    };
   }
 
-  // Test helpers
+  async loadCompiledBySdkMetadata(organizationId: string, projectId: string, environment: string) {
+    for (const [environmentId, storedEnvironment] of this.environmentKeys) {
+      if (storedEnvironment !== environment) continue;
+      const head = this.heads.get(environmentId);
+      const current = (this.revisions.get(environmentId) ?? []).find(
+        (revision) => revision.revisionNo === head?.currentRevisionNo,
+      );
+      if (
+        current?.compiledSnapshot.sdk.projectId === projectId &&
+        current.compiledSnapshot.sdk.environment === environment &&
+        organizationId === SCOPE.organizationId
+      ) {
+        return {
+          revisionNo: current.revisionNo,
+          environmentId,
+          compiledSnapshot: current.compiledSnapshot,
+        };
+      }
+    }
+    return null;
+  }
+
   revisionCount(environmentId: string): number {
     return (this.revisions.get(environmentId) ?? []).length;
   }
@@ -88,6 +110,12 @@ const SCOPE: ConfigScope = {
   environmentId: "env_prod",
   environmentKey: "production",
 };
+const MAPPING: ApiKeyMapping = {
+  organizationId: SCOPE.organizationId,
+  projectId: SCOPE.projectId,
+  defaultEnvironmentId: SCOPE.environmentId,
+  allowedEnvironmentIds: [SCOPE.environmentId],
+};
 
 let store: InMemoryConfigStore;
 let service: RemoteSdkConfigService;
@@ -96,109 +124,159 @@ beforeEach(async () => {
   store = new InMemoryConfigStore();
   service = new RemoteSdkConfigService(store, {
     topology: { ingestBaseUrl: "https://ingest.pulse.test" },
+    // Deliberately fixed: the service must still issue a fresh timestamp per revision.
     clock: () => "2026-01-01T00:00:00.000Z",
   });
   await service.initialize(SCOPE, "user1");
 });
 
-describe("initialize (R1 atomic + idempotent)", () => {
-  it("creates exactly one revision-1 with a full compiled snapshot", async () => {
-    expect(store.revisionCount(SCOPE.environmentId)).toBe(1);
-    const rev = await store.loadRevision(SCOPE, 1);
-    expect(rev?.changeType).toBe("initial");
-    expect(rev?.compiledSnapshot.schemaVersion).toBe(1);
-    expect(Object.keys(rev?.compiledSnapshot.transport.routes ?? {})).toHaveLength(9);
-    expect(rev?.canonicalSha256).toMatch(/^[0-9a-f]{64}$/);
-  });
-  it("is idempotent (second init does not create a second revision)", async () => {
+describe("canonical initialization", () => {
+  it("atomically creates one complete revision and is idempotent", async () => {
     await service.initialize(SCOPE, "user1");
     expect(store.revisionCount(SCOPE.environmentId)).toBe(1);
-  });
-});
 
-describe("getEditableView (R5/R6 no compiled leak)", () => {
-  it("returns an editableConfigView with no protected fields", async () => {
+    const revision = await store.loadRevision(SCOPE, 1);
+    expect(revision).toMatchObject({ revisionNo: 1, requestedConfig: {}, changeType: "initial" });
+    expect(revision?.compiledSnapshot).toMatchObject({
+      schemaVersion: 1,
+      sdk: { projectId: SCOPE.projectId, environment: SCOPE.environmentKey, release: "1.0.0" },
+      meta: { generatedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(Object.keys(revision?.compiledSnapshot ?? {})).toHaveLength(12);
+    expect(Object.keys(revision?.compiledSnapshot.transport.routes ?? {})).toHaveLength(10);
+    expect(revision?.canonicalSha256).toBe(revision?.compiledSnapshot.meta.configHash);
+  });
+
+  it("returns only the editable management projection", async () => {
     const view = await service.getEditableView(SCOPE);
-    expect(view.type).toBe("editableConfigView");
+    const serialized = JSON.stringify(view);
+    expect(view).toMatchObject({
+      type: "editableConfigView",
+      scope: SCOPE,
+      revision: { currentRevisionNo: 1 },
+    });
+    expect(view.editableConfig).not.toHaveProperty("schemaVersion");
     expect(view.editableConfig).not.toHaveProperty("sdk");
     expect(view.editableConfig).not.toHaveProperty("meta");
-    expect(JSON.stringify(view).includes("ingest.pulse.test")).toBe(false);
+    expect(view.editableConfig).not.toHaveProperty("entitlements");
+    expect(serialized).not.toContain("ingest.pulse.test");
   });
 });
 
-describe("publish (R8/R9/R11)", () => {
-  it("rejects a protected route url write and appends no revision", async () => {
-    await expect(
-      service.publish(SCOPE, {
-        method: "PUT",
-        body: { editableConfig: { transport: { routes: { traces: { url: "https://evil" } } } } },
-        actorId: "user1",
-      }),
-    ).rejects.toMatchObject({ code: "protected_field", statusCode: 422 });
+describe("canonical publishing", () => {
+  it("rejects protected, legacy, unknown, and arbitrary compiled writes before persistence", async () => {
+    await expect(service.publish(SCOPE, {
+      method: "PUT",
+      body: { editableConfig: { transport: { routes: { traces: { url: "https://evil.test" } } } } },
+      actorId: "user1",
+    })).rejects.toMatchObject({ code: "protected_field", statusCode: 422 });
+
+    await expect(service.publish(SCOPE, {
+      method: "PUT",
+      body: { editableConfig: { sampling: { routeOverrides: true } } },
+      actorId: "user1",
+    })).rejects.toMatchObject({ code: "unknown_field", statusCode: 422 });
+
+    await expect(service.publish(SCOPE, {
+      method: "PUT",
+      body: { editableConfig: {}, compiledSnapshot: { schemaVersion: 1 } },
+      actorId: "user1",
+    })).rejects.toMatchObject({ code: "envelope_invalid", statusCode: 422 });
+
     expect(store.revisionCount(SCOPE.environmentId)).toBe(1);
   });
 
-  it("rejects unknown fields and appends no revision", async () => {
-    await expect(
-      service.publish(SCOPE, { method: "PUT", body: { editableConfig: { nope: 1 } }, actorId: "user1" }),
-    ).rejects.toBeInstanceOf(SdkConfigError);
-    expect(store.revisionCount(SCOPE.environmentId)).toBe(1);
-  });
-
-  it("appends a compiled revision for a valid change", async () => {
+  it("appends a complete revision with a fresh generatedAt and hash", async () => {
+    const initial = await store.loadRevision(SCOPE, 1);
     const view = await service.publish(SCOPE, {
       method: "PUT",
-      body: { editableConfig: { features: { tracing: false }, sampling: { traces: 0.25 } } },
+      body: {
+        editableConfig: {
+          features: { tracing: false },
+          sampling: { traces: 0.25 },
+          limits: { maxMemoryMb: "auto" },
+        },
+      },
       actorId: "user1",
     });
+
+    const published = await store.loadRevision(SCOPE, 2);
     expect(view.revision.currentRevisionNo).toBe(2);
-    expect((view.editableConfig as any).features.tracing).toBe(false);
-    const rev = await store.loadRevision(SCOPE, 2);
-    expect(rev?.compiledSnapshot.features.tracing).toBe(false);
-    expect(rev?.compiledSnapshot.sampling.traces).toBe(0.25);
-    expect(rev?.changeType).toBe("publish");
+    expect(published).toMatchObject({
+      revisionNo: 2,
+      requestedConfig: {
+        features: { tracing: false },
+        sampling: { traces: 0.25 },
+        limits: { maxMemoryMb: "auto" },
+      },
+      changeType: "publish",
+      rolledBackToRevision: null,
+    });
+    expect(published?.compiledSnapshot.features.tracing).toBe(false);
+    expect(published?.compiledSnapshot.sampling.traces).toBe(0.25);
+    expect(published?.compiledSnapshot.meta.generatedAt).toBe("2026-01-01T00:00:00.001Z");
+    expect(published?.compiledSnapshot.meta.generatedAt).not.toBe(initial?.compiledSnapshot.meta.generatedAt);
+    expect(published?.canonicalSha256).toBe(published?.compiledSnapshot.meta.configHash);
+    expect(published?.canonicalSha256).not.toBe(initial?.canonicalSha256);
   });
 });
 
-describe("rollback (R11 append-only, never rewind)", () => {
-  it("appends a new revision whose intent matches the target", async () => {
-    // rev2: tracing false
-    await service.publish(SCOPE, { method: "PUT", body: { editableConfig: { features: { tracing: false } } }, actorId: "u" });
-    // rev3: tracing true
-    await service.publish(SCOPE, { method: "PUT", body: { editableConfig: { features: { tracing: true } } }, actorId: "u" });
-    expect(store.revisionCount(SCOPE.environmentId)).toBe(3);
+describe("append-only rollback", () => {
+  it("recompiles historical editable intent into a new revision with a fresh timestamp and hash", async () => {
+    await service.publish(SCOPE, {
+      method: "PUT",
+      body: { editableConfig: { features: { tracing: false } } },
+      actorId: "user1",
+    });
+    await service.publish(SCOPE, {
+      method: "PUT",
+      body: { editableConfig: { features: { tracing: true } } },
+      actorId: "user1",
+    });
+    const target = await store.loadRevision(SCOPE, 2);
 
-    // rollback to rev2 -> appends rev4 (pointer advances, never rewinds)
-    const view = await service.rollback(SCOPE, 2, "u");
+    const view = await service.rollback(SCOPE, 2, "user1");
+    const rollback = await store.loadRevision(SCOPE, 4);
     expect(view.revision.currentRevisionNo).toBe(4);
     expect(store.revisionCount(SCOPE.environmentId)).toBe(4);
-    const rev4 = await store.loadRevision(SCOPE, 4);
-    expect(rev4?.changeType).toBe("rollback");
-    expect(rev4?.rolledBackToRevision).toBe(2);
-    expect(rev4?.compiledSnapshot.features.tracing).toBe(false);
+    expect(rollback).toMatchObject({
+      revisionNo: 4,
+      requestedConfig: target?.requestedConfig,
+      changeType: "rollback",
+      rolledBackToRevision: 2,
+    });
+    expect(rollback?.compiledSnapshot.features.tracing).toBe(false);
+    expect(rollback?.compiledSnapshot.meta.generatedAt).toBe("2026-01-01T00:00:00.003Z");
+    expect(rollback?.compiledSnapshot.meta.generatedAt).not.toBe(target?.compiledSnapshot.meta.generatedAt);
+    expect(rollback?.canonicalSha256).toBe(rollback?.compiledSnapshot.meta.configHash);
+    expect(rollback?.canonicalSha256).not.toBe(target?.canonicalSha256);
   });
 });
 
-describe("buildDelivery (R10 key-mapping resolution)", () => {
-  const mapping: ApiKeyMapping = {
-    organizationId: "org1",
-    projectId: "proj_123",
-    defaultEnvironmentId: "env_prod",
-    allowedEnvironmentIds: ["env_prod"],
-  };
-
-  it("delivers the compiled snapshot resolved from the key, ignoring body identity", async () => {
-    const result = await service.buildDelivery(mapping, { projectId: "spoofed", environmentId: "env_secret" });
-    expect(result.projectId).toBe("proj_123");
-    expect(result.environmentId).toBe("env_prod"); // ungranted hint -> default
-    expect(result.usedDefaultFallback).toBe(true);
-    expect(result.config.schemaVersion).toBe(1);
-    expect(result.etag).toMatch(/^"cfg-[0-9a-f]{64}"$/);
+describe("direct delivery", () => {
+  it("returns the stored effective document with identity resolved from SDK metadata plus API-key org", async () => {
+    const stored = await store.loadRevision(SCOPE, 1);
+    const result = await service.buildDelivery(MAPPING, {
+      projectId: SCOPE.projectId,
+      environment: SCOPE.environmentKey,
+      environmentId: "env_secret",
+    });
+    expect(result).toMatchObject({
+      organizationId: SCOPE.organizationId,
+      projectId: SCOPE.projectId,
+      environmentId: SCOPE.environmentId,
+      revisionNo: 1,
+      usedDefaultFallback: false,
+    });
+    expect(result.config).toEqual(stored?.compiledSnapshot);
+    expect(result.etag).toBe(`"cfg-${stored?.canonicalSha256}"`);
   });
 
-  it("returns 503 when no committed config exists for the environment", async () => {
-    const emptyStore = new InMemoryConfigStore();
-    const emptyService = new RemoteSdkConfigService(emptyStore, { topology: { ingestBaseUrl: "https://x" } });
-    await expect(emptyService.buildDelivery(mapping, {})).rejects.toMatchObject({ statusCode: 503 });
+  it("fails closed when no committed snapshot exists", async () => {
+    const emptyService = new RemoteSdkConfigService(new InMemoryConfigStore(), {
+      topology: { ingestBaseUrl: "https://ingest.pulse.test" },
+    });
+    await expect(emptyService.buildDelivery(MAPPING, {})).rejects.toBeInstanceOf(SdkConfigError);
+    await expect(emptyService.buildDelivery(MAPPING, {})).rejects.toMatchObject({ statusCode: 503 });
   });
 });

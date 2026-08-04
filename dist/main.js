@@ -3,7 +3,6 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { closeDatabase, connectDB } from './config/database.js';
 import { connectLogDB, logDB } from './config/log-database.js';
-import { checkRedis, closeRedis, connectRedis } from './config/redis.js';
 import { startPgBoss, stopPgBoss } from './lib/pgboss.js';
 const bootLogger = logger.child({ component: 'bootstrap' });
 const HEAP_CHECK_INTERVAL_MS = 60_000;
@@ -25,7 +24,6 @@ setInterval(() => {
 let app = null;
 let databaseConnected = false;
 let logDatabaseConnected = false;
-let redisConnected = false;
 let pgBossStarted = false;
 let shutdownPromise = null;
 async function closeStep(name, enabled, close) {
@@ -63,10 +61,6 @@ function shutdown(reason, exitCode) {
             await stopPgBoss(Math.min(10_000, env.SHUTDOWN_TIMEOUT_MS));
             pgBossStarted = false;
         });
-        await closeStep('redis', redisConnected, async () => {
-            await closeRedis();
-            redisConnected = false;
-        });
         await closeStep('log-database', logDatabaseConnected, async () => {
             await logDB.close();
             logDatabaseConnected = false;
@@ -99,13 +93,15 @@ async function bootstrap() {
         databaseConnected = true;
         await connectLogDB();
         logDatabaseConnected = true;
-        await connectRedis();
-        redisConnected = true;
+        // Redis connection disabled — see config/redis.ts. Re-enable by
+        // restoring the import above and uncommenting the two lines below.
+        // await connectRedis();
+        // redisConnected = true;
         await startPgBoss();
         pgBossStarted = true;
-        if (!(await checkRedis())) {
-            throw new Error('Redis health check failed');
-        }
+        // if (!(await checkRedis())) {
+        //   throw new Error('Redis health check failed');
+        // }
         bootLogger.info('All datastores connected');
         app = await buildApp();
         await app.listen({ port: env.PORT, host: env.HOST });

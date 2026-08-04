@@ -6,7 +6,7 @@ export declare class TelemetryReader {
     listErrorEvents(query: NormalizedErrorEventListQuery): Promise<ErrorEventListResult>;
     getErrorEventById(errorId: string, projectId: string): Promise<ErrorEventRecord | null>;
     getEventById(eventId: string, projectId: string): Promise<Record<string, unknown> | null>;
-    getEventsForReplay(projectId: string, startTime: string, endTime: string, eventTypes?: string[], maxEvents?: number): Promise<EnrichedEvent[]>;
+    getEventsForReplay(projectId: string, startTime: string, endTime: string, eventTypes?: string[], maxEvents?: number, environment?: string): Promise<EnrichedEvent[]>;
     private mapErrorRow;
     private rowToNormalizedEvent;
 }

@@ -273,6 +273,72 @@ export class EnvironmentRepository {
     });
   }
 
+  /**
+   * Hard-delete an already soft-deleted environment along with every API key
+   * scoped to it (and their rotation history) plus its SDK configuration
+   * (head + immutable revisions cascade via FK). Requires the environment to
+   * already be soft-deleted so the destructive purge is always a deliberate
+   * second step after the reversible delete, never the default action.
+   *
+   * `project_api_keys`/`project_api_key_rotations`/`project_releases` all hold
+   * an `ON DELETE RESTRICT` foreign key to `project_environments`, so they are
+   * removed explicitly before the environment row itself is deleted. SDK
+   * config tables and nullable-environment alert thresholds hold `ON DELETE
+   * CASCADE` and are removed automatically by Postgres.
+   */
+  async permanentlyDeleteEnvironment(
+    projectId: string,
+    environmentId: string,
+    client?: PoolClient,
+  ): Promise<{ deletedApiKeySecretHashes: string[]; deletedActiveApiKeyCount: number }> {
+    return this.transaction(client, async (tx) => {
+      const current = await this.findEnvironmentIncludingDeleted(projectId, environmentId, tx, true);
+      if (!current) {
+        throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+      }
+      if (!current.deletedAt) {
+        throw new ProjectError(
+          "ENVIRONMENT_NOT_SOFT_DELETED",
+          "Soft-delete the environment before permanently deleting it",
+          409,
+        );
+      }
+
+      const keyRows = await tx.query<{ secret_hash: string; status: string }>(
+        `SELECT secret_hash, status FROM project_api_keys WHERE project_id = $1 AND environment_id = $2`,
+        [projectId, environmentId],
+      );
+      const deletedApiKeySecretHashes = keyRows.rows.map((row) => row.secret_hash);
+      const deletedActiveApiKeyCount = keyRows.rows.filter((row) => row.status === "active").length;
+
+      // Rotation history references project_api_keys with a RESTRICT FK, so it
+      // must be cleared before the credential rows themselves.
+      await tx.query(
+        `DELETE FROM project_api_key_rotations WHERE project_id = $1 AND environment_id = $2`,
+        [projectId, environmentId],
+      );
+      await tx.query(
+        `DELETE FROM project_api_keys WHERE project_id = $1 AND environment_id = $2`,
+        [projectId, environmentId],
+      );
+      // Releases also hold a RESTRICT FK to the environment.
+      await tx.query(
+        `DELETE FROM project_releases WHERE project_id = $1 AND environment_id = $2`,
+        [projectId, environmentId],
+      );
+
+      const result = await tx.query(
+        `DELETE FROM project_environments WHERE project_id = $1 AND id = $2`,
+        [projectId, environmentId],
+      );
+      if (result.rowCount === 0) {
+        throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Environment not found", 404);
+      }
+
+      return { deletedApiKeySecretHashes, deletedActiveApiKeyCount };
+    });
+  }
+
   async restoreEnvironment(
     projectId: string,
     environmentId: string,

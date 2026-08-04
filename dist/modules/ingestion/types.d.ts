@@ -6,6 +6,7 @@ export type EventType = SdkEventType;
 export interface SDKRequestEvent {
     type: 'request';
     requestId: string;
+    route?: string;
     url: string;
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
     statusCode: number;
@@ -14,18 +15,34 @@ export interface SDKRequestEvent {
     headers: Record<string, string>;
     query: Record<string, any>;
     bodySize: number;
+    responseSize?: number;
     userId: string | null;
+    traceId?: string;
+    spanId?: string;
+    metadata?: Record<string, any>;
 }
 /** SDK Error Event Payload */
 export interface SDKErrorEvent {
     type: 'error';
-    requestId: string;
+    eventId?: string;
+    requestId?: string;
     message: string;
-    name: string | Record<string, any>;
-    stack: string[];
-    fingerprint: string;
+    name?: string | Record<string, any>;
+    stack?: unknown[];
+    severity?: string;
+    fingerprint?: string;
+    traceId?: string;
+    spanId?: string;
+    sessionId?: string;
+    statusCode?: number;
+    statusText?: string;
+    handled?: boolean;
+    method?: string;
+    route?: string;
+    url?: string;
     timestamp: number;
-    context: Record<string, any>;
+    context?: Record<string, any>;
+    metadata?: Record<string, any>;
 }
 /** SDK Log Event Payload */
 export interface SDKLogEvent {
@@ -39,20 +56,45 @@ export interface SDKLogEvent {
 /** SDK Metric Event Payload */
 export interface SDKMetricEvent {
     type: 'metric';
-    name: string;
-    value: number;
+    eventId?: string;
+    metricName?: string;
+    name?: string;
+    metricType?: 'counter' | 'gauge' | 'histogram' | 'summary' | 'observable_counter' | 'observable_gauge' | 'up_down_counter';
+    value?: number;
     unit?: string;
+    metricUnit?: string;
+    metricNamespace?: string;
+    metricDescription?: string;
+    count?: number;
+    sum?: number;
+    min?: number;
+    max?: number;
+    avg?: number;
+    rate?: number;
+    p50?: number;
+    p75?: number;
+    p90?: number;
+    p95?: number;
+    p99?: number;
+    temporality?: 'delta' | 'cumulative' | 'unspecified';
+    isMonotonic?: boolean;
     tags?: Record<string, string>;
+    attributes?: Record<string, any>;
     metadata?: Record<string, any>;
     requestId?: string;
+    sessionId?: string;
+    tenantId?: string;
+    traceId?: string;
+    spanId?: string;
     timestamp: number;
 }
 export type SDKEvent = SDKRequestEvent | SDKErrorEvent | SDKLogEvent | SDKMetricEvent;
 /** API Request Body */
 export interface IngestRequest {
-    apiKey: string;
+    apiKey?: string;
     events: SDKEvent[];
     metadata?: {
+        environment: string;
         sdkVersion?: string;
         compression?: 'gzip' | 'none';
         batchId?: string;
@@ -75,6 +117,7 @@ export interface IngestResponse {
 }
 export interface ErrorEventListQuery {
     projectId: string;
+    environment?: string;
     limit?: number;
     offset?: number;
     from?: string;
@@ -91,13 +134,16 @@ export interface ErrorEventRecord {
     id: string;
     eventId: string;
     projectId: string;
+    environment: string;
     requestId: string | null;
     message: string;
     errorType: string;
     fingerprint: string;
     stack: unknown;
     context: unknown;
-    metadata: unknown;
+    metadata: {
+        environment: string;
+    };
     timestamp: string;
     createdAt: string;
     resolvedAt: string | null;
@@ -112,28 +158,13 @@ export interface ErrorEventListResult {
     offset: number;
     hasMore: boolean;
 }
-/** SDK Init Response — Matches your SDK expectation exactly */
-export interface SDKInitResponse {
-    success: boolean;
-    projectId: string;
-    config: {
-        samplingRate: number;
-        enableErrors: boolean;
-        enablePerformance: boolean;
-    };
-    ingestion: {
-        endpoint: string;
-        batchSize: number;
-        flushInterval: number;
-        maxQueueSize: number;
-    };
-}
 /** Internal Enriched Event (after API processing) */
 export interface EnrichedEvent {
     id: string;
     type: EventType;
     projectId: string;
     orgId: string;
+    environment: string;
     requestId?: string;
     receivedAt: number;
     ingestedAt?: string;
@@ -145,6 +176,7 @@ export interface ReplayRequest {
     projectId: string;
     startTime: string;
     endTime: string;
+    environment?: string;
     eventTypes?: EventType[];
     targetQueue?: string;
 }
@@ -165,7 +197,6 @@ export interface HealthStatus {
     timestamp: string;
 }
 export declare const IngestSchema: FastifySchema;
-export declare const InitSchema: FastifySchema;
 export declare const ReplaySchema: FastifySchema;
 export declare const ErrorListSchema: FastifySchema;
 export declare const ErrorByIdSchema: FastifySchema;

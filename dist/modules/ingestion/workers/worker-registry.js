@@ -60,10 +60,10 @@ export class WorkerRegistry {
     inFlight = new Map();
     registeredQueues = [];
     started = false;
-    constructor(pool, log) {
+    constructor(pool, log, telemetryPool = pool) {
         this.pool = pool;
         this.log = log;
-        this.processor = new EventProcessor(pool, this.metrics, log.child({ component: 'event-processor' }));
+        this.processor = new EventProcessor(telemetryPool, this.metrics, log.child({ component: 'event-processor' }), pool);
         this.rollup = new UsageRollup(pool, this.metrics, log.child({ component: 'usage-rollup' }));
         this.metricsServer = new MetricsServer(this.metrics, pool, log.child({ component: 'metrics-server' }));
     }
@@ -116,6 +116,16 @@ export class WorkerRegistry {
     // ── Per-type ingest batch handler ─────────────────────────────────────────
     async handleIngestBatch(queue, type, arg) {
         const jobs = normalizeJobs(arg);
+        this.log.info({
+            queue,
+            eventType: type,
+            jobs: jobs.length,
+            events: jobs.reduce((count, job) => {
+                const payload = job.data;
+                return count + (Array.isArray(payload?.events) ? payload.events.length : 0);
+            }, 0),
+            jobIds: jobs.map((job) => job.id),
+        }, 'ingestion worker picked jobs');
         const outcomes = await Promise.all(jobs.map(async (job) => {
             try {
                 const output = await this.runOne(queue, type, job.data);
@@ -144,6 +154,7 @@ export class WorkerRegistry {
         const deferCount = typeof meta?.deferCount === 'number' ? meta.deferCount : 0;
         const limit = TENANT_INFLIGHT_LIMIT[planTier];
         const current = this.inFlight.get(orgId) ?? 0;
+        const eventCount = Array.isArray(payload?.events) ? payload.events.length : 0;
         if (current >= limit && deferCount < env.INGESTION_FAIRNESS_MAX_DEFERS) {
             // Re-enqueue a copy with an aged priority boost, then complete the
             // original — if the send throws, the original FAILS and retries, so the
@@ -156,7 +167,15 @@ export class WorkerRegistry {
                 startAfter: env.INGESTION_FAIRNESS_DEFER_DELAY_SECONDS,
                 priority: jobPriority(planTier, type, deferCount + 1),
             });
-            this.metrics.recordDeferred(queue, Array.isArray(payload?.events) ? payload.events.length : 0);
+            this.metrics.recordDeferred(queue, eventCount);
+            this.log.info({
+                queue,
+                eventType: type,
+                batchId: meta?.batchId,
+                events: eventCount,
+                deferCount: deferCount + 1,
+                limit,
+            }, 'ingestion worker deferred job for tenant fairness');
             return { deferred: true, deferCount: deferCount + 1 };
         }
         this.inFlight.set(orgId, current + 1);
@@ -209,7 +228,7 @@ export class WorkerRegistry {
                 jobType: typeof d.eventType === 'string' ? d.eventType : 'unknown',
                 orgId: d.organizationId,
                 projectId: d.projectId,
-                payload: d.payload ?? null,
+                payload: d,
                 attempts: 1,
                 lastError: typeof d.error === 'string' ? d.error : 'validation failed',
                 errorCode: 'validation_failed',

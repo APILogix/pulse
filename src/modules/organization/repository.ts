@@ -153,7 +153,7 @@ export class OrganizationRepository extends BaseRepository {
          s.id AS subscription_id, s.status AS subscription_status,
          p.id AS plan_id, p.key AS plan_key, p.tier AS plan_tier,
          COALESCE(jsonb_object_agg(e.feature_key, COALESCE(to_jsonb(e.boolean_value), to_jsonb(e.integer_value), to_jsonb(e.decimal_value), to_jsonb(e.string_value))) FILTER (WHERE e.feature_key IS NOT NULL), '{}'::jsonb) AS feature_config,
-         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key = 'monthly_events'), 0) AS event_limit_monthly,
+         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key IN ('quota.monthly_events', 'monthly_events')), 0) AS event_limit_monthly,
          FALSE AS hard_cap
        FROM organization_subscriptions s
        JOIN plans p ON p.id = s.plan_id
@@ -215,6 +215,23 @@ export class OrganizationRepository extends BaseRepository {
       alertRulesUsed: Number(row.alert_rules_used ?? 0),
       dashboardsUsed: Number(row.dashboards_used ?? 0),
     };
+  }
+
+  /**
+   * Adjust the fast-path `organization_usage_current_period.api_keys_used`
+   * counter so org-level dashboards/quota checks reflect API key creation and
+   * deletion immediately. Non-fatal: callers treat a missing usage row (org
+   * has no active subscription period yet) as a no-op rather than an error,
+   * since the authoritative limit enforcement is the live COUNT(*) in
+   * `ProjectsRepository.getProjectModuleUsageCounts`.
+   */
+  async adjustApiKeyUsageCounter(orgId: string, delta: number): Promise<void> {
+    await this.db.query(
+      `UPDATE organization_usage_current_period
+          SET api_keys_used = GREATEST(api_keys_used + $2, 0)
+        WHERE organization_id = $1`,
+      [orgId, delta],
+    );
   }
 
   // ── Backward Compatibility for Modules ────────────────────────

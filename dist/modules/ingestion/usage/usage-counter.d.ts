@@ -20,10 +20,12 @@ export declare class UsageCounter {
     private timer;
     private flushing;
     private stopped;
+    private schemaReady;
     constructor(pool: Pool, log: Logger, opts?: UsageCounterOptions);
     start(): void;
     increment(projectId: string, orgId: string, counterType: CounterType, by?: number, dimensions?: UsageDimensions): void;
     flush(): Promise<void>;
+    private ensureSchema;
     private runRollup;
     getUsage(projectId: string, counterType: CounterType, periodStart?: Date): Promise<number>;
     stop(): Promise<void>;

@@ -108,11 +108,13 @@ export class MonitoringTools {
       ? input.projects.find((project) => project.id === input.requestedProjectId)
       : mentionedProject(question, input.projects) ?? (input.projects.length === 1 ? input.projects[0] : undefined);
     const projectId = selectedProject?.id;
+    const environment = selectedProject?.environment;
     const baseQuery = {
       range: '24h' as const,
       from: input.from,
       to: input.to,
       ...(projectId ? { projectId } : {}),
+      ...(environment ? { environment } : {}),
     };
 
     if (/\b(?:show|list|what|which).*\bprojects?\b|\bprojects?\s+(?:do we|are we)\s+monitor/i.test(question)) {
@@ -152,10 +154,10 @@ export class MonitoringTools {
     const traceIntent = /\btraces?\b|critical path|\bspans?\b|bottleneck|n\+1/i.test(question);
     if (traceIntent) {
       const traceId = extractTraceId(input.question);
-      if (traceId && /show|explain|critical path|bottleneck|trace\s+(?:id\s*)?[#:]?\s*\[?/i.test(question)) {
+      if (traceId && projectId && environment && /show|explain|critical path|bottleneck|trace\s+(?:id\s*)?[#:]?\s*\[?/i.test(question)) {
         await this.capture(sources, calls, 'query_traces', projectId ?? null,
           { traceId, includeSpans: true },
-          () => this.eventAnalytics.getTrace(input.tenantId, traceId),
+          () => this.eventAnalytics.getTrace(input.tenantId, traceId, projectId, environment),
           `Trace ${traceId}`);
       } else {
         const service = extractServiceName(input.question);

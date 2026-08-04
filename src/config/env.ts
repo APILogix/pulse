@@ -20,6 +20,7 @@ const envSchema = z.object({
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(5000).default(20_000),
   APP_NAME: z.string().default('Pulsiv'),
   APP_URL: z.string().url().default('http://localhost:5173'),
+  BACKEND_URL: z.string().url().default('http://localhost:5000/api'),
   API_PUBLIC_URL: z.string().url().optional(),
   // Primary Database (PostgreSQL)
   DATABASE_URL: z.string(),
@@ -80,6 +81,13 @@ const envSchema = z.object({
   LOG_DB_CHUNK_INTERVAL: z.string().default('1 day'),
   LOG_DB_COMPRESS_AFTER: z.string().default('7 days'),
   LOG_DB_RETENTION: z.string().default('90 days'),
+  // Ingestion workers write into the dedicated Log DB event schema. Keep this
+  // enabled so workers fail fast instead of processing jobs against stale/missing
+  // Log DB tables. Set to false only when migrations are handled externally.
+  LOG_DB_AUTO_MIGRATE: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
 
   // ClickHouse (Optional)
   CLICKHOUSE_URL: z.string().optional(),
@@ -263,6 +271,92 @@ const envSchema = z.object({
   // Cron schedules (pg-boss) for the usage rollup and alert rule evaluator.
   INGESTION_USAGE_ROLLUP_CRON: z.string().default('* * * * *'),
   INGESTION_ALERT_EVAL_CRON: z.string().default('* * * * *'),
+
+  // ── Alerting v2 rollout flags ───────────────────────────────────────────────
+  // docs/alerting-redesign/07-migration-plan.md §7 (zero-downtime sequence).
+  // Flags are read at boot, so a rollback is a restart — never a migration.
+  //
+  // ALERTING_V2_WRITE: when true, alerting/connector runtime writes are mirrored
+  // into the typed *_v2 Log DB tables (Increment 1 creates them; Increment 5
+  // begins dual-write). Legacy tables stay authoritative until ALERTING_V2_READ.
+  // A v2 mirror failure is logged and MUST NOT fail the request.
+  ALERTING_V2_WRITE: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  // ALERTING_V2_READ: when true, reads come from the typed *_v2 runtime tables.
+  // Requires ALERTING_V2_WRITE plus a passing verification gate
+  // (07-migration-plan.md §9). Defined here so Increment 1 ships the complete,
+  // documented rollout switch rather than adding flags piecemeal later.
+  ALERTING_V2_READ: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  // DEV-002 (docs/alerting-redesign/DEVIATIONS.md): the scheduled evaluators read telemetry
+  // through an injected pool. When the telemetry pool differs from the control-plane pool,
+  // repointing changes WHAT the evaluator can see, so firing is suppressed by default until
+  // Increment 8's parity harness has run. Tri-state:
+  //   'true'  → always dry-run (evaluate + log, never fire or auto-resolve)
+  //   'false' → always fire (use only after parity validation)
+  //   unset   → dry-run automatically IF the telemetry pool differs from the config pool,
+  //             so single-database deployments keep their current behaviour exactly.
+  ALERTING_EVAL_DRY_RUN: z.enum(['true', 'false']).optional(),
+
+  // Boot assertion for ADR-0006: the alerting runtime pool MUST be able to see the
+  // telemetry and v2 runtime tables. Converts audit finding B1 (evaluator querying a
+  // database with no telemetry) from a silent failure into a startup crash. Only
+  // disable for local bootstrap before Log DB migrations have been applied.
+  ALERTING_RUNTIME_POOL_ASSERT: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+
+  // ── Analytics engine (docs/analytics/00-architecture-overview.md §7) ────
+  // Dedicated worker process that turns canonical Log DB telemetry into
+  // dashboard rollups. Completely independent from ingestion: separate
+  // process, separate pool, separate queues, read-only on events_*.
+  ANALYTICS_ENGINE_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  // Per-queue local concurrency for analytics domain workers.
+  ANALYTICS_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+  // Hard ceiling on rows a single worker run may fold into rollups. Bounds the
+  // read pressure any one analytics batch can put on the Log DB.
+  ANALYTICS_BATCH_MAX_ROWS: z.coerce.number().int().min(1000).max(5_000_000).default(50_000),
+  // Maximum catch-up span per run. Large backlogs are consumed in slices so a
+  // cold start cannot issue an unbounded scan.
+  ANALYTICS_MAX_WINDOW_SPAN_MINUTES: z.coerce.number().int().min(1).max(1440).default(60),
+  // Recompute lookback for late-arriving events. Buckets newer than
+  // (now - grace) are recomputed on every pass.
+  ANALYTICS_LATE_EVENT_GRACE_SECONDS: z.coerce.number().int().min(0).max(86_400).default(900),
+  // Per-statement guard for analytics reads (0 disables).
+  ANALYTICS_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
+  // Dedicated Log DB pool for the analytics process. Kept small so analytics
+  // reads can never starve the ingestion writer pool.
+  ANALYTICS_DB_POOL_MAX: z.coerce.number().int().min(1).max(64).default(4),
+  // Health + Prometheus endpoint exposed by the analytics worker process.
+  ANALYTICS_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(9301),
+  // Watermark lag beyond which API responses report meta.freshness.stale.
+  ANALYTICS_FRESHNESS_STALE_SECONDS: z.coerce.number().int().min(30).default(300),
+  // Analytics-owned retention pruning (never touches events_*).
+  ANALYTICS_RETENTION_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  // Boot assertion that the analytics pool is attached to the database that
+  // owns events_* — mirrors ALERTING_RUNTIME_POOL_ASSERT.
+  ANALYTICS_POOL_ASSERT: z
+    .string()
+    .optional()
+    .transform((value) => value !== 'false'),
+  // Per-bucket entity ceiling for Shape B rollups. Overflow is folded into a
+  // single __other__ row so route/metric-name explosions stay bounded.
+  ANALYTICS_ENTITY_TOPK: z.coerce.number().int().min(50).max(50_000).default(1_000),
+  // Apdex satisfied threshold (ms). Tolerating zone is 4x this value.
+  ANALYTICS_APDEX_THRESHOLD_MS: z.coerce.number().int().min(10).max(60_000).default(500),
+  // Inactivity gap that closes a reconstructed session.
+  ANALYTICS_SESSION_IDLE_MINUTES: z.coerce.number().int().min(1).max(1440).default(30),
 });
 
 export const env = envSchema.parse(process.env);

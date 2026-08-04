@@ -8,14 +8,9 @@ import { extractApiKeyPrefix, hashApiKey, constantTimeEqualHex } from '../projec
 export class PostgresWriter {
     pool;
     reader;
-    constructor(pool) {
+    constructor(pool, telemetryPool = pool) {
         this.pool = pool;
-        this.reader = new TelemetryReader(pool);
-    }
-    configObject(value) {
-        return value !== null && typeof value === 'object' && !Array.isArray(value)
-            ? value
-            : {};
+        this.reader = new TelemetryReader(telemetryPool);
     }
     /**
      * Resolve an ingestion API key by extracting its public prefix, looking up
@@ -41,17 +36,10 @@ export class PostgresWriter {
         k.status as key_status,
         k.expires_at,
         k.secret_hash,
-        cr.config_value AS sdk_config,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
-      INNER JOIN project_environment_sdk_configs ch
-        ON ch.environment_id = k.environment_id
-       AND ch.project_id = k.project_id
-       AND ch.organization_id = k.organization_id
-      INNER JOIN project_environment_sdk_config_revisions cr
-        ON cr.id = ch.published_revision_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
        AND s.status IN ('trialing', 'active', 'past_due')
@@ -108,9 +96,6 @@ export class PostgresWriter {
                 allowedIps: [],
                 allowedDomains: [],
                 allowedSdks: [],
-                samplingRules: this.configObject(row.sdk_config?.samplingRules),
-                featureFlags: this.configObject(row.sdk_config?.featureFlags),
-                sdkConfig: row.sdk_config ?? {},
                 rateLimitPerSecond: null,
                 rateLimitPerMinute: null,
                 rateLimitPerHour: null,
@@ -166,8 +151,8 @@ export class PostgresWriter {
     async getEventById(eventId, projectId) {
         return this.reader.getEventById(eventId, projectId);
     }
-    async getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents = 10_000) {
-        return this.reader.getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents);
+    async getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents = 10_000, environment) {
+        return this.reader.getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents, environment);
     }
     async healthCheck() {
         try {

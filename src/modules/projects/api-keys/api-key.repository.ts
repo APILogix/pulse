@@ -272,6 +272,7 @@ export class ApiKeyRepository {
 
     if (input.name !== undefined) set("name", input.name);
     if (input.expiresAt !== undefined) set("expires_at", input.expiresAt);
+    if (input.environmentId !== undefined) set("environment_id", input.environmentId);
 
     if (assignments.length === 0) {
       const apiKey = await this.findApiKeyById(projectId, apiKeyId, client);
@@ -460,7 +461,6 @@ export class ApiKeyRepository {
     project: Project;
     environmentName: string;
     environmentSlug: string;
-    publishedConfig: Record<string, unknown>;
   }>> {
     const db = client ?? this.db;
     const result = await db.query<ApiKeyRow & Record<string, unknown>>(
@@ -472,8 +472,7 @@ export class ApiKeyRepository {
          p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
          p.deleted_by AS p_deleted_by, p.created_at AS p_created_at, p.updated_at AS p_updated_at,
          p.version AS p_version,
-         e.name AS env_name, e.slug AS env_slug,
-         cr.config_value AS environment_sdk_config
+         e.name AS env_name, e.slug AS env_slug
        FROM project_api_keys k
        INNER JOIN projects p ON p.id = k.project_id AND p.org_id = k.organization_id
        INNER JOIN project_environments e
@@ -482,12 +481,6 @@ export class ApiKeyRepository {
         AND e.organization_id = k.organization_id
         AND e.is_active = TRUE
         AND e.deleted_at IS NULL
-       INNER JOIN project_environment_sdk_configs ch
-         ON ch.environment_id = e.id
-        AND ch.project_id = k.project_id
-        AND ch.organization_id = k.organization_id
-       INNER JOIN project_environment_sdk_config_revisions cr
-         ON cr.id = ch.published_revision_id
        WHERE k.public_key = $1
          AND p.status = 'active'
          AND p.deleted_at IS NULL
@@ -512,7 +505,6 @@ export class ApiKeyRepository {
       project: this.mapProject(this.prefixedProjectRow(row)),
       environmentName: (row.env_name as string | null) ?? "default",
       environmentSlug: (row.env_slug as string | null) ?? "production",
-      publishedConfig: (row.environment_sdk_config as Record<string, unknown> | null) ?? {},
     }));
   }
 
@@ -560,15 +552,16 @@ export class ApiKeyRepository {
 
   // ── Mapping helpers ─────────────────────────────────────────────────────────
 
-  private prefixedProjectRow(row: Record<string, unknown>): ProjectRow {
+  private prefixedProjectRow(row: Record<string, unknown>): import("../core/project.repository.js").ProjectRow {
     return {
       id: row.p_id as string,
+      public_id: row.p_public_id as string,
       org_id: row.p_org_id as string,
       name: row.p_name as string,
       slug: row.p_slug as string,
       description: row.p_description as string | null,
       status: row.p_status as ProjectStatus,
-      visibility: row.p_visibility as string,
+      visibility: row.p_visibility as "public" | "private" | "organization",
       timezone: row.p_timezone as string,
       tags: row.p_tags as string[],
       icon: row.p_icon as string | null,
@@ -583,9 +576,10 @@ export class ApiKeyRepository {
     };
   }
 
-  private mapProject(row: ProjectRow): Project {
+  private mapProject(row: import("../core/project.repository.js").ProjectRow): Project {
     return {
       id: row.id,
+      publicId: row.public_id,
       orgId: row.org_id,
       name: row.name,
       slug: row.slug,

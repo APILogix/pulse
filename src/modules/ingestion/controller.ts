@@ -19,12 +19,13 @@
  *   - All error paths log the reqId so a 500 in production is traceable.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { IngestionService } from './service.js';
+import type { IngestionService } from './service.js';
 import type {
   ErrorEventListQuery,
   IngestRequest,
   ReplayRequest,
 } from './types.js';
+import type { SdkEventType } from './pipeline/event-normalizer.js';
 import { resolveApiKey } from './utils/api-key.js';
 
 interface InitBody {
@@ -62,6 +63,7 @@ interface DebugQuery {
 
 const ERROR_MAP: Record<string, { status: number; message: string }> = {
   INVALID_REQUEST: { status: 400, message: 'Invalid request body' },
+  INVALID_ENVIRONMENT: { status: 400, message: 'A valid SDK environment string is required' },
   INVALID_API_KEY: { status: 401, message: 'Invalid API key' },
   PROJECT_INACTIVE: { status: 403, message: 'Project inactive' },
   API_KEY_PERMISSION_DENIED: { status: 403, message: 'API key lacks ingest permission' },
@@ -73,6 +75,7 @@ const ERROR_MAP: Record<string, { status: number; message: string }> = {
   CIRCUIT_OPEN: { status: 503, message: 'Service temporarily unavailable' },
   INVALID_EVENT_TYPE: { status: 400, message: 'Invalid event type for endpoint' },
   INVALID_DATE_RANGE: { status: 400, message: 'Invalid date range' },
+  CONFIG_UNAVAILABLE: { status: 503, message: 'Configuration temporarily unavailable' },
   JOB_NOT_FOUND: { status: 404, message: 'Job not found' },
 };
 
@@ -96,7 +99,10 @@ export class IngestionController {
         throw new Error('INVALID_API_KEY');
       }
       const result = await this.service.initializeSdk(apiKey);
-      return reply.send(result);
+      reply.header('ETag', result.etag);
+      reply.header('X-Config-Revision', String(result.revisionNo));
+      reply.header('Cache-Control', 'private, no-cache');
+      return reply.send(result.config);
     } catch (err) {
       return this.handleError(err, request, reply);
     }
@@ -117,6 +123,30 @@ export class IngestionController {
     } catch (err) {
       return this.handleError(err, request, reply);
     }
+  }
+
+  /**
+   * Factory that builds a typed-ingestion route handler for one SDK event
+   * family. The data-driven route table (route-table.ts) calls this once per
+   * family, so route registration never hand-writes a near-identical handler
+   * per type. The returned handler stays thin: it shapes HTTP input and resolves
+   * the API key, then delegates ALL policy (auth, quota, rate limits,
+   * backpressure, event-type enforcement, queue priority) to the service. The
+   * arrow closure captures `this`, so Fastify can invoke the handler without the
+   * controller instance context and no explicit `.bind()` is required.
+   */
+  ingestTyped(type: SdkEventType) {
+    return async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const body = request.body as IngestRequest;
+        const apiKey = resolveApiKey(request, body);
+        if (!apiKey) throw new Error('INVALID_API_KEY');
+        const result = await this.service.ingestTyped(body, apiKey, type);
+        return reply.status(202).send(result);
+      } catch (err) {
+        return this.handleError(err, request, reply);
+      }
+    };
   }
 
   /**
@@ -353,6 +383,9 @@ export class IngestionController {
 
     const to = this.optionalString(raw.to);
     if (to !== undefined) query.to = to;
+
+    const environment = this.optionalString(raw.environment);
+    if (environment !== undefined) query.environment = environment;
 
     const fingerprint = this.optionalString(raw.fingerprint);
     if (fingerprint !== undefined) query.fingerprint = fingerprint;

@@ -38,13 +38,13 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         error: "error";
         release: "release";
         security: "security";
+        ai: "ai";
         billing: "billing";
         usage: "usage";
-        ai: "ai";
+        cron: "cron";
         all: "all";
         deployment: "deployment";
         performance: "performance";
-        cron: "cron";
     }>;
     userIds: z.ZodArray<z.ZodString>;
 }, z.core.$strip>;

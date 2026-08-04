@@ -1,0 +1,67 @@
+◇ injecting env (37) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+{"level":30,"time":1785427661690,"pid":6284,"env":"production","component":"bootstrap","msg":"Connecting to datastores"}
+{"level":30,"time":1785427661798,"pid":6284,"env":"production","component":"database","db":"apitool","serverTime":"2026-07-30T16:07:41.803Z","msg":"Primary database connected"}
+{"level":30,"time":1785427661800,"pid":6284,"env":"production","component":"log-database","msg":"Testing log database connections"}
+{"level":30,"time":1785427661880,"pid":6284,"env":"production","component":"log-database","db":"logdb","time":"2026-07-30T16:07:41.886Z","msg":"Log DB primary connected"}
+{"level":30,"time":1785427662837,"pid":6284,"env":"production","component":"redis","msg":"Redis connection established"}
+{"level":30,"time":1785427663583,"pid":6284,"env":"production","component":"redis","msg":"Redis ready to accept commands"}
+{"level":30,"time":1785427663583,"pid":6284,"env":"production","component":"redis","url":"rediss://***@balanced-tortoise-69020.upstash.io:6379","msg":"Redis connected"}
+{"level":30,"time":1785427663584,"pid":6284,"env":"production","component":"pg-boss","poolSize":2,"connectionTimeoutMillis":5000,"processRole":"api","producerOnly":true,"msg":"Starting PgBoss"}
+{"level":30,"time":1785427663724,"pid":6284,"env":"production","component":"pg-boss","processRole":"api","producerOnly":true,"msg":"PgBoss started successfully"}
+{"level":30,"time":1785427664049,"pid":6284,"env":"production","component":"bootstrap","msg":"All datastores connected"}
+[ORGANIZATION:Module] Organization module registered 
+{"level":30,"time":1785427664431,"pid":6284,"env":"production","component":"auth-module","msg":"Auth module registered"}
+{"level":30,"time":1785427664447,"pid":6284,"env":"production","component":"sdk-config-delivery-module","msg":"SDK config delivery routes registered at POST /v1/init and POST /v1/sdk-config"}
+{"level":30,"time":1785427664561,"pid":6284,"env":"production","component":"ingestion-service","flushIntervalMs":30000,"msg":"UsageCounter started"}
+{"level":30,"time":1785427664581,"pid":6284,"env":"production","component":"ingestion-module","msg":"Ingestion module registered (pg-boss gateway)"}
+{"level":30,"time":1785427664724,"pid":6284,"env":"production","component":"projects-module","msg":"Projects module registered"}
+{"level":30,"time":1785427664738,"pid":6284,"env":"production","component":"analytics-module","msg":"Analytics module registered"}
+{"level":30,"time":1785427664773,"pid":6284,"env":"production","component":"connectors-module","msg":"Connectors module registered"}
+{"level":30,"time":1785427664815,"pid":6284,"env":"production","component":"alerting-module","msg":"Alerting module registered"}
+{"level":30,"time":1785427664832,"pid":6284,"env":"production","component":"event-analytics-module","msg":"Event-analytics module registered"}
+{"level":30,"time":1785427664840,"pid":6284,"env":"production","enabled":false,"providerConfigured":true,"msg":"AI reliability module registered"}
+{"level":30,"time":1785427664847,"pid":6284,"env":"production","component":"automation-module","msg":"Automation module registered"}
+{"level":30,"time":1785427664847,"pid":6284,"env":"production","component":"app","msg":"All modules registered"}
+{"level":30,"time":1785427665054,"pid":6284,"env":"production","msg":"Server listening at http://127.0.0.1:5001"}
+{"level":30,"time":1785427665054,"pid":6284,"env":"production","msg":"Server listening at http://192.168.112.1:5001"}
+{"level":30,"time":1785427665054,"pid":6284,"env":"production","msg":"Server listening at http://192.168.1.6:5001"}
+{"level":30,"time":1785427665054,"pid":6284,"env":"production","component":"bootstrap","port":5001,"host":"0.0.0.0","env":"production","pid":6284,"memoryMB":260,"msg":"Server started successfully"}
+{"level":50,"time":1785434890518,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"read ECONNRESET","stack":"Error: read ECONNRESET\n    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20)","errno":-4077,"code":"ECONNRESET","syscall":"read"},"msg":"Redis connection error"}
+{"level":40,"time":1785434890553,"pid":6284,"env":"production","component":"redis","attempt":1,"nextRetryMs":200,"msg":"Redis connection retry"}
+{"level":40,"time":1785434890554,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":30,"time":1785434891392,"pid":6284,"env":"production","component":"redis","msg":"Redis connection established"}
+{"level":30,"time":1785434892076,"pid":6284,"env":"production","component":"redis","msg":"Redis ready to accept commands"}
+{"level":50,"time":1785437850267,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"read ECONNRESET","stack":"Error: read ECONNRESET\n    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20)","errno":-4077,"code":"ECONNRESET","syscall":"read"},"msg":"Redis connection error"}
+{"level":40,"time":1785437851130,"pid":6284,"env":"production","component":"redis","attempt":1,"nextRetryMs":200,"msg":"Redis connection retry"}
+{"level":40,"time":1785437851131,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785437853956,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785437854041,"pid":6284,"env":"production","component":"redis","attempt":2,"nextRetryMs":400,"msg":"Redis connection retry"}
+{"level":40,"time":1785437854085,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785437854542,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785437854542,"pid":6284,"env":"production","component":"redis","attempt":3,"nextRetryMs":600,"msg":"Redis connection retry"}
+{"level":40,"time":1785437854558,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785437855276,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785437855304,"pid":6284,"env":"production","component":"redis","attempt":4,"nextRetryMs":800,"msg":"Redis connection retry"}
+{"level":40,"time":1785437855665,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785437856167,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785437856168,"pid":6284,"env":"production","component":"redis","attempt":5,"nextRetryMs":1000,"msg":"Redis connection retry"}
+{"level":40,"time":1785437856168,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785437857315,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785437857316,"pid":6284,"env":"production","component":"redis","attempt":6,"nextRetryMs":1200,"msg":"Redis connection retry"}
+{"level":40,"time":1785437857316,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785438629684,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785438629812,"pid":6284,"env":"production","component":"redis","attempt":7,"nextRetryMs":1400,"msg":"Redis connection retry"}
+{"level":40,"time":1785438629812,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785438641645,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"connect ETIMEDOUT","stack":"Error: connect ETIMEDOUT\n    at TLSSocket.<anonymous> (C:\\Users\\vikas\\OneDrive\\Desktop\\SaasBackend\\pulse\\node_modules\\ioredis\\built\\Redis.js:171:41)\n    at Object.onceWrapper (node:events:630:28)\n    at TLSSocket.emit (node:events:509:20)\n    at Socket._onTimeout (node:net:740:8)\n    at Timeout.onStreamTimeout (node:internal/stream_base_commons:237:10)\n    at listOnTimeout (node:internal/timers:637:11)\n    at process.processTimers (node:internal/timers:571:7)","errorno":"ETIMEDOUT","code":"ETIMEDOUT","syscall":"connect"},"msg":"Redis connection error"}
+{"level":40,"time":1785438641934,"pid":6284,"env":"production","component":"redis","attempt":8,"nextRetryMs":1600,"msg":"Redis connection retry"}
+{"level":40,"time":1785438642014,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":30,"time":1785438661072,"pid":6284,"env":"production","component":"redis","msg":"Redis connection established"}
+{"level":50,"time":1785438665516,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"read ECONNRESET","stack":"Error: read ECONNRESET\n    at TLSWrap.onStreamRead (node:internal/stream_base_commons:216:20)","errno":-4077,"code":"ECONNRESET","syscall":"read"},"msg":"Redis connection error"}
+{"level":40,"time":1785438665535,"pid":6284,"env":"production","component":"redis","attempt":9,"nextRetryMs":1800,"msg":"Redis connection retry"}
+{"level":40,"time":1785438665535,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785438667923,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":40,"time":1785438667924,"pid":6284,"env":"production","component":"redis","attempt":10,"nextRetryMs":2000,"msg":"Redis connection retry"}
+{"level":40,"time":1785438668010,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}
+{"level":50,"time":1785438670546,"pid":6284,"env":"production","component":"redis","err":{"type":"Error","message":"getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io","stack":"Error: getaddrinfo ENOTFOUND balanced-tortoise-69020.upstash.io\n    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:121:26)","errno":-3008,"code":"ENOTFOUND","syscall":"getaddrinfo","hostname":"balanced-tortoise-69020.upstash.io"},"msg":"Redis connection error"}
+{"level":60,"time":1785438671183,"pid":6284,"env":"production","component":"redis","attempts":11,"msg":"Redis retry limit exceeded — giving up"}
+{"level":40,"time":1785438671448,"pid":6284,"env":"production","component":"redis","msg":"Redis connection closed"}

@@ -1,7 +1,7 @@
 import { type CreateConnectorInput } from './core/connector.repository.js';
 import { type InsertDeliveryInput } from './delivery/delivery.repository.js';
 import type { PoolClient } from 'pg';
-import type { ConnectorConfigRow, ConnectorStatus, DeliveryRow, DeliveryStatus, FailureCategory, HealthCheckRow, HealthState, ListConnectorsQuery } from './types.js';
+import type { ConnectorConfigRow, ConnectorStatus, ConnectorType, DeliveryRow, DeliveryStatus, FailureCategory, HealthCheckRow, HealthState, ListConnectorsQuery } from './types.js';
 export * from './core/connector.repository.js';
 export * from './delivery/delivery.repository.js';
 export * from './metrics/metrics.repository.js';
@@ -18,10 +18,13 @@ export declare class ConnectorRepository {
     findById(organizationId: string, id: string): Promise<ConnectorConfigRow | null>;
     findByIdInternal(id: string): Promise<ConnectorConfigRow | null>;
     getByIds(ids: string[]): Promise<ConnectorConfigRow[]>;
+    findFirstActiveByType(organizationId: string, type: ConnectorType): Promise<ConnectorConfigRow | null>;
+    getOrCreateManagedEmailConnector(organizationId: string): Promise<ConnectorConfigRow>;
     list(organizationId: string, query: ListConnectorsQuery): Promise<{
         data: ConnectorConfigRow[];
         total: number;
     }>;
+    countActiveConnectors(organizationId: string): Promise<number>;
     listMonitorable(): Promise<ConnectorConfigRow[]>;
     update(organizationId: string, id: string, fields: Record<string, unknown>): Promise<ConnectorConfigRow>;
     upsertCredential(input: import('./core/connector.repository.js').UpsertConnectorCredentialInput): Promise<void>;
@@ -53,6 +56,11 @@ export declare class ConnectorRepository {
         existed: boolean;
     }>;
     findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number): Promise<DeliveryRow | null>;
+    consumeRateLimitToken(connectorId: string, limit: number, windowSeconds: number): Promise<import("./delivery/delivery.repository.js").RateLimitCheckResult>;
+    circuitAllows(connectorId: string, resetTimeoutMs: number): Promise<boolean>;
+    recordCircuitSuccess(connectorId: string): Promise<void>;
+    recordCircuitFailure(connectorId: string, failureThreshold: number): Promise<"open" | "closed" | "half_open">;
+    recordSuccessfulDeliveryUsage(organizationId: string, projectId: string | null, connectorType: ConnectorType): Promise<void>;
     listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
         limit: number;
         offset: number;

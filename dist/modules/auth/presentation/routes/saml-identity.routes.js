@@ -3,7 +3,6 @@ import { handleAuthError } from './index.js';
 import * as saml from '../../application/services/saml.service.js';
 import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from '../../presentation/cookies.js';
 import { env } from '../../../../config/env.js';
-import { ssoCallbackRateLimit, } from '../../presentation/middleware/rate-limits.js';
 function setRefreshCookie(reply, refreshToken, expiresAt) {
     reply.setCookie(REFRESH_COOKIE_NAME, refreshToken, {
         ...getRefreshCookieOptions(),
@@ -22,7 +21,7 @@ export default async function samlIdentityRoutes(fastify) {
     });
     // POST /auth/saml/acs — SAML Assertion Consumer Service (IdP POST binding)
     fastify.post('/saml/acs', {
-        preHandler: [ssoCallbackRateLimit],
+        preHandler: [],
         config: { rawBody: true },
     }, async (request, reply) => {
         try {

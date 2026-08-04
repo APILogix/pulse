@@ -9,7 +9,6 @@
  *   - alert.orphan-sweep        — requeue events/batches stuck in 'processing'
  *   - alert.cleanup             — retention purge (scheduled daily)
  *   - alert.dead-letter-retry   — re-drive retryable dead letters (scheduled)
- *   - alert.evaluate-rules      — due-rule evaluation tick (scheduled, default every minute)
  *   - alert-dead-letter         — pg-boss dead-letter queue for process-batch
  *
  * Concurrency guarantees:
@@ -31,6 +30,7 @@
  * is started. The API process stays thin and only inserts pending events.
  */
 import type { FastifyBaseLogger } from 'fastify';
+import type { Pool } from 'pg';
 import type { ProjectSubscriptionResolver } from './batch-processor.js';
 export declare const ALERT_JOBS: {
     readonly formBatches: "alert.form-batches";
@@ -41,7 +41,12 @@ export declare const ALERT_JOBS: {
     readonly cleanup: "alert.cleanup";
     readonly deadLetter: "alert-dead-letter";
     readonly deadLetterRetry: "alert.dead-letter-retry";
-    readonly evaluateRules: "alert.evaluate-rules";
+    readonly evaluateFast: "alert.evaluate.fast";
+    readonly evaluateWindow: "alert.evaluate.window";
+    readonly evaluateOperational: "alert.evaluate.operational";
+    readonly evaluateAi: "alert.evaluate.ai";
+    readonly notificationRouter: "alert.notification-router";
+    readonly telemetryOutboxRelay: "alert.telemetry-outbox-relay";
 };
 export interface AlertingWorkerConfig {
     teamSize?: number;
@@ -65,7 +70,13 @@ export interface AlertingWorkerConfig {
  * Register all alerting pg-boss workers + schedules. Idempotent per process.
  * Returns a stop() that cancels schedules.
  */
-export declare function registerAlertingWorkers(logger: FastifyBaseLogger, config?: AlertingWorkerConfig, projectSubscriptionResolver?: ProjectSubscriptionResolver): Promise<{
+/**
+ * @param telemetryPool Pool that owns the `events_*` telemetry tables (the Log DB pool).
+ *   Injected by the worker bootstrap per ADR-0006 / DEV-002 so this module never imports the
+ *   Log DB singleton itself. Omit it and the evaluators fall back to the control-plane pool,
+ *   which is correct for single-database deployments.
+ */
+export declare function registerAlertingWorkers(logger: FastifyBaseLogger, config?: AlertingWorkerConfig, projectSubscriptionResolver?: ProjectSubscriptionResolver, telemetryPool?: Pool): Promise<{
     stop: () => Promise<void>;
 }>;
 //# sourceMappingURL=queue.d.ts.map

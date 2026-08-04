@@ -12,7 +12,7 @@ import { getClientInfo } from '../../../../shared/utils/request.js';
 import { handleAuthError } from './index.js';
 import * as service from '../../application/services/index.js';
 import * as webauthn from '../../application/services/webauthn.service.js';
-import { loginMfaRateLimit, webauthnRateLimit } from '../../presentation/middleware/rate-limits.js';
+
 import {
   AdminForcePasswordResetSchema,
   MFADeviceRenameSchema,
@@ -34,7 +34,7 @@ interface RequestWithUser extends FastifyRequest {
 export default async function accountAdministrationRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/mfa/step-up/webauthn/options',
-    { preHandler: [authenticate, webauthnRateLimit] },
+    { preHandler: [authenticate] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;
@@ -52,7 +52,7 @@ export default async function accountAdministrationRoutes(fastify: FastifyInstan
 
   fastify.post(
     '/mfa/step-up/webauthn/verify',
-    { preHandler: [authenticate, loginMfaRateLimit] },
+    { preHandler: [authenticate] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;

@@ -1,5 +1,8 @@
+import { pool } from '../../../config/database.js';
 export declare class ConnectorAuditRepository {
     private readonly db;
+    /** ADR-0006: pools are injected explicitly. */
+    constructor(db?: typeof pool);
     insertAuditLog(input: {
         organizationId: string;
         connectorId: string | null;

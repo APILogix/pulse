@@ -11,6 +11,10 @@
  */
 import type { PoolClient } from 'pg';
 import type { User, UserStatus } from '../../domain/types.js';
+export type UserDbRow = User & {
+    email_verified?: boolean;
+};
+export declare function toUser(row: UserDbRow | undefined | null): User | null;
 export declare function findUserById(id: string, client?: PoolClient): Promise<User | null>;
 export declare function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null>;
 /**

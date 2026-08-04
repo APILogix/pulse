@@ -9,7 +9,6 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
-import { forgotPasswordRateLimit, loginMfaRateLimit, loginRateLimit, mfaEmailResendRateLimit, refreshSessionRateLimit, registerRateLimit, resendVerificationRateLimit, resetPasswordRateLimit, tokenConfirmRateLimit, verifyEmailRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -111,12 +110,12 @@ export async function passwordRoutes(fastify) {
             return handleAuthError(error, reply, request);
         }
     };
-    fastify.post('/forgot-password', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
-    fastify.post('/password/forgot', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
-    fastify.post('/reset-password', { preHandler: [resetPasswordRateLimit] }, resetPassword);
-    fastify.post('/password/reset', { preHandler: [resetPasswordRateLimit] }, resetPassword);
+    fastify.post('/forgot-password', forgotPassword);
+    fastify.post('/password/forgot', forgotPassword);
+    fastify.post('/reset-password', resetPassword);
+    fastify.post('/password/reset', resetPassword);
     // POST /auth/resend-verification
-    fastify.post('/resend-verification', { preHandler: [resendVerificationRateLimit] }, async (request, reply) => {
+    fastify.post('/resend-verification', async (request, reply) => {
         try {
             const body = ResendVerificationSchema.parse(request.body);
             const ci = getClientInfo(request);
@@ -128,7 +127,7 @@ export async function passwordRoutes(fastify) {
         }
     });
     // GET /auth/verify-email
-    fastify.get('/verify-email', { preHandler: [verifyEmailRateLimit] }, async (request, reply) => {
+    fastify.get('/verify-email', async (request, reply) => {
         try {
             preventSensitiveResponseCaching(reply);
             const query = VerifyEmailQuerySchema.parse(request.query);
@@ -143,7 +142,7 @@ export async function passwordRoutes(fastify) {
     // POST /auth/verify-email/confirm
     // Safer SPA flow: read the token client-side and POST it, instead of relying
     // on a GET confirmation endpoint as the only supported redemption path.
-    fastify.post('/verify-email/confirm', { preHandler: [tokenConfirmRateLimit] }, async (request, reply) => {
+    fastify.post('/verify-email/confirm', async (request, reply) => {
         try {
             preventSensitiveResponseCaching(reply);
             const body = VerifyEmailConfirmSchema.parse(request.body);

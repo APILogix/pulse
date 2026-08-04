@@ -103,7 +103,16 @@ export interface CreateRuleInput {
 }
 
 export class RulesRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /**
+   * ADR-0006: pools are injected explicitly. Alert RULE definition is
+   * control-plane owned, so this defaults to the primary pool and callers that
+   * want the boundary enforced pass it in from AlertConfigRepository.
+   */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();

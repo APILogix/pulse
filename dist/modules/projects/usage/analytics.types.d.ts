@@ -51,13 +51,13 @@ export declare const TopListQuerySchema: z.ZodPipe<z.ZodTransform<unknown, unkno
     dimension: z.ZodEnum<{
         release: "release";
         service: "service";
+        device: "device";
         country: "country";
         endpoint: "endpoint";
         sdkVersion: "sdkVersion";
         errorGroup: "errorGroup";
         browser: "browser";
         os: "os";
-        device: "device";
     }>;
     environmentId: z.ZodOptional<z.ZodString>;
     apiKeyId: z.ZodOptional<z.ZodString>;

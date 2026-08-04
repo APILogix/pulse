@@ -12,6 +12,8 @@ import { ThresholdRepository } from './alerts/thresholds/threshold.repository.js
 import { ThresholdService } from './alerts/thresholds/threshold.service.js';
 import { AlertChannelRepository } from './alerts/channels/channel.repository.js';
 import { ProjectAlertChannelService } from './alerts/channels/channel.service.js';
+import { DeliveryLogRepository } from './alerts/deliveries/delivery-log.repository.js';
+import { DeliveryLogService } from './alerts/deliveries/delivery-log.service.js';
 import { ProjectsService } from './service.js';
 import { logger } from '../../config/logger.js';
 import { pool } from '../../config/database.js';
@@ -45,6 +47,8 @@ async function projectsModule(fastify, _options) {
     const alertPreferencesService = new ProjectMemberAlertPreferenceService(alertPreferencesRepository, service, fastify.organization.repository, fastify.log);
     const alertThresholdsService = new ThresholdService(alertThresholdsRepository, service);
     const alertChannelsService = new ProjectAlertChannelService(alertChannelsRepository, service, fastify.log);
+    const deliveryLogRepository = new DeliveryLogRepository();
+    const deliveryLogService = new DeliveryLogService(deliveryLogRepository, service.base, fastify.log);
     fastify.decorate('projects', {
         repository,
         settingsRepository,
@@ -62,6 +66,8 @@ async function projectsModule(fastify, _options) {
         alertThresholdsService,
         alertChannelsRepository,
         alertChannelsService,
+        deliveryLogRepository,
+        deliveryLogService,
     });
     await fastify.register(projectsRoutes, {
         prefix: '/organizations/:orgId/projects',

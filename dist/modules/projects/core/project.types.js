@@ -46,6 +46,10 @@ export const UpdateProjectBodySchema = z.preprocess(normalizeObjectKeys, z
     .refine((value) => Object.keys(value).length > 0, {
     message: "At least one field is required",
 }));
+export const ProjectByPublicIdParamsSchema = z.object({
+    orgId: z.string().uuid(),
+    publicId: z.string().regex(/^prj_[A-Z0-9]{8}$/, "Invalid public project ID format"),
+});
 export const ProjectMemberRole = {
     OWNER: 'owner',
     ADMIN: 'admin',

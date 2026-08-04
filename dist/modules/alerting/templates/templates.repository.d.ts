@@ -11,9 +11,12 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertTemplateRow } from '../types.js';
 export declare class TemplatesRepository {
     private readonly db;
+    /** ADR-0006: templates are control-plane configuration. */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createTemplate(input: {
         organizationId: string;

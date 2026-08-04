@@ -1,7 +1,11 @@
 import { pool } from '../../../config/database.js';
 import { ConnectorConflictError, ConnectorNotFoundError, } from '../types.js';
 export class ConnectorAuditRepository {
-    db = pool;
+    db;
+    /** ADR-0006: pools are injected explicitly. */
+    constructor(db = pool) {
+        this.db = db;
+    }
     // ── Connector CRUD ─────────────────────────────────────────────────────
     // ── Health / failure bookkeeping ───────────────────────────────────────
     // ── Deliveries ─────────────────────────────────────────────────────────

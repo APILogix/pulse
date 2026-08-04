@@ -63,6 +63,13 @@ export class AnalyticsQueryBuilder {
     return this;
   }
 
+  whereEnvironment(environment?: string): this {
+    if (!environment) return this;
+    this.conditions.push(`environment = ${this.next()}`);
+    this.params.push(environment);
+    return this;
+  }
+
   whereEq(column: string, value: unknown): this {
     if (value === undefined || value === null) return this;
     this.conditions.push(`${column} = ${this.next()}`);

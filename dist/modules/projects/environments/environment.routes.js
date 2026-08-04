@@ -1,5 +1,5 @@
 import { authenticate } from "../../../shared/middleware/auth.js";
-import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config.types.js";
+import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../../organization/sdk-config/sdk-config.types.js";
 import { CreateEnvironmentBodySchema, EnvironmentParamsSchema, ListEnvironmentsQuerySchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, UpdateEnvironmentBodySchema, } from "../types.js";
 import { ProjectError } from "../shared/utils.js";
 import { requestMeta, organizationRequestMeta, authenticatedUser, withErrorHandling, } from "../shared/route-utils.js";
@@ -49,9 +49,7 @@ export async function projectEnvironmentRoutes(fastify) {
         const userId = authenticatedUser(request).id;
         await service.getProject(orgId, projectId, userId);
         const body = UpdateSdkConfigSchema.parse(request.body);
-        const update = { configValue: body.configValue };
-        if (body.schemaVersion !== undefined)
-            update.schemaVersion = body.schemaVersion;
+        const update = { editableConfig: body.editableConfig };
         if (body.changeSummary !== undefined)
             update.changeSummary = body.changeSummary;
         const config = await sdkConfigService.updateProjectConfig(organizationRequestMeta(request), orgId, projectId, configId, update);
@@ -98,6 +96,14 @@ export async function projectEnvironmentRoutes(fastify) {
     fastify.delete("/:projectId/environments/:environmentId", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
         const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
         await service.deleteEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
+        return reply.code(204).send();
+    }));
+    // Irreversible: permanently removes the (already soft-deleted) environment,
+    // every API key scoped to it, their rotation history, and its SDK
+    // configuration. Requires owner role and a prior soft-delete.
+    fastify.delete("/:projectId/environments/:environmentId/permanent", { preHandler: [authenticate] }, withErrorHandling(async (request, reply) => {
+        const { orgId, projectId, environmentId } = EnvironmentParamsSchema.parse(request.params);
+        await service.permanentlyDeleteEnvironment(orgId, projectId, environmentId, authenticatedUser(request).id, requestMeta(request));
         return reply.code(204).send();
     }));
 }

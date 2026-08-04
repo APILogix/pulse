@@ -33,15 +33,20 @@
  *     written here — this writer only persists raw events.
  */
 import { randomUUID } from 'crypto';
-import type { Pool } from 'pg';
+import { STATUS_CODES } from 'http';
+import type { Pool, PoolClient } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 import { resolveTimestamp } from './event-normalizer.js';
+import { RequestEnricher } from './request-enrichment.js';
 
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
   projectId: string;
   /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
   orgId: string | null;
+  apiKeyName?: string | undefined;
+  /** Normalized string supplied by the SDK envelope; never an environment UUID. */
+  environment: string;
   event: NormalizedEvent;
 }
 
@@ -54,6 +59,203 @@ function rec(ev: NormalizedEvent): Record<string, unknown> {
   return ev as unknown as Record<string, unknown>;
 }
 
+/** Return the SDK metadata object while making the server-resolved environment authoritative. */
+function metadataFor(ev: NormalizedEvent, environment: string): Record<string, unknown> {
+  const value = rec(ev).metadata;
+  const metadata = value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+  metadata.environment = environment;
+  return metadata;
+}
+
+function sdkMetadataField(ev: NormalizedEvent, environment: string, key: string): unknown {
+  const metadata = metadataFor(ev, environment);
+  return metadata[key] ?? rec(ev)[key];
+}
+
+const REQUEST_ATTRIBUTE_DUPLICATES = new Set([
+  'endpoint', 'method', 'duration_ms', 'durationMs', 'latency', 'latency_ms',
+  'statusCode', 'status_code', 'responseSize', 'response_size', 'bodySize', 'body_size',
+  'traceId', 'trace_id', 'spanId', 'span_id', 'parentSpanId', 'parent_span_id',
+  'requestId', 'request_id', 'sessionId', 'session_id', 'userId', 'user_id', 'user',
+  'tenantId', 'tenant_id', 'projectId', 'project_id', 'organizationId', 'organization_id',
+  'environment', 'applicationName', 'application_name', 'applicationVersion', 'application_version',
+  'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version', 'release', 'timestamp', 'route', 'url',
+  'service', 'framework', 'serverName', 'server_name',
+  'spanCount', 'span_count', 'rootSpanStatus', 'root_span_status', 'isPartial', 'is_partial',
+  'clientIp', 'client_ip', 'userAgent', 'user_agent', 'referer',
+]);
+
+function requestAttributes(ev: NormalizedEvent): Record<string, unknown> {
+  const r = rec(ev);
+  const attributes: Record<string, unknown> = {};
+  if (r.headers && typeof r.headers === 'object' && !Array.isArray(r.headers)) {
+    attributes.headers = r.headers;
+  }
+  if (r.query && typeof r.query === 'object' && !Array.isArray(r.query)) {
+    attributes.query = r.query;
+  }
+  if (r.body && typeof r.body === 'object' && !Array.isArray(r.body)) {
+    attributes.body = r.body;
+  }
+  if (r.attributes && typeof r.attributes === 'object' && !Array.isArray(r.attributes)) {
+    Object.assign(attributes, r.attributes);
+  }
+  if (r.extra && typeof r.extra === 'object' && !Array.isArray(r.extra)) {
+    Object.assign(attributes, r.extra);
+  }
+  if (r.tags && typeof r.tags === 'object' && !Array.isArray(r.tags)) {
+    attributes.tags = r.tags;
+  }
+  for (const key of REQUEST_ATTRIBUTE_DUPLICATES) delete attributes[key];
+  return attributes;
+}
+
+const TRACE_ATTRIBUTE_DUPLICATES = new Set([
+  'endpoint', 'http_method', 'httpMethod', 'status_code', 'statusCode',
+  'duration_ms', 'durationMs', 'total_duration_ms', 'totalDuration',
+  'response_size', 'responseSize', 'trace_id', 'traceId', 'span_id', 'spanId',
+  'root_span_id', 'rootSpanId', 'root_span_name', 'rootSpanName',
+  'root_span_status', 'rootSpanStatus', 'span_kind', 'spanKind',
+  'request_id', 'requestId', 'session_id', 'sessionId',
+  'project_id', 'projectId', 'organization_id', 'organizationId',
+  'environment', 'sdk_name', 'sdkName', 'sdk_version', 'sdkVersion',
+  'application_name', 'applicationName', 'application_version', 'applicationVersion',
+  'release', 'timestamp',
+]);
+
+function plainObject(v: unknown): Record<string, unknown> | null {
+  return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
+}
+
+function attrValue(attrs: Record<string, unknown> | null, path: string): unknown {
+  if (!attrs) return undefined;
+  if (Object.prototype.hasOwnProperty.call(attrs, path)) return attrs[path];
+  return path.split('.').reduce<unknown>((cur, key) => plainObject(cur)?.[key], attrs);
+}
+
+const SPAN_ATTRIBUTE_DUPLICATES = [
+  'http.method', 'http.route', 'route', 'http.target', 'http.url', 'http.host',
+  'http.scheme', 'http.flavor', 'http.status_code', 'http.status_text',
+  'http.response.body.size', 'http.user_agent', 'http.client_ip',
+  'net.transport', 'net.host.name', 'net.host.ip', 'net.host.port',
+  'net.peer.ip', 'net.peer.port',
+  'db.system', 'db.name', 'db.operation', 'db.collection', 'db.statement', 'query',
+  'messaging.system', 'messaging.destination', 'messaging.operation',
+  'pulse.request_id', 'pulse.tenant_id',
+] as const;
+
+function deleteAttrPath(attrs: Record<string, unknown>, path: string): void {
+  delete attrs[path];
+  const parts = path.split('.');
+  let cur: Record<string, unknown> | null = attrs;
+  const parents: Array<[Record<string, unknown>, string]> = [];
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i] as string;
+    const next = plainObject(cur?.[key]);
+    if (!next) return;
+    parents.push([cur, key]);
+    cur = next;
+  }
+  delete cur[parts[parts.length - 1] as string];
+  for (let i = parents.length - 1; i >= 0; i--) {
+    const [parent, key] = parents[i] as [Record<string, unknown>, string];
+    const child = plainObject(parent[key]);
+    if (child && Object.keys(child).length === 0) delete parent[key];
+  }
+}
+
+function normalizedSpanAttributes(attrs: Record<string, unknown> | null): Record<string, unknown> {
+  const out = attrs ? { ...attrs } : {};
+  for (const path of SPAN_ATTRIBUTE_DUPLICATES) deleteAttrPath(out, path);
+  return out;
+}
+
+function classifySpan(kind: string | null, name: string | null, attrs: Record<string, unknown> | null): string {
+  const n = (name ?? '').toLowerCase();
+  const dbSystem = attrValue(attrs, 'db.system');
+  const msgSystem = attrValue(attrs, 'messaging.system');
+  if (attrValue(attrs, 'http.method') || attrValue(attrs, 'http.route') || attrValue(attrs, 'http.url')) return 'http';
+  if (dbSystem) return n.includes('redis') || n.includes('memcache') ? 'cache' : 'database';
+  if (msgSystem) return kind === 'producer' ? 'producer' : kind === 'consumer' ? 'consumer' : 'messaging';
+  if (n.includes('redis') || n.includes('cache') || n.includes('memcache')) return 'cache';
+  if (n.includes('queue')) return 'queue';
+  if (n.includes('rpc') || n.includes('grpc')) return 'rpc';
+  if (n.includes('cron')) return 'cron';
+  if (n.includes('schedule')) return 'scheduler';
+  if (kind === 'producer') return 'producer';
+  if (kind === 'consumer') return 'consumer';
+  if (kind === 'internal') return 'internal';
+  return 'unknown';
+}
+
+function traceAttributes(ev: NormalizedEvent): Record<string, unknown> {
+  const r = rec(ev);
+  const attributes = r.attributes && typeof r.attributes === 'object' && !Array.isArray(r.attributes)
+    ? { ...(r.attributes as Record<string, unknown>) }
+    : {};
+  for (const key of TRACE_ATTRIBUTE_DUPLICATES) delete attributes[key];
+  return attributes;
+}
+
+const METRIC_ATTRIBUTE_DUPLICATES = [
+  'metricName', 'metric_name', 'metricType', 'metric_type', 'metricUnit', 'metric_unit', 'unit',
+  'metricNamespace', 'metric_namespace', 'metricDescription', 'metric_description',
+  'value', 'count', 'sum', 'min', 'max', 'avg', 'rate', 'p50', 'p75', 'p90', 'p95', 'p99',
+  'aggregationType', 'aggregation_type', 'temporality', 'isMonotonic', 'is_monotonic',
+  'endpoint', 'path', 'route', 'method', 'httpMethod', 'http_method', 'status', 'statusCode', 'status_code',
+  'requestId', 'request_id', 'sessionId', 'session_id', 'traceId', 'trace_id', 'spanId', 'span_id',
+  'tenantId', 'tenant_id', 'projectId', 'project_id', 'organizationId', 'organization_id',
+  'environment', 'applicationName', 'application_name', 'applicationVersion', 'application_version',
+  'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version', 'release', 'timestamp',
+] as const;
+
+function metricAttributes(ev: NormalizedEvent): Record<string, unknown> {
+  const attrs = plainObject(rec(ev).attributes);
+  const out = attrs ? { ...attrs } : {};
+  for (const key of METRIC_ATTRIBUTE_DUPLICATES) deleteAttrPath(out, key);
+  return out;
+}
+
+function tagValue(tags: Record<string, unknown> | null, ...keys: string[]): unknown {
+  if (!tags) return undefined;
+  for (const key of keys) {
+    const value = tags[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
+}
+
+function classifyMetric(name: string, type: string, tags: Record<string, unknown> | null): string {
+  const n = name.toLowerCase();
+  const ns = String(tagValue(tags, 'namespace', 'metric_namespace') ?? '').toLowerCase();
+  if (tagValue(tags, 'path', 'route', 'http.route') || tagValue(tags, 'method', 'http.method') || n.startsWith('http.') || n.includes('http.')) return 'http';
+  if (n.startsWith('db.') || n.includes('database') || tagValue(tags, 'db.system')) return 'database';
+  if (n.includes('redis') || n.includes('cache') || n.includes('memcache')) return 'cache';
+  if (n.includes('queue') || tagValue(tags, 'messaging.system')) return 'queue';
+  if (n.startsWith('runtime.') || ns === 'runtime') return 'runtime';
+  if (n.startsWith('system.') || ns === 'system') return 'system';
+  if (n.includes('network') || n.includes('net.')) return 'network';
+  if (n.includes('memory') || n.includes('heap') || n.includes('rss')) return 'memory';
+  if (n.includes('cpu')) return 'cpu';
+  if (n.includes('disk') || n.includes('fs.')) return 'disk';
+  if (n.startsWith('business.') || ns === 'business') return 'business';
+  if (n.startsWith('app.') || n.startsWith('application.') || type === 'gauge') return 'application';
+  return 'custom';
+}
+
+function aggregationType(metricType: string): string {
+  return ['counter', 'gauge', 'histogram', 'summary', 'observable_counter', 'observable_gauge', 'up_down_counter'].includes(metricType)
+    ? metricType
+    : 'gauge';
+}
+
+/** Preserve the exact normalized SDK event so newly added SDK fields are never lost. */
+function payloadFor(ev: NormalizedEvent): string {
+  return JSON.stringify(ev);
+}
+
 /** Safe optional string with a max length, else null. */
 function str(v: unknown, max = 255): string | null {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
@@ -62,6 +264,15 @@ function str(v: unknown, max = 255): string | null {
 /** Safe optional finite number, else null. */
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function httpStatus(v: unknown): number | null {
+  const value = num(v);
+  return value != null && Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
+}
+
+function bool(v: unknown): boolean | null {
+  return typeof v === 'boolean' ? v : null;
 }
 
 /** Basic IPv4/IPv6 validation so an invalid string can't fail an INET insert. */
@@ -100,6 +311,42 @@ function spanStatus(v: unknown): string {
   return 'unset';
 }
 
+function classifyMessageCategory(msg: string | null, tags: Record<string, unknown> | null, logger: string | null, context: Record<string, unknown> | null): string {
+  const m = (msg ?? '').toLowerCase();
+  const t = tags ?? {};
+  const c = context ?? {};
+  
+  if (t['category'] && typeof t['category'] === 'string') return t['category'];
+  if (m.includes('security') || m.includes('unauthorized') || m.includes('forbidden') || t['security'] || c['security']) return 'security';
+  if (m.includes('audit') || t['audit'] || c['audit']) return 'audit';
+  if (m.includes('http') || m.includes('request') || m.includes('response') || t['http.method']) return 'http';
+  if (m.includes('auth') || m.includes('login') || m.includes('logout')) return 'authentication';
+  if (m.includes('permission') || m.includes('access')) return 'authorization';
+  if (m.includes('database') || m.includes('sql') || m.includes('query') || t['db.system']) return 'database';
+  if (m.includes('cache') || m.includes('redis') || m.includes('memcached')) return 'cache';
+  if (m.includes('queue') || m.includes('rabbitmq') || m.includes('kafka') || t['messaging.system']) return 'queue';
+  if (m.includes('cron') || m.includes('job') || m.includes('schedule') || logger === 'cron') return 'cron';
+  if (m.includes('system') || m.includes('memory') || m.includes('cpu') || logger === 'system') return 'system';
+  if (m.includes('business') || m.includes('order') || m.includes('payment') || m.includes('invoice')) return 'business';
+  
+  return 'application';
+}
+
+function classifyMessageSource(sdkName: string | null, logger: string | null): string {
+  const s = (sdkName ?? '').toLowerCase();
+  const l = (logger ?? '').toLowerCase();
+  
+  if (l === 'manual' || s.includes('manual')) return 'manual';
+  if (l.includes('worker') || s.includes('worker')) return 'worker';
+  if (l.includes('cron') || l.includes('job')) return 'cron';
+  if (l.includes('queue') || l.includes('messaging')) return 'queue';
+  if (s.includes('framework') || l.includes('framework')) return 'framework';
+  if (s.includes('middleware') || l.includes('middleware')) return 'middleware';
+  if (s) return 'sdk';
+  
+  return 'unknown';
+}
+
 /** Storage error_name for an error event (shared with the error grouper). */
 export function errorNameOf(event: NormalizedEvent): string {
   const name = (event as { name?: unknown }).name;
@@ -122,15 +369,22 @@ export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf
  * against the (project_id, event_id) identity indexes; RETURNING keeps
  * rowCount truthful — it counts only ACTUALLY inserted rows. */
 function buildInsert(table: string, cols: string[], rows: unknown[][], returning = 'id'): { text: string; values: unknown[] } {
+  const timestampIndex = cols.indexOf('timestamp');
+  const insertCols = timestampIndex >= 0 && !cols.includes('occurred_at')
+    ? [...cols, 'occurred_at']
+    : cols;
+  const insertRows = insertCols === cols
+    ? rows
+    : rows.map((row) => [...row, row[timestampIndex]]);
   const values: unknown[] = [];
   const tuples: string[] = [];
   let p = 1;
-  for (const row of rows) {
+  for (const row of insertRows) {
     tuples.push(`(${row.map(() => `$${p++}`).join(', ')})`);
     values.push(...row);
   }
   return {
-    text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
+    text: `INSERT INTO ${table} (${insertCols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
     values,
   };
 }
@@ -154,7 +408,11 @@ export interface DetailedWriteResult {
   insertedErrors: ScopedEvent[];
 }
 
+type Queryable = Pool | PoolClient;
+
 export class TelemetryWriter {
+  private readonly enricher = RequestEnricher.get();
+
   constructor(private readonly pool: Pool) {}
 
   /**
@@ -178,6 +436,42 @@ export class TelemetryWriter {
    * at-least-once retries are never billed twice.
    */
   async writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
+    return this.writeBatchDetailedUsing(this.pool, scoped);
+  }
+
+  async writeBatchDetailedWithOutbox(
+    clientOrScoped: PoolClient | ScopedEvent[],
+    scopedParam?: ScopedEvent[],
+  ): Promise<DetailedWriteResult> {
+    if (Array.isArray(clientOrScoped)) {
+      const scoped = clientOrScoped;
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await this.writeBatchDetailedUsing(client, scoped);
+        if (result.totalInserted > 0) {
+          await this.appendTelemetryOutbox(scoped, client);
+        }
+        await client.query('COMMIT');
+        return result;
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        client.release();
+      }
+    } else {
+      const client = clientOrScoped;
+      const scoped = scopedParam ?? [];
+      const result = await this.writeBatchDetailedUsing(client, scoped);
+      if (result.totalInserted > 0) {
+        await this.appendTelemetryOutbox(scoped, client);
+      }
+      return result;
+    }
+  }
+
+  private async writeBatchDetailedUsing(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
     const result: DetailedWriteResult = {
       totalReceived: 0,
       totalInserted: 0,
@@ -195,7 +489,7 @@ export class TelemetryWriter {
     }
 
     for (const [type, list] of byType) {
-      const res = await this.writeTyped(type, list);
+      const res = await this.writeTyped(type, list, db);
       result.perType[type] = { received: list.length, inserted: res.inserted };
       result.totalReceived += list.length;
       result.totalInserted += res.inserted;
@@ -204,18 +498,54 @@ export class TelemetryWriter {
     return result;
   }
 
-  private async writeTyped(type: string, list: ScopedEvent[]): Promise<TypedWriteResult> {
+  async appendTelemetryOutbox(scoped: ScopedEvent[], db: Queryable = this.pool): Promise<number> {
+    const rows = scoped
+      .filter((event) => event.orgId !== null)
+      .map((event) => {
+        const record = rec(event.event);
+        return [
+          event.orgId,
+          event.projectId,
+          event.environment,
+          event.event.type,
+          this.eventId(event.event),
+          outboxSeverity(event.event),
+          isFastPathSignal(event),
+          JSON.stringify({
+            eventType: event.event.type,
+            message: str(record.message, 4096),
+            service: str(record.service, 100),
+            requestId: str(record.requestId, 64),
+            monitorSlug: str(record.monitorSlug, 255),
+          }),
+          iso(resolveTimestamp(event.event)),
+        ];
+      });
+    if (rows.length === 0) return 0;
+
+    const { text, values } = buildInsert(
+      'telemetry_outbox',
+      ['organization_id', 'project_id', 'environment', 'signal_kind', 'event_id',
+       'severity', 'fast_path', 'attributes', 'occurred_at'],
+      rows,
+      'id',
+    );
+    const result = await db.query(text, values);
+    return result.rowCount ?? 0;
+  }
+
+  private async writeTyped(type: string, list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     switch (type) {
-      case 'error': return this.writeErrors(list);
-      case 'message': return this.writeMessages(list);
-      case 'request': return this.writeRequests(list);
-      case 'span': return this.writeSpans(list);
-      case 'trace': return this.writeTraces(list);
-      case 'metric': return this.writeMetrics(list);
-      case 'log': return this.writeLogs(list);
-      case 'profile': return this.writeProfiles(list);
-      case 'cron_checkin': return this.writeCronCheckins(list);
-      case 'replay': return this.writeReplays(list);
+      case 'error': return this.writeErrors(list, db);
+      case 'message': return this.writeMessages(list, db);
+      case 'request': return this.writeRequests(list, db);
+      case 'span': return this.writeSpans(list, db);
+      case 'trace': return this.writeTraces(list, db);
+      case 'metric': return this.writeMetrics(list, db);
+      case 'log': return this.writeLogs(list, db);
+      case 'profile': return this.writeProfiles(list, db);
+      case 'cron_checkin': return this.writeCronCheckins(list, db);
+      case 'replay': return this.writeReplays(list, db);
       default: return { inserted: 0 };
     }
   }
@@ -227,42 +557,61 @@ export class TelemetryWriter {
   }
 
   // ── events_errors ─────────────────────────────────────────────────────────
-  private async writeErrors(list: ScopedEvent[]): Promise<TypedWriteResult> {
+  private async writeErrors(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
     const ids = list.map(({ event }) => this.eventId(event));
-    const rows = list.map(({ projectId, orgId, event }, i) => {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }, i) => {
       const e = event as Extract<NormalizedEvent, { type: 'error' }>;
       const r = rec(event);
       const errorName = errorNameOf(event);
       const fingerprint = errorFingerprint(event, errorName);
+      
+      const req = (e.context?.request as any) || e.context || {};
+      const endpoint = str(e.route ?? r.route ?? req.route ?? req.endpoint ?? e.url ?? r.url ?? req.url, 8192);
+      const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? req.statusCode ?? req.status_code);
+      const statusText = str(
+        e.statusText ?? r.statusText ?? req.statusText ?? req.status_text
+          ?? (statusCode == null ? null : STATUS_CODES[statusCode]),
+        128,
+      );
+      const handled = bool(e.handled ?? r.handled);
+      const durationMs = num(req.duration ?? req.duration_ms ?? req.durationMs);
+
+      const attributes: Record<string, any> = { ...(r.extra as any) };
+      if (r.tags) attributes.tags = r.tags;
+      if (r.user) attributes.user = r.user;
+      
       return [
-        orgId, projectId, ids[i], fingerprint, e.message,
+        orgId, projectId, apiKeyName ?? '', ids[i], fingerprint, e.message,
         errorName, eventSeverity(e.severity, 'error'),
-        str(r.stackHash, 64), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
-        str(r.source, 100) ?? 'capture', str(r.mechanism, 50), str(r.service, 100),
-        str(r.environment, 50), str(r.release, 100), str(r.serverName, 100),
-        JSON.stringify(e.stack ?? []), r.sourceContext != null ? JSON.stringify(r.sourceContext) : null,
-        str(r.userId, 255), str(r.userEmail, 255), inet(r.userIp),
-        JSON.stringify(e.breadcrumbs ?? []),
-        JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(e.context ?? {}),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
+        str(e.mechanism ?? r.mechanism, 50), str(r.service, 100),
+        environment, str(sdkMetadataField(event, environment, 'release'), 100), str(sdkMetadataField(event, environment, 'serverName'), 100),
+        str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        JSON.stringify(e.stack ?? []), JSON.stringify(e.breadcrumbs ?? []), JSON.stringify(e.context ?? {}),
+        endpoint ?? null, statusCode ?? null, statusText ?? null, handled, durationMs ?? null, JSON.stringify(attributes),
+        str(r.userId ?? (r.user as any)?.id ?? (e.context as any)?.userId, 255),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_errors',
-      ['organization_id', 'project_id', 'event_id', 'fingerprint', 'message',
-       'error_name', 'severity', 'stack_hash', 'trace_id', 'span_id', 'request_id', 'session_id',
-       'source', 'mechanism', 'service', 'environment', 'release', 'server_name',
-       'stack_frames', 'source_context', 'user_id', 'user_email', 'user_ip',
-       'breadcrumbs', 'tags', 'extra', 'contexts', 'sdk_name', 'sdk_version', 'timestamp'],
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'message',
+       'error_name', 'severity', 'trace_id', 'span_id', 'request_id', 'session_id',
+       'mechanism', 'service', 'environment', 'release', 'server_name',
+       'application_name', 'application_version',
+       'stack_frames', 'breadcrumbs', 'contexts', 
+       'endpoint', 'status_code', 'status_text', 'handled', 'duration_ms', 'attributes', 'user_id',
+       'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
       'event_id',
     );
-    const res = await this.pool.query<{ event_id: string }>(text, values);
+    const res = await db.query<{ event_id: string }>(text, values);
     // Pair each returned event_id with its first unpaired input occurrence, so
     // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
     // is not double-counted by downstream error grouping.
     const unpaired = new Map<string, number>();
-    for (const row of res.rows) unpaired.set(row.event_id, (unpaired.get(row.event_id) ?? 0) + 1);
+    for (const row of (res?.rows ?? [])) unpaired.set(row.event_id, (unpaired.get(row.event_id) ?? 0) + 1);
     const insertedErrors: ScopedEvent[] = [];
     for (let i = 0; i < list.length; i++) {
       const id = ids[i] as string;
@@ -273,251 +622,729 @@ export class TelemetryWriter {
         else unpaired.set(id, n - 1);
       }
     }
-    return { inserted: res.rowCount ?? 0, insertedErrors };
+    return { inserted: res?.rowCount ?? 0, insertedErrors };
   }
 
   // ── events_messages ─────────────────────────────────────────────────────────
-  private async writeMessages(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeMessages(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'message' }>;
       const r = rec(event);
+      
+      const tags = plainObject(r.tags) ?? {};
+      const ctx = plainObject(e.context) ?? {};
+      const attrs = plainObject(r.attributes) ?? {};
+      const loggerName = str(e.loggerName ?? r.loggerName ?? r.logger, 128);
+      const sdkName = str(sdkMetadataField(event, environment, 'sdkName'), 50);
+      
+      const name = str(e.name ?? r.name, 256) ?? str(e.message, 100) ?? 'Untitled';
+      const tenantId = str(e.tenantId ?? r.tenantId ?? attrValue(attrs, 'tenantId') ?? (r.extra as any)?.tenantId, 255);
+      const messageCategory = classifyMessageCategory(e.message, tags, loggerName, ctx);
+      const messageSource = classifyMessageSource(sdkName, loggerName);
+
       return [
-        orgId, projectId, this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
         str(r.userId, 255), inet(r.userIp),
-        JSON.stringify(r.tags ?? {}), JSON.stringify(e.context ?? {}), JSON.stringify(e.breadcrumbs ?? []),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        JSON.stringify(tags), JSON.stringify(ctx), JSON.stringify(e.breadcrumbs ?? []),
+        sdkName, str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        tenantId, loggerName, messageCategory, messageSource,
+        str(e.endpoint ?? r.endpoint, 8192), num(e.statusCode ?? r.statusCode ?? r.status_code),
+        name, JSON.stringify(attrs)
       ];
     });
     const { text, values } = buildInsert(
       'events_messages',
-      ['organization_id', 'project_id', 'event_id', 'message', 'severity',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
        'trace_id', 'span_id', 'request_id', 'session_id',
-       'service', 'environment', 'release', 'user_id', 'user_ip',
-       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'timestamp'],
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+       'user_id', 'user_ip',
+       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response',
+       'tenant_id', 'logger_name', 'message_category', 'message_source',
+       'endpoint', 'status_code', 'name', 'attributes'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_requests ─────────────────────────────────────────────────────────
-  private async writeRequests(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeRequests(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    // Open the GeoIP databases once (no-op after first call; never throws).
+    await this.enricher.init();
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'request' }>;
       const r = rec(event);
+      const endpoint = str(r.route, 500) ?? str(e.url, 8192) ?? str(r.endpoint, 8192);
+      const name = endpoint ? `${e.method} ${endpoint}`.slice(0, 1024) : e.method;
+      
+      const headers = (e.headers && typeof e.headers === 'object') ? (e.headers as Record<string, unknown>) : {};
+      const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? null;
+      const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['x-real-ip'] ?? null;
+      
+      // Enrich clientIp -> geo, userAgent -> browser/os/device.
+      const g = this.enricher.enrich(rawClientIp, rawUserAgent);
+
+      const userId = str((r.user as any)?.id ?? r.userId ?? r.user_id, 255);
+      const tenantId = str(r.tenantId ?? (r.extra as any)?.tenantId ?? r.tenant_id, 255);
+      const framework = str(r.framework ?? (r.tags as any)?.framework, 50);
+      const service = str(r.service ?? sdkMetadataField(event, environment, 'applicationName'), 100) ?? 'unknown';
+      const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? r.status_code);
+      const durationMs = num(e.latency ?? r.duration_ms ?? r.durationMs);
+
       return [
-        orgId, projectId, this.eventId(event), e.requestId, e.url, e.method,
-        e.statusCode, Math.round(e.latency), str(r.route, 500), str(r.framework, 50),
-        JSON.stringify(e.headers ?? {}), JSON.stringify(e.query ?? {}),
-        e.body != null ? JSON.stringify(e.body) : null,
-        num(e.bodySize), num(r.responseSize),
-        str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
-        inet(r.clientIp), str(r.userAgent, 1024), str(r.referer, 1024),
-        e.traceId ?? null, e.spanId ?? null,
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        randomUUID(),                                                        // 1. id
+        orgId,                                                               // 2. organization_id
+        projectId,                                                           // 3. project_id
+        apiKeyName ?? 'unknown',                                             // 4. api_key_name
+        this.eventId(event),                                                 // 5. event_id
+        str(e.requestId ?? r.requestId ?? r.request_id, 64) ?? this.eventId(event), // 6. request_id
+        e.traceId ?? str(r.traceId ?? r.trace_id, 64),                       // 7. trace_id
+        e.spanId ?? str(r.spanId ?? r.span_id, 64),                          // 8. span_id
+        str(r.parentSpanId ?? r.parent_span_id, 64),                         // 9. parent_span_id
+        e.sessionId ?? str(r.sessionId ?? r.session_id, 64),                 // 10. session_id
+        userId,                                                              // 11. user_id
+        tenantId,                                                            // 12. tenant_id
+        endpoint,                                                            // 13. endpoint
+        name,                                                                // 14. name
+        e.method,                                                            // 15. method
+        statusCode,                                                          // 16. status_code
+        durationMs,                                                          // 17. duration_ms
+        num(e.bodySize ?? r.body_size),                                      // 18. body_size
+        num(r.responseSize ?? r.response_size),                              // 19. response_size
+        num(r.spanCount ?? r.span_count),                                    // 20. span_count
+        str(r.rootSpanStatus ?? r.root_span_status, 32),                     // 21. root_span_status
+        bool(r.isPartial ?? r.is_partial),                                   // 22. is_partial
+        g.clientIpHash,                                                      // 23. client_ip_hash
+        str(rawUserAgent, 1024),                                             // 24. user_agent
+        str(r.referer ?? headers['referer'] ?? headers['Referer'], 1024),    // 25. referer
+        g.geoCountryCode,                                                    // 26. geo_country_code
+        g.geoRegion,                                                         // 27. geo_region
+        g.geoAsn,                                                            // 28. geo_asn
+        g.browserFamily,                                                     // 29. browser_family
+        g.browserVersionMajor != null ? String(g.browserVersionMajor) : null, // 30. browser_version_major
+        g.osName,                                                            // 31. os_name
+        g.osVersionMajor != null ? String(g.osVersionMajor) : null,          // 32. os_version_major
+        g.deviceType,                                                        // 33. device_type
+        g.isBot,                                                             // 34. is_bot
+        service,                                                             // 35. service
+        framework,                                                           // 36. framework
+        environment,                                                         // 37. environment
+        str(r.release ?? sdkMetadataField(event, environment, 'release'), 100), // 38. release
+        str(r.serverName ?? sdkMetadataField(event, environment, 'serverName'), 100), // 39. server_name
+        str(sdkMetadataField(event, environment, 'sdkName'), 50),            // 40. sdk_name
+        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),         // 41. sdk_version
+        eventSeverity(r.severity, (statusCode ?? 200) >= 500 ? 'error' : 'info'), // 42. severity
+        JSON.stringify(requestAttributes(event)),                             // 43. attributes
+        JSON.stringify(metadataFor(event, environment)),                     // 44. metadata
+        payloadFor(event),                                                   // 45. payload
+        e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
+        iso(resolveTimestamp(event)),                                        // 47. timestamp
       ];
     });
     // is_slow / is_error are GENERATED columns — do NOT insert them.
+    // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
+    // timestamp is mapped to (timestamp, occurred_at) by buildInsert.
     const { text, values } = buildInsert(
       'events_requests',
-      ['organization_id', 'project_id', 'event_id', 'request_id', 'url', 'method',
-       'status_code', 'latency_ms', 'route', 'framework', 'headers', 'query_params',
-       'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
-       'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
-       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      ['id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
+       'parent_span_id', 'session_id', 'user_id', 'tenant_id', 'endpoint', 'name', 'method',
+       'status_code', 'duration_ms', 'body_size', 'response_size', 'span_count', 'root_span_status', 'is_partial',
+       'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
+       'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
+       'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
+       'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'timestamp'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_spans ─────────────────────────────────────────────────────────
-  private async writeSpans(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeSpans(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'span' }>;
       const r = rec(event);
+      const attrs = plainObject(e.attributes) ?? {};
+      const kind = spanKind(e.kind);
+      const status = spanStatus(e.status);
+      const endpoint = str(attrValue(attrs, 'http.route') ?? attrValue(attrs, 'route'), 500);
+      const spanType = classifySpan(kind, str(e.name, 500), attrs);
+      const isHttp = spanType === 'http';
+      const isDb = spanType === 'database';
+      const isCache = spanType === 'cache';
+      const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
+      const requestId = e.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255);
+      const tenantId = str(r.tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255);
       return [
-        orgId, projectId, this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
-        e.name, spanKind(e.kind), spanStatus(e.status), e.statusMessage ?? null,
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
+        kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
+        e.name, e.statusMessage ?? null, endpoint,
         iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
-        num(e.duration), num(e.exclusiveDuration),
-        JSON.stringify(e.attributes ?? {}), JSON.stringify(e.events ?? []), JSON.stringify(e.links ?? []),
-        str(r.dbSystem, 50), str(r.dbName, 100), str(r.dbOperation, 50), str(r.dbCollection, 100), str(r.dbStatement, 8192),
-        str(r.httpMethod, 10), str(r.httpUrl, 8192), num(r.httpStatusCode), str(r.httpHost, 255), str(r.httpRoute, 500),
-        str(r.messagingSystem, 50), str(r.messagingDestination, 255), str(r.messagingOperation, 50),
-        e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)), iso(resolveTimestamp(event)),
+        str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
+        str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
+        str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32),
+        str(attrValue(attrs, 'http.flavor'), 32), num(attrValue(attrs, 'http.status_code')),
+        str(attrValue(attrs, 'http.status_text'), 255), num(attrValue(attrs, 'http.response.body.size')),
+        str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
+        str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255),
+        str(attrValue(attrs, 'net.host.ip'), 255), num(attrValue(attrs, 'net.host.port')),
+        str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
+        str(attrValue(attrs, 'db.system') ?? r.dbSystem, 50), str(attrValue(attrs, 'db.name') ?? r.dbName, 100),
+        str(attrValue(attrs, 'db.operation') ?? r.dbOperation, 50), str(attrValue(attrs, 'db.collection') ?? r.dbCollection, 100),
+        str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query') ?? r.dbStatement, 8192),
+        str(attrValue(attrs, 'messaging.system') ?? r.messagingSystem, 50),
+        str(attrValue(attrs, 'messaging.destination') ?? r.messagingDestination, 255),
+        str(attrValue(attrs, 'messaging.operation') ?? r.messagingOperation, 50),
+        JSON.stringify(normalizedSpanAttributes(attrs)), JSON.stringify(e.events ?? []), JSON.stringify(e.links ?? []),
+        requestId, e.sessionId ?? null, str(r.userId, 255), tenantId,
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_spans',
-      ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
-       'name', 'kind', 'status', 'status_message', 'start_time', 'end_time',
-       'duration_ms', 'exclusive_duration_ms', 'attributes', 'events', 'links',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+       'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
+       'name', 'message', 'endpoint', 'start_time', 'end_time',
+       'duration_ms', 'exclusive_duration_ms', 'occurred_at', 'timestamp',
+       'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
+       'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',
+       'net_transport', 'net_host_name', 'net_host_ip', 'net_host_port', 'net_peer_ip', 'net_peer_port',
        'db_system', 'db_name', 'db_operation', 'db_collection', 'db_statement',
-       'http_method', 'http_url', 'http_status_code', 'http_host', 'http_route',
        'messaging_system', 'messaging_destination', 'messaging_operation',
+       'attributes', 'events', 'links',
        'request_id', 'session_id', 'user_id', 'tenant_id',
-       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_traces ─────────────────────────────────────────────────────────
-  private async writeTraces(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeTraces(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    return this.writeTracesInTransaction(list, db);
+  }
+
+  private async writeTracesInTransaction(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'trace' }>;
       const r = rec(event);
-      const root = (e.rootSpan ?? {}) as { name?: unknown; spanId?: unknown; id?: unknown };
+      const root = plainObject(e.rootSpan) ?? {};
+      const rootAttrs = plainObject(root.attributes);
+      const endpoint = str(attrValue(rootAttrs, 'http.route'), 500) ?? str(attrValue(rootAttrs, 'route'), 500);
+      const httpMethod = str(attrValue(rootAttrs, 'http.method'), 10);
+      const statusCode = num(attrValue(rootAttrs, 'http.status_code'));
+      const responseSize = num(attrValue(rootAttrs, 'http.response.body.size'));
+      const rootSpanId = str(root.spanId ?? root.id, 64);
+      const parentSpanId = str(root.parentSpanId ?? root.parentId, 64);
+      const headers = plainObject(r.headers) ?? {};
+      const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? attrValue(rootAttrs, 'http.user_agent') ?? null;
+      const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['X-Forwarded-For'] ?? attrValue(rootAttrs, 'http.client_ip') ?? null;
+      const occurredAt = iso(resolveTimestamp(event));
+
       return [
-        orgId, projectId, this.eventId(event), e.traceId,
-        str(root.name, 500), str(root.spanId ?? root.id, 64),
-        e.spanCount, num(e.totalDuration), e.isPartial ?? false,
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), e.traceId, rootSpanId, parentSpanId,
+        str(root.name, 500), rootSpanId, str(root.kind, 32), spanStatus(root.status), endpoint, httpMethod, statusCode,
+        num(root.duration) ?? 0, num(e.totalDuration) ?? 0, responseSize, e.spanCount ?? 0, e.isPartial ?? false,
         e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
         e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt, occurredAt,
+        str(rawUserAgent, 1024), str(rawClientIp, 255),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_traces',
-      ['organization_id', 'project_id', 'event_id', 'trace_id',
-       'root_span_name', 'root_span_id', 'span_count', 'total_duration_ms', 'is_partial',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'trace_id', 'span_id', 'parent_span_id',
+       'root_span_name', 'root_span_id', 'span_kind', 'root_span_status', 'endpoint', 'http_method', 'status_code',
+       'duration_ms', 'total_duration_ms', 'response_size', 'span_count', 'is_partial',
        'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
-       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+       'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp', 'occurred_at',
+       'user_agent', 'client_ip_hash', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
+    await this.writeTraceSpanTree(list, db);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_metrics ─────────────────────────────────────────────────────────
-  private async writeMetrics(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeTraceSpanTree(list: ScopedEvent[], db: Queryable): Promise<void> {
+    const rows: unknown[][] = [];
+    for (const scoped of list) {
+      const e = scoped.event as Extract<NormalizedEvent, { type: 'trace' }>;
+      const ts = iso(resolveTimestamp(scoped.event));
+      this.collectTraceSpanRows(scoped, e.rootSpan, null, 0, ts, rows);
+    }
+    if (rows.length === 0) return;
+    const { text, values } = buildInsert(
+      'events_spans',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+       'name', 'span_kind', 'span_type', 'span_status', 'message', 'endpoint',
+       'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
+       'start_time', 'end_time', 'duration_ms', 'exclusive_duration_ms', 'occurred_at',
+       'attributes', 'events', 'links', 'depth',
+       'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
+       'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',
+       'net_transport', 'net_host_name', 'net_host_ip', 'net_host_port', 'net_peer_ip', 'net_peer_port',
+       'db_system', 'db_name', 'db_operation', 'db_collection', 'db_statement',
+       'messaging_system', 'messaging_destination', 'messaging_operation',
+       'request_id', 'session_id', 'user_id', 'tenant_id',
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+       'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload'],
+      rows,
+    );
+    await db.query(text, values);
+  }
+
+  private collectTraceSpanRows(
+    scoped: ScopedEvent,
+    span: unknown,
+    parentSpanId: string | null,
+    depth: number,
+    timestamp: string,
+    rows: unknown[][],
+  ): void {
+    const s = plainObject(span);
+    if (!s) return;
+    const event = scoped.event as Extract<NormalizedEvent, { type: 'trace' }>;
+    const spanId = str(s.spanId ?? s.id, 64);
+    if (!spanId) return;
+    const attrs = plainObject(s.attributes) ?? {};
+    const eventId = `${this.eventId(event)}:${spanId}`.slice(0, 64);
+    const kind = spanKind(s.kind);
+    const status = spanStatus(s.status);
+    const name = str(s.name, 500) ?? spanId;
+    const endpoint = str(attrValue(attrs, 'http.route') ?? attrValue(attrs, 'route'), 500);
+    const spanType = classifySpan(kind, name, attrs);
+    const isHttp = spanType === 'http';
+    const isDb = spanType === 'database';
+    const isCache = spanType === 'cache';
+    const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
+    rows.push([
+      scoped.orgId, scoped.projectId, scoped.apiKeyName ?? '', eventId, spanId, event.traceId, parentSpanId,
+      name, kind, spanType, status, str(s.statusMessage, 1024), endpoint,
+      parentSpanId == null, isHttp, isDb, isCache, isMessaging,
+      s.startTime != null ? iso(Number(s.startTime)) : null,
+      s.endTime != null ? iso(Number(s.endTime)) : null,
+      num(s.duration), num(s.exclusiveDuration), timestamp, JSON.stringify(normalizedSpanAttributes(attrs)),
+      s.events != null ? JSON.stringify(s.events) : JSON.stringify([]),
+      s.links != null ? JSON.stringify(s.links) : JSON.stringify([]),
+      depth,
+      str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
+      str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
+      str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32), str(attrValue(attrs, 'http.flavor'), 32),
+      num(attrValue(attrs, 'http.status_code')), str(attrValue(attrs, 'http.status_text'), 255),
+      num(attrValue(attrs, 'http.response.body.size')), str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
+      str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255), str(attrValue(attrs, 'net.host.ip'), 255),
+      num(attrValue(attrs, 'net.host.port')), str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
+      str(attrValue(attrs, 'db.system'), 50), str(attrValue(attrs, 'db.name'), 100), str(attrValue(attrs, 'db.operation'), 50),
+      str(attrValue(attrs, 'db.collection'), 100), str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query'), 8192),
+      str(attrValue(attrs, 'messaging.system'), 50), str(attrValue(attrs, 'messaging.destination'), 255), str(attrValue(attrs, 'messaging.operation'), 50),
+      event.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255), event.sessionId ?? null, str(rec(event).userId, 255),
+      str(rec(event).tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255),
+      str(rec(event).service, 100), scoped.environment, str(sdkMetadataField(event, scoped.environment, 'release'), 100),
+      str(sdkMetadataField(event, scoped.environment, 'serverName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationVersion'), 50),
+      str(sdkMetadataField(event, scoped.environment, 'sdkName'), 50), str(sdkMetadataField(event, scoped.environment, 'sdkVersion'), 50),
+      JSON.stringify(metadataFor(event, scoped.environment)), timestamp, payloadFor(event),
+    ]);
+    const children = Array.isArray(s.children) ? s.children : [];
+    for (const child of children) this.collectTraceSpanRows(scoped, child, spanId, depth + 1, timestamp, rows);
+  }
+
+  private async writeMetrics(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'metric' }>;
       const r = rec(event);
+      const tags = plainObject(e.tags) ?? {};
+      // Resolve metric_unit from canonical SDK field first, then legacy 'unit'
+      const metricUnit = str(e.metricUnit ?? e.unit ?? r.metricUnit ?? r.unit, 50);
+      // Promote HTTP context out of tags (no JSON parsing at query time)
+      const endpoint   = str(tagValue(tags, 'path', 'route', 'endpoint', 'http.route'), 500);
+      const httpMethod = str(tagValue(tags, 'method', 'http.method', 'http_method'), 10);
+      const statusCode = num(tagValue(tags, 'status', 'statusCode', 'status_code', 'http.status_code'));
+      // Automatic classification — no JSON at dashboard query time
+      const metricCategory = str(r.metricCategory, 50) ?? classifyMetric(e.metricName, e.metricType, tags);
+      const aggType        = str(r.aggregationType, 50) ?? aggregationType(e.metricType);
+      // Percentiles: prefer SDK-supplied values, resolved from both camelCase and snake_case
+      const p50 = num(e.p50 ?? r.p50);
+      const p75 = num(e.p75 ?? r.p75);
+      const p90 = num(e.p90 ?? r.p90);
+      const p95 = num(e.p95 ?? r.p95);
+      const p99 = num(e.p99 ?? r.p99);
       return [
-        orgId, projectId, this.eventId(event), e.metricName, e.metricType,
-        num(e.value) ?? 0, str(e.unit, 50),
-        JSON.stringify(e.tags ?? {}), num(e.count), num(e.sum), num(e.min), num(e.max), num(e.avg),
-        num(r.rate), e.buckets != null ? JSON.stringify(e.buckets) : null,
-        num(r.p50), num(r.p75), num(r.p90), num(r.p95), num(r.p99),
-        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        // identity
+        orgId, projectId, apiKeyName ?? '', this.eventId(event),
+        // metric identity
+        e.metricName, e.metricType,
+        metricUnit, str(e.metricNamespace ?? r.metricNamespace, 255), str(e.metricDescription ?? r.metricDescription, 1024),
+        // numeric value + aggregates
+        num(e.value) ?? 0,
+        num(e.count), num(e.sum), num(e.min), num(e.max), num(e.avg),
+        num(e.rate ?? r.rate),
+        e.buckets != null ? JSON.stringify(e.buckets) : null,
+        p50, p75, p90, p95, p99,
+        // classification
+        metricCategory, aggType,
+        str(e.temporality ?? r.temporality, 32),
+        typeof e.isMonotonic === 'boolean' ? e.isMonotonic : (typeof r.isMonotonic === 'boolean' ? r.isMonotonic : null),
+        // promoted HTTP context from tags
+        endpoint, httpMethod, statusCode,
+        // correlation IDs
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
+        str(r.userId, 255), str(e.tenantId ?? r.tenantId, 255),
+        // SDK origin
+        str(r.service, 100), environment,
+        str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100),
+        str(sdkMetadataField(event, environment, 'applicationName'), 100),
+        str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50),
+        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        // raw tags (full JSONB), clean attributes (custom-only), debug copies
+        JSON.stringify(e.tags ?? {}),
+        JSON.stringify(metricAttributes(event)),
+        JSON.stringify(metadataFor(event, environment)),
+        iso(resolveTimestamp(event)),
+        payloadFor(event),
+        e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_metrics',
-      ['organization_id', 'project_id', 'event_id', 'metric_name', 'metric_type',
-       'value', 'unit', 'tags', 'count', 'sum', 'min', 'max', 'avg',
-       'rate', 'buckets', 'p50', 'p75', 'p90', 'p95', 'p99',
-       'trace_id', 'span_id', 'request_id', 'service', 'environment', 'release',
-       'sdk_name', 'sdk_version', 'timestamp'],
+      [// identity
+       'organization_id', 'project_id', 'api_key_name', 'event_id',
+       // metric identity
+       'metric_name', 'metric_type',
+       'metric_unit', 'metric_namespace', 'metric_description',
+       // numeric value + aggregates
+       'value',
+       'count', 'sum', 'min', 'max', 'avg',
+       'rate', 'buckets',
+       'p50', 'p75', 'p90', 'p95', 'p99',
+       // classification
+       'metric_category', 'aggregation_type', 'temporality', 'is_monotonic',
+       // promoted HTTP context
+       'endpoint', 'http_method', 'status_code',
+       // correlation IDs
+       'trace_id', 'span_id', 'request_id', 'session_id',
+       'user_id', 'tenant_id',
+       // SDK origin
+       'service', 'environment', 'release', 'server_name',
+       'application_name', 'application_version',
+       'sdk_name', 'sdk_version',
+       // JSONB
+       'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_logs ─────────────────────────────────────────────────────────
-  private async writeLogs(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeLogs(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'log' }>;
       const r = rec(event);
+
+      const msg = e.message ?? '';
+      const c = plainObject(e.context) ?? {};
+      const httpC = plainObject(c.http) ?? {};
+
+      // ── Extraction logic ──────────────────────────────────────────────────────
+      const httpMethod = e.httpMethod ?? str(httpC.method, 16) ?? (msg.match(/^(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+/)?.[1]) ?? null;
+      const endpoint = e.endpoint ?? str(httpC.url, 2048) ?? (msg.match(/^(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+([^?\s]+)/)?.[1]) ?? null;
+      let statusCode = e.statusCode ?? num(httpC.status_code);
+      if (statusCode == null) {
+        const sc1 = msg.match(/HTTP.*?\s([2-5][0-9]{2})\b/)?.[1];
+        if (sc1) statusCode = Number(sc1);
+        else {
+          const sc2 = msg.match(/\b([2-5][0-9]{2})\b.*?\s\d+ms/)?.[1];
+          if (sc2) statusCode = Number(sc2);
+        }
+      }
+      let durationMs = e.durationMs ?? num(httpC.duration_ms);
+      if (durationMs == null) {
+        const d = msg.match(/\b(\d+)\s*ms\b/)?.[1];
+        if (d) durationMs = Number(d);
+      }
+
+      // ── Categorization ────────────────────────────────────────────────────────
+      const loggerName = str(e.loggerName ?? r.loggerName ?? e.logger, 255) ?? 'unknown';
+      const loggerLower = loggerName.toLowerCase();
+      const msgLower = msg.toLowerCase();
+
+      const name = str(e.name, 255) ?? (
+        msg.match(/^(GET|POST|PUT|DELETE|PATCH)\s+/) ? 'HTTP Request' :
+        (msgLower.includes('error') || e.level === 'error' || e.level === 'fatal') ? 'Error Log' :
+        (loggerLower.includes('db') || loggerLower.includes('postgres')) ? 'Database Query' :
+        (loggerLower.includes('cache') || loggerLower.includes('redis')) ? 'Cache Operation' :
+        (loggerLower.includes('worker') || loggerLower.includes('job') || loggerLower.includes('queue')) ? 'Background Job' :
+        'Log Event'
+      );
+
+      const logSource = e.logSource ?? (
+        e.sdkName != null ? 'sdk' :
+        (loggerLower.includes('express') || loggerLower.includes('koa') || loggerLower.includes('fastify')) ? 'framework' :
+        loggerLower.includes('middleware') ? 'middleware' :
+        (loggerLower.includes('worker') || loggerLower.includes('job')) ? 'worker' :
+        'unknown'
+      );
+
+      const logCategory = e.logCategory ?? (
+        (msgLower.includes('get ') || msgLower.includes('post ') || loggerLower.includes('http')) ? 'http' :
+        (loggerLower.includes('db') || loggerLower.includes('sql') || loggerLower.includes('postgres')) ? 'database' :
+        (loggerLower.includes('redis') || loggerLower.includes('cache')) ? 'cache' :
+        (loggerLower.includes('auth') || msgLower.includes('login') || msgLower.includes('unauthorized')) ? 'authentication' :
+        (loggerLower.includes('queue') || loggerLower.includes('worker')) ? 'worker' :
+        (e.level === 'error' || e.level === 'fatal' || msgLower.includes('exception')) ? 'application' :
+        'application'
+      );
+
+      // Clean attributes
+      const rawAttrs = plainObject(e.attributes) ?? {};
+      const LOG_ATTR_DUPES = new Set([
+        'parentSpanId', 'parent_span_id', 'tenantId', 'tenant_id',
+        'name', 'loggerName', 'logger_name', 'logSource', 'log_source',
+        'logCategory', 'log_category', 'endpoint', 'httpMethod', 'http_method',
+        'statusCode', 'status_code', 'durationMs', 'duration_ms',
+        'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+        'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+        'applicationName', 'application_name', 'applicationVersion', 'application_version',
+        'release', 'timestamp', 'eventId', 'event_id',
+        'requestId', 'request_id', 'sessionId', 'session_id',
+        'traceId', 'trace_id', 'spanId', 'span_id', 'level', 'message'
+      ]);
+      const cleanAttributes: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawAttrs)) {
+        if (!LOG_ATTR_DUPES.has(k)) cleanAttributes[k] = v;
+      }
+      const extra = plainObject(r.extra);
+      if (extra) {
+        for (const [k, v] of Object.entries(extra)) {
+          if (!LOG_ATTR_DUPES.has(k)) cleanAttributes[k] = v;
+        }
+      }
+
       return [
-        orgId, projectId, this.eventId(event), logLevel(e.level), e.message,
-        JSON.stringify(e.args ?? []), e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), logLevel(e.level), msg,
+        JSON.stringify(e.args ?? []), e.traceId ?? null, e.spanId ?? null,
+        str(e.parentSpanId ?? r.parentSpanId, 128), str(e.tenantId ?? r.tenantId, 255),
+        name, loggerName, logSource, logCategory, endpoint, httpMethod, statusCode, durationMs,
+        e.requestId ?? null, e.sessionId ?? null,
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
         str(r.userId, 255), inet(r.userIp),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        JSON.stringify(c), JSON.stringify(e.tags ?? {}), JSON.stringify(cleanAttributes),
+        JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_logs',
-      ['organization_id', 'project_id', 'event_id', 'level', 'message',
-       'args', 'trace_id', 'span_id', 'request_id',
-       'service', 'environment', 'release', 'user_id', 'user_ip',
-       'sdk_name', 'sdk_version', 'timestamp'],
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
+       'args', 'trace_id', 'span_id', 'parent_span_id', 'tenant_id',
+       'name', 'logger_name', 'log_source', 'log_category', 'endpoint', 'http_method', 'status_code', 'duration_ms',
+       'request_id', 'session_id',
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
+       'user_id', 'user_ip',
+       'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
+       'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_profiles ─────────────────────────────────────────────────────────
-  private async writeProfiles(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeProfiles(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'profile' }>;
       const r = rec(event);
       const ts = resolveTimestamp(event);
       return [
-        orgId, projectId, this.eventId(event), str(e.profileType, 20) ?? 'cpu',
-        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null,
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), str(e.profileType, 20) ?? 'cpu',
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255),
         e.startTime != null ? iso(e.startTime) : iso(ts),
         e.endTime != null ? iso(e.endTime) : null, num(e.duration),
         e.profile != null ? JSON.stringify(e.profile) : null,
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(ts),
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(ts),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_profiles',
-      ['organization_id', 'project_id', 'event_id', 'profile_type',
-       'trace_id', 'span_id', 'request_id', 'start_time', 'end_time', 'duration_ms',
-       'profile_data', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'profile_type',
+       'trace_id', 'span_id', 'request_id', 'session_id', 'user_id', 'start_time', 'end_time', 'duration_ms',
+       'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_cron_checkins ─────────────────────────────────────────────────────
-  private async writeCronCheckins(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeCronCheckins(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'cron_checkin' }>;
       const r = rec(event);
+
+      // Derived: is_success
+      const isSuccess = e.status === 'ok';
+
+      // Derived: checkin_type — auto-classify if SDK doesn't supply it
+      const checkinType = str(e.checkinType ?? r.checkinType, 32)
+        ?? (e.monitorSlug && (e.monitorSlug.includes('heartbeat') || e.monitorSlug.includes('ping')) ? 'heartbeat'
+          : e.scheduleType ?? r.scheduleType ? 'scheduled'
+          : 'scheduled');
+
+      // Clean attributes: remove all fields that have canonical columns
+      const rawAttrs = plainObject(e.attributes) ?? {};
+      const CRON_ATTR_DUPES = new Set([
+        'monitorSlug', 'monitor_slug', 'monitorName', 'monitor_name',
+        'status', 'duration', 'duration_ms',
+        'checkinType', 'checkin_type', 'scheduleType', 'schedule_type',
+        'startedAt', 'started_at', 'finishedAt', 'finished_at',
+        'isSuccess', 'is_success', 'tenantId', 'tenant_id',
+        'environment', 'projectId', 'project_id', 'organizationId', 'organization_id',
+        'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version',
+        'applicationName', 'application_name', 'applicationVersion', 'application_version',
+        'release', 'timestamp', 'eventId', 'event_id',
+        'requestId', 'request_id', 'sessionId', 'session_id',
+        'traceId', 'trace_id', 'spanId', 'span_id',
+      ]);
+      const cleanAttributes: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawAttrs)) {
+        if (!CRON_ATTR_DUPES.has(k)) cleanAttributes[k] = v;
+      }
+      // Merge extra object into attributes (custom business data)
+      const extra = plainObject(r.extra);
+      if (extra) {
+        for (const [k, v] of Object.entries(extra)) {
+          if (!CRON_ATTR_DUPES.has(k)) cleanAttributes[k] = v;
+        }
+      }
+
       return [
-        orgId, projectId, this.eventId(event), e.monitorSlug, e.status, num(e.duration),
-        str(r.service, 100), str(e.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        // identity
+        orgId, projectId, apiKeyName ?? '', this.eventId(event),
+        // monitor
+        e.monitorSlug, str(e.monitorName ?? r.monitorName, 255),
+        // status + derived
+        e.status, isSuccess,
+        // timing
+        num(e.duration),
+        e.startedAt != null ? iso(Number(e.startedAt)) : null,
+        e.finishedAt != null ? iso(Number(e.finishedAt)) : null,
+        // classification
+        checkinType, str(e.scheduleType ?? r.scheduleType, 64),
+        // correlation IDs
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
+        str(r.userId, 255), str(e.tenantId ?? r.tenantId, 255),
+        // SDK origin
+        str(r.service, 100), environment,
+        str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100),
+        str(sdkMetadataField(event, environment, 'applicationName'), 100),
+        str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50),
+        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        // JSONB
+        JSON.stringify(e.tags ?? {}),
+        JSON.stringify(cleanAttributes),
+        JSON.stringify(metadataFor(event, environment)),
+        iso(resolveTimestamp(event)),
+        payloadFor(event),
+        e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_cron_checkins',
-      ['organization_id', 'project_id', 'event_id', 'monitor_slug', 'status', 'duration_ms',
-       'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+      [// identity
+       'organization_id', 'project_id', 'api_key_name', 'event_id',
+       // monitor
+       'monitor_slug', 'monitor_name',
+       // status
+       'status', 'is_success',
+       // timing
+       'duration_ms', 'started_at', 'finished_at',
+       // classification
+       'checkin_type', 'schedule_type',
+       // correlation IDs
+       'trace_id', 'span_id', 'request_id', 'session_id',
+       'user_id', 'tenant_id',
+       // SDK origin
+       'service', 'environment', 'release', 'server_name',
+       'application_name', 'application_version',
+       'sdk_name', 'sdk_version',
+       // JSONB
+       'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
 
   // ── events_replays ─────────────────────────────────────────────────────────
-  private async writeReplays(list: ScopedEvent[]): Promise<TypedWriteResult> {
-    const rows = list.map(({ projectId, orgId, event }) => {
+  private async writeReplays(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
+    const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'replay' }>;
       const r = rec(event);
       return [
-        orgId, projectId, this.eventId(event), e.sessionId, e.segmentId,
+        orgId, projectId, apiKeyName ?? '', this.eventId(event), e.sessionId, e.segmentId,
         JSON.stringify(e.events ?? []),
-        str(r.service, 100), str(r.environment, 50), str(r.release, 100),
-        str(r.sdkName, 50), str(r.sdkVersion, 50), iso(resolveTimestamp(event)),
+        e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, str(r.userId, 255),
+        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
+        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_replays',
       ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
-       'events', 'service', 'environment', 'release', 'sdk_name', 'sdk_version', 'timestamp'],
+       'events', 'trace_id', 'span_id', 'request_id', 'user_id',
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
       rows,
     );
-    const res = await this.pool.query(text, values);
+    const res = await db.query(text, values);
     return { inserted: res.rowCount ?? 0 };
   }
+}
+
+function outboxSeverity(event: NormalizedEvent): string | null {
+  if (event.type === 'error') return eventSeverity((event as { severity?: unknown }).severity, 'error');
+  if (event.type === 'message') return eventSeverity((event as { severity?: unknown }).severity, 'info');
+  if (event.type === 'log') return logLevel((event as { level?: unknown }).level) === 'error' ? 'error' : 'info';
+  return null;
+}
+
+function isFastPathSignal(scoped: ScopedEvent): boolean {
+  const event = scoped.event;
+  const record = rec(event);
+  if (event.type === 'error') return true;
+  if (event.type === 'cron_checkin') return record.status === 'error';
+  if (event.type === 'log') {
+    const message = typeof record.message === 'string' ? record.message : '';
+    return /out of memory|heap out of memory|oom|security|csrf|xss|sql injection|auth bypass/i.test(message);
+  }
+  if (event.type === 'request') {
+    const status = Number(record.statusCode);
+    return status === 401 || status === 403;
+  }
+  return false;
 }

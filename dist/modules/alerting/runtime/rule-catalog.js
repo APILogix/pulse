@@ -1,0 +1,161 @@
+import { resolveEffectiveRule, } from '../policy/resolve-rule.js';
+const RULE_COLUMNS = `
+  id, organization_id, name, description, severity, enabled,
+  evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
+  deduplication_window_seconds, deduplication_key_template,
+  grouping_enabled, grouping_key_template, grouping_wait_seconds,
+  labels, annotations, metadata, created_by, updated_by,
+  enabled_at, disabled_at, created_at, updated_at, deleted_at,
+  project_id, preset_key, is_default, last_evaluated_at,
+  COALESCE(current_revision, 1) AS current_revision
+`;
+const BINDING_COLUMNS = `
+  id, organization_id, rule_id, scope_type, scope_level,
+  project_id, environment, service, endpoint,
+  mode, enabled, priority,
+  severity, cooldown_seconds, deduplication_window_seconds,
+  auto_resolve_after_minutes, evaluation_interval_seconds, consecutive_breaches,
+  threshold_overrides, action_mode, requested_channels, recipient_overrides,
+  escalation_policy_id, notes, created_at, deleted_at
+`;
+const TIER_FIELD_PREFIXES = {
+    fast: [
+        'errors.unhandled',
+        'errors.fatal',
+        'errors.crash',
+        'logs.oom',
+        'logs.security',
+        'cron.failed',
+        'requests.auth_failure',
+        'deployment.failed',
+        'heartbeat.lost',
+        'connector.failure',
+    ],
+    window: [
+        'errors.rate',
+        'error.rate',
+        'requests.error_rate',
+        'requests.degraded_rate',
+        'requests.5xx_rate',
+        '5xx.rate',
+        'requests.latency.p95',
+        'latency.p95',
+        'requests.latency.p99',
+        'latency.p99',
+        'availability.pct',
+        'requests.count',
+        'traffic.count',
+        'cron.failure_rate',
+        'cron.failures',
+        'ai.failure_rate',
+        'ai.latency.p95',
+        'ai.requests.failed',
+        'ai.duration.p95',
+    ],
+    operational: [
+        'runtime.cpu',
+        'runtime.memory',
+        'metrics.cpu.usage',
+        'metrics.memory.usage',
+        'runtime.disk',
+        'runtime.network_errors',
+        'db.connection_errors',
+        'queue.backlog',
+        'service.health',
+        'endpoint.health',
+        'logs.error_count',
+    ],
+    ai: [
+        'ai.cost',
+        'ai.credits',
+        'ai.cost.usd',
+        'ai.credits.used',
+        'ai.usage',
+        'capacity.forecast',
+        'slo.burn_rate',
+        'release.regression',
+        'usage.anomaly',
+        'trend.regression',
+    ],
+};
+export function tierForFieldPath(fieldPath) {
+    const normalized = fieldPath.trim().toLowerCase();
+    for (const [tier, prefixes] of Object.entries(TIER_FIELD_PREFIXES)) {
+        if (prefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}.`))) {
+            return tier;
+        }
+    }
+    return null;
+}
+export class AlertRuntimeRuleCatalog {
+    db;
+    constructor(db) {
+        this.db = db;
+    }
+    async listRulesForTier(organizationId, tier) {
+        const prefixes = TIER_FIELD_PREFIXES[tier];
+        const result = await this.db.query(`SELECT ${RULE_COLUMNS}
+         FROM alert_rules r
+        WHERE r.organization_id = $1
+          AND r.enabled = TRUE
+          AND r.deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1
+              FROM alert_rule_conditions c
+             WHERE c.rule_id = r.id
+               AND EXISTS (
+                 SELECT 1 FROM unnest($2::text[]) AS p(prefix)
+                  WHERE lower(c.field_path) = p.prefix
+                     OR lower(c.field_path) LIKE p.prefix || '.%'
+               )
+          )
+        ORDER BY r.created_at ASC
+        LIMIT 1000`, [organizationId, prefixes]);
+        return result.rows;
+    }
+    async listConditions(ruleIds) {
+        const grouped = new Map();
+        if (ruleIds.length === 0)
+            return grouped;
+        const result = await this.db.query(`SELECT *
+         FROM alert_rule_conditions
+        WHERE rule_id = ANY($1::uuid[])
+        ORDER BY rule_id, order_index ASC, id ASC`, [ruleIds]);
+        for (const row of result.rows) {
+            const list = grouped.get(row.rule_id) ?? [];
+            list.push(row);
+            grouped.set(row.rule_id, list);
+        }
+        return grouped;
+    }
+    async listBindings(organizationId, ruleIds) {
+        const grouped = new Map();
+        if (ruleIds.length === 0)
+            return grouped;
+        const result = await this.db.query(`SELECT ${BINDING_COLUMNS}
+         FROM alert_rule_bindings
+        WHERE organization_id = $1
+          AND rule_id = ANY($2::uuid[])
+          AND deleted_at IS NULL
+        ORDER BY rule_id, scope_level ASC, priority DESC, created_at ASC`, [organizationId, ruleIds]);
+        for (const row of result.rows) {
+            const list = grouped.get(row.rule_id) ?? [];
+            list.push(row);
+            grouped.set(row.rule_id, list);
+        }
+        return grouped;
+    }
+    async resolveRulesForScope(organizationId, tier, scope) {
+        const rules = await this.listRulesForTier(organizationId, tier);
+        const ruleIds = rules.map((rule) => rule.id);
+        const [conditionsByRule, bindingsByRule] = await Promise.all([
+            this.listConditions(ruleIds),
+            this.listBindings(organizationId, ruleIds),
+        ]);
+        return rules.map((rule) => ({
+            rule,
+            effective: resolveEffectiveRule(rule, conditionsByRule.get(rule.id) ?? [], bindingsByRule.get(rule.id) ?? [], scope),
+        }));
+    }
+}
+//# sourceMappingURL=rule-catalog.js.map

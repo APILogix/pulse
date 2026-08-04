@@ -1,5 +1,4 @@
 import { authenticate } from "../../shared/middleware/auth.js";
-import { ListSdkConfigsQuerySchema, ResolveSdkConfigQuerySchema, UpdateSdkConfigSchema, } from "../organization/sdk-config.types.js";
 import { ApiKeyParamsSchema, BulkRevokeBodySchema, BulkRotateBodySchema, CreateApiKeyBodySchema, CreateEnvironmentBodySchema, CreateProjectBodySchema, EnvironmentParamsSchema, ListApiKeysQuerySchema, ListProjectsQuerySchema, OrgIdParamsSchema, ProjectParamsSchema, ProjectSdkConfigParamsSchema, RevokeApiKeyBodySchema, RotateApiKeyBodySchema, UpdateApiKeyBodySchema, UpdateEnvironmentBodySchema, UpdateProjectBodySchema, UpdateProjectSettingsBodySchema, } from "./types.js";
 import { handleProjectError, ProjectError } from "./shared/utils.js";
 import { projectCoreRoutes } from "./core/project.routes.js";
@@ -11,6 +10,7 @@ import { projectConnectorSubscriptionRoutes } from "./alerts/subscriptions/conne
 import { thresholdRoutes } from "./alerts/thresholds/threshold.routes.js";
 import { projectAlertChannelRoutes } from "./alerts/channels/channel.routes.js";
 import { projectAnalyticsRoutes } from "./usage/analytics.routes.js";
+import { projectDeliveryLogRoutes } from "./alerts/deliveries/delivery-log.routes.js";
 export async function projectsRoutes(fastify) {
     // ── Project CRUD ──────────────────────────────────────────────────────────
     // ── Project Settings & Overview ─────────────────────────────────────────────
@@ -19,6 +19,7 @@ export async function projectsRoutes(fastify) {
     // Bulk operations are registered before the parameterized :apiKeyId routes so
     // "bulk-rotate"/"bulk-revoke" are never captured as an apiKeyId.
     await fastify.register(projectAnalyticsRoutes);
+    await fastify.register(projectDeliveryLogRoutes);
     await fastify.register(projectCoreRoutes);
     await fastify.register(projectMemberRoutes);
     await fastify.register(projectConnectorSubscriptionRoutes);

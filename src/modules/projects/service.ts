@@ -197,6 +197,10 @@ export class ProjectsService {
       return this.core.getProject(orgId, projectId, userId) as any;
   }
 
+  async getProjectByPublicId(orgId: string, publicId: string, userId: string): Promise<Project> {
+      return this.core.getProjectByPublicId(orgId, publicId, userId) as any;
+  }
+
   async getProjectSettings(orgId: string, projectId: string, userId: string): Promise<ProjectSettings> {
       return this.settings.getProjectSettings(orgId, projectId, userId) as any;
   }
@@ -315,6 +319,17 @@ export class ProjectsService {
     meta: RequestMeta,
   ): Promise<void> {
       return (this.environments as any).deleteEnvironment(orgId, projectId, environmentId, userId, meta) as any;
+  }
+
+  /** Irreversible: permanently deletes an already soft-deleted environment and its API keys. */
+  async permanentlyDeleteEnvironment(
+    orgId: string,
+    projectId: string,
+    environmentId: string,
+    userId: string,
+    meta: RequestMeta,
+  ): Promise<void> {
+      return this.environments.permanentlyDeleteEnvironment(orgId, projectId, environmentId, userId, meta);
   }
 
   async restoreEnvironment(

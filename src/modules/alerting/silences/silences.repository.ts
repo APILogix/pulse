@@ -39,7 +39,12 @@ function pgCode(e: unknown): string | undefined {
 }
 
 export class SilencesRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /** ADR-0006: silences are control-plane configuration (primary pool). */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.db.connect();

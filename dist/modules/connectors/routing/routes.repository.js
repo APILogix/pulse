@@ -1,7 +1,11 @@
 import { pool } from '../../../config/database.js';
 import { ConnectorNotFoundError } from '../types.js';
 export class ConnectorRoutesRepository {
-    db = pool;
+    db;
+    /** ADR-0006: connector routes are control-plane configuration. */
+    constructor(db = pool) {
+        this.db = db;
+    }
     async createRoute(organizationId, connectorId, input) {
         await this.requireOwnedConnector(organizationId, connectorId);
         await this.requireOwnedProject(organizationId, input.projectId ?? null);

@@ -52,8 +52,7 @@ DECLARE table_name TEXT;
 BEGIN
  FOREACH table_name IN ARRAY ARRAY[
   'project_settings','project_environments','project_releases','project_api_keys',
-  'api_key_usage_minute','api_key_usage_hourly','api_key_usage_daily','api_key_usage_monthly','project_usage_minute','project_usage_hourly','project_usage_daily',
-  'project_usage_monthly','project_usage_current','project_alert_thresholds','project_alert_channels',
+  'project_alert_thresholds','project_alert_channels',
   'project_member_alert_channel_preferences','project_notification_preferences','project_connector_subscriptions'
  ] LOOP
   EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I','trg_'||table_name||'_tenant',table_name);
@@ -61,8 +60,7 @@ BEGIN
  END LOOP;
  FOREACH table_name IN ARRAY ARRAY[
   'projects','project_settings','project_environments','project_releases','project_api_keys',
-  'api_key_usage_minute','api_key_usage_hourly','api_key_usage_daily','api_key_usage_monthly','project_usage_minute','project_usage_hourly','project_usage_daily',
-  'project_usage_monthly','project_usage_current','project_alert_thresholds','project_alert_channels',
+  'project_alert_thresholds','project_alert_channels',
   'project_member_alert_channel_preferences','project_notification_preferences','project_connector_subscriptions'
  ] LOOP
   EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I','trg_'||table_name||'_updated_at',table_name);
@@ -88,7 +86,6 @@ BEGIN
     NEW.id,NEW.org_id,NEW.created_by,'owner',NEW.created_by,NOW(),NOW(),'active',NEW.created_by
   ) ON CONFLICT(project_id,user_id) DO NOTHING;
  END IF;
- INSERT INTO project_usage_current(project_id,organization_id) VALUES(NEW.id,NEW.org_id) ON CONFLICT(project_id) DO NOTHING;
  INSERT INTO project_notification_preferences(organization_id,project_id,category) VALUES(NEW.org_id,NEW.id,'all') ON CONFLICT DO NOTHING;
  INSERT INTO project_alert_thresholds(organization_id,project_id,threshold_key,metric_name,metric_source,category,severity,comparison_operator,threshold_value,threshold_unit,evaluation_window_minutes,cooldown_minutes,consecutive_breaches)
  SELECT NEW.org_id,NEW.id,t.threshold_key,t.metric_name,'project_usage',t.category,t.severity,t.comparison_operator,t.threshold_value,t.threshold_unit,t.evaluation_window_minutes,t.cooldown_minutes,t.consecutive_breaches

@@ -1,5 +1,5 @@
-/** Environment-owned SDK configuration heads and immutable revisions. */
 import { z } from "zod";
+import type { SchemaV1Config } from "../../projects/sdk-config/schema-v1.js";
 export declare const SdkConfigParamsSchema: z.ZodObject<{
     orgId: z.ZodString;
     configId: z.ZodString;
@@ -21,24 +21,45 @@ export declare const ListSdkConfigsQuerySchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
     environmentId: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
-export declare const UpdateSdkConfigSchema: z.ZodObject<{
-    configValue: z.ZodRecord<z.ZodString, z.ZodUnknown>;
-    schemaVersion: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+export interface UpdateSdkConfigBody {
+    editableConfig: Record<string, unknown>;
+    changeSummary?: string;
+}
+export declare const UpdateSdkConfigSchema: z.ZodPipe<z.ZodUnion<readonly [z.ZodObject<{
+    editableConfig: z.ZodRecord<z.ZodString, z.ZodUnknown>;
     changeSummary: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>;
+}, z.core.$strict>, z.ZodPipe<z.ZodObject<{
+    schemaVersion: z.ZodOptional<z.ZodLiteral<1>>;
+    configValue: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+    changeSummary: z.ZodOptional<z.ZodString>;
+}, z.core.$strict>, z.ZodTransform<{
+    changeSummary?: string;
+    editableConfig: Record<string, unknown>;
+}, {
+    configValue: Record<string, unknown>;
+    schemaVersion?: 1 | undefined;
+    changeSummary?: string | undefined;
+}>>, z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnknown>, z.ZodTransform<{
+    editableConfig: Record<string, unknown>;
+}, Record<string, unknown>>>]>, z.ZodObject<{
+    editableConfig: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+    changeSummary: z.ZodOptional<z.ZodString>;
+}, z.core.$strict>>;
 export declare const RollbackSdkConfigSchema: z.ZodObject<{
     toRevision: z.ZodNumber;
     reason: z.ZodString;
-}, z.core.$strip>;
+}, z.core.$strict>;
 export declare const ResolveSdkConfigQuerySchema: z.ZodObject<{
     environmentId: z.ZodString;
-}, z.core.$strip>;
+}, z.core.$strict>;
 export type SdkConfigChangeType = "initial" | "publish" | "rollback";
 export interface SdkConfigRow {
     id: string;
     organization_id: string;
     project_id: string;
     environment_id: string;
+    environment_name: string;
+    environment_slug: string;
     published_revision_id: string;
     current_revision: number;
     current_hash: string;
@@ -48,7 +69,7 @@ export interface SdkConfigRow {
     created_at: Date;
     updated_at: Date;
     version: number;
-    config_value: Record<string, unknown>;
+    compiled_snapshot: SchemaV1Config;
     published_at: Date;
 }
 export interface SdkConfigVersionRow {
@@ -57,8 +78,10 @@ export interface SdkConfigVersionRow {
     organization_id: string;
     project_id: string;
     environment_id: string;
+    environment_name: string;
+    environment_slug: string;
     revision_number: number;
-    config_value: Record<string, unknown>;
+    compiled_snapshot: SchemaV1Config;
     config_hash: string;
     schema_version: string | null;
     change_type: SdkConfigChangeType;
@@ -72,11 +95,13 @@ export interface SdkConfigDto {
     orgId: string;
     projectId: string;
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     publishedRevisionId: string;
     revision: number;
     revisionHash: string;
-    configValue: Record<string, unknown>;
-    schemaVersion: string | null;
+    compiledSnapshot: SchemaV1Config;
+    schemaVersion: 1;
     publishedAt: Date;
     createdAt: Date;
     updatedAt: Date;
@@ -88,23 +113,26 @@ export interface SdkConfigVersionDto {
     orgId: string;
     projectId: string;
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     revision: number;
     revisionHash: string;
-    configValue: Record<string, unknown>;
-    schemaVersion: string | null;
+    compiledSnapshot: SchemaV1Config;
+    schemaVersion: 1;
     changeType: SdkConfigChangeType;
     changeSummary: string | null;
     rolledBackToRevision: number | null;
     publishedBy: string | null;
     publishedAt: Date;
 }
-/** Exact published document returned to every SDK in one environment. */
 export interface SdkConfigResolvedDto {
     environmentId: string;
+    environmentName: string;
+    environmentSlug: string;
     revision: number;
     revisionHash: string;
-    schemaVersion: string | null;
-    configValue: Record<string, unknown>;
+    schemaVersion: 1;
+    compiledSnapshot: SchemaV1Config;
     publishedAt: Date;
 }
 //# sourceMappingURL=sdk-config.types.d.ts.map

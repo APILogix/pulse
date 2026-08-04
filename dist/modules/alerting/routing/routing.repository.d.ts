@@ -11,9 +11,12 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertRoutingRuleRow } from '../types.js';
 export declare class RoutingRepository {
     private readonly db;
+    /** ADR-0006: routing rules are control-plane configuration. */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createRoutingRule(input: {
         organizationId: string;

@@ -60,6 +60,11 @@ import {
 import { BaseProjectService } from "../shared/base.service.js";
 import { EnvironmentType } from "../environments/environment.types.js";
 import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
+import {
+  syncProjectLookupToLogDbBestEffort,
+  syncEnvironmentLookupToLogDbBestEffort,
+  syncApiKeyLookupToLogDbBestEffort,
+} from "../../../shared/logdb/lookup-sync.js";
 
 /**
  * Result of creating a project: the project itself plus the single Production
@@ -250,6 +255,13 @@ export class ProjectService extends BaseProjectService {
       "Project created with Production environment, SDK configuration, and initial API key",
     );
 
+    // Best-effort Log DB lookup snapshots (analytics attribution). Never blocks
+    // or rolls back the committed primary-DB create; the primary DB is the
+    // source of truth. See docs/distributed-ingestion-routing-master-prompt.md.
+    syncProjectLookupToLogDbBestEffort(result.project.id, "project.created");
+    syncEnvironmentLookupToLogDbBestEffort(result.environment.id, "environment.created");
+    syncApiKeyLookupToLogDbBestEffort(result.apiKey.id, "api_key.created");
+
     return {
       project: result.project,
       environment: result.environment,
@@ -286,6 +298,15 @@ export class ProjectService extends BaseProjectService {
   public async getProject(orgId: string, projectId: string, userId: string): Promise<Project> {
     return this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
   }
+
+  public async getProjectByPublicId(orgId: string, publicId: string, userId: string): Promise<Project> {
+    await this.requireOrganizationAccess(orgId, userId);
+    const project = await this.repository.findProjectByPublicId(orgId, publicId);
+    if (!project) throw new ProjectError("PROJECT_NOT_FOUND", "Project not found", 404);
+    // Now do the standard access check using the resolved UUID.
+    return this.requireProjectAccess(orgId, project.id, userId, ProjectMemberRole.VIEWER);
+  }
+
 
   public async getProjectOverview(orgId: string, projectId: string, userId: string): Promise<ProjectOverviewDto> {
     const project = await this.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
@@ -367,6 +388,7 @@ export class ProjectService extends BaseProjectService {
       newValues: { status: updated.status },
     });
 
+    syncProjectLookupToLogDbBestEffort(projectId, "project.updated");
     return updated;
   }
 
@@ -397,6 +419,7 @@ export class ProjectService extends BaseProjectService {
       isSensitive: true,
     });
     this.logger.warn({ orgId, projectId, userId }, "Project soft-deleted");
+    syncProjectLookupToLogDbBestEffort(projectId, "project.deleted");
   }
 
   public async restoreProject(orgId: string, projectId: string, userId: string, meta: RequestMeta): Promise<Project> {
@@ -417,6 +440,7 @@ export class ProjectService extends BaseProjectService {
       entityName: restored.name,
       newValues: { status: restored.status },
     });
+    syncProjectLookupToLogDbBestEffort(projectId, "project.restored");
     return restored;
   }
 

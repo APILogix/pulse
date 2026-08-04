@@ -7,7 +7,8 @@
  * isolates tenants in the application layer — see module README / migration).
  */
 import type { PoolClient } from 'pg';
-import { type DeliveryRow, type DeliveryStatus, type FailureCategory, type NotificationSeverity } from '../types.js';
+import { pool } from '../../../config/database.js';
+import { type ConnectorType, type DeliveryRow, type DeliveryStatus, type FailureCategory, type NotificationSeverity } from '../types.js';
 export interface InsertDeliveryInput {
     organizationId: string;
     connectorId: string;
@@ -20,8 +21,17 @@ export interface InsertDeliveryInput {
     parentDeliveryId: string | null;
     status: DeliveryStatus;
 }
+export interface RateLimitCheckResult {
+    allowed: boolean;
+    retryAfterMs: number;
+}
 export declare class DeliveryRepository {
     private readonly db;
+    /**
+     * ADR-0006: pools are injected explicitly. Reads/writes the LEGACY connector
+     * delivery tables and stays on the primary pool until the L9 view swap.
+     */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     insertDelivery(input: InsertDeliveryInput): Promise<DeliveryRow>;
     insertDeliveryIdempotent(input: InsertDeliveryInput): Promise<{
@@ -49,6 +59,11 @@ export declare class DeliveryRepository {
     }>;
     getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null>;
     findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number): Promise<DeliveryRow | null>;
+    consumeRateLimitToken(connectorId: string, limit: number, windowSeconds: number): Promise<RateLimitCheckResult>;
+    circuitAllows(connectorId: string, resetTimeoutMs: number): Promise<boolean>;
+    recordCircuitSuccess(connectorId: string): Promise<void>;
+    recordCircuitFailure(connectorId: string, failureThreshold: number): Promise<'closed' | 'open' | 'half_open'>;
+    recordSuccessfulDeliveryUsage(organizationId: string, projectId: string | null, connectorType: ConnectorType): Promise<void>;
     listAttempts(organizationId: string, connectorId: string, deliveryId: string, filters: {
         limit: number;
         offset: number;

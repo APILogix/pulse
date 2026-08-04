@@ -1,5 +1,5 @@
 /**
- * Auth Routes — Fastify HTTP layer.
+ * Auth Routes — Credential (login/MFA) routes.
  *
  * Responsibilities:
  *   - Validate request payloads with Zod schemas in types.ts.
@@ -14,10 +14,6 @@
  *     Secure + no Domain attribute and blocks sibling-subdomain overwrite.
  *   - Development falls back to `refresh_token` because browsers reject
  *     `__Host-` cookies over plain HTTP.
- *
- * Rate limiting:
- *   - Scoped in-process LRU limits (rate-limits.ts) on sensitive auth routes.
- *   - Global Fastify rate limiter (app.ts) still applies as a backstop.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 export declare function handleAuthError(error: unknown, reply: FastifyReply, request: FastifyRequest): FastifyReply;

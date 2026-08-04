@@ -8,7 +8,7 @@ import {
   SubscriptionEventActor,
   BillingInterval
 } from '../shared/types.js';
-import { randomUUID } from 'crypto';
+import { syncOrganizationLookupToLogDbBestEffort } from '../../../shared/logdb/lookup-sync.js';
 
 export class SubscriptionsService {
   constructor(
@@ -58,7 +58,7 @@ export class SubscriptionsService {
 
     // In a real system, you'd integrate with Stripe/Razorpay if it's a paid plan.
     // We will just do the local DB logic here.
-    return this.repository.withTransaction(async (client) => {
+    const result = await this.repository.withTransaction(async (client) => {
       const active = await this.repository.getSubscriptionForUpdate(orgId, client);
       if (active && active.status !== SubscriptionStatus.CANCELLED && active.status !== SubscriptionStatus.EXPIRED) {
         throw new BillingError('Organization already has an active subscription', BillingErrorCodes.INVALID_SUBSCRIPTION_STATE, 400);
@@ -106,6 +106,8 @@ export class SubscriptionsService {
 
       return { success: true, data: sub };
     });
+    syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.created');
+    return result;
   }
 
   async changePlan(orgId: string, newPlanId: string, userId: string) {
@@ -114,7 +116,7 @@ export class SubscriptionsService {
       throw new BillingError('New plan not found', BillingErrorCodes.PLAN_NOT_FOUND, 404);
     }
 
-    return this.repository.withTransaction(async (client) => {
+    const result = await this.repository.withTransaction(async (client) => {
       const active = await this.repository.getSubscriptionForUpdate(orgId, client);
       if (!active) {
         throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
@@ -155,6 +157,8 @@ export class SubscriptionsService {
 
       return { success: true, data: sub };
     });
+    syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.plan_changed');
+    return result;
   }
 
   async previewChange(orgId: string, newPlanId: string) {
@@ -219,7 +223,7 @@ export class SubscriptionsService {
       throw new BillingError('New plan not found', BillingErrorCodes.PLAN_NOT_FOUND, 404);
     }
 
-    return this.repository.withTransaction(async (client) => {
+    const result = await this.repository.withTransaction(async (client) => {
       const active = await this.repository.getSubscriptionForUpdate(orgId, client);
       if (!active) {
         throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
@@ -256,10 +260,12 @@ export class SubscriptionsService {
 
       return { success: true, data: sub };
     });
+    syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.change_scheduled');
+    return result;
   }
 
   async cancelSubscription(orgId: string, userId: string) {
-    return this.repository.withTransaction(async (client) => {
+    const result = await this.repository.withTransaction(async (client) => {
       const active = await this.repository.getSubscriptionForUpdate(orgId, client);
       if (!active) {
         throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
@@ -281,5 +287,7 @@ export class SubscriptionsService {
 
       return { success: true, data: sub };
     });
+    syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.cancelled');
+    return result;
   }
 }

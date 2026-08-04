@@ -21,6 +21,7 @@ export interface ProjectAuthResult {
   environmentName: string;
   environmentSlug: string;
   apiKeyId: string;
+  apiKeyName: string;
   /**
    * Ingestion-side policy defaults. These are NOT credential columns: the API
    * key only selects a project/environment, so authorization, endpoint/event
@@ -39,9 +40,6 @@ export interface ProjectAuthResult {
   allowedIps: string[];
   allowedDomains: string[];
   allowedSdks: string[];
-  samplingRules: Record<string, unknown>;
-  featureFlags: Record<string, unknown>;
-  sdkConfig: Record<string, unknown>;
   rateLimitPerSecond: number | null;
   rateLimitPerMinute: number | null;
   rateLimitPerHour: number | null;
@@ -63,14 +61,8 @@ export interface ProjectAuthResult {
 export class PostgresWriter {
   private readonly reader: TelemetryReader;
 
-  constructor(public readonly pool: Pool) {
-    this.reader = new TelemetryReader(pool);
-  }
-
-  private configObject(value: unknown): Record<string, unknown> {
-    return value !== null && typeof value === 'object' && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : {};
+  constructor(public readonly pool: Pool, telemetryPool: Pool = pool) {
+    this.reader = new TelemetryReader(telemetryPool);
   }
 
   /**
@@ -93,23 +85,17 @@ export class PostgresWriter {
         p.name as project_name,
         p.status as project_status,
         k.id as key_id,
+        k.name as api_key_name,
         k.environment_id,
         e.name as environment_name,
         e.slug as environment_slug,
         k.status as key_status,
         k.expires_at,
         k.secret_hash,
-        cr.config_value AS sdk_config,
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
-      INNER JOIN project_environment_sdk_configs ch
-        ON ch.environment_id = k.environment_id
-       AND ch.project_id = k.project_id
-       AND ch.organization_id = k.organization_id
-      INNER JOIN project_environment_sdk_config_revisions cr
-        ON cr.id = ch.published_revision_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
        AND s.status IN ('trialing', 'active', 'past_due')
@@ -152,6 +138,7 @@ export class PostgresWriter {
         environmentName: row.environment_name as string,
         environmentSlug: row.environment_slug as string,
         apiKeyId: row.key_id as string,
+        apiKeyName: row.api_key_name as string,
         // A credential only proves identity. Ingestion authorization and rate
         // limits come from organization/platform configuration, so an
         // authenticated key resolves to the permissive ingestion defaults.
@@ -168,9 +155,6 @@ export class PostgresWriter {
         allowedIps: [],
         allowedDomains: [],
         allowedSdks: [],
-        samplingRules: this.configObject((row.sdk_config as Record<string, unknown> | null)?.samplingRules),
-        featureFlags: this.configObject((row.sdk_config as Record<string, unknown> | null)?.featureFlags),
-        sdkConfig: (row.sdk_config as Record<string, unknown> | null) ?? {},
         rateLimitPerSecond: null,
         rateLimitPerMinute: null,
         rateLimitPerHour: null,
@@ -246,8 +230,9 @@ export class PostgresWriter {
     endTime: string,
     eventTypes?: string[],
     maxEvents = 10_000,
+    environment?: string,
   ): Promise<EnrichedEvent[]> {
-    return this.reader.getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents);
+    return this.reader.getEventsForReplay(projectId, startTime, endTime, eventTypes, maxEvents, environment);
   }
 
   async healthCheck(): Promise<boolean> {

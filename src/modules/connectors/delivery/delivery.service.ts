@@ -14,15 +14,11 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { randomUUID } from 'crypto';
+import { pgboss } from '../../../lib/pgboss.js';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
 import { decryptConfigAsync } from '../secrets/secret.service.js';
-import {
-  checkRateLimit,
-  recordCircuitFailure,
-  recordCircuitSuccess,
-  computeBackoffMs,
-} from '../runtime.js';
+import { computeBackoffMs } from '../runtime.js';
 import type { BaseConnector } from '../shared/base.connector.js';
 import {
   type ConnectorConfigRow,
@@ -122,12 +118,6 @@ export class NotificationDispatcher {
     return this.attemptDelivery(row, delivery, payload, delivery.attempts);
   }
 
-  private circuitOpen(row: ConnectorConfigRow): boolean {
-    if (row.consecutive_failures < row.failure_threshold) return false;
-    const CIRCUIT_RESET_MS = 30_000;
-    return Date.now() - new Date(row.updated_at).getTime() < CIRCUIT_RESET_MS;
-  }
-
   private async attemptDelivery(
     row: ConnectorConfigRow,
     delivery: DeliveryRow,
@@ -137,20 +127,21 @@ export class NotificationDispatcher {
     const log = this.logger.child({ connectorId: row.id, deliveryId: delivery.id, correlationId: payload.correlationId });
 
     // 1. Rate limit
-    const rate = checkRateLimit(
-      `connector:${row.id}`,
+    const rate = await this.repository.consumeRateLimitToken(
+      row.id,
       row.rate_limit_requests,
       row.rate_limit_window_seconds,
     );
     if (!rate.allowed) {
       return this.scheduleRetryOrFail(
         row, delivery, payload, priorAttempts,
-        'rate_limit', 'Local rate limit exceeded', true, rate.retryAfterMs, log,
+        'rate_limit', 'Global rate limit exceeded', true, rate.retryAfterMs, log,
       );
     }
 
-    // 2. Circuit breaker
-    if (this.circuitOpen(row)) {
+    const CIRCUIT_RESET_MS = 30_000;
+    const circuitAllowed = await this.repository.circuitAllows(row.id, CIRCUIT_RESET_MS);
+    if (!circuitAllowed) {
       log.warn('Circuit open — short-circuiting delivery');
       return this.scheduleRetryOrFail(
         row, delivery, payload, priorAttempts,
@@ -181,6 +172,7 @@ export class NotificationDispatcher {
         latencyMs: result.latencyMs,
       });
       await this.repository.recordSuccess(row.id);
+      await this.recordUsage(row, payload, log);
       await this.repository.insertAuditLog({
         organizationId: row.organization_id,
         connectorId: row.id,
@@ -193,14 +185,17 @@ export class NotificationDispatcher {
           externalMessageId: result.externalMessageId ?? null,
         },
       });
-      recordCircuitSuccess(`connector:${row.id}`);
+      await this.repository.recordCircuitSuccess(row.id);
       log.info({ latencyMs: result.latencyMs }, 'Notification delivered');
       return { deliveryId: delivery.id, status: 'sent', result };
     }
 
     // Failure path
-    recordCircuitFailure(`connector:${row.id}`, { failureThreshold: row.failure_threshold });
+    const circuitState = await this.repository.recordCircuitFailure(row.id, row.failure_threshold);
     await this.repository.recordFailure(row.id);
+    if (circuitState === 'open') {
+      await this.enqueueConnectorFailureAlert(row, delivery.id, result.errorMessage ?? 'Delivery failed', log);
+    }
 
     return this.scheduleRetryOrFail(
       row, delivery, payload, priorAttempts,
@@ -210,6 +205,43 @@ export class NotificationDispatcher {
       undefined,
       log,
     );
+  }
+
+  private async enqueueConnectorFailureAlert(
+    row: ConnectorConfigRow,
+    deliveryId: string,
+    errorMessage: string,
+    log: FastifyBaseLogger,
+  ): Promise<void> {
+    try {
+      await pgboss.send(
+        'alert.evaluate.fast',
+        {
+          organizationId: row.organization_id,
+          projectId: row.project_id,
+          signals: [{
+            projectId: row.project_id,
+            source: 'connector',
+            kind: 'open_circuit',
+            labels: { connector_id: row.id, connector_type: row.type },
+            evidence: {
+              connectorId: row.id,
+              connectorType: row.type,
+              deliveryId,
+              errorMessage,
+            },
+          }],
+        },
+        {
+          singletonKey: `connector-open-circuit:${row.id}:${Math.floor(Date.now() / 30_000)}`,
+          expireInSeconds: 60,
+          retryLimit: 1,
+          retryDelay: 5,
+        } as never,
+      );
+    } catch (err) {
+      log.warn({ err, connectorId: row.id }, 'Failed to enqueue connector open-circuit alert');
+    }
   }
 
   private async scheduleRetryOrFail(
@@ -301,6 +333,21 @@ export class NotificationDispatcher {
       if (v !== undefined) out[k] = v;
     }
     return out;
+  }
+
+  private async recordUsage(
+    row: ConnectorConfigRow,
+    payload: NotificationPayload,
+    log: FastifyBaseLogger,
+  ): Promise<void> {
+    try {
+      const projectId = typeof payload.metadata?.projectId === 'string'
+        ? payload.metadata.projectId
+        : typeof payload.metadata?.project_id === 'string' ? payload.metadata.project_id : null;
+      await this.repository.recordSuccessfulDeliveryUsage(row.organization_id, projectId, row.type);
+    } catch (err) {
+      log.error({ err }, 'Connector delivery usage accounting failed');
+    }
   }
 
   private payloadFromStorage(delivery: DeliveryRow): NotificationPayload {

@@ -18,6 +18,13 @@ export interface ConnectorSendJobData {
     connectorId: string;
     payload: NotificationPayload;
     routeId?: string | null;
+    projectChannel?: {
+        userId?: string;
+        channelId?: string;
+        channelType?: string;
+        destination?: string | null;
+        metadata?: Record<string, unknown>;
+    };
 }
 export interface ConnectorTestJobData {
     organizationId: string;

@@ -64,15 +64,7 @@ function idempotencyKey(request: FastifyRequest): string {
   return value;
 }
 
-function aiRateLimitKey(request: FastifyRequest): string {
-  const params = (request.params ?? {}) as Record<string, unknown>;
-  const orgId = typeof params.orgId === 'string' ? params.orgId : 'unknown-org';
-  const credential = request.headers.authorization
-    ?? request.headers['x-api-key']
-    ?? request.headers.cookie
-    ?? request.ip;
-  return `${orgId}:${sha256(credential).slice(0, 24)}`;
-}
+
 
 function statusCode(status: string): number {
   if (status === 'LOCKED') return 403;
@@ -129,7 +121,6 @@ export async function aiRoutes(fastify: FastifyInstance): Promise<void> {
 
   const analyzeOptions = {
     preHandler: [authenticate, requireOrgAccess],
-    config: { rateLimit: { max: aiConfig.rateLimitPerMinute, timeWindow: '1 minute', keyGenerator: aiRateLimitKey } },
   };
   const analyze = (forcedMode?: AIMode) => async (request: FastifyRequest, reply: FastifyReply) => {
     try {
@@ -165,13 +156,6 @@ export async function aiRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.post('/chat', {
     preHandler: [authenticate, requireOrgAccess],
-    config: {
-      rateLimit: {
-        max: Math.max(2, Math.floor(aiConfig.rateLimitPerMinute / 2)),
-        timeWindow: '1 minute',
-        keyGenerator: aiRateLimitKey,
-      },
-    },
   }, async (request, reply) => {
     try {
       const { orgId } = orgParamsSchema.parse(request.params);
@@ -190,7 +174,6 @@ export async function aiRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.post('/jobs', {
     preHandler: [authenticate, requireOrgAccess],
-    config: { rateLimit: { max: Math.max(2, Math.floor(aiConfig.rateLimitPerMinute / 4)), timeWindow: '1 minute', keyGenerator: aiRateLimitKey } },
   }, async (request, reply) => {
     try {
       const { orgId } = orgParamsSchema.parse(request.params);

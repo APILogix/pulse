@@ -39,8 +39,8 @@ export declare const TriggerDefinitionSchema: z.ZodObject<{
     triggerKind: z.ZodEnum<{
         schedule: "schedule";
         manual: "manual";
-        webhook: "webhook";
         event: "event";
+        webhook: "webhook";
     }>;
     triggerType: z.ZodEnum<{
         "alert.event.created": "alert.event.created";
@@ -146,10 +146,10 @@ export declare const ActionDefinitionSchema: z.ZodObject<{
     isEnabled: z.ZodDefault<z.ZodBoolean>;
     requiresApproval: z.ZodDefault<z.ZodBoolean>;
     riskLevel: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         low: "low";
         medium: "medium";
         high: "high";
-        critical: "critical";
     }>>;
     timeoutSeconds: z.ZodDefault<z.ZodNumber>;
     maxAttempts: z.ZodDefault<z.ZodNumber>;
@@ -162,10 +162,10 @@ export declare const SafetyDefinitionSchema: z.ZodObject<{
     maxRunsPerHour: z.ZodDefault<z.ZodNumber>;
     dedupeWindowSeconds: z.ZodDefault<z.ZodNumber>;
     requiresApprovalAboveRisk: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         low: "low";
         medium: "medium";
         high: "high";
-        critical: "critical";
     }>>;
 }, z.core.$strip>;
 export declare const WebhookSafetyMetadataSchema: z.ZodObject<{
@@ -207,8 +207,8 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         triggerKind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
@@ -314,10 +314,10 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         isEnabled: z.ZodDefault<z.ZodBoolean>;
         requiresApproval: z.ZodDefault<z.ZodBoolean>;
         riskLevel: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
         timeoutSeconds: z.ZodDefault<z.ZodNumber>;
         maxAttempts: z.ZodDefault<z.ZodNumber>;
@@ -330,10 +330,10 @@ export declare const CreateWorkflowSchema: z.ZodObject<{
         maxRunsPerHour: z.ZodDefault<z.ZodNumber>;
         dedupeWindowSeconds: z.ZodDefault<z.ZodNumber>;
         requiresApprovalAboveRisk: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
     }, z.core.$strip>>;
     tags: z.ZodDefault<z.ZodArray<z.ZodString>>;
@@ -347,8 +347,8 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
         triggerKind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         triggerType: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
@@ -454,10 +454,10 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
         isEnabled: z.ZodDefault<z.ZodBoolean>;
         requiresApproval: z.ZodDefault<z.ZodBoolean>;
         riskLevel: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
         timeoutSeconds: z.ZodDefault<z.ZodNumber>;
         maxAttempts: z.ZodDefault<z.ZodNumber>;
@@ -470,10 +470,10 @@ export declare const UpdateWorkflowSchema: z.ZodObject<{
         maxRunsPerHour: z.ZodDefault<z.ZodNumber>;
         dedupeWindowSeconds: z.ZodDefault<z.ZodNumber>;
         requiresApprovalAboveRisk: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
     }, z.core.$strip>>;
     tags: z.ZodOptional<z.ZodDefault<z.ZodArray<z.ZodString>>>;
@@ -674,10 +674,10 @@ export declare const ListApprovalsQuerySchema: z.ZodObject<{
     }>>;
     workflowId: z.ZodOptional<z.ZodString>;
     riskLevel: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         low: "low";
         medium: "medium";
         high: "high";
-        critical: "critical";
     }>>;
 }, z.core.$strip>;
 export declare const TemplateDefinitionSchema: z.ZodObject<{
@@ -706,8 +706,8 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
         kind: z.ZodEnum<{
             schedule: "schedule";
             manual: "manual";
-            webhook: "webhook";
             event: "event";
+            webhook: "webhook";
         }>;
         type: z.ZodEnum<{
             "alert.event.created": "alert.event.created";
@@ -795,10 +795,10 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
             noop: "noop";
         }>;
         riskLevel: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
         requiresApproval: z.ZodDefault<z.ZodBoolean>;
         config: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
@@ -807,10 +807,10 @@ export declare const TemplateDefinitionSchema: z.ZodObject<{
         maxRunsPerHour: z.ZodDefault<z.ZodNumber>;
         dedupeWindowSeconds: z.ZodDefault<z.ZodNumber>;
         requiresApprovalAboveRisk: z.ZodDefault<z.ZodEnum<{
+            critical: "critical";
             low: "low";
             medium: "medium";
             high: "high";
-            critical: "critical";
         }>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;

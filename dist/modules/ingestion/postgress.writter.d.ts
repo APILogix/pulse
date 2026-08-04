@@ -31,9 +31,6 @@ export interface ProjectAuthResult {
     allowedIps: string[];
     allowedDomains: string[];
     allowedSdks: string[];
-    samplingRules: Record<string, unknown>;
-    featureFlags: Record<string, unknown>;
-    sdkConfig: Record<string, unknown>;
     rateLimitPerSecond: number | null;
     rateLimitPerMinute: number | null;
     rateLimitPerHour: number | null;
@@ -54,8 +51,7 @@ export interface ProjectAuthResult {
 export declare class PostgresWriter {
     readonly pool: Pool;
     private readonly reader;
-    constructor(pool: Pool);
-    private configObject;
+    constructor(pool: Pool, telemetryPool?: Pool);
     /**
      * Resolve an ingestion API key by extracting its public prefix, looking up
      * candidate rows, and comparing the SHA-256 secret hash in constant time.
@@ -75,7 +71,7 @@ export declare class PostgresWriter {
     listErrorEvents(query: NormalizedErrorEventListQuery): Promise<ErrorEventListResult>;
     getErrorEventById(errorId: string, projectId: string): Promise<ErrorEventRecord | null>;
     getEventById(eventId: string, projectId: string): Promise<unknown>;
-    getEventsForReplay(projectId: string, startTime: string, endTime: string, eventTypes?: string[], maxEvents?: number): Promise<EnrichedEvent[]>;
+    getEventsForReplay(projectId: string, startTime: string, endTime: string, eventTypes?: string[], maxEvents?: number, environment?: string): Promise<EnrichedEvent[]>;
     healthCheck(): Promise<boolean>;
 }
 //# sourceMappingURL=postgress.writter.d.ts.map

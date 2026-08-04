@@ -11,9 +11,12 @@
  *     set operations — NO per-row (N+1) writes.
  */
 import type { PoolClient } from 'pg';
+import { pool } from '../../../config/database.js';
 import { type AlertSilenceRow } from '../types.js';
 export declare class SilencesRepository {
     private readonly db;
+    /** ADR-0006: silences are control-plane configuration (primary pool). */
+    constructor(db?: typeof pool);
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createSilence(input: {
         organizationId: string;

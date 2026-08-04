@@ -3,6 +3,7 @@ import type { AiCreditUsageBody, CouponRedeemBody, CouponValidateBody, EventUsag
 export declare class InternalBillingService {
     private readonly repository;
     constructor(repository: InternalBillingRepository);
+    private getQuotaFeature;
     getEntitlements(orgId: string): Promise<any>;
     getFeature(orgId: string, featureKey: string): Promise<{
         featureKey: string;
@@ -24,19 +25,13 @@ export declare class InternalBillingService {
     consumeEvents(body: EventUsageBody): Promise<any>;
     consumeAiCredits(body: AiCreditUsageBody): Promise<{
         accepted: boolean;
-        remaining: null;
-        creditsUsed: number;
-        idempotent: boolean;
-        code?: never;
-    } | {
-        accepted: boolean;
         remaining: number;
         code: "BILLING_004";
         creditsUsed?: never;
         idempotent?: never;
     } | {
         accepted: boolean;
-        remaining: number;
+        remaining: number | null;
         creditsUsed: number;
         idempotent: boolean;
         code?: never;
@@ -45,24 +40,26 @@ export declare class InternalBillingService {
         resourceType: "projects" | "members" | "apiKeys" | "connectors" | "alertRules" | "dashboards";
         used: number;
         limit: number;
-        remaining: number;
+        remaining: number | null;
     }>;
     getEventQuota(orgId: string): Promise<{
         limit: number;
         used: number;
-        remaining: number;
+        remaining: number | null;
+        usageBehavior: any;
         overageEvents: number;
     }>;
     getAiCreditQuota(orgId: string): Promise<{
         limit: number;
         used: number;
-        remaining: number;
+        remaining: number | null;
         overageAiCredits: number;
     }>;
     checkEventQuota(orgId: string, requestedCount: number): Promise<{
         allowed: boolean;
-        remaining: number;
+        remaining: number | null;
         wouldOverage: boolean;
+        usageBehavior: any;
     }>;
     syncSubscription(orgId: string): Promise<{
         synced: boolean;

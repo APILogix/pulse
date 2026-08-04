@@ -1,10 +1,13 @@
 import { pgboss } from '../../lib/pgboss.js';
 import { env } from '../../config/env.js';
+import { pool } from '../../config/database.js';
 import { AlertingRepository } from './repository.js';
 import { AlertBatchProcessor } from './batch-processor.js';
 import { AlertEscalationSweep } from './escalation.js';
-import { AlertRuleEvaluator } from './evaluator/rule-evaluator.js';
 import { ConnectorRepository } from '../connectors/repository.js';
+import { AlertRuntimeEngines } from './runtime/engines.js';
+import { AlertNotificationRouter } from './runtime/notification-router.js';
+import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
 export const ALERT_JOBS = {
     formBatches: 'alert.form-batches',
     processBatch: 'alert.process-batch',
@@ -14,7 +17,12 @@ export const ALERT_JOBS = {
     cleanup: 'alert.cleanup',
     deadLetter: 'alert-dead-letter',
     deadLetterRetry: 'alert.dead-letter-retry',
-    evaluateRules: 'alert.evaluate-rules',
+    evaluateFast: 'alert.evaluate.fast',
+    evaluateWindow: 'alert.evaluate.window',
+    evaluateOperational: 'alert.evaluate.operational',
+    evaluateAi: 'alert.evaluate.ai',
+    notificationRouter: 'alert.notification-router',
+    telemetryOutboxRelay: 'alert.telemetry-outbox-relay',
 };
 const BATCH_SIZE = 100;
 const DEFAULTS = {
@@ -45,7 +53,13 @@ function allJobs(arg) {
  * Register all alerting pg-boss workers + schedules. Idempotent per process.
  * Returns a stop() that cancels schedules.
  */
-export async function registerAlertingWorkers(logger, config = {}, projectSubscriptionResolver) {
+/**
+ * @param telemetryPool Pool that owns the `events_*` telemetry tables (the Log DB pool).
+ *   Injected by the worker bootstrap per ADR-0006 / DEV-002 so this module never imports the
+ *   Log DB singleton itself. Omit it and the evaluators fall back to the control-plane pool,
+ *   which is correct for single-database deployments.
+ */
+export async function registerAlertingWorkers(logger, config = {}, projectSubscriptionResolver, telemetryPool) {
     const cfg = { ...DEFAULTS, ...config };
     const log = logger.child({ component: 'alerting-workers' });
     const alertRepo = new AlertingRepository();
@@ -53,7 +67,6 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     const enqueueConnectorJob = async (queue, data, options) => pgboss.send(queue, data, options);
     const processor = new AlertBatchProcessor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver);
     const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
-    const ruleEvaluator = new AlertRuleEvaluator(logger);
     // ── Queue creation with enterprise defaults ─────────────────────────────
     // process-batch: retries with backoff, then dead-letters to `alert-dead-letter`.
     await safeCreateQueue(ALERT_JOBS.formBatches);
@@ -70,7 +83,16 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     await safeCreateQueue(ALERT_JOBS.cleanup);
     await safeCreateQueue(ALERT_JOBS.deadLetter);
     await safeCreateQueue(ALERT_JOBS.deadLetterRetry);
-    await safeCreateQueue(ALERT_JOBS.evaluateRules);
+    await safeCreateQueue(ALERT_JOBS.evaluateFast);
+    await safeCreateQueue(ALERT_JOBS.evaluateWindow);
+    await safeCreateQueue(ALERT_JOBS.evaluateOperational);
+    await safeCreateQueue(ALERT_JOBS.evaluateAi);
+    await safeCreateQueue(ALERT_JOBS.notificationRouter);
+    await safeCreateQueue(ALERT_JOBS.telemetryOutboxRelay);
+    const runtimePool = telemetryPool ?? pool;
+    const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool);
+    const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
+    const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
     // ── process-batch: the high-throughput worker ──────────────────────────
     // pg-boss v12 concurrency options: `localConcurrency` = number of workers
     // polling/processing independently, `batchSize` = jobs fetched per poll.
@@ -188,9 +210,30 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
         ]);
         log.info({ events, batches, attempts, deadLetters, throttles }, 'Alerting retention cleanup finished');
     }));
-    // ── evaluate-rules: due-rule scan + metric evaluation + preset seeding ──
-    await pgboss.work(ALERT_JOBS.evaluateRules, {}, (async () => {
-        await ruleEvaluator.runTick();
+    await pgboss.work(ALERT_JOBS.evaluateFast, { localConcurrency: 8, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => runtimeEngines.evaluateFast(job.data)));
+    }));
+    await pgboss.work(ALERT_JOBS.evaluateWindow, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'window' })));
+    }));
+    await pgboss.work(ALERT_JOBS.evaluateOperational, { localConcurrency: 3, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'operational' })));
+    }));
+    await pgboss.work(ALERT_JOBS.evaluateAi, { localConcurrency: 2, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => runtimeEngines.evaluateTier({ organizationId: job.data.organizationId, tier: 'ai' })));
+    }));
+    await pgboss.work(ALERT_JOBS.notificationRouter, { localConcurrency: 5, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => job.data.notificationJobId
+            ? notificationRouter.dispatchById(job.data.notificationJobId)
+            : notificationRouter.run(100)));
+    }));
+    await pgboss.work(ALERT_JOBS.telemetryOutboxRelay, { localConcurrency: 2, batchSize: 1 }, (async () => {
+        await telemetryOutboxRelay.run(250);
     }));
     // ── Schedules (cron) ────────────────────────────────────────────────────
     // pg-boss cron is minute-granularity; sub-minute cadence is approximated by
@@ -201,7 +244,7 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     await pgboss.schedule(ALERT_JOBS.orphanSweep, '*/5 * * * *', {}, { singletonKey: 'alert-orphan-sweep' });
     await pgboss.schedule(ALERT_JOBS.deadLetterRetry, '*/5 * * * *', {}, { singletonKey: 'alert-dead-letter-retry' });
     await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' });
-    await pgboss.schedule(ALERT_JOBS.evaluateRules, env.INGESTION_ALERT_EVAL_CRON, { triggeredAt: new Date().toISOString() }, { singletonKey: 'alert-rule-evaluator' });
+    const runtimeTimers = startRuntimeDispatchTimers(runtimePool, log);
     log.info({ ...cfg }, 'Alerting workers registered');
     return {
         stop: async () => {
@@ -211,9 +254,65 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
             await pgboss.unschedule(ALERT_JOBS.orphanSweep).catch(() => undefined);
             await pgboss.unschedule(ALERT_JOBS.deadLetterRetry).catch(() => undefined);
             await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
-            await pgboss.unschedule(ALERT_JOBS.evaluateRules).catch(() => undefined);
+            for (const timer of runtimeTimers)
+                clearInterval(timer);
         },
     };
+}
+function startRuntimeDispatchTimers(telemetryPool, log) {
+    const dispatch = async (queue, cadenceSeconds) => {
+        try {
+            const orgs = await activeRuntimeOrganizations(telemetryPool);
+            const bucket = Math.floor(Date.now() / (cadenceSeconds * 1000));
+            await Promise.allSettled(orgs.map((organizationId) => pgboss.send(queue, { organizationId }, {
+                singletonKey: `${queue}:${organizationId}:${bucket}`,
+                expireInSeconds: Math.max(60, cadenceSeconds * 4),
+                retryLimit: 2,
+                retryDelay: 5,
+                retryBackoff: true,
+            })));
+            if (orgs.length > 0)
+                log.debug({ queue, orgs: orgs.length }, 'Runtime alert evaluation jobs dispatched');
+        }
+        catch (err) {
+            log.warn({ err, queue }, 'Runtime alert evaluation dispatch failed');
+        }
+    };
+    const timers = [
+        setInterval(() => void dispatch(ALERT_JOBS.evaluateWindow, 5), 5_000),
+        setInterval(() => void dispatch(ALERT_JOBS.evaluateOperational, 30), 30_000),
+        setInterval(() => void dispatch(ALERT_JOBS.evaluateAi, 300), 300_000),
+        setInterval(() => void pgboss.send(ALERT_JOBS.notificationRouter, {}, {
+            singletonKey: `alert-notification-router:${Math.floor(Date.now() / 10_000)}`,
+            expireInSeconds: 60,
+        }).catch(() => undefined), 10_000),
+        setInterval(() => void pgboss.send(ALERT_JOBS.telemetryOutboxRelay, {}, {
+            singletonKey: `alert-telemetry-outbox:${Math.floor(Date.now() / 1_000)}`,
+            expireInSeconds: 30,
+        }).catch(() => undefined), 1_000),
+    ];
+    for (const timer of timers)
+        timer.unref();
+    void dispatch(ALERT_JOBS.evaluateWindow, 5);
+    void dispatch(ALERT_JOBS.evaluateOperational, 30);
+    void dispatch(ALERT_JOBS.evaluateAi, 300);
+    return timers;
+}
+async function activeRuntimeOrganizations(telemetryPool) {
+    const result = await telemetryPool.query(`SELECT DISTINCT organization_id
+       FROM (
+         SELECT organization_id FROM events_requests WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
+         UNION
+         SELECT organization_id FROM events_errors WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
+         UNION
+         SELECT organization_id FROM events_logs WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
+         UNION
+         SELECT organization_id FROM events_cron_checkins WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
+         UNION
+         SELECT organization_id FROM ai_requests WHERE updated_at >= NOW() - INTERVAL '15 minutes'
+       ) recent
+      LIMIT 1000`);
+    return result.rows.map((row) => row.organization_id);
 }
 async function safeCreateQueue(name, options) {
     const boss = pgboss;

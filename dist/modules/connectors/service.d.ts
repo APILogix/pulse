@@ -12,11 +12,13 @@
 import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
+import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 import { type ConnectorJobName } from './job.constants.js';
 import { type ConnectorAuditLogDto, type ConnectionTestResult, type ConnectorConfigRow, type ConnectorDto, type ConnectorOAuthStartDto, type ConnectorRouteDto, type ConnectorTypeInfoDto, type CreateConnectorRouteBody, type CreateConnectorBody, type DeliveryAttemptRow, type DeliveryDto, type DispatchSummary, type HealthStatus, type ListConnectorsQuery, type OAuthCallbackBody, type PaginationQuery, type PreviewNotificationBody, type RequestMeta, type RotateSecretBody, type SendTestNotificationBody, type UpdateConnectorRouteBody, type UpdateConnectorBody, type ValidateConfigurationBody } from './types.js';
 export interface ConnectorServiceDeps {
     repository: ConnectorRepository;
     dispatcher: NotificationDispatcher;
+    entitlements?: Pick<EntitlementsRepository, 'hasFeature' | 'getEffectiveIntegerFeature'>;
     logger: FastifyBaseLogger;
     emitEvent?: (event: string, payload: Record<string, unknown>) => Promise<void>;
     enqueueConnectorJob?: (queue: ConnectorJobName, data: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>;
@@ -24,6 +26,7 @@ export interface ConnectorServiceDeps {
 export declare class ConnectorService {
     private readonly repository;
     private readonly dispatcher;
+    private readonly entitlements;
     private readonly logger;
     private readonly emitEvent;
     private readonly enqueueConnectorJob?;
@@ -102,6 +105,7 @@ export declare class ConnectorService {
     /** Run a health check for a connector row (used by the background monitor). */
     runHealthCheck(row: ConnectorConfigRow): Promise<HealthStatus>;
     private requireConnector;
+    private assertConnectorEntitled;
     private validateConfigOrThrow;
     private assertSafeUrls;
     private audit;

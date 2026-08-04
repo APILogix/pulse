@@ -7,6 +7,7 @@ import { EnvironmentRepository } from "../environments/environment.repository.js
 import { UsageRepository } from "../usage/usage.repository.js";
 import { constantTimeEqualHex, createApiKey, extractApiKeyPrefix, hashApiKey, ProjectError, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
+import { syncApiKeyLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
 const MAX_ACTIVE_KEYS_ON_CREATE = 5;
 const MAX_ACTIVE_KEYS_ON_ENABLE = 10;
 const DEFAULT_GRACE_PERIOD_HOURS = 24;
@@ -63,7 +64,12 @@ export class ApiKeyService extends BaseProjectService {
             isSensitive: true,
             newValues: { projectId, environmentId: created.environmentId, publicKey: created.publicKey },
         });
+        // Keep the org-level fast-path counter in sync with actual key creation.
+        // Non-fatal: the authoritative limit check above already ran against the
+        // live COUNT(*), so a failed counter update never blocks the request.
+        await this.adjustOrgApiKeyUsage(orgId, 1);
         this.logger.info({ orgId, projectId, apiKeyId: created.id, userId }, "Project API key created");
+        syncApiKeyLookupToLogDbBestEffort(created.id, "api_key.created");
         return { apiKey: this.publicApiKey(created), fullKey: keyMaterial.fullKey };
     }
     async getApiKey(orgId, projectId, apiKeyId, userId) {
@@ -76,16 +82,30 @@ export class ApiKeyService extends BaseProjectService {
     async updateApiKey(orgId, projectId, apiKeyId, userId, body, meta) {
         await this.requireProjectAccess(orgId, projectId, userId, "admin");
         this.assertFutureExpiry(body.expiresAt);
+        const current = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
+        if (!current)
+            throw new ProjectError("API_KEY_NOT_FOUND", "API key not found", 404);
         const updates = {};
         if (body.name !== undefined)
             updates.name = body.name;
         if (body.expiresAt !== undefined)
             updates.expiresAt = body.expiresAt;
+        let targetEnvironment = null;
+        if (body.environmentId !== undefined && body.environmentId !== current.environmentId) {
+            targetEnvironment = await this.environmentRepository.findEnvironment(projectId, body.environmentId);
+            if (!targetEnvironment || !targetEnvironment.isActive || targetEnvironment.deletedAt !== null) {
+                throw new ProjectError("ENVIRONMENT_NOT_FOUND", "Active environment not found", 404);
+            }
+            const activeKeysInTarget = await this.apiKeyRepository.countActiveApiKeys(projectId, body.environmentId);
+            if (current.status === "active" && activeKeysInTarget >= MAX_ACTIVE_KEYS_ON_CREATE) {
+                throw new ProjectError("API_KEY_LIMIT_EXCEEDED", `Maximum ${MAX_ACTIVE_KEYS_ON_CREATE} active API keys are allowed per environment`, 400);
+            }
+            updates.environmentId = body.environmentId;
+        }
         const updated = await this.apiKeyRepository.updateApiKey(projectId, apiKeyId, updates);
-        // Expiry affects authentication, so evict the cached credential.
-        const record = await this.apiKeyRepository.findApiKeyRecordById(projectId, apiKeyId);
-        if (record)
-            this.evictApiKeyConfig(record.secretHash);
+        // Expiry and environment changes affect authentication/config resolution,
+        // so evict the cached credential either way.
+        this.evictApiKeyConfig(current.secretHash);
         await this.audit(meta, {
             orgId,
             projectId,
@@ -94,7 +114,11 @@ export class ApiKeyService extends BaseProjectService {
             entityId: apiKeyId,
             entityName: updated.name,
             changedFields: Object.keys(body),
+            ...(targetEnvironment
+                ? { oldValues: { environmentId: current.environmentId }, newValues: { environmentId: targetEnvironment.id } }
+                : {}),
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.updated");
         return updated;
     }
     /** Revoke a key with a reason. Soft state change, not row removal. */
@@ -115,6 +139,10 @@ export class ApiKeyService extends BaseProjectService {
             isSensitive: true,
             newValues: { reason: reason ?? null },
         });
+        // Revocation is a soft-delete of the credential row, so the org-level
+        // counter must shrink to reflect one fewer live API key.
+        await this.adjustOrgApiKeyUsage(orgId, -1);
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.revoked");
         return revoked;
     }
     async rotateApiKey(orgId, projectId, apiKeyId, userId, body, meta) {
@@ -176,6 +204,9 @@ export class ApiKeyService extends BaseProjectService {
                 reason: body.rotationReason ?? null,
             },
         });
+        // Old key transitioned to 'rotated'; the new key is a fresh row. Snapshot both.
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.rotated");
+        syncApiKeyLookupToLogDbBestEffort(rotated.id, "api_key.created");
         return { apiKey: this.publicApiKey(rotated), fullKey: keyMaterial.fullKey };
     }
     /** Emergency regenerate: rotate with no grace window. */
@@ -213,6 +244,7 @@ export class ApiKeyService extends BaseProjectService {
             entityId: apiKeyId,
             entityName: currentKey.name,
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.enabled");
         return updated;
     }
     async disableApiKey(orgId, projectId, apiKeyId, userId, meta) {
@@ -230,6 +262,7 @@ export class ApiKeyService extends BaseProjectService {
             entityId: apiKeyId,
             entityName: record.name,
         });
+        syncApiKeyLookupToLogDbBestEffort(apiKeyId, "api_key.disabled");
         return updated;
     }
     async bulkRotateKeys(orgId, projectId, userId, body, meta) {
@@ -312,9 +345,6 @@ export class ApiKeyService extends BaseProjectService {
                     environmentId: candidate.apiKey.environmentId,
                     environmentName: candidate.environmentName,
                     environmentSlug: candidate.environmentSlug,
-                    samplingRules: this.configObject(candidate.publishedConfig.samplingRules),
-                    featureFlags: this.configObject(candidate.publishedConfig.featureFlags),
-                    sdkConfig: candidate.publishedConfig,
                 };
             }
         }
@@ -363,17 +393,26 @@ export class ApiKeyService extends BaseProjectService {
             results,
         };
     }
-    configObject(value) {
-        return value !== null && typeof value === "object" && !Array.isArray(value)
-            ? value
-            : {};
-    }
     evictApiKeyConfig(secretHash) {
         try {
             apiKeyCache.delete(secretHash);
         }
         catch (err) {
             this.logger.warn({ err }, "Failed to evict API key cache");
+        }
+    }
+    /**
+     * Best-effort adjustment of the organization's fast-path `api_keys_used`
+     * counter. Failures are logged and swallowed: the counter only backs
+     * dashboards/quota display, while the actual limit gate is the live
+     * COUNT(*) enforced in `enforceProjectModuleLimit` before this is called.
+     */
+    async adjustOrgApiKeyUsage(orgId, delta) {
+        try {
+            await this.orgRepo.adjustApiKeyUsageCounter(orgId, delta);
+        }
+        catch (err) {
+            this.logger.warn({ err, orgId, delta }, "Failed to adjust organization api_keys_used counter");
         }
     }
 }

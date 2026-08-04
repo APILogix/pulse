@@ -1,0 +1,245 @@
+{
+  "schemaVersion": 1,
+  "sdk": {
+    "projectId": "proj_123",
+    "environment": "production",
+    "release": "1.0.0"
+  },
+  "features": {
+    "tracing": true,
+    "requestCapture": true,
+    "errors": true,
+    "metrics": true,
+    "logging": true,
+    "profiling": false,
+    "crons": false,
+    "sessionReplay": false,
+    "runtimeMetrics": false,
+    "eventLoopMonitoring": false,
+    "gcMonitoring": false
+  },
+  "sampling": {
+    "errors": 1,
+    "traces": 1,
+    "spans": 1,
+    "requests": 1,
+    "metrics": 1,
+    "logs": 1,
+    "events": 1,
+    "messages": 1,
+    "profiles": 0.1,
+    "replays": 0.1,
+    "crons": 1,
+    "routes": {
+      "/health": {
+        "traces": 0,
+        "requests": 0,
+        "spans": 0,
+        "metrics": 0,
+        "logs": 0
+      },
+      "/favicon.ico": {
+        "traces": 0,
+        "requests": 0
+      }
+    }
+  },
+  "instrumentation": {
+    "http": true,
+    "https": true,
+    "fetch": true,
+    "axios": false,
+    "fastify": true,
+    "express": true,
+    "graphql": false,
+    "prisma": false,
+    "mongodb": false,
+    "redis": false,
+    "bullmq": false,
+    "pg": false,
+    "mysql2": false,
+    "eventEmitterPatch": true
+  },
+  "privacy": {
+    "capture": {
+      "headers": false,
+      "body": false,
+      "response": false,
+      "query": false,
+      "cookies": false
+    },
+    "scrubbing": {
+      "enabled": true,
+      "headers": [
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key"
+      ],
+      "fields": [
+        "password",
+        "secret",
+        "token",
+        "apiKey",
+        "authorization",
+        "creditCard",
+        "ssn",
+        "access_token",
+        "refresh_token",
+        "client_secret"
+      ]
+    },
+    "piiDetection": {
+      "enabled": true,
+      "maskEmails": true,
+      "maskPhones": true,
+      "maskIPs": true
+    }
+  },
+  "limits": {
+    "maxSpansPerTrace": 2000,
+    "maxSpanAttributes": 128,
+    "maxAttributeLength": 4096,
+    "maxPayloadSize": 1048576,
+    "maxQueueSize": 10000,
+    "maxMemoryMb": "auto",
+    "tenantGovernance": {
+      "enabled": false,
+      "maxTenantsTracked": 1000,
+      "quotaPerWindow": 10000,
+      "windowDurationMs": 60000,
+      "criticalReserve": 100
+    }
+  },
+  "killswitches": {
+    "disableSDK": false,
+    "disableTracing": false,
+    "disableMetrics": false,
+    "disableTransport": false,
+    "disableProfiling": false,
+    "disableErrors": false,
+    "disableLogs": false
+  },
+  "transport": {
+    "retry": {
+      "enabled": true,
+      "maxRetries": 3,
+      "backoff": "exponential",
+      "baseDelayMs": 500
+    },
+    "queue": {
+      "overflowStrategy": "drop_oldest",
+      "maxSize": 10000,
+      "criticalReserve": 1000
+    },
+    "connections": {
+      "maxTotalConnections": 50,
+      "acquireTimeoutMs": 5000
+    },
+    "keepAlive": true,
+    "routes": {
+      "errors": {
+        "url": "https://ingest.pulse.test/api/v1/errors",
+        "batchSize": 100,
+        "flushIntervalMs": 1000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "critical"
+      },
+      "requests": {
+        "url": "https://ingest.pulse.test/api/v1/requests",
+        "batchSize": 500,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "high"
+      },
+      "traces": {
+        "url": "https://ingest.pulse.test/api/v1/traces",
+        "batchSize": 500,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "high"
+      },
+      "spans": {
+        "url": "https://ingest.pulse.test/api/v1/spans",
+        "batchSize": 500,
+        "flushIntervalMs": 5000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "metrics": {
+        "url": "https://ingest.pulse.test/api/v1/metrics",
+        "batchSize": 1000,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "logs": {
+        "url": "https://ingest.pulse.test/api/v1/logs",
+        "batchSize": 200,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "normal"
+      },
+      "profiles": {
+        "url": "https://ingest.pulse.test/api/v1/profiles",
+        "batchSize": 5,
+        "flushIntervalMs": 30000,
+        "timeoutMs": 15000,
+        "compression": "gzip",
+        "priority": "low"
+      },
+      "events": {
+        "url": "https://ingest.pulse.test/api/v1/events",
+        "batchSize": 100,
+        "flushIntervalMs": 2000,
+        "timeoutMs": 5000,
+        "compression": "gzip",
+        "priority": "high"
+      },
+      "crons": {
+        "url": "https://ingest.pulse.test/api/v1/checkins",
+        "batchSize": 1,
+        "flushIntervalMs": 0,
+        "timeoutMs": 5000,
+        "compression": "none",
+        "priority": "high"
+      },
+      "replays": {
+        "url": "https://ingest.pulse.test/api/v1/replays",
+        "batchSize": 5,
+        "flushIntervalMs": 10000,
+        "timeoutMs": 30000,
+        "compression": "gzip",
+        "priority": "low"
+      }
+    }
+  },
+  "runtime": {
+    "configTtlSeconds": 300,
+    "staleWhileRevalidate": true
+  },
+  "meta": {
+    "generatedAt": "2026-01-01T00:00:00.000Z",
+    "generatedBy": "pulse-config-compiler@1",
+    "configHash": "<sha256>"
+  },
+  "entitlements": {
+    "customSpans": true,
+    "customMetrics": true,
+    "profiling": false,
+    "logging": true,
+    "sessionReplay": false,
+    "crons": false,
+    "requestCapture": true,
+    "tracing": true,
+    "errors": true,
+    "metrics": true
+  }
+}

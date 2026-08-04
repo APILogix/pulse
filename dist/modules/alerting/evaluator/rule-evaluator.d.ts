@@ -27,6 +27,7 @@
  * try/catch and the tick processes rules with bounded concurrency.
  */
 import type { FastifyBaseLogger } from 'fastify';
+import type { Pool } from 'pg';
 export interface EvaluatorTickSummary {
     rulesDue: number;
     evaluated: number;
@@ -41,7 +42,25 @@ export declare class AlertRuleEvaluator {
     private readonly eventsService;
     private readonly projectThresholds;
     private readonly log;
-    constructor(logger: FastifyBaseLogger);
+    /**
+     * Pool that owns TELEMETRY (`events_*`). ADR-0006 / DEV-002: ingestion persists telemetry
+     * through the Log DB pool, so the evaluator must read it through the same pool. Defaults to
+     * the control-plane pool so single-database deployments behave exactly as before.
+     *
+     * NOTE: `ai_usage_logs`, `alert_rules` and `alert_events` are NOT telemetry — they stay on
+     * the control-plane pool. Only `events_*` reads are routed here.
+     */
+    private readonly telemetry;
+    /** When true, conditions are evaluated and logged but no alert is fired or auto-resolved. */
+    private readonly dryRun;
+    /**
+     * @param telemetryPool pool owning `events_*`; defaults to the control-plane pool
+     * @param dryRun explicit override. When omitted it defaults to "dry-run if the telemetry pool
+     *   is a different pool", so single-database deployments keep firing exactly as before.
+     *   The environment-driven value is resolved by the worker registration (see
+     *   `resolveEvaluatorDryRun`) and passed in, keeping this class free of env coupling.
+     */
+    constructor(logger: FastifyBaseLogger, telemetryPool?: Pool, dryRun?: boolean);
     /** One evaluator tick: alert rules, project thresholds, and preset seeding. */
     runTick(limit?: number): Promise<EvaluatorTickSummary>;
     /** Enabled rules due for evaluation, oldest watermark first, bounded. */

@@ -44,6 +44,7 @@ export const OptionalDateSchema = z.preprocess((value) => {
     return value;
   }
   if (typeof value === "string") {
+    if (value.trim().length === 0) return null;
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? value : parsed;
   }

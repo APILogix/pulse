@@ -62,6 +62,8 @@ export const UpdateApiKeyBodySchema = z.preprocess(
     .object({
       name: z.string().trim().min(1).max(255).optional(),
       expiresAt: OptionalDateSchema,
+      /** Move this credential to a different environment within the same project. */
+      environmentId: z.string().uuid().optional(),
     })
     .strict()
     .refine((value) => Object.keys(value).length > 0, {
@@ -177,9 +179,6 @@ export interface ValidatedApiKey {
   environmentId: string;
   environmentName: string;
   environmentSlug: string;
-  samplingRules: Record<string, unknown>;
-  featureFlags: Record<string, unknown>;
-  sdkConfig: Record<string, unknown>;
 }
 
 export interface ApiKeyUsageSeriesPoint {
@@ -228,4 +227,5 @@ export interface BulkOperationResult {
 export interface ApiKeyUpdateInput {
   name?: string;
   expiresAt?: Date | null;
+  environmentId?: string;
 }

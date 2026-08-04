@@ -1,6 +1,9 @@
+import { pool } from '../../../config/database.js';
 import { type HealthCheckRow, type HealthState } from '../types.js';
 export declare class ConnectorMetricsRepository {
     private readonly db;
+    /** ADR-0006: pools are injected explicitly. */
+    constructor(db?: typeof pool);
     recordSuccess(connectorId: string): Promise<void>;
     /** Increment failures; flip to 'error' once the threshold is crossed. */
     recordFailure(connectorId: string): Promise<{

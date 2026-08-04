@@ -36,6 +36,15 @@ export declare class OrganizationRepository extends BaseRepository {
     }>;
     getBillingEntitlements(orgId: string): Promise<BillingEntitlementsRow | null>;
     getOrganizationUsageCounts(orgId: string): Promise<OrganizationUsageCounts>;
+    /**
+     * Adjust the fast-path `organization_usage_current_period.api_keys_used`
+     * counter so org-level dashboards/quota checks reflect API key creation and
+     * deletion immediately. Non-fatal: callers treat a missing usage row (org
+     * has no active subscription period yet) as a no-op rather than an error,
+     * since the authoritative limit enforcement is the live COUNT(*) in
+     * `ProjectsRepository.getProjectModuleUsageCounts`.
+     */
+    adjustApiKeyUsageCounter(orgId: string, delta: number): Promise<void>;
     findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null>;
     findUserByEmail(email: string): Promise<{
         id: string;

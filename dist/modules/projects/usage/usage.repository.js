@@ -69,10 +69,11 @@ export class UsageRepository {
            FROM project_usage_hourly
           WHERE organization_id=$1 AND project_id=$2 AND bucket>=NOW()-INTERVAL '7 days'
           GROUP BY EXTRACT(HOUR FROM bucket) ORDER BY bucket_hour`, [organizationId, projectId]),
-            db.query(`SELECT event_type,SUM(events)::text total_events
-           FROM api_key_usage_minute
-          WHERE organization_id=$1 AND project_id=$2 AND bucket>=date_trunc('day',NOW())
-          GROUP BY event_type ORDER BY SUM(events) DESC`, [organizationId, projectId]),
+            db.query(`SELECT t.name AS event_type,SUM(m.accepted_event_count)::text total_events
+           FROM api_key_usage_minute m
+           JOIN telemetry_event_types t ON t.id = m.event_type_id
+          WHERE m.organization_id=$1 AND m.project_id=$2 AND m.bucket>=date_trunc('day',NOW())
+          GROUP BY t.name ORDER BY SUM(m.accepted_event_count) DESC`, [organizationId, projectId]),
         ]);
         const summaryRow = summary.rows[0];
         const hourlyRows = hourly.rows.map((row) => ({

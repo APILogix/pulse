@@ -13,7 +13,15 @@ const RULE_COLS = `
   project_id, preset_key, is_default, last_evaluated_at
 `;
 export class RulesRepository {
-    db = pool;
+    db;
+    /**
+     * ADR-0006: pools are injected explicitly. Alert RULE definition is
+     * control-plane owned, so this defaults to the primary pool and callers that
+     * want the boundary enforced pass it in from AlertConfigRepository.
+     */
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         const client = await this.db.connect();
         try {

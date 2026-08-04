@@ -20,7 +20,7 @@ export class QuotasRepository extends BaseRepository {
            ) FILTER (WHERE e.feature_key IS NOT NULL),
            '{}'::jsonb
          ) AS feature_config,
-         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key = 'monthly_events'), 0) AS event_limit_monthly,
+         COALESCE(MAX(e.integer_value) FILTER (WHERE e.feature_key IN ('quota.monthly_events', 'monthly_events')), 0) AS event_limit_monthly,
          FALSE AS hard_cap
        FROM organization_subscriptions s
        JOIN plans p ON p.id = s.plan_id

@@ -4,23 +4,21 @@ import { pool } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { FEATURE_FLAGS, isEnabled } from '../feature-flags/service.js';
 import { getAlertAnalysisHook } from './ai/alert-analysis.js';
-import { sendEmail } from '../../shared/email/mailer.js';
+const MANAGED_EMAIL_FALLBACK_CONNECTOR_ID = '00000000-0000-0000-0000-000000000000';
 export class AlertBatchProcessor {
     alertRepo;
     connectorRepo;
     enqueueConnectorJob;
     logger;
     projectSubscriptionResolver;
-    sendDirectEmail;
     static EVENT_CONCURRENCY = 10;
     authorize;
-    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver, authorize, sendDirectEmail = sendEmail) {
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver, authorize) {
         this.alertRepo = alertRepo;
         this.connectorRepo = connectorRepo;
         this.enqueueConnectorJob = enqueueConnectorJob;
         this.logger = logger;
         this.projectSubscriptionResolver = projectSubscriptionResolver;
-        this.sendDirectEmail = sendDirectEmail;
         this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
     }
     async mapBounded(items, limit, fn) {
@@ -316,34 +314,41 @@ export class AlertBatchProcessor {
                 delivered: false,
             };
         }
-        const startedAt = Date.now();
         try {
-            const safeTitle = this.escapeHtml(payload.title);
-            const safeBody = this.escapeHtml(payload.body).replace(/\n/g, '<br>');
-            await this.sendDirectEmail({
-                to: channel.destination,
-                subject: `[${payload.severity.toUpperCase()}] ${payload.title}`,
-                text: `${payload.title}\n\n${payload.body}`,
-                html: `<!doctype html><html><body><h2>${safeTitle}</h2><p>${safeBody}</p></body></html>`,
+            const priority = CONNECTOR_PRIORITY[event.severity] ?? 0;
+            const jobId = await this.enqueueConnectorJob(`${CONNECTOR_JOBS.send}-email`, {
+                organizationId: event.organization_id,
+                connectorId: MANAGED_EMAIL_FALLBACK_CONNECTOR_ID,
+                payload,
+                routeId: null,
+                projectChannel: channel,
+            }, {
+                priority,
+                retryLimit: 0,
+                retryDelay: 60,
+                retryBackoff: true,
+                expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
             });
-            return { log: { ...base, status: 'sent', latencyMs: Date.now() - startedAt }, delivered: true };
+            return {
+                log: {
+                    ...base,
+                    status: 'queued',
+                    externalMessageId: typeof jobId === 'string' ? jobId : null,
+                },
+                delivered: true,
+            };
         }
         catch (err) {
             return {
                 log: {
                     ...base,
                     status: 'failed',
-                    latencyMs: Date.now() - startedAt,
-                    errorMessage: (err instanceof Error ? err.message : 'Direct email delivery failed').slice(0, 2000),
-                    errorCategory: 'delivery',
+                    errorMessage: (err instanceof Error ? err.message : 'Managed email enqueue failed').slice(0, 2000),
+                    errorCategory: 'queue',
                 },
                 delivered: false,
             };
         }
-    }
-    escapeHtml(value) {
-        return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
     async deliverToConnector(event, target, connectorMap, batchId, payload) {
         const { connectorId, routeId } = target;

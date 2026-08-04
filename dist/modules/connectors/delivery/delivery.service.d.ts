@@ -38,10 +38,11 @@ export declare class NotificationDispatcher {
     }): Promise<DispatchOutcome>;
     /** Process a single retry (invoked by the background worker). */
     processRetry(row: ConnectorConfigRow, delivery: DeliveryRow): Promise<DispatchOutcome>;
-    private circuitOpen;
     private attemptDelivery;
+    private enqueueConnectorFailureAlert;
     private scheduleRetryOrFail;
     private payloadForStorage;
+    private recordUsage;
     private payloadFromStorage;
     /** Convenience for building a payload's correlation id when not supplied. */
     static newCorrelationId(): string;

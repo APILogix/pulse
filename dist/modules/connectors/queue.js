@@ -9,6 +9,7 @@ import { CONNECTOR_JOBS } from './job.constants.js';
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
+import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 function allJobs(arg) {
     if (Array.isArray(arg))
         return arg;
@@ -39,9 +40,32 @@ function resolveCredentialExpiry(config, fallback) {
     }
     return fallback;
 }
+function payloadWithProjectChannel(job) {
+    if (!job.projectChannel)
+        return job.payload;
+    return {
+        ...job.payload,
+        metadata: {
+            ...(job.payload.metadata ?? {}),
+            projectChannel: {
+                ...(job.projectChannel.metadata ?? {}),
+                userId: job.projectChannel.userId,
+                channelId: job.projectChannel.channelId,
+                channelType: job.projectChannel.channelType,
+                destination: job.projectChannel.destination ?? null,
+            },
+        },
+    };
+}
+function hasEmailDestination(payload) {
+    const projectChannel = payload.metadata?.projectChannel;
+    return typeof projectChannel?.destination === 'string'
+        && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(projectChannel.destination.trim());
+}
 export async function registerConnectorWorkers(logger) {
     const log = logger.child({ component: 'connector-workers' });
     const repository = new ConnectorRepository();
+    const entitlements = new EntitlementsRepository();
     const dispatcher = new NotificationDispatcher(repository, logger);
     const service = new ConnectorService({
         repository,
@@ -68,13 +92,33 @@ export async function registerConnectorWorkers(logger) {
             await Promise.allSettled(jobs.map(async (job) => {
                 workerMetrics.recordJobStarted();
                 try {
-                    const row = rowMap.get(job.data.connectorId);
-                    if (!row) {
-                        log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector send skipped: connector not found');
-                        workerMetrics.recordJobFailed(false);
-                        return;
+                    let row = rowMap.get(job.data.connectorId);
+                    const payload = payloadWithProjectChannel(job.data);
+                    if (!row || row.status !== 'active') {
+                        if (!hasEmailDestination(payload)) {
+                            log.warn({ jobId: job.id, connectorId: job.data.connectorId, status: row?.status ?? null }, 'Connector send skipped: connector unavailable and no email fallback destination is present');
+                            workerMetrics.recordJobFailed(false);
+                            return;
+                        }
+                        row = await repository.findFirstActiveByType(job.data.organizationId, 'email');
+                        if (!row) {
+                            const canUseManagedFallback = await entitlements.hasFeature(job.data.organizationId, 'alerting.managed_email_fallback');
+                            if (!canUseManagedFallback) {
+                                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector send skipped: managed email fallback is not entitled');
+                                workerMetrics.recordJobFailed(false);
+                                return;
+                            }
+                            row = await repository.getOrCreateManagedEmailConnector(job.data.organizationId);
+                        }
+                        log.warn({
+                            jobId: job.id,
+                            requestedConnectorId: job.data.connectorId,
+                            requestedConnectorStatus: rowMap.get(job.data.connectorId)?.status ?? null,
+                            fallbackConnectorId: row.id,
+                            managedFallback: row.metadata?.managedBy === 'pulse',
+                        }, 'Connector unavailable; falling back to email transport');
                     }
-                    const outcome = await dispatcher.dispatch(row, job.data.payload, { routeId: job.data.routeId ?? null });
+                    const outcome = await dispatcher.dispatch(row, payload, { routeId: job.data.routeId ?? null });
                     if (outcome.status === 'sent') {
                         workerMetrics.recordJobCompleted();
                     }

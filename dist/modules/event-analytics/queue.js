@@ -1,5 +1,5 @@
 import { pgboss } from '../../lib/pgboss.js';
-import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
 import { EventAnalyticsRepository } from './repository.js';
 export const ANALYTICS_JOBS = {
     rollupHourly: 'analytics.rollup-hourly',
@@ -13,7 +13,8 @@ function allJobs(arg) {
 }
 export async function registerAnalyticsWorkers(logger) {
     const log = logger.child({ component: 'event-analytics-workers' });
-    const repo = new EventAnalyticsRepository(pool);
+    const logDbPool = logDB.getPrimaryPool();
+    const repo = new EventAnalyticsRepository(logDbPool);
     const boss = pgboss;
     for (const name of Object.values(ANALYTICS_JOBS)) {
         if (typeof boss.createQueue === 'function')
@@ -35,7 +36,7 @@ export async function registerAnalyticsWorkers(logger) {
     }));
     // Partition maintenance — keep a week of daily partitions ahead.
     await pgboss.work(ANALYTICS_JOBS.partitionMaintain, {}, (async () => {
-        await pool.query('SELECT create_event_partitions(7)');
+        await logDbPool.query('SELECT create_event_partitions(7)');
         log.info('Daily partitions ensured');
     }));
     // ── Fan-out via cron-ish scheduling ──────────────────────────────────────

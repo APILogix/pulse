@@ -422,6 +422,13 @@ class LogDatabaseManager {
             ...(this.replicaPool ? { replica: snapshot(this.replicaPool) } : {}),
         };
     }
+    /**
+     * Standard pg Pool used by typed telemetry persistence and analytics SQL.
+     * Control-plane repositories must continue using config/database.ts.
+     */
+    getPrimaryPool() {
+        return this.primaryPool;
+    }
     /** Graceful shutdown — drains both pools. */
     async close() {
         this.isShuttingDown = true;

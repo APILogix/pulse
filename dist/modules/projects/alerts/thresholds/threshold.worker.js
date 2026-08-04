@@ -17,10 +17,27 @@ export class ProjectThresholdWorker {
     repository;
     events;
     log;
-    constructor(logger) {
+    /**
+     * Pool that owns TELEMETRY (`events_*`). ADR-0006 / DEV-002.
+     *
+     * Only the apdex metric reads telemetry. `project_usage_minute`, `ai_usage_logs`,
+     * `project_alert_thresholds` and `alert_events` are control-plane owned and stay on the
+     * primary pool. Defaults to the primary pool so single-database deployments are unchanged.
+     */
+    telemetry;
+    /** When true, thresholds are evaluated and logged but no alert is emitted or resolved. */
+    dryRun;
+    /**
+     * @param telemetryPool pool owning `events_*`; defaults to the control-plane pool
+     * @param dryRun explicit override supplied by AlertRuleEvaluator. Defaults to "dry-run if the
+     *   telemetry pool is a different pool", so single-database deployments are unaffected.
+     */
+    constructor(logger, telemetryPool = pool, dryRun) {
         this.repository = new AlertingRepository();
         this.events = new EventsService({ repository: this.repository, logger });
         this.log = logger.child({ component: "project-threshold-evaluator" });
+        this.telemetry = telemetryPool;
+        this.dryRun = dryRun ?? this.telemetry !== pool;
     }
     async runTick(limit = 500) {
         const summary = { due: 0, evaluated: 0, fired: 0, recovered: 0, failed: 0 };
@@ -86,6 +103,28 @@ export class ProjectThresholdWorker {
             || threshold.last_triggered_at.getTime() + threshold.cooldown_minutes * 60_000 <= Date.now();
         const shouldFire = reached && cooldownElapsed;
         const shouldRecover = !matched && threshold.is_breaching;
+        // DEV-002 dry-run: evaluate and record breach state, but never emit or auto-resolve.
+        if (this.dryRun) {
+            if (shouldFire || shouldRecover) {
+                this.log.warn({
+                    thresholdId: threshold.id,
+                    projectId: threshold.project_id,
+                    thresholdKey: threshold.threshold_key,
+                    metric: threshold.metric_name,
+                    actual,
+                    threshold: Number(threshold.threshold_value),
+                    intent: shouldFire ? "fire" : "recover",
+                }, "DRY-RUN: project threshold would have emitted an alert (no alert event created)");
+            }
+            await this.markEvaluated(threshold, breaches, reached, false, false);
+            if (shouldFire)
+                return "fired";
+            if (shouldRecover)
+                return "recovered";
+            if (reached)
+                return "cooldown";
+            return matched ? "breaching" : "clear";
+        }
         if (shouldFire)
             await this.emit(threshold, actual, false);
         if (shouldRecover) {
@@ -110,7 +149,8 @@ export class ProjectThresholdWorker {
             return this.readUsageExpression(threshold, "CASE WHEN SUM(requests)+SUM(rate_limit_usage)>0 THEN 100.0*SUM(rate_limit_usage)/(SUM(requests)+SUM(rate_limit_usage)) ELSE 0 END::float8");
         }
         if (threshold.metric_name === "apdex") {
-            const result = await pool.query(`SELECT CASE WHEN COUNT(*)>0 THEN
+            // Telemetry read (events_requests) → telemetry pool (ADR-0006 / DEV-002).
+            const result = await this.telemetry.query(`SELECT CASE WHEN COUNT(*)>0 THEN
            (COUNT(*) FILTER(WHERE latency_ms<=500)
              + 0.5*COUNT(*) FILTER(WHERE latency_ms>500 AND latency_ms<=2000))/COUNT(*)
           ELSE NULL END::float8 AS value

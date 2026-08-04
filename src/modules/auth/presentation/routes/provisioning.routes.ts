@@ -11,7 +11,7 @@ import { handleAuthError } from './index.js';
 import { isLinkableProvider } from '../../infrastructure/config/identity-link.config.js';
 import { getRefreshCookieOptions, REFRESH_COOKIE_NAME } from '../../presentation/cookies.js';
 import { env } from '../../../../config/env.js';
-import { ssoCallbackRateLimit, loginRateLimit } from '../../presentation/middleware/rate-limits.js';
+
 import { AuthError, AuthErrorCodes, SocialLoginSchema } from '../../domain/types.js';
 import * as samlSlo from '../../application/services/saml-slo.service.js';
 import * as identityProviders from '../../application/services/identity-provider.service.js';
@@ -93,7 +93,7 @@ async function runPassportAuthenticate(
 export default async function provisioningRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/login/social/:provider',
-    { preHandler: [loginRateLimit] },
+    {},
     async (request, reply) => {
       try {
         const { provider } = request.params as { provider: string };
@@ -123,7 +123,7 @@ export default async function provisioningRoutes(fastify: FastifyInstance) {
 
   fastify.get(
     '/login/social/:provider/authorize',
-    { preHandler: [loginRateLimit] },
+    {},
     async (request, reply) => {
       try {
         const { provider } = request.params as { provider: string };
@@ -163,7 +163,7 @@ export default async function provisioningRoutes(fastify: FastifyInstance) {
 
   fastify.get(
     '/login/social/callback',
-    { preHandler: [ssoCallbackRateLimit] },
+    {},
     async (request, reply) => {
       try {
         const query = request.query as {
@@ -394,7 +394,7 @@ export default async function provisioningRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/saml/slo',
     {
-      preHandler: [ssoCallbackRateLimit],
+      preHandler: [],
       config: { rawBody: true },
     },
     async (request, reply) => {

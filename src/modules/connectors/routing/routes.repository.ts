@@ -8,7 +8,12 @@ import type {
 } from '../types.js';
 
 export class ConnectorRoutesRepository {
-  private readonly db = pool;
+  private readonly db: typeof pool;
+
+  /** ADR-0006: connector routes are control-plane configuration. */
+  constructor(db: typeof pool = pool) {
+    this.db = db;
+  }
 
   async createRoute(
     organizationId: string,

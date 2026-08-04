@@ -30,7 +30,6 @@ import type { AlertEventRow, AlertEventStatus } from './types.js';
 import type { ConnectorRepository } from '../connectors/repository.js';
 import type { NotificationSeverity } from '../connectors/types.js';
 import { type ConnectorJobName } from '../connectors/job.constants.js';
-import type { EmailMessage } from '../../shared/email/email.types.js';
 export interface BatchJobData {
     batchId: string;
     organizationId: string;
@@ -99,10 +98,9 @@ export declare class AlertBatchProcessor {
     private readonly enqueueConnectorJob;
     private readonly logger;
     private readonly projectSubscriptionResolver?;
-    private readonly sendDirectEmail;
     private static readonly EVENT_CONCURRENCY;
     private readonly authorize;
-    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined, authorize?: BatchAuthorizationVerifier, sendDirectEmail?: (message: EmailMessage) => Promise<void>);
+    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, projectSubscriptionResolver?: ProjectSubscriptionResolver | undefined, authorize?: BatchAuthorizationVerifier);
     private mapBounded;
     processBatch(data: BatchJobData): Promise<BatchProcessSummary>;
     /** Deliver a single event to all routed connectors concurrently. */
@@ -113,7 +111,6 @@ export declare class AlertBatchProcessor {
     private isThrottled;
     private throttledAttempt;
     private deliverToTarget;
-    private escapeHtml;
     private deliverToConnector;
     /**
      * Re-verify, straight from the database on every run (never cached), that
