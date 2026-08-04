@@ -311,6 +311,17 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value !== 'false'),
 
+  // ── Connector global guards (alerting redesign Increment 7) ─────────────
+  CONNECTOR_GLOBAL_LIMITS: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+  CONNECTOR_GLOBAL_LIMIT: z.coerce.number().int().min(1).default(60),
+  CONNECTOR_GLOBAL_WINDOW_SECONDS: z.coerce.number().int().min(1).default(60),
+  CONNECTOR_CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(5),
+  CONNECTOR_CIRCUIT_RESET_SECONDS: z.coerce.number().int().min(1).default(60),
+  ESCALATION_V2: z.string().optional().transform((value) => value === 'true'),
+
   // ── Analytics engine (docs/analytics/00-architecture-overview.md §7) ────
   // Dedicated worker process that turns canonical Log DB telemetry into
   // dashboard rollups. Completely independent from ingestion: separate

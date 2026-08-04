@@ -523,14 +523,45 @@ export class TelemetryWriter {
       });
     if (rows.length === 0) return 0;
 
-    const { text, values } = buildInsert(
-      'telemetry_outbox',
-      ['organization_id', 'project_id', 'environment', 'signal_kind', 'event_id',
-       'severity', 'fast_path', 'attributes', 'occurred_at'],
-      rows,
-      'id',
+    const result = await db.query(
+      `INSERT INTO telemetry_outbox (
+         organization_id, project_id, environment, signal_kind, event_id,
+         severity, fast_path, attributes, occurred_at
+       )
+       WITH input AS (
+         SELECT *
+           FROM UNNEST(
+             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
+             $6::logdb_severity[], $7::boolean[], $8::jsonb[], $9::timestamptz[]
+           ) AS t(organization_id, project_id, environment, signal_kind, event_id,
+                  severity, fast_path, attributes, occurred_at)
+       ), reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id
+           FROM input
+         ON CONFLICT DO NOTHING
+         RETURNING organization_id, idempotency_key
+       )
+       SELECT t.organization_id, t.project_id, t.environment, t.signal_kind, t.event_id,
+              t.severity, t.fast_path, t.attributes, t.occurred_at
+         FROM input t
+         JOIN reserved r
+           ON r.organization_id = t.organization_id
+          AND r.idempotency_key = t.signal_kind || ':' || t.event_id
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [
+        rows.map((row) => row[0]),
+        rows.map((row) => row[1]),
+        rows.map((row) => row[2]),
+        rows.map((row) => row[3]),
+        rows.map((row) => row[4]),
+        rows.map((row) => row[5]),
+        rows.map((row) => row[6]),
+        rows.map((row) => row[7]),
+        rows.map((row) => row[8]),
+      ],
     );
-    const result = await db.query(text, values);
     return result.rowCount ?? 0;
   }
 

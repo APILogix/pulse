@@ -9,6 +9,7 @@ import {
   type NotificationJobDetailRow,
   type NotificationJobStatus,
 } from './alert-runtime.repository.js';
+import type { ConnectorTransportJob } from '../../connectors/delivery/transport.types.js';
 
 export interface NotificationRouterSummary {
   claimed: number;
@@ -76,15 +77,29 @@ export class AlertNotificationRouter {
         return 'suppressed';
       }
 
-      const queueName = `${CONNECTOR_JOBS.send}-${job.channel_kind}` as ConnectorJobName;
+      const queueName = env.ALERTING_V2_READ
+        ? `connector.v2.${job.channel_kind}`
+        : `${CONNECTOR_JOBS.send}-${job.channel_kind}` as ConnectorJobName;
+      const transport: ConnectorTransportJob = {
+        organizationId: job.organization_id,
+        notificationJobId: job.id,
+        connectorId: job.connector_id,
+        channelKind: job.channel_kind,
+        severity: toConnectorSeverity(job.severity),
+        idempotencyKey: job.idempotency_key,
+        correlationId: job.alert_key,
+        payload: job.payload,
+      };
       await pgboss.send(
         queueName,
-        {
-          organizationId: job.organization_id,
-          connectorId: job.connector_id,
-          payload: job.payload,
-          routeId: job.route_id,
-        },
+        env.ALERTING_V2_READ
+          ? transport
+          : {
+              organizationId: job.organization_id,
+              connectorId: job.connector_id,
+              payload: job.payload,
+              routeId: job.route_id,
+            },
         {
           priority: CONNECTOR_PRIORITY[toConnectorSeverity(job.severity)] ?? job.priority,
           retryLimit: 0,

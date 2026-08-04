@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(npm:*)",
+      "Shell(npx vitest run test/unit/alerting-runtime-pool.test.ts test/unit/alerting-pool-boundary.test.ts test/unit/alerting-runtime-rule-catalog.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-effective-rule.test.ts test/unit/alerting-effective-threshold.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/telemetry-writer-outbox.test.ts test/unit/modules/ingestion.service.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/telemetry-writer-outbox.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/telemetry-writer-outbox.test.ts test/unit/alerting-effective-rule.test.ts test/unit/alerting-effective-threshold.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-state-machine.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-state-machine.test.ts test/unit/alerting-decision-engine.test.ts test/unit/modules/connector-queue.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/modules/connector-queue.test.ts test/unit/alerting-decision-engine.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-metric-registry.test.ts test/unit/alerting-state-machine.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-entitlements.test.ts test/unit/alerting-metric-registry.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-entitlements.test.ts test/unit/alerting-preferences-correlation.test.ts test/unit/alerting-metric-registry.test.ts test/unit/alerting-state-machine.test.ts test/unit/alerting-decision-engine.test.ts test/unit/telemetry-writer-outbox.test.ts --no-file-parallelism)",
+      "Shell(npx vitest run test/unit/alerting-effective-rule.test.ts test/unit/alerting-effective-threshold.test.ts test/unit/alerting-runtime-pool.test.ts test/unit/alerting-pool-boundary.test.ts test/unit/alerting-state-machine.test.ts test/unit/alerting-decision-engine.test.ts test/unit/alerting-metric-registry.test.ts test/unit/alerting-entitlements.test.ts test/unit/alerting-preferences-correlation.test.ts test/unit/telemetry-writer-outbox.test.ts test/unit/modules/connector-queue.test.ts --no-file-parallelism)",
+      "Shell(git:*)",
+      "powershell",
+      "Shell(npx eslint src/modules/alerting src/pages/act/IncidentsPage.tsx src/pages/act/IncidentDetailPage.tsx src/pages/act/AlertRulesPage.tsx src/pages/act/AlertRuleDetailPage.tsx src/pages/act/EscalationsPage.tsx src/pages/act/EscalationDetailPage.tsx src/pages/act/ChannelsPage.tsx src/pages/act/ChannelDetailPage.tsx src/pages/act/RoutingRulesPage.tsx src/pages/act/SilencesPage.tsx src/pages/act/PolicySimulatorPage.tsx src/app/navigation/navigation.tsx src/app/router/protected-routes.tsx)",
+      "Shell(Get-ChildItem:*)",
+      "Shell(ForEach-Object:*)",
+      "Shell(Get-Location:*)",
+      "Shell(.Path.Length:*)",
+      "Shell(.Replace:*)",
+      "Shell(\\,/:*)",
+      "Shell(if:*)",
+      "Shell({:*)",
+      "Shell(Sort-Object:*)",
+      "Shell(-not:*)",
+      "Shell(npx eslint src/modules/alerting src/pages/act/IncidentsPage.tsx src/pages/act/IncidentDetailPage.tsx src/pages/act/AlertRulesPage.tsx src/pages/act/CreateAlertRulePage.tsx src/pages/act/AlertRuleDetailPage.tsx src/pages/act/EscalationsPage.tsx src/pages/act/EscalationDetailPage.tsx src/pages/act/ChannelsPage.tsx src/pages/act/ChannelDetailPage.tsx src/pages/act/RoutingRulesPage.tsx src/pages/act/SilencesPage.tsx src/pages/act/PolicySimulatorPage.tsx src/app/navigation/navigation.tsx src/app/router/protected-routes.tsx)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

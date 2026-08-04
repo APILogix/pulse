@@ -7,6 +7,7 @@ import { policiesRoutes } from './policies/policies.routes.js';
 import { templatesRoutes } from './templates/templates.routes.js';
 import { routingRoutes } from './routing/routing.routes.js';
 import { metricsRoutes } from './metrics/metrics.routes.js';
+import { policyRoutes } from './policy/policy.routes.js';
 
 export async function alertingRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(rulesRoutes);
@@ -19,4 +20,5 @@ export async function alertingRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(templatesRoutes);
   await fastify.register(routingRoutes);
   await fastify.register(metricsRoutes);
+  await fastify.register(policyRoutes);
 }

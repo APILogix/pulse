@@ -6,14 +6,14 @@ One record per increment. Architecture is locked; this file tracks execution aga
 |---|---|---|
 | 1 | Stabilize schema ownership | **Implemented and verified** |
 | 2 | Rule bindings + Effective Rule Resolution | **Implemented and verified** (ships dormant) |
-| 3 | Alert Policy Engine (shadow mode) | Not started |
-| 4 | Transactional outbox + relay | Not started |
-| 5 | Decision Engine + notification jobs | Not started |
-| 6 | Router + connector isolation | Not started |
-| 7 | Global rate limit + single circuit breaker | Not started |
-| 8 | Window Engine + Fast Engine (cutover) | Not started |
-| 9 | Entitlements + usage accounting | Not started |
-| 10 | Escalation, preferences, correlation | Not started |
+| 3 | Alert Policy Engine (shadow mode) | **Implemented; shadow/simulation available** |
+| 4 | Transactional outbox + relay | **Implemented; relay remains rollout-gated** |
+| 5 | Decision Engine + notification jobs | **Implemented; `alert.decide` rollout path available** |
+| 6 | Router + connector isolation | **Implemented; v2 transport queues are read-flag gated** |
+| 7 | Global rate limit + single circuit breaker | **Implemented; `CONNECTOR_GLOBAL_LIMITS` gated** |
+| 8 | Window Engine + Fast Engine (cutover) | **Implemented; parity/cutover flags remain gated** |
+| 9 | Entitlements + usage accounting | **Implemented; report-only default** |
+| 10 | Escalation, preferences, correlation | **Implemented; `ESCALATION_V2` gated** |
 
 ---
 

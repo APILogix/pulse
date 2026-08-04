@@ -1,0 +1,18 @@
+# Taste
+- Prefers a phased, plan-before-code workflow for codebase work: full audit/report of the code first, then a master plan with solutions, then implementation, then continued execution of the plan. Keeps design/spec documents in a dedicated planning folder and treats them as the source of truth — expects every item written in the spec file to be implemented completely. Confidence: 0.8
+- Prefers comprehensive, whole-codebase analysis ("analyse whole code base and create a full-fledged report") rather than piecemeal fixes. Confidence: 0.7
+- Wants "enterprise-grade" code with proper error handling, DB table indexing, and fixes that preserve existing flows and scalability (e.g., fixing an auth module "without disturbing the flow" and keeping it scalable). Confidence: 0.8
+- Prefers to keep infrastructure simple — standardize on a single cache technology for now rather than introducing multiple caching layers. Confidence: 0.5
+- Prefers secure-by-design auth implementations: magic links over OTP for email verification, explicitly requiring the link to be very secure. Confidence: 0.8
+- Prefers external service configuration (e.g., Google SSO callback URLs) to live in environment variables (.env) rather than hardcoded. Confidence: 0.7
+- Prefers policy-driven configuration with an inheritance hierarchy (global templates → organization policies → project subscriptions → overrides) over duplicated or copied rules; configuration should never be duplicated. Confidence: 0.9
+- Prefers clean separation of concerns in system design — configuration, evaluation, incident lifecycle, and notification delivery as distinct services, each with a single responsibility. Confidence: 0.9
+- Prefers a single evaluation engine / single source of truth over overlapping engines and duplicated logic. Confidence: 0.9
+- Prefers event-driven, queue/telemetry-based evaluation over database polling; pre-aggregates windowed metrics instead of rescanning raw tables. Confidence: 0.8
+- Prefers asynchronous, queued notification delivery with idempotency keys rather than direct notification calls. Confidence: 0.8
+- Prefers explicit, audited state machines for lifecycle management (e.g., alert states) with every transition logged and no shortcuts. Confidence: 0.8
+- Prefers fingerprint-based deduplication and incident correlation so duplicates increment occurrence counters instead of creating new alerts. Confidence: 0.7
+- Prefers multi-tenant isolation with strict scoping (organization → project → environment → service) and no cross-tenant evaluation. Confidence: 0.8
+- Prefers stateless, horizontally scalable workers plus versioned configuration, complete audit history, and RBAC for enterprise systems. Confidence: 0.8
+- Frontend work lives in a separate sibling repository, `SaasBackend/pulsiv_fe` (backend is `SaasBackend/pulse`) — when UI work is requested, search and implement there rather than in the backend repo. Confidence: 0.9
+- The pulsiv_fe frontend stack is React 19 + Vite + Tailwind v4 + TanStack Query + Zustand + Lucide icons with a dual-sidebar app shell; new UI must follow these existing conventions, consume only real backend API routes (no dummy-data fallbacks), and preserve existing navigation/theme patterns. Confidence: 0.75

@@ -1,0 +1,3 @@
+BEGIN;
+DROP TABLE IF EXISTS alert_usage_facts;
+COMMIT;

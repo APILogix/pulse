@@ -2,9 +2,10 @@
 
 Date: 2026-07-31
 
-> **Current state:** architecture approved and LOCKED. **Increments 1 and 2 implemented and
-> verified** (code + SQL + tests, applied to the live `apitool` / `logdb` databases). Increments 3–10
-> not started. Per-increment records live in `PROGRESS.md`; deviations in `DEVIATIONS.md`.
+> **Current state:** architecture approved and LOCKED. **Increments 1–10 have implementation paths,
+> tests, and rollout flags in place.** Increments 1–2 have the documented live-database verification;
+> increments 3–10 require the remaining disposable/live pipeline, parity, concurrency, and load gates
+> before production cutover. Per-increment records live in `PROGRESS.md`; deviations in `DEVIATIONS.md`.
 >
 > Increment 2 ships **dormant**: rule inheritance is queryable through the API but no evaluator
 > resolves an effective rule until Increment 8, and all 39 backfilled bindings are non-asserting, so

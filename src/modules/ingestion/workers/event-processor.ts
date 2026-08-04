@@ -258,6 +258,9 @@ export class EventProcessor {
         result.totalInserted = errorResult.inserted;
         result.totalReceived = errorBatch.length;
         errorDomainEvents = errorResult.domainEvents;
+        if (result.totalInserted > 0) {
+          await this.writer.appendTelemetryOutbox(scoped, client);
+        }
       } else {
         result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
       }

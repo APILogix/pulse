@@ -1,0 +1,872 @@
+Implement the entire frontend for the new Alerting V2 architecture.
+
+The backend implementation is complete.
+
+Do NOT redesign or modify backend APIs, database schema, business logic, evaluation engine, routing, notification engine, or policy resolver.
+
+Your responsibility is to expose every backend capability through a polished enterprise-grade UI.
+
+Target quality should match or exceed:
+
+Datadog
+Grafana Cloud
+Sentry
+New Relic
+PagerDuty
+Opsgenie
+Linear
+GitHub
+Vercel Dashboard
+Critical Rules
+
+Do NOT simplify features.
+
+Do NOT hide backend capabilities.
+
+Do NOT merge unrelated workflows.
+
+Do NOT invent backend endpoints.
+
+Only consume existing APIs.
+
+Every backend feature must be configurable from the UI.
+
+Overall Information Architecture
+Alerting
+
+├── Overview
+├── Organization Policies
+│     ├── Built-in Policies
+│     ├── Custom Policies
+│     ├── Categories
+│     ├── Versions
+│     ├── Templates
+│     └── Policy Simulator
+│
+├── Project Alerting
+│     ├── Subscriptions
+│     ├── Overrides
+│     ├── Effective Policies
+│     ├── Environment Overrides
+│     └── Service Overrides
+│
+├── Incidents
+│
+├── Notification Routing
+│
+├── Escalation Policies
+│
+├── Maintenance Windows
+│
+├── Connector Routing
+│
+├── User Preferences
+│
+├── Audit Logs
+│
+├── Usage
+│
+├── Entitlements
+│
+├── Analytics
+│
+└── Settings
+Organization Alert Rules
+
+Create a complete Organization Policy Management module.
+
+Support
+
+Built-in rules
+Custom rules
+Categories
+Search
+Filters
+Versions
+Dependencies
+Documentation
+Clone
+Archive
+Disable
+Enable
+
+Each policy card displays
+
+Name
+Description
+Category
+Severity
+Expression
+Threshold
+Recovery Threshold
+Cooldown
+Evaluation Window
+Version
+Status
+Projects Subscribed
+Last Updated
+Organization Policy Editor
+
+Support editing
+
+Threshold
+
+Cooldown
+
+Recovery
+
+Severity
+
+Maintenance
+
+Channels
+
+Escalation
+
+Environments
+
+Mute Schedules
+
+NOT editable
+
+Expression
+
+Aggregation
+
+Metric
+
+Evaluation Strategy
+
+Policy ID
+
+Project Alerting
+
+Projects do NOT create rules.
+
+Projects subscribe.
+
+Display
+
+Available Policies
+
+✓ High Error Rate
+
+✓ High Latency
+
+✓ CPU
+
+✓ Memory
+
+✓ Disk
+
+✓ Queue
+
+✓ Deployment
+
+✓ Cron Failure
+
+Each policy shows
+
+Subscribed
+
+Not subscribed
+
+Inherited
+
+Overridden
+
+Unavailable
+
+Deprecated
+
+Subscription Workflow
+
+User clicks
+
+Subscribe
+
+↓
+
+Subscription created
+
+↓
+
+Configure Overrides
+
+↓
+
+Preview Effective Policy
+
+↓
+
+Save
+
+Project Overrides
+
+Allow overriding
+
+Threshold
+
+Cooldown
+
+Severity
+
+Channels
+
+Maintenance
+
+Escalation
+
+Mute
+
+Environment
+
+Do NOT allow editing
+
+Metric
+
+Expression
+
+Aggregation
+
+Logic
+
+Evaluation Engine
+
+Effective Policy Viewer
+
+One dedicated page.
+
+Display
+
+Organization Policy
+
+↓
+
+Overrides
+
+↓
+
+Effective Runtime Policy
+
+Highlight
+
+Inherited fields
+
+Overridden fields
+
+Disabled fields
+
+Unavailable fields
+
+Validation warnings
+
+Policy Simulation
+
+Use backend simulation API.
+
+Allow user to
+
+Select Project
+
+Select Environment
+
+Select Service
+
+Preview
+
+Effective Policy
+
+Evaluation Trace
+
+Resolved Channels
+
+Resolved Escalation
+
+Resolved Threshold
+
+Resolved Maintenance
+
+Resolved Suppression
+
+Incident Management
+
+Full Incident Center.
+
+Pages
+
+Open
+
+Acknowledged
+
+Escalated
+
+Muted
+
+Resolved
+
+Closed
+
+Archived
+
+Incident Detail
+
+Timeline
+
+Occurrences
+
+Comments
+
+Assignments
+
+Tags
+
+Correlated Incidents
+
+Notification History
+
+Audit History
+
+Recovery
+
+Escalation
+
+Incident Detail
+
+Display
+
+Summary
+
+Severity
+
+Current State
+
+Policy
+
+Environment
+
+Service
+
+Occurrences
+
+First Seen
+
+Last Seen
+
+Duration
+
+Fingerprint
+
+Correlation Group
+
+Assigned User
+
+Tags
+
+Timeline
+
+Incident Timeline
+
+Every event
+
+Triggered
+
+Recovered
+
+Acknowledged
+
+Assigned
+
+Comment
+
+Escalated
+
+Muted
+
+Notification Sent
+
+Retry
+
+Resolved
+
+Closed
+
+Notification Routing
+
+Page
+
+Routing Rules
+
+Display
+
+Slack
+
+Discord
+
+Teams
+
+PagerDuty
+
+Webhook
+
+Email
+
+SMS
+
+Each route displays
+
+Priority
+
+Conditions
+
+Recipients
+
+Fallback
+
+Rate Limits
+
+Enabled
+
+Health
+
+Escalation Policies
+
+Visual builder
+
+5 Minutes
+
+↓
+
+Slack
+
+↓
+
+No Ack
+
+↓
+
+10 Minutes
+
+↓
+
+Email
+
+↓
+
+No Ack
+
+↓
+
+PagerDuty
+
+↓
+
+No Ack
+
+↓
+
+SMS
+
+Support
+
+Repeat
+
+Timeout
+
+Auto Resolve
+
+Cancel on Ack
+
+Connector Management
+
+Display
+
+Status
+
+Health
+
+Rate Limits
+
+Failures
+
+Retries
+
+Last Delivery
+
+Dead Letters
+
+Replay
+
+Test
+
+Disable
+
+Enable
+
+Dead Letter Queue
+
+Page
+
+Failed notifications
+
+Replay
+
+Retry
+
+Delete
+
+Inspect payload
+
+Connector response
+
+Retry history
+
+User Notification Preferences
+
+Support
+
+Email
+
+Slack
+
+SMS
+
+Webhook
+
+Digest
+
+Quiet Hours
+
+Vacation
+
+Temporary Mute
+
+Business Hours
+
+Priority Filters
+
+Maintenance Windows
+
+Calendar view
+
+Timeline
+
+Upcoming
+
+Active
+
+Expired
+
+Create
+
+Edit
+
+Delete
+
+Recurring
+
+Environment specific
+
+Service specific
+
+Project specific
+
+Organization wide
+
+Alert Analytics
+
+Charts
+
+Alerts per Day
+
+Incidents
+
+Recovery Time
+
+MTTA
+
+MTTR
+
+Top Policies
+
+Top Services
+
+Top Environments
+
+Top Projects
+
+Notification Success
+
+Connector Failures
+
+Escalations
+
+Muted Alerts
+
+Suppressed Alerts
+
+Usage
+
+Display
+
+Policies Used
+
+Subscriptions
+
+Notifications
+
+SMS
+
+Connector Calls
+
+Escalations
+
+Quota Remaining
+
+Plan Limits
+
+Usage Trends
+
+Audit Logs
+
+Everything
+
+Policy Changes
+
+Subscriptions
+
+Overrides
+
+Acknowledgements
+
+Resolutions
+
+Assignments
+
+Escalations
+
+Notification Changes
+
+Maintenance Windows
+
+Connectors
+
+Preferences
+
+RBAC
+
+Search
+
+Global Search
+
+Search
+
+Policies
+
+Incidents
+
+Projects
+
+Services
+
+Connectors
+
+Users
+
+Environments
+
+Comments
+
+Tags
+
+Filters
+
+Every page
+
+Environment
+
+Project
+
+Severity
+
+Status
+
+Category
+
+Connector
+
+Policy
+
+User
+
+Tag
+
+Time
+
+Bulk Actions
+
+Support
+
+Subscribe
+
+Unsubscribe
+
+Mute
+
+Assign
+
+Resolve
+
+Delete
+
+Export
+
+Change Severity
+
+Move Category
+
+Permissions
+
+Respect backend RBAC.
+
+Hide unauthorized actions.
+
+Disable buttons when user lacks permission.
+
+Never expose admin functionality to viewers.
+
+UX Requirements
+
+Desktop
+
+Tablet
+
+Mobile
+
+Keyboard navigation
+
+Accessibility
+
+Dark mode
+
+Optimistic updates
+
+Skeleton loaders
+
+Realtime updates
+
+Infinite scrolling
+
+Command palette
+
+Context menus
+
+Split panels
+
+Resizable layouts
+
+Virtualized tables
+
+Components
+
+Build reusable components
+
+PolicyTable
+
+PolicyCard
+
+PolicyEditor
+
+SubscriptionCard
+
+OverrideEditor
+
+EffectivePolicyViewer
+
+IncidentTable
+
+IncidentTimeline
+
+IncidentGraph
+
+NotificationBuilder
+
+EscalationBuilder
+
+ConnectorCard
+
+MaintenanceCalendar
+
+AuditTable
+
+UsageCharts
+
+SearchPanel
+
+FilterBar
+
+BulkToolbar
+
+State Management
+
+Use centralized state.
+
+Cache server data.
+
+Optimistic mutations.
+
+Automatic invalidation.
+
+Background refetch.
+
+Realtime synchronization where supported.
+
+Performance
+
+Support
+
+100,000 incidents
+
+10,000 policies
+
+100,000 subscriptions
+
+Millions of timeline entries
+
+Use virtualization.
+
+Avoid unnecessary renders.
+
+Deliverables
+
+Implement 100% of backend functionality with production-quality UX.
+
+Deliver:
+
+Organization Policy Management
+Project Subscription Management
+Override Management
+Effective Policy Viewer
+Policy Simulation
+Incident Center
+Incident Detail
+Timeline
+Escalation Builder
+Notification Routing
+Connector Management
+Dead Letter Queue
+User Preferences
+Maintenance Windows
+Usage Dashboard
+Audit Logs
+Analytics Dashboard
+Global Search
+Filters
+Bulk Operations
+Permission-aware UI
+Responsive layouts
+Loading, empty, and error states
+Complete navigation integration
+Enterprise-grade design system consistency
+
+Success criteria: A user should be able to configure, subscribe to, monitor, investigate, route, escalate, audit, and manage the entire alerting lifecycle—from organization-wide policy creation to project subscriptions, incident response, and notification delivery—without needing to interact with the backend directly./go

@@ -25,6 +25,9 @@ import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
 import { EntitlementsRepository } from '../billing/entitlements/repository.js';
+import { pool } from '../../config/database.js';
+import { ConnectorGlobalGuards } from './runtime-global-guards.js';
+import { isConnectorTransportJob, type ConnectorTransportJob } from './delivery/transport.types.js';
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -125,6 +128,7 @@ export async function registerConnectorWorkers(
   const log = logger.child({ component: 'connector-workers' });
   const repository = new ConnectorRepository();
   const entitlements = new EntitlementsRepository();
+  const globalGuards = new ConnectorGlobalGuards(pool);
   const dispatcher = new NotificationDispatcher(repository, logger);
   const service = new ConnectorService({
     repository,
@@ -138,7 +142,32 @@ export async function registerConnectorWorkers(
 
   const connectorTypes = listConnectorTypes();
   const providerQueues = connectorTypes.map((t) => `${CONNECTOR_JOBS.send}-${t.type}`);
-  await Promise.all(providerQueues.map((queue) => safeCreateQueue(queue)));
+  const transportQueues = connectorTypes.map((t) => `connector.v2.${t.type}`);
+  await Promise.all([...providerQueues, ...transportQueues].map((queue) => safeCreateQueue(queue)));
+
+  for (const queue of transportQueues) {
+    await pgboss.work(
+      queue,
+      { localConcurrency: env.CONNECTOR_SEND_CONCURRENCY, batchSize: env.CONNECTOR_SEND_BATCH_SIZE } as never,
+      (async (arg: unknown) => {
+        const jobs = allJobs<ConnectorTransportJob>(arg);
+        await Promise.all(jobs.map(async (job) => {
+          if (!isConnectorTransportJob(job.data)) {
+            log.error({ jobId: job.id }, 'Rejected connector transport job with invalid contract');
+            return;
+          }
+          const row = await repository.findById(job.data.organizationId, job.data.connectorId);
+          if (!row || row.status !== 'active') {
+            log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive connector');
+            return;
+          }
+          const outcome = await dispatcher.dispatch(row, job.data.payload as unknown as NotificationPayload, { routeId: null });
+          if (outcome.status === 'sent') await globalGuards.recordSuccess(job.data.connectorId);
+          else await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
+        }));
+      }) as never,
+    );
+  }
 
   for (const queue of providerQueues) {
     await pgboss.work(
@@ -196,10 +225,26 @@ export async function registerConnectorWorkers(
                 'Connector unavailable; falling back to email transport',
               );
             }
+            if (env.CONNECTOR_GLOBAL_LIMITS) {
+              const guard = await globalGuards.acquire(job.data.connectorId, {
+                limit: env.CONNECTOR_GLOBAL_LIMIT,
+                windowSeconds: env.CONNECTOR_GLOBAL_WINDOW_SECONDS,
+                failureThreshold: env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD,
+                resetSeconds: env.CONNECTOR_CIRCUIT_RESET_SECONDS,
+              });
+              if (!guard.allowed) {
+                workerMetrics.recordJobFailed(true);
+                log.warn({ jobId: job.id, connectorId: job.data.connectorId, circuitState: guard.circuitState }, 'Connector delivery denied by global guard');
+                return;
+              }
+            }
+
             const outcome = await dispatcher.dispatch(row, payload, { routeId: job.data.routeId ?? null });
             if (outcome.status === 'sent') {
+              if (env.CONNECTOR_GLOBAL_LIMITS) await globalGuards.recordSuccess(job.data.connectorId);
               workerMetrics.recordJobCompleted();
             } else {
+              if (env.CONNECTOR_GLOBAL_LIMITS) await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
               workerMetrics.recordJobFailed(outcome.result.retryable ?? false);
             }
           } catch (err) {
