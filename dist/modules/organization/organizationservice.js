@@ -15,12 +15,11 @@ import { SecurityEventsService } from "./security-events/security-events.service
 import { SecurityEventsRepository } from "./security-events/security-events.repository.js";
 import { invalidateMembershipCache } from "../../shared/middleware/tenant.js";
 import { apiKeyCache, evictAlertThresholdCache } from "../../config/lrucashe.js";
-import { pool } from "../../config/database.js";
 import { env } from "../../config/env.js";
 import { emailService } from "../../shared/email/email.service.js";
 import { orgInvitationTemplate } from "../../shared/email/templates.js";
 import { enqueueOrgEmail } from "./shared/background/email-outbox.js";
-import { seedDefaultPresetsForOrg } from "../alerting/evaluator/presets.js";
+import { AlertingWorkspaceProvisioner } from "../alerting/workspace/alerting-workspace.provisioner.js";
 import { hasMinRole, canManageRole, isMutableOrg, OrganizationError, ForbiddenError, NotFoundError, OrgStatusError, ConflictError, ValidationError, } from "./types.js";
 import { CoreService } from "./core/core.service.js";
 import { CoreRepository } from "./core/core.repository.js";
@@ -83,17 +82,18 @@ export class OrganizationService {
             repository: new SecurityEventsRepository(),
             requireMember: this.requireMember.bind(this),
         });
+        const alertingWorkspaceProvisioner = new AlertingWorkspaceProvisioner();
         this.core = new CoreService({
             repository: new CoreRepository(),
             log: this.log,
             requireMember: this.requireMember.bind(this),
             audit: this.audit.bind(this),
             billingProvisioning: new BillingProvisioningService(),
+            provisionAlertingWorkspace: (client, context) => alertingWorkspaceProvisioner.provision(client, context),
             deleteApiKeyCache: (hash) => { try {
                 apiKeyCache.delete(hash);
             }
             catch { } },
-            seedDefaultAlertPresets: (orgId) => seedDefaultPresetsForOrg(pool, orgId),
         });
         this.members = new MembersService({
             repository: new MembersRepository(),

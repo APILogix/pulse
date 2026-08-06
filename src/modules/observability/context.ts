@@ -44,6 +44,7 @@ export class ObservabilityContextResolver {
 
     const ctx: QueryContext = {
       organizationId: input.organizationId,
+      userId: input.userId,
       role,
       plan: planKey,
       retentionFloor,

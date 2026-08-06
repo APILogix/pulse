@@ -16,6 +16,7 @@ import { logger } from '../../config/logger.js';
 import { AlertingRepository } from './repository.js';
 import { AlertingService } from './service.js';
 import { alertingRoutes } from './routes.js';
+import { alertingWorkspaceRoutes } from './workspace/alerting-workspace.routes.js';
 
 const moduleLogger = logger.child({ component: 'alerting-module' });
 
@@ -37,6 +38,7 @@ async function alertingModule(
 
   fastify.decorate('alerting', { repository, service });
 
+  await fastify.register(alertingWorkspaceRoutes, { prefix: '/organizations/:orgId' });
   await fastify.register(alertingRoutes, { prefix: '/organizations/:orgId/alerting' });
 
   fastify.addHook('onClose', async () => {

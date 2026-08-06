@@ -9,9 +9,10 @@ export class ErrorGroupRepository {
      * as well as regression detection (moving RESOLVED back to REGRESSED).
      */
     async upsertGroup(client, params) {
-        const { projectId, fingerprint, eventId, severity, release, sdkVersion, applicationVersion, message, errorName, statusCode, traceId, requestId } = params;
+        const { organizationId, projectId, fingerprint, eventId, severity, release, sdkVersion, applicationVersion, message, errorName, statusCode, traceId, requestId } = params;
         const query = `
       INSERT INTO error_groups (
+        organization_id,
         project_id,
         fingerprint,
         status,
@@ -36,9 +37,10 @@ export class ErrorGroupRepository {
         version
       )
       VALUES (
-        $1, $2, 'OPEN', 1, NOW(), NOW(), $3, $3, $4, $4, FALSE, 0, NULL, $5, $6, $7, $8, $9, $10, $11, $12, 1
+        $1, $2, $3, 'OPEN', 1, NOW(), NOW(), $4, $4, $5, $5, FALSE, 0, NULL, $6, $7, $8, $9, $10, $11, $12, $13, 1
       )
       ON CONFLICT (project_id, fingerprint) DO UPDATE SET
+        organization_id = COALESCE(error_groups.organization_id, EXCLUDED.organization_id),
         occurrence_count = error_groups.occurrence_count + 1,
         last_seen_at = NOW(),
         latest_event_id = EXCLUDED.latest_event_id,
@@ -74,6 +76,7 @@ export class ErrorGroupRepository {
       RETURNING id, (xmax = 0) AS is_new, status, is_regression
     `;
         const result = await client.query(query, [
+            organizationId || null,
             projectId,
             fingerprint,
             eventId,

@@ -12,11 +12,11 @@ import { AppError } from '../../../shared/errors/app-error.js';
 export declare const ConnectorTypeSchema: z.ZodEnum<{
     sms: "sms";
     email: "email";
-    webhook: "webhook";
-    teams: "teams";
     slack: "slack";
     discord: "discord";
+    teams: "teams";
     pagerduty: "pagerduty";
+    webhook: "webhook";
 }>;
 export type ConnectorType = z.infer<typeof ConnectorTypeSchema>;
 export declare const ConnectorStatusSchema: z.ZodEnum<{
@@ -26,9 +26,9 @@ export declare const ConnectorStatusSchema: z.ZodEnum<{
     inactive: "inactive";
     expired: "expired";
     revoked: "revoked";
+    disabled: "disabled";
     rate_limited: "rate_limited";
     pending_setup: "pending_setup";
-    disabled: "disabled";
 }>;
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
 export declare const NotificationSeveritySchema: z.ZodEnum<{
@@ -263,11 +263,11 @@ export declare const CreateConnectorSchema: z.ZodObject<{
     type: z.ZodEnum<{
         sms: "sms";
         email: "email";
-        webhook: "webhook";
-        teams: "teams";
         slack: "slack";
         discord: "discord";
+        teams: "teams";
         pagerduty: "pagerduty";
+        webhook: "webhook";
     }>;
     description: z.ZodOptional<z.ZodString>;
     config: z.ZodRecord<z.ZodString, z.ZodUnknown>;
@@ -289,9 +289,9 @@ export declare const UpdateConnectorSchema: z.ZodObject<{
         inactive: "inactive";
         expired: "expired";
         revoked: "revoked";
+        disabled: "disabled";
         rate_limited: "rate_limited";
         pending_setup: "pending_setup";
-        disabled: "disabled";
     }>>;
     config: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     displayConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
@@ -306,11 +306,11 @@ export declare const ListConnectorsQuerySchema: z.ZodObject<{
     type: z.ZodOptional<z.ZodEnum<{
         sms: "sms";
         email: "email";
-        webhook: "webhook";
-        teams: "teams";
         slack: "slack";
         discord: "discord";
+        teams: "teams";
         pagerduty: "pagerduty";
+        webhook: "webhook";
     }>>;
     status: z.ZodOptional<z.ZodEnum<{
         error: "error";
@@ -319,9 +319,9 @@ export declare const ListConnectorsQuerySchema: z.ZodObject<{
         inactive: "inactive";
         expired: "expired";
         revoked: "revoked";
+        disabled: "disabled";
         rate_limited: "rate_limited";
         pending_setup: "pending_setup";
-        disabled: "disabled";
     }>>;
     search: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -354,11 +354,11 @@ export declare const ValidateConfigurationSchema: z.ZodObject<{
     type: z.ZodEnum<{
         sms: "sms";
         email: "email";
-        webhook: "webhook";
-        teams: "teams";
         slack: "slack";
         discord: "discord";
+        teams: "teams";
         pagerduty: "pagerduty";
+        webhook: "webhook";
     }>;
     config: z.ZodRecord<z.ZodString, z.ZodUnknown>;
 }, z.core.$strict>;

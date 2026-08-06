@@ -56,9 +56,9 @@ export class ObservabilityService {
         const base = buildExplorerQuery(rawQuery, resource.defaultSort);
         const query = {
             ...base,
-            filters: [...base.filters, { field: 'timestamp', op: 'gt', value: since.toISOString() }],
+            filters: [...base.filters, { field: 'occurredAt', op: 'gt', value: since.toISOString() }],
             timeRange: { from: since, to: new Date(Date.now() + 60_000) },
-            sort: { field: 'timestamp', direction: 'asc' },
+            sort: { field: 'occurredAt', direction: 'asc' },
             direction: 'forward',
             limit: max,
             live: true,
@@ -175,7 +175,8 @@ export class ObservabilityService {
         if (filters.length === 0)
             return [];
         const resource = this.resource(name);
-        const center = raw.timestamp instanceof Date ? raw.timestamp : new Date(String(raw.timestamp));
+        const rawTime = raw.occurred_at ?? raw.timestamp;
+        const center = rawTime instanceof Date ? rawTime : new Date(String(rawTime));
         const anchor = Number.isNaN(center.getTime()) ? new Date() : center;
         const query = {
             timeRange: { from: new Date(anchor.getTime() - 24 * 60 * 60 * 1000), to: new Date(anchor.getTime() + 60 * 60 * 1000) },

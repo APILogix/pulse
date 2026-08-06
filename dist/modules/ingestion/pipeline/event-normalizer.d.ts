@@ -77,7 +77,9 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     type: z.ZodLiteral<"message">;
 }, z.core.$loose>, z.ZodObject<{
     requestId: z.ZodString;
+    parentSpanId: z.ZodOptional<z.ZodString>;
     url: z.ZodString;
+    route: z.ZodOptional<z.ZodString>;
     method: z.ZodString;
     statusCode: z.ZodNumber;
     latency: z.ZodNumber;
@@ -85,7 +87,22 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     query: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     body: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     bodySize: z.ZodOptional<z.ZodNumber>;
+    responseSize: z.ZodOptional<z.ZodNumber>;
     userId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    tenantId: z.ZodOptional<z.ZodString>;
+    user: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    extra: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
+    service: z.ZodOptional<z.ZodString>;
+    framework: z.ZodOptional<z.ZodString>;
+    release: z.ZodOptional<z.ZodString>;
+    serverName: z.ZodOptional<z.ZodString>;
+    sdkName: z.ZodOptional<z.ZodString>;
+    sdkVersion: z.ZodOptional<z.ZodString>;
+    spanCount: z.ZodOptional<z.ZodNumber>;
+    rootSpanStatus: z.ZodOptional<z.ZodString>;
+    isPartial: z.ZodOptional<z.ZodBoolean>;
     eventId: z.ZodOptional<z.ZodString>;
     timestamp: z.ZodOptional<z.ZodNumber>;
     traceId: z.ZodOptional<z.ZodString>;
@@ -158,9 +175,9 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     logSource: z.ZodOptional<z.ZodEnum<{
         unknown: "unknown";
         worker: "worker";
+        framework: "framework";
         sdk: "sdk";
         console: "console";
-        framework: "framework";
         middleware: "middleware";
         application: "application";
         cron: "cron";

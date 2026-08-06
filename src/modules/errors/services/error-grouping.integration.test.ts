@@ -41,7 +41,7 @@ describe('Error Grouping System Integration', () => {
 
     await errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
     );
 
     const upsertCall = (mockClient.query as any).mock.calls[1][0] as string;
@@ -57,7 +57,7 @@ describe('Error Grouping System Integration', () => {
 
     await expect(errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
     )).rejects.toThrow('Insertion failed');
 
     expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
@@ -72,7 +72,7 @@ describe('Error Grouping System Integration', () => {
     const promises = Array.from({ length: 10 }).map((_, i) => 
       errorIngestionService.ingestError(
         { projectId: 'proj-1', fingerprint: 'hash', eventId: `evt-${i}`, severity: 'error' },
-        { id: `${i}`, organization_id: 'org-1', project_id: 'proj-1', event_id: `evt-${i}`, fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+        { id: `${i}`, organization_id: 'org-1', project_id: 'proj-1', event_id: `evt-${i}`, fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
       )
     );
 
@@ -96,7 +96,7 @@ describe('Error Grouping System Integration', () => {
 
     await errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-dup', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
     );
 
     // It should rollback and NOT publish

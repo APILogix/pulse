@@ -27,7 +27,7 @@ export class EventAnalyticsRepository {
               COUNT(*) FILTER (WHERE severity='error')::bigint AS error,
               COUNT(*) FILTER (WHERE severity='warning')::bigint AS warning
        FROM events_errors
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3
          AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)`, [orgId, range.from, range.to, projectId ?? null, environment ?? null]);
         const row = r.rows[0];
@@ -41,7 +41,7 @@ export class EventAnalyticsRepository {
               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95,
               PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms)::int AS p99
        FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3
          AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)`, [orgId, range.from, range.to, projectId ?? null, environment ?? null]);
         const row = r.rows[0];
@@ -58,7 +58,7 @@ export class EventAnalyticsRepository {
     }
     async getUniqueUserCount(orgId, projectId, environment, range) {
         const r = await this.db.query(`SELECT COUNT(DISTINCT user_id)::bigint AS count FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3
          AND user_id IS NOT NULL AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)`, [orgId, range.from, range.to, projectId ?? null, environment ?? null]);
         return Number(r.rows[0]?.count ?? 0);
@@ -86,8 +86,8 @@ export class EventAnalyticsRepository {
             .whereSearch('message', filters.search);
         const countQ = qb.count();
         const countRes = await this.db.query(countQ.sql, countQ.params);
-        qb.orderBy('timestamp', 'desc').paginate(filters.limit, filters.offset);
-        const listQ = qb.select('id, event_id, fingerprint, message, error_name, severity, service, environment, release, trace_id, user_id, timestamp');
+        qb.orderBy('occurred_at', 'desc').paginate(filters.limit, filters.offset);
+        const listQ = qb.select('id, event_id, fingerprint, message, error_name, severity, service, environment, release, trace_id, user_id, occurred_at');
         const listRes = await this.db.query(listQ.sql, listQ.params);
         return { rows: listRes.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
@@ -169,7 +169,7 @@ export class EventAnalyticsRepository {
               COUNT(*)::bigint AS request_count,
               (COUNT(*) FILTER (WHERE status_code >= 500))::float / NULLIF(COUNT(*),0) AS error_rate
        FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND ($3::uuid IS NULL OR project_id=$3)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4) AND route IS NOT NULL
        GROUP BY route, method
        ORDER BY request_count DESC
@@ -180,7 +180,7 @@ export class EventAnalyticsRepository {
         const r = await this.db.query(`SELECT width_bucket(latency_ms, 0, 5000, 50) AS bucket,
               MIN(latency_ms) AS min_ms, MAX(latency_ms) AS max_ms, COUNT(*)::bigint AS count
        FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)
        GROUP BY bucket ORDER BY bucket ASC`, [orgId, range.from, range.to, projectId ?? null, environment ?? null]);
         return r.rows;
@@ -191,7 +191,7 @@ export class EventAnalyticsRepository {
               COUNT(*) FILTER (WHERE latency_ms > $6 AND latency_ms <= $6*4)::bigint AS tolerating,
               COUNT(*)::bigint AS total
        FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)`, [orgId, range.from, range.to, projectId ?? null, environment ?? null, thresholdMs]);
         const row = r.rows[0];
         return { satisfied: Number(row.satisfied), tolerating: Number(row.tolerating), total: Number(row.total) };
@@ -209,8 +209,8 @@ export class EventAnalyticsRepository {
             .whereTrue('is_error', filters.errorOnly);
         const countQ = qb.count();
         const countRes = await this.db.query(countQ.sql, countQ.params);
-        qb.orderBy('timestamp', 'desc').paginate(filters.limit, filters.offset);
-        const listQ = qb.select('id, event_id, request_id, url, method, status_code, latency_ms, route, trace_id, user_id, environment, is_slow, is_error, timestamp');
+        qb.orderBy('occurred_at', 'desc').paginate(filters.limit, filters.offset);
+        const listQ = qb.select('id, event_id, request_id, url, method, status_code, latency_ms, route, trace_id, user_id, environment, is_slow, is_error, occurred_at');
         const listRes = await this.db.query(listQ.sql, listQ.params);
         return { rows: listRes.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
@@ -233,11 +233,11 @@ export class EventAnalyticsRepository {
     async getTraceById(orgId, traceId, projectId, environment) {
         const r = await this.db.query(`SELECT * FROM events_traces
        WHERE organization_id=$1 AND trace_id=$2 AND project_id=$3 AND environment=$4
-       ORDER BY timestamp DESC LIMIT 1`, [orgId, traceId, projectId, environment]);
+       ORDER BY occurred_at DESC LIMIT 1`, [orgId, traceId, projectId, environment]);
         return r.rows[0] ?? null;
     }
     async listTraces(orgId, range, filters) {
-        const conditions = ['t.organization_id=$1', 't.timestamp >= $2', 't.timestamp < $3'];
+        const conditions = ['t.organization_id=$1', 't.occurred_at >= $2', 't.occurred_at < $3'];
         const params = [orgId, range.from, range.to];
         if (filters.projectId) {
             params.push(filters.projectId);
@@ -279,16 +279,16 @@ export class EventAnalyticsRepository {
         params.push(filters.limit, filters.offset);
         const rows = await this.db.query(`SELECT t.id, t.trace_id, t.root_span_name, t.root_span_id, t.span_count,
               t.total_duration_ms, t.request_id, t.service, t.environment, t.release,
-              t.timestamp, ${errorPredicate} AS has_error
+              t.occurred_at, ${errorPredicate} AS has_error
        FROM events_traces t WHERE ${where}
-       ORDER BY t.timestamp DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+       ORDER BY t.occurred_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { rows: rows.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     // ── Metrics ─────────────────────────────────────────────────────────────
     async listMetricNames(orgId, projectId, environment, range) {
-        const r = await this.db.query(`SELECT metric_name, metric_type, COUNT(*)::bigint AS sample_count, MAX(timestamp) AS last_seen
+        const r = await this.db.query(`SELECT metric_name, metric_type, COUNT(*)::bigint AS sample_count, MAX(occurred_at) AS last_seen
        FROM events_metrics
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)
        GROUP BY metric_name, metric_type ORDER BY metric_name ASC LIMIT 1000`, [orgId, range.from, range.to, projectId ?? null, environment ?? null]);
         return r.rows;
@@ -297,9 +297,9 @@ export class EventAnalyticsRepository {
         // aggregate is validated by the route enum — safe to interpolate the fn name.
         const fn = ['avg', 'sum', 'min', 'max', 'count'].includes(aggregate) ? aggregate : 'avg';
         const expr = fn === 'count' ? 'COUNT(*)' : `${fn.toUpperCase()}(value)`;
-        const r = await this.db.query(`SELECT DATE_TRUNC('${bucket}', timestamp) AS bucket, ${expr}::float AS value
+        const r = await this.db.query(`SELECT DATE_TRUNC('${bucket}', occurred_at) AS bucket, ${expr}::float AS value
        FROM events_metrics
-       WHERE organization_id=$1 AND metric_name=$2 AND timestamp >= $3 AND timestamp < $4
+       WHERE organization_id=$1 AND metric_name=$2 AND occurred_at >= $3 AND occurred_at < $4
          AND ($5::uuid IS NULL OR project_id=$5)
          AND ($6::text IS NULL OR environment=$6)
        GROUP BY bucket ORDER BY bucket ASC LIMIT 5000`, [orgId, name, range.from, range.to, projectId ?? null, environment ?? null]);
@@ -311,7 +311,7 @@ export class EventAnalyticsRepository {
               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY value)::float AS p95,
               PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY value)::float AS p99
        FROM events_metrics
-       WHERE organization_id=$1 AND metric_name=$2 AND timestamp >= $3 AND timestamp < $4
+       WHERE organization_id=$1 AND metric_name=$2 AND occurred_at >= $3 AND occurred_at < $4
          AND ($5::uuid IS NULL OR project_id=$5)
          AND ($6::text IS NULL OR environment=$6)`, [orgId, name, range.from, range.to, projectId ?? null, environment ?? null]);
         return r.rows[0] ?? null;
@@ -330,19 +330,19 @@ export class EventAnalyticsRepository {
         }
         const countQ = qb.count();
         const countRes = await this.db.query(countQ.sql, countQ.params);
-        qb.orderBy('timestamp', 'desc').paginate(filters.limit, filters.offset);
-        const listQ = qb.select('id, event_id, level, message, logger, service, trace_id, span_id, request_id, environment, release, context, timestamp');
+        qb.orderBy('occurred_at', 'desc').paginate(filters.limit, filters.offset);
+        const listQ = qb.select('id, event_id, level, message, logger, service, trace_id, span_id, request_id, environment, release, context, occurred_at');
         const listRes = await this.db.query(listQ.sql, listQ.params);
         return { rows: listRes.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async getLog(orgId, id) {
         const result = await this.db.query(`SELECT id, event_id, level, message, logger, service, trace_id, span_id, request_id,
-              environment, release, context, tags, timestamp
+              environment, release, context, tags, occurred_at
        FROM events_logs WHERE organization_id=$1 AND id=$2 LIMIT 1`, [orgId, id]);
         return result.rows[0] ?? null;
     }
     async summarizeLogs(orgId, range, filters) {
-        const conditions = ['organization_id=$1', 'timestamp >= $2', 'timestamp < $3'];
+        const conditions = ['organization_id=$1', 'occurred_at >= $2', 'occurred_at < $3'];
         const params = [orgId, range.from, range.to];
         if (filters.projectId) {
             params.push(filters.projectId);
@@ -365,7 +365,7 @@ export class EventAnalyticsRepository {
             conditions.push(`to_tsvector('english', message) @@ plainto_tsquery('english', $${params.length})`);
         }
         params.push(Math.max(1, Math.min(filters.limit, 100)));
-        const result = await this.db.query(`SELECT level, service, message, COUNT(*)::bigint AS occurrences, MAX(timestamp) AS last_seen
+        const result = await this.db.query(`SELECT level, service, message, COUNT(*)::bigint AS occurrences, MAX(occurred_at) AS last_seen
        FROM events_logs
        WHERE ${conditions.join(' AND ')}
        GROUP BY level, service, message
@@ -375,16 +375,16 @@ export class EventAnalyticsRepository {
     }
     async listObservedServices(orgId, range, projectId, environment, limit) {
         const result = await this.db.query(`WITH observations AS (
-         SELECT project_id, service, timestamp, 'trace'::text AS source FROM events_traces
-          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+         SELECT project_id, service, occurred_at, 'trace'::text AS source FROM events_traces
+          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
             AND ($5::text IS NULL OR environment=$5)
          UNION ALL
-         SELECT project_id, service, timestamp, 'request'::text AS source FROM events_requests
-          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+         SELECT project_id, service, occurred_at, 'request'::text AS source FROM events_requests
+          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
             AND ($5::text IS NULL OR environment=$5)
          UNION ALL
-         SELECT project_id, service, timestamp, 'log'::text AS source FROM events_logs
-          WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+         SELECT project_id, service, occurred_at, 'log'::text AS source FROM events_logs
+          WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
             AND ($5::text IS NULL OR environment=$5)
        )
        SELECT o.service, o.project_id, p.name AS project_name, p.slug AS project_slug,
@@ -392,7 +392,7 @@ export class EventAnalyticsRepository {
               COUNT(*) FILTER (WHERE o.source='trace')::bigint AS trace_count,
               COUNT(*) FILTER (WHERE o.source='request')::bigint AS request_count,
               COUNT(*) FILTER (WHERE o.source='log')::bigint AS log_count,
-              MAX(o.timestamp) AS last_seen
+              MAX(o.occurred_at) AS last_seen
        FROM observations o
        LEFT JOIN project_lookup p ON p.project_id=o.project_id AND p.organization_id=$1
        WHERE o.service IS NOT NULL AND BTRIM(o.service) <> ''
@@ -406,9 +406,9 @@ export class EventAnalyticsRepository {
               COUNT(*) FILTER (WHERE status_code >= 500)::bigint AS error_count,
               AVG(latency_ms)::int AS avg_latency_ms,
               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms)::int AS p95_latency_ms,
-              MAX(timestamp) AS last_seen
+              MAX(occurred_at) AS last_seen
        FROM events_requests
-       WHERE organization_id=$1 AND service=$2 AND timestamp >= $3 AND timestamp < $4
+       WHERE organization_id=$1 AND service=$2 AND occurred_at >= $3 AND occurred_at < $4
          AND ($5::uuid IS NULL OR project_id=$5)
          AND ($6::text IS NULL OR environment=$6) AND route IS NOT NULL
        GROUP BY route, method
@@ -418,17 +418,17 @@ export class EventAnalyticsRepository {
     }
     /** Logs newer than a cursor timestamp — used by the SSE poll loop. */
     async listLogsSince(orgId, since, projectId, environment, limit) {
-        const r = await this.db.query(`SELECT id, level, message, service, trace_id, environment, timestamp FROM events_logs
-       WHERE organization_id=$1 AND timestamp > $2 AND ($3::uuid IS NULL OR project_id=$3)
+        const r = await this.db.query(`SELECT id, level, message, service, trace_id, environment, occurred_at FROM events_logs
+       WHERE organization_id=$1 AND occurred_at > $2 AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4)
-       ORDER BY timestamp ASC LIMIT $5`, [orgId, since, projectId ?? null, environment ?? null, limit]);
+       ORDER BY occurred_at ASC LIMIT $5`, [orgId, since, projectId ?? null, environment ?? null, limit]);
         return r.rows;
     }
     async listErrorsSince(orgId, since, projectId, environment, limit) {
-        const r = await this.db.query(`SELECT id, fingerprint, message, error_name, severity, service, environment, timestamp FROM events_errors
-       WHERE organization_id=$1 AND timestamp > $2 AND ($3::uuid IS NULL OR project_id=$3)
+        const r = await this.db.query(`SELECT id, fingerprint, message, error_name, severity, service, environment, occurred_at FROM events_errors
+       WHERE organization_id=$1 AND occurred_at > $2 AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4)
-       ORDER BY timestamp ASC LIMIT $5`, [orgId, since, projectId ?? null, environment ?? null, limit]);
+       ORDER BY occurred_at ASC LIMIT $5`, [orgId, since, projectId ?? null, environment ?? null, limit]);
         return r.rows;
     }
     // ── Sessions / users ───────────────────────────────────────────────────
@@ -464,9 +464,9 @@ export class EventAnalyticsRepository {
     async listUsers(orgId, range, projectId, environment, limit, offset) {
         const r = await this.db.query(`SELECT user_id,
               COUNT(*)::bigint AS request_count,
-              MAX(timestamp) AS last_seen
+              MAX(occurred_at) AS last_seen
        FROM events_requests
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND user_id IS NOT NULL AND ($4::uuid IS NULL OR project_id=$4)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND user_id IS NOT NULL AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)
        GROUP BY user_id ORDER BY request_count DESC LIMIT $6 OFFSET $7`, [orgId, range.from, range.to, projectId ?? null, environment ?? null, limit, offset]);
         return r.rows;
@@ -474,34 +474,34 @@ export class EventAnalyticsRepository {
     async getUserJourney(orgId, userId, range, projectId, environment, limit) {
         const params = [orgId, userId, range.from, range.to, projectId ?? null, environment ?? null, limit];
         const [errors, requests] = await Promise.all([
-            this.db.query(`SELECT id, error_name, message, severity, environment, timestamp FROM events_errors
-         WHERE organization_id=$1 AND user_id=$2 AND timestamp >= $3 AND timestamp < $4
+            this.db.query(`SELECT id, error_name, message, severity, environment, occurred_at FROM events_errors
+         WHERE organization_id=$1 AND user_id=$2 AND occurred_at >= $3 AND occurred_at < $4
            AND ($5::uuid IS NULL OR project_id=$5)
            AND ($6::text IS NULL OR environment=$6)
-         ORDER BY timestamp DESC LIMIT $7`, params),
-            this.db.query(`SELECT id, method, route, status_code, latency_ms, environment, timestamp FROM events_requests
-         WHERE organization_id=$1 AND user_id=$2 AND timestamp >= $3 AND timestamp < $4
+         ORDER BY occurred_at DESC LIMIT $7`, params),
+            this.db.query(`SELECT id, method, route, status_code, latency_ms, environment, occurred_at FROM events_requests
+         WHERE organization_id=$1 AND user_id=$2 AND occurred_at >= $3 AND occurred_at < $4
            AND ($5::uuid IS NULL OR project_id=$5)
            AND ($6::text IS NULL OR environment=$6)
-         ORDER BY timestamp DESC LIMIT $7`, params),
+         ORDER BY occurred_at DESC LIMIT $7`, params),
         ]);
         return { errors: errors.rows, requests: requests.rows };
     }
     // ── Crons ────────────────────────────────────────────────────────────────
     async listCrons(orgId, projectId, environment) {
-        const r = await this.db.query(`SELECT DISTINCT ON (monitor_slug) monitor_slug, status, duration_ms, timestamp
+        const r = await this.db.query(`SELECT DISTINCT ON (monitor_slug) monitor_slug, status, duration_ms, occurred_at
        FROM events_cron_checkins
        WHERE organization_id=$1 AND ($2::uuid IS NULL OR project_id=$2)
          AND ($3::text IS NULL OR environment=$3)
-       ORDER BY monitor_slug, timestamp DESC`, [orgId, projectId ?? null, environment ?? null]);
+       ORDER BY monitor_slug, occurred_at DESC`, [orgId, projectId ?? null, environment ?? null]);
         return r.rows;
     }
     async getCronHistory(orgId, slug, projectId, environment, limit, offset) {
-        const r = await this.db.query(`SELECT id, status, duration_ms, environment, timestamp FROM events_cron_checkins
+        const r = await this.db.query(`SELECT id, status, duration_ms, environment, occurred_at FROM events_cron_checkins
        WHERE organization_id=$1 AND monitor_slug=$2
          AND ($3::uuid IS NULL OR project_id=$3)
          AND ($4::text IS NULL OR environment=$4)
-       ORDER BY timestamp DESC LIMIT $5 OFFSET $6`, [orgId, slug, projectId ?? null, environment ?? null, limit, offset]);
+       ORDER BY occurred_at DESC LIMIT $5 OFFSET $6`, [orgId, slug, projectId ?? null, environment ?? null, limit, offset]);
         return r.rows;
     }
     // ── Dashboards CRUD ──────────────────────────────────────────────────────
@@ -576,9 +576,9 @@ export class EventAnalyticsRepository {
     async exportDataset(orgId, dataset, range, projectId, environment, limit) {
         const table = { errors: 'events_errors', requests: 'events_requests', logs: 'events_logs', metrics: 'events_metrics' }[dataset];
         const r = await this.db.query(`SELECT * FROM ${table}
-       WHERE organization_id=$1 AND timestamp >= $2 AND timestamp < $3 AND ($4::uuid IS NULL OR project_id=$4)
+       WHERE organization_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND ($4::uuid IS NULL OR project_id=$4)
          AND ($5::text IS NULL OR environment=$5)
-       ORDER BY timestamp DESC LIMIT $6`, [orgId, range.from, range.to, projectId ?? null, environment ?? null, limit]);
+       ORDER BY occurred_at DESC LIMIT $6`, [orgId, range.from, range.to, projectId ?? null, environment ?? null, limit]);
         return r.rows;
     }
     // ── Rollup helpers (called by workers) ───────────────────────────────────
@@ -606,9 +606,9 @@ export class EventAnalyticsRepository {
          (organization_id, project_id, fingerprint, error_name, message_template,
           first_seen_at, last_seen_at, total_count, services, environments, releases)
        SELECT organization_id, project_id, fingerprint,
-              (array_agg(error_name ORDER BY timestamp DESC))[1],
-              (array_agg(message ORDER BY timestamp DESC))[1],
-              MIN(timestamp), MAX(timestamp), COUNT(*)::int,
+              (array_agg(error_name ORDER BY occurred_at DESC))[1],
+              (array_agg(message ORDER BY occurred_at DESC))[1],
+              MIN(occurred_at), MAX(occurred_at), COUNT(*)::int,
               ARRAY(SELECT DISTINCT service FROM events_errors e2 WHERE e2.organization_id=ee.organization_id AND e2.project_id=ee.project_id AND e2.fingerprint=ee.fingerprint AND service IS NOT NULL),
               ARRAY(SELECT DISTINCT environment FROM events_errors e3 WHERE e3.organization_id=ee.organization_id AND e3.project_id=ee.project_id AND e3.fingerprint=ee.fingerprint AND environment IS NOT NULL),
               ARRAY(SELECT DISTINCT release FROM events_errors e4 WHERE e4.organization_id=ee.organization_id AND e4.project_id=ee.project_id AND e4.fingerprint=ee.fingerprint AND release IS NOT NULL)

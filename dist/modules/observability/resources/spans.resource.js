@@ -45,7 +45,7 @@ const spanFields = {
 export const spansResource = {
     name: 'spans',
     table: 'events_spans',
-    timeColumn: 'timestamp',
+    timeColumn: 'occurredAt',
     idColumn: 'id',
     fields: spanFields,
     searchFields: ['name', 'message', 'endpoint', 'service', 'dbStatement', 'httpUrl', 'httpTarget'],
@@ -60,9 +60,9 @@ export const spansResource = {
         endpoint: 'endpoint',
         duration: 'durationMs',
     },
-    defaultSort: { field: 'timestamp', direction: 'desc' },
+    defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'timestamp', 'traceId', 'spanId', 'parentSpanId', 'name',
+        'id', 'projectId', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
         'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
     ],
     preferredIndexes: ['idx_events_spans_trace_time', 'idx_events_spans_parent_time', 'idx_events_spans_type_time', 'idx_events_spans_endpoint_time'],

@@ -170,6 +170,12 @@ declare const envSchema: z.ZodObject<{
         false: "false";
     }>>;
     ALERTING_RUNTIME_POOL_ASSERT: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    CONNECTOR_GLOBAL_LIMITS: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    CONNECTOR_GLOBAL_LIMIT: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_GLOBAL_WINDOW_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CIRCUIT_FAILURE_THRESHOLD: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CIRCUIT_RESET_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    ESCALATION_V2: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     ANALYTICS_ENGINE_ENABLED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     ANALYTICS_WORKER_CONCURRENCY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     ANALYTICS_BATCH_MAX_ROWS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -320,6 +326,12 @@ export declare const env: {
     ALERTING_V2_WRITE: boolean;
     ALERTING_V2_READ: boolean;
     ALERTING_RUNTIME_POOL_ASSERT: boolean;
+    CONNECTOR_GLOBAL_LIMITS: boolean;
+    CONNECTOR_GLOBAL_LIMIT: number;
+    CONNECTOR_GLOBAL_WINDOW_SECONDS: number;
+    CONNECTOR_CIRCUIT_FAILURE_THRESHOLD: number;
+    CONNECTOR_CIRCUIT_RESET_SECONDS: number;
+    ESCALATION_V2: boolean;
     ANALYTICS_ENGINE_ENABLED: boolean;
     ANALYTICS_WORKER_CONCURRENCY: number;
     ANALYTICS_BATCH_MAX_ROWS: number;

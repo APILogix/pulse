@@ -16,7 +16,7 @@ const traceFields = {
 export const tracesResource = {
     name: 'traces',
     table: 'events_traces',
-    timeColumn: 'timestamp',
+    timeColumn: 'occurredAt',
     idColumn: 'id',
     fields: traceFields,
     searchFields: ['rootSpanName', 'endpoint', 'service', 'traceId'],
@@ -29,9 +29,9 @@ export const tracesResource = {
         status: 'rootSpanStatus',
         kind: 'spanKind',
     },
-    defaultSort: { field: 'timestamp', direction: 'desc' },
+    defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'timestamp', 'traceId', 'rootSpanName', 'spanCount',
+        'id', 'projectId', 'environment', 'occurredAt', 'rootSpanName', 'spanCount',
         'totalDurationMs', 'durationMs', 'endpoint', 'httpMethod', 'statusCode',
         'rootSpanStatus', 'spanKind', 'service', 'isPartial', 'requestId',
     ],

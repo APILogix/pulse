@@ -25,7 +25,7 @@ import type { Logger } from 'pino';
 import { type AlertingPoolTarget } from './runtime-pool.js';
 export type LogDbSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical' | 'fatal';
 export type AlertEventKind = 'fired' | 'recovered' | 'duplicate' | 'suppressed' | 'silenced';
-export type AlertStateValue = 'pending' | 'firing' | 'acknowledged' | 'resolved' | 'suppressed' | 'silenced' | 'expired' | 'error';
+export type AlertStateValue = 'healthy' | 'pending' | 'triggered' | 'firing' | 'acknowledged' | 'escalated' | 'resolved' | 'closed' | 'suppressed' | 'silenced' | 'expired' | 'error';
 export type NotificationChannelKind = 'in_app' | 'email' | 'slack' | 'discord' | 'teams' | 'pagerduty' | 'webhook' | 'sms';
 export type NotificationJobStatus = 'pending' | 'queued' | 'sent' | 'failed' | 'suppressed' | 'cancelled' | 'expired';
 export type AlertEngine = 'fast' | 'window' | 'reconcile' | 'api' | 'legacy';

@@ -48,7 +48,7 @@ export class AnalyticsQueryBuilder {
     return `$${this.params.length + 1}`;
   }
 
-  whereTimeRange(start: Date, end: Date, column = 'timestamp'): this {
+  whereTimeRange(start: Date, end: Date, column = 'occurred_at'): this {
     this.conditions.push(`${column} >= ${this.next()}`);
     this.params.push(start);
     this.conditions.push(`${column} < ${this.next()}`);
@@ -143,7 +143,7 @@ export class AnalyticsQueryBuilder {
    * expressions (already safe, server-defined — never user input).
    */
   timeSeries(bucket: TimeBucket, extraSelects = ''): { sql: string; params: unknown[] } {
-    const trunc = `DATE_TRUNC('${bucket}', timestamp)`;
+    const trunc = `DATE_TRUNC('${bucket}', occurred_at)`;
     const extra = extraSelects ? `, ${extraSelects}` : '';
     return {
       sql: `

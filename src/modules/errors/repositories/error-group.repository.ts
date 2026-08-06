@@ -24,6 +24,7 @@ export class ErrorGroupRepository {
     params: UpsertErrorGroupParams
   ): Promise<{ id: string; isNew: boolean; status: string; isRegression: boolean }> {
     const {
+      organizationId,
       projectId,
       fingerprint,
       eventId,
@@ -40,6 +41,7 @@ export class ErrorGroupRepository {
 
     const query = `
       INSERT INTO error_groups (
+        organization_id,
         project_id,
         fingerprint,
         status,
@@ -64,9 +66,10 @@ export class ErrorGroupRepository {
         version
       )
       VALUES (
-        $1, $2, 'OPEN', 1, NOW(), NOW(), $3, $3, $4, $4, FALSE, 0, NULL, $5, $6, $7, $8, $9, $10, $11, $12, 1
+        $1, $2, $3, 'OPEN', 1, NOW(), NOW(), $4, $4, $5, $5, FALSE, 0, NULL, $6, $7, $8, $9, $10, $11, $12, $13, 1
       )
       ON CONFLICT (project_id, fingerprint) DO UPDATE SET
+        organization_id = COALESCE(error_groups.organization_id, EXCLUDED.organization_id),
         occurrence_count = error_groups.occurrence_count + 1,
         last_seen_at = NOW(),
         latest_event_id = EXCLUDED.latest_event_id,
@@ -103,6 +106,7 @@ export class ErrorGroupRepository {
     `;
 
     const result = await client.query(query, [
+      organizationId || null,
       projectId,
       fingerprint,
       eventId,

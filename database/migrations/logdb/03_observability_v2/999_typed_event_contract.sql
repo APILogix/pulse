@@ -7,8 +7,7 @@ BEGIN;
 CREATE OR REPLACE FUNCTION logdb_sync_typed_event_contract()
 RETURNS trigger AS $$
 BEGIN
-  NEW.timestamp := COALESCE(NEW.timestamp, NEW.occurred_at, NOW());
-  NEW.occurred_at := NEW.timestamp;
+  NEW.occurred_at := COALESCE(NEW.occurred_at, NOW());
   NEW.created_at := COALESCE(NEW.created_at, NEW.ingested_at, NOW());
   NEW.ingested_at := COALESCE(NEW.ingested_at, NEW.created_at);
   NEW.metadata := jsonb_set(

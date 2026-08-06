@@ -34,7 +34,7 @@ const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'latenc
 export const requestsResource = {
     name: 'requests',
     table: 'events_requests',
-    timeColumn: 'timestamp',
+    timeColumn: 'occurredAt',
     idColumn: 'id',
     fields: requestFields,
     searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
@@ -48,10 +48,10 @@ export const requestsResource = {
         device: 'device',
         ip: 'clientIp',
     },
-    defaultSort: { field: 'timestamp', direction: 'desc' },
+    defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
         'id', 'projectId', 'environment', 'method', 'endpoint', 'name', 'statusCode', 'durationMs',
-        'timestamp', 'traceId', 'requestId', 'userId', 'service', 'release', 'sdkVersion',
+        'occurredAt', 'traceId', 'requestId', 'userId', 'service', 'release', 'sdkVersion',
         'geoCountry', 'browser', 'os', 'device', 'clientIp', 'hasError', 'isSlow', 'hasTrace',
     ],
     preferredIndexes: [

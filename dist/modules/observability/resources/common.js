@@ -19,8 +19,8 @@ export const commonFields = {
     message: { column: 'message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Message' },
     name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
     durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
-    statusCode: { column: 'status_code', type: 'number', filterable: true, projectable: true, label: 'Status Code' },
-    timestamp: { column: 'timestamp', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Timestamp' },
+    occurredAt: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
+    timestamp: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
     ingestedAt: { column: 'ingested_at', type: 'timestamp', filterable: true, projectable: true, label: 'Ingested At' },
 };
 /** Search key aliases common to every resource. */

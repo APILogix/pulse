@@ -15,7 +15,10 @@ export const SEVERITY_VALUES = ['debug', 'info', 'warning', 'error', 'critical',
 export const commonFields: Record<string, FieldDef> = {
   id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
   eventId: { column: 'event_id', type: 'string', filterable: true, projectable: true, label: 'Event ID' },
+  organizationId: { column: 'organization_id', type: 'uuid', filterable: true, projectable: true, label: 'Organization ID' },
   projectId: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project' },
+  tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant ID' },
+  apiKeyName: { column: 'api_key_name', type: 'string', filterable: true, projectable: true, label: 'API Key' },
   environment: { column: 'environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
   traceId: { column: 'trace_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Trace ID' },
   spanId: { column: 'span_id', type: 'string', filterable: true, projectable: true, label: 'Span ID' },
@@ -31,20 +34,69 @@ export const commonFields: Record<string, FieldDef> = {
   message: { column: 'message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Message' },
   name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
   durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
-  statusCode: { column: 'status_code', type: 'number', filterable: true, projectable: true, label: 'Status Code' },
-  timestamp: { column: 'timestamp', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Timestamp' },
+  statusCode: { column: 'status_code', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Status Code' },
+  status_code: { column: 'status_code', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Status Code' },
+  occurredAt: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
+  occurred_at: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
+  timestamp: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
   ingestedAt: { column: 'ingested_at', type: 'timestamp', filterable: true, projectable: true, label: 'Ingested At' },
+  createdAt: { column: 'created_at', type: 'timestamp', filterable: true, projectable: true, label: 'Created At' },
+  attributes: { column: 'attributes', type: 'json', filterable: true, projectable: true, label: 'Attributes' },
+  metadata: { column: 'metadata', type: 'json', filterable: true, projectable: true, label: 'Metadata' },
+  payload: { column: 'payload', type: 'json', filterable: true, projectable: true, label: 'Payload' },
 };
 
 /** Search key aliases common to every resource. */
 export const commonSearchAliases: Record<string, string> = {
+  // Correlation
   trace: 'traceId',
+  trace_id: 'traceId',
+  traceid: 'traceId',
   span: 'spanId',
+  span_id: 'spanId',
+  spanid: 'spanId',
+  parent_span: 'parentSpanId',
+  parent_span_id: 'parentSpanId',
   session: 'sessionId',
+  session_id: 'sessionId',
+  sessionid: 'sessionId',
   user: 'userId',
+  user_id: 'userId',
+  userid: 'userId',
+  tenant: 'tenantId',
+  tenant_id: 'tenantId',
+  tenantid: 'tenantId',
+
+  // System & Environment
   svc: 'service',
+  service: 'service',
   env: 'environment',
+  environment: 'environment',
+  project: 'projectId',
+  project_id: 'projectId',
+  org: 'organizationId',
+  organization_id: 'organizationId',
+  release: 'release',
+  ver: 'sdkVersion',
+  version: 'sdkVersion',
+  sdk: 'sdkName',
+
+  // Status & Performance
+  status: 'statusCode',
+  status_code: 'statusCode',
+  statuscode: 'statusCode',
+  code: 'statusCode',
+  duration: 'durationMs',
+  duration_ms: 'durationMs',
+  latency: 'durationMs',
+  latency_ms: 'durationMs',
+
+  // Content & Classification
   msg: 'message',
+  message: 'message',
+  name: 'name',
+  severity: 'severity',
+  level: 'severity',
 };
 
 /**

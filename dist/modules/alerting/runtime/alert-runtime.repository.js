@@ -54,19 +54,25 @@ export class AlertRuntimeRepository {
      * is the exactly-once mechanism, and it lives in the index, not in code.
      */
     async appendEvent(input, client) {
-        const result = await this.exec(client).query(`INSERT INTO alert_events_v2 (
+        const result = await this.exec(client).query(`WITH reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         VALUES ('alert_event', $1, $18)
+         ON CONFLICT DO NOTHING
+         RETURNING organization_id, idempotency_key
+       )
+       INSERT INTO alert_events_v2 (
          organization_id, project_id, environment, service, endpoint,
          rule_id, binding_id, rule_revision, kind, severity, priority,
          fingerprint, dedup_key, correlation_key, group_key, source, engine,
          idempotency_key, observed_value, threshold_value,
          evidence, policy_snapshot, labels, annotations, occurred_at
-       ) VALUES (
-         $1, $2, $3, $4, $5,
-         $6, $7, $8, $9::alert_event_kind, $10::logdb_severity, $11,
-         $12, $13, $14, $15, $16, $17,
-         $18, $19, $20,
-         $21::jsonb, $22::jsonb, $23::jsonb, $24::jsonb, $25
        )
+       SELECT $1, $2, $3, $4, $5,
+              $6, $7, $8, $9::alert_event_kind, $10::logdb_severity, $11,
+              $12, $13, $14, $15, $16, $17,
+              $18, $19, $20,
+              $21::jsonb, $22::jsonb, $23::jsonb, $24::jsonb, $25
+         FROM reserved
        ON CONFLICT DO NOTHING
        RETURNING *`, [
             input.organizationId,
@@ -216,7 +222,25 @@ export class AlertRuntimeRepository {
     async insertNotificationJobs(rows, client) {
         if (rows.length === 0)
             return [];
-        const result = await this.exec(client).query(`INSERT INTO alert_notification_jobs (
+        const result = await this.exec(client).query(`WITH input AS (
+         SELECT t.*
+           FROM UNNEST(
+             $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[],
+             $6::uuid[], $7::uuid[], $8::uuid[], $9::text[], $10::uuid[],
+             $11::text[], $12::smallint[], $13::smallint[], $14::smallint[], $15::jsonb[],
+             $16::text[], $17::boolean[], $18::timestamptz[]
+           ) AS t(organization_id, project_id, alert_event_id, alert_key, channel_kind,
+                  connector_id, route_id, recipient_user_id, recipient_ref, template_id,
+                  severity, priority, escalation_step, attempt_epoch, payload,
+                  idempotency_key, billable, notify_after)
+       ), reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         SELECT 'notification_job', organization_id, idempotency_key
+           FROM input
+         ON CONFLICT DO NOTHING
+         RETURNING organization_id, idempotency_key
+       )
+       INSERT INTO alert_notification_jobs (
          organization_id, project_id, alert_event_id, alert_key, channel_kind,
          connector_id, route_id, recipient_user_id, recipient_ref, template_id,
          severity, priority, escalation_step, attempt_epoch, payload,
@@ -227,15 +251,10 @@ export class AlertRuntimeRepository {
               t.connector_id, t.route_id, t.recipient_user_id, t.recipient_ref, t.template_id,
               t.severity::logdb_severity, t.priority, t.escalation_step, t.attempt_epoch,
               t.payload, t.idempotency_key, t.billable, t.notify_after
-         FROM UNNEST(
-           $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[],
-           $6::uuid[], $7::uuid[], $8::uuid[], $9::text[], $10::uuid[],
-           $11::text[], $12::smallint[], $13::smallint[], $14::smallint[], $15::jsonb[],
-           $16::text[], $17::boolean[], $18::timestamptz[]
-         ) AS t(organization_id, project_id, alert_event_id, alert_key, channel_kind,
-                connector_id, route_id, recipient_user_id, recipient_ref, template_id,
-                severity, priority, escalation_step, attempt_epoch, payload,
-                idempotency_key, billable, notify_after)
+         FROM input t
+         JOIN reserved r
+           ON r.organization_id = t.organization_id
+          AND r.idempotency_key = t.idempotency_key
        ON CONFLICT DO NOTHING
        RETURNING id, created_at, idempotency_key, channel_kind, status`, [
             rows.map((r) => r.organizationId),
@@ -359,7 +378,24 @@ export class AlertRuntimeRepository {
     async appendDeliveryAttempts(rows, client) {
         if (rows.length === 0)
             return 0;
-        const result = await this.exec(client).query(`INSERT INTO alert_delivery_attempts_v2 (
+        const result = await this.exec(client).query(`WITH input AS (
+         SELECT t.*
+           FROM UNNEST(
+             $1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::text[],
+             $6::uuid[], $7::uuid[], $8::uuid[], $9::smallint[], $10::text[],
+             $11::int[], $12::text[], $13::text[], $14::text[], $15::int[]
+           ) AS t(organization_id, project_id, alert_event_id, notification_job_id, channel_kind,
+                  connector_id, route_id, recipient_user_id, attempt_number, status,
+                  response_status_code, external_message_id, error_category, error_message, latency_ms)
+       ), reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         SELECT 'delivery_attempt', organization_id,
+                notification_job_id::text || ':' || attempt_number::text
+           FROM input
+         ON CONFLICT DO NOTHING
+         RETURNING organization_id, idempotency_key
+       )
+       INSERT INTO alert_delivery_attempts_v2 (
          organization_id, project_id, alert_event_id, notification_job_id, channel_kind,
          connector_id, route_id, recipient_user_id, attempt_number, status,
          response_status_code, external_message_id, error_category, error_message, latency_ms
@@ -370,13 +406,10 @@ export class AlertRuntimeRepository {
               t.status::notification_job_status,
               t.response_status_code, t.external_message_id, t.error_category,
               t.error_message, t.latency_ms
-         FROM UNNEST(
-           $1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::text[],
-           $6::uuid[], $7::uuid[], $8::uuid[], $9::smallint[], $10::text[],
-           $11::int[], $12::text[], $13::text[], $14::text[], $15::int[]
-         ) AS t(organization_id, project_id, alert_event_id, notification_job_id, channel_kind,
-                connector_id, route_id, recipient_user_id, attempt_number, status,
-                response_status_code, external_message_id, error_category, error_message, latency_ms)
+         FROM input t
+         JOIN reserved r
+           ON r.organization_id = t.organization_id
+          AND r.idempotency_key = t.notification_job_id::text || ':' || t.attempt_number::text
        ON CONFLICT DO NOTHING`, [
             rows.map((r) => r.organizationId),
             rows.map((r) => r.projectId ?? null),

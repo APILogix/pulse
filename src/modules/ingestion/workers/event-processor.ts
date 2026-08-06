@@ -33,6 +33,7 @@ import { pgboss } from '../../../lib/pgboss.js';
 import {
   normalizeEvent,
   normalizeSdkEnvironment,
+  resolveTimestamp,
   type NormalizedEvent,
 } from '../pipeline/event-normalizer.js';
 import {
@@ -199,6 +200,7 @@ export class EventProcessor {
           const req = (e.context?.request as any) || e.context || {};
           return {
             groupParams: {
+              organizationId: s.orgId as string,
               projectId: s.projectId,
               fingerprint,
               eventId: e.eventId,
@@ -248,7 +250,7 @@ export class EventProcessor {
               extra: e.extra ?? {},
               metadata: e.metadata ?? {},
               ai_response: e.aiResponse ?? null,
-              timestamp: new Date(e.timestamp),
+              occurred_at: new Date(resolveTimestamp(e)),
               payload: e
             }
           };

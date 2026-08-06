@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS events_replays (
   ai_response JSONB,
 
   -- Timekeeping
-  timestamp TIMESTAMPTZ NOT NULL,
   occurred_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

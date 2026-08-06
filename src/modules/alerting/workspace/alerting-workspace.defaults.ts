@@ -1,0 +1,161 @@
+import type { JsonObject } from './alerting-workspace.types.js';
+
+export type PolicyCategoryDefault = {
+  slug: string;
+  name: string;
+  sortOrder: number;
+};
+
+export type PolicyDefault = {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  metricSource: string;
+  expression: string;
+  defaultThreshold: JsonObject;
+  recoveryThreshold: JsonObject;
+  cooldownSeconds: number;
+  evaluationWindowSeconds: number;
+  enabled: boolean;
+  documentation: string;
+  dependencies: string[];
+};
+
+export const POLICY_CATEGORIES: readonly PolicyCategoryDefault[] = [
+  { slug: 'errors', name: 'Errors', sortOrder: 10 },
+  { slug: 'performance', name: 'Performance', sortOrder: 20 },
+  { slug: 'availability', name: 'Availability', sortOrder: 30 },
+  { slug: 'infrastructure', name: 'Infrastructure', sortOrder: 40 },
+  { slug: 'security', name: 'Security', sortOrder: 50 },
+  { slug: 'queues', name: 'Queues', sortOrder: 60 },
+  { slug: 'database', name: 'Database', sortOrder: 70 },
+  { slug: 'deployments', name: 'Deployments', sortOrder: 80 },
+  { slug: 'cron', name: 'Cron', sortOrder: 90 },
+  { slug: 'sdk', name: 'SDK', sortOrder: 100 },
+  { slug: 'custom', name: 'Custom', sortOrder: 110 },
+  { slug: 'ai', name: 'AI', sortOrder: 120 },
+];
+
+const policy = (
+  slug: string,
+  name: string,
+  category: string,
+  severity: PolicyDefault['severity'],
+  metricSource: string,
+  expression: string,
+  threshold: JsonObject,
+  recoveryThreshold: JsonObject,
+  cooldownSeconds: number,
+  evaluationWindowSeconds: number,
+  documentation: string,
+  dependencies: string[] = [],
+): PolicyDefault => ({
+  slug,
+  name,
+  description: documentation,
+  category,
+  severity,
+  metricSource,
+  expression,
+  defaultThreshold: threshold,
+  recoveryThreshold,
+  cooldownSeconds,
+  evaluationWindowSeconds,
+  enabled: slug !== 'anomaly_detection',
+  documentation,
+  dependencies,
+});
+
+export const POLICY_DEFAULTS: readonly PolicyDefault[] = [
+  policy('high_error_rate', 'High Error Rate', 'errors', 'critical', 'requests.error_rate', 'error_rate > threshold for window', { value: 5, unit: 'percent' }, { value: 2, unit: 'percent' }, 900, 600, 'Triggers when request errors exceed the default percentage threshold.'),
+  policy('high_latency', 'High Latency', 'performance', 'warning', 'requests.latency', 'latency > threshold for window', { value: 1000, unit: 'ms' }, { value: 700, unit: 'ms' }, 600, 300, 'Triggers when request latency remains above the operational threshold.'),
+  policy('p95_latency', 'P95 Latency', 'performance', 'warning', 'requests.latency.p95', 'p95(latency) > threshold for window', { value: 500, unit: 'ms' }, { value: 350, unit: 'ms' }, 600, 300, 'Monitors the 95th percentile request latency.'),
+  policy('p99_latency', 'P99 Latency', 'performance', 'error', 'requests.latency.p99', 'p99(latency) > threshold for window', { value: 2000, unit: 'ms' }, { value: 1200, unit: 'ms' }, 900, 300, 'Monitors the 99th percentile request latency.'),
+  policy('availability', 'Availability', 'availability', 'critical', 'service.availability', 'availability < threshold for window', { value: 99.9, unit: 'percent' }, { value: 99.95, unit: 'percent' }, 900, 900, 'Triggers when service availability falls below the target.'),
+  policy('service_down', 'Service Down', 'availability', 'critical', 'service.heartbeat', 'heartbeat missing for window', { value: 5, unit: 'minutes' }, { value: 1, unit: 'minutes' }, 600, 300, 'Detects a service that has stopped reporting telemetry.'),
+  policy('no_traffic', 'No Traffic', 'availability', 'warning', 'requests.count', 'request_count == 0 for window', { value: 0, unit: 'requests' }, { value: 1, unit: 'requests' }, 1800, 900, 'Detects expected services that have stopped receiving traffic.'),
+  policy('cron_failure', 'Cron Failure', 'cron', 'error', 'cron.status', 'failed_runs >= threshold for window', { value: 1, unit: 'failures' }, { value: 0, unit: 'failures' }, 900, 900, 'Detects failed or missed scheduled jobs.'),
+  policy('queue_backlog', 'Queue Backlog', 'queues', 'warning', 'queue.backlog', 'backlog > threshold for window', { value: 1000, unit: 'messages' }, { value: 500, unit: 'messages' }, 1800, 600, 'Detects queues whose backlog exceeds the operating limit.'),
+  policy('oom', 'OOM', 'infrastructure', 'critical', 'system.memory.oom', 'oom_count > threshold for window', { value: 0, unit: 'events' }, { value: 0, unit: 'events' }, 600, 60, 'Detects out-of-memory terminations.'),
+  policy('memory', 'Memory', 'infrastructure', 'warning', 'system.memory.usage', 'memory_usage > threshold for window', { value: 85, unit: 'percent' }, { value: 70, unit: 'percent' }, 1800, 600, 'Detects sustained high memory utilization.'),
+  policy('cpu', 'CPU', 'infrastructure', 'warning', 'system.cpu.usage', 'cpu_usage > threshold for window', { value: 85, unit: 'percent' }, { value: 70, unit: 'percent' }, 1800, 600, 'Detects sustained high CPU utilization.'),
+  policy('database_latency', 'Database Latency', 'database', 'error', 'database.latency', 'database_latency > threshold for window', { value: 500, unit: 'ms' }, { value: 250, unit: 'ms' }, 900, 300, 'Detects elevated database query latency.'),
+  policy('worker_failure', 'Worker Failure', 'infrastructure', 'critical', 'worker.failures', 'worker_failures >= threshold for window', { value: 1, unit: 'failures' }, { value: 0, unit: 'failures' }, 600, 300, 'Detects worker processes that fail or stop processing.'),
+  policy('webhook_failure', 'Webhook Failure', 'errors', 'error', 'webhook.delivery', 'failed_deliveries >= threshold for window', { value: 1, unit: 'failures' }, { value: 0, unit: 'failures' }, 900, 300, 'Detects repeated webhook delivery failures.'),
+  policy('sdk_offline', 'SDK Offline', 'sdk', 'warning', 'sdk.heartbeat', 'heartbeat missing for window', { value: 10, unit: 'minutes' }, { value: 1, unit: 'minutes' }, 1800, 600, 'Detects SDK clients that stopped reporting.'),
+  policy('certificate_expiry', 'Certificate Expiry', 'security', 'error', 'certificate.expires_at', 'days_to_expiry < threshold', { value: 30, unit: 'days' }, { value: 45, unit: 'days' }, 86400, 86400, 'Detects certificates approaching expiration.'),
+  policy('rate_limit', 'Rate Limit', 'security', 'warning', 'requests.rate_limited', 'rate_limited_count > threshold for window', { value: 100, unit: 'requests' }, { value: 20, unit: 'requests' }, 900, 300, 'Detects elevated rate-limit responses.'),
+  policy('deployment_failure', 'Deployment Failure', 'deployments', 'error', 'deployment.status', 'failed_deployments >= threshold for window', { value: 1, unit: 'failures' }, { value: 0, unit: 'failures' }, 900, 600, 'Detects deployments that fail to complete successfully.'),
+  policy('authentication_spike', 'Authentication Spike', 'security', 'critical', 'auth.failures', 'authentication_failures > threshold for window', { value: 50, unit: 'attempts' }, { value: 10, unit: 'attempts' }, 900, 300, 'Detects unusual authentication failure spikes.'),
+  policy('slo_burn_rate', 'SLO Burn Rate', 'performance', 'critical', 'slo.burn_rate', 'burn_rate > threshold for window', { value: 14.4, unit: 'ratio' }, { value: 1, unit: 'ratio' }, 1800, 3600, 'Detects rapid consumption of the service-level objective error budget.'),
+  policy('custom_metric_threshold', 'Custom Metric Threshold', 'custom', 'warning', 'custom.metric', 'custom_metric > threshold for window', { value: 0, unit: 'number' }, { value: 0, unit: 'number' }, 900, 300, 'A configurable threshold for organization-defined metrics.'),
+  policy('anomaly_detection', 'Anomaly Detection', 'ai', 'warning', 'ai.anomaly', 'anomaly_score > threshold for window', { value: 0.8, unit: 'score' }, { value: 0.5, unit: 'score' }, 1800, 900, 'Detects statistically significant deviations from learned behavior.', ['ai_alert_analysis']),
+];
+
+export const ROUTING_DEFAULTS = [
+  { severity: 'critical', destinationType: 'email', priority: 100 },
+  { severity: 'high', destinationType: 'email', priority: 100 },
+  { severity: 'medium', destinationType: 'dashboard', priority: 100 },
+  { severity: 'low', destinationType: 'dashboard', priority: 100 },
+] as const;
+
+export const ESCALATION_DEFAULTS = [
+  { systemKey: 'default', name: 'Default', description: 'Default organization escalation chain.', acknowledgementTimeoutSeconds: 900, repeatIntervalSeconds: 1800, maxRepeats: 2 },
+  { systemKey: 'critical', name: 'Critical', description: 'Critical incident escalation chain.', acknowledgementTimeoutSeconds: 300, repeatIntervalSeconds: 600, maxRepeats: 3 },
+  { systemKey: 'production', name: 'Production', description: 'Production service escalation chain.', acknowledgementTimeoutSeconds: 600, repeatIntervalSeconds: 900, maxRepeats: 2 },
+] as const;
+
+export const PROVIDER_DEFAULTS = [
+  { providerKey: 'slack', displayName: 'Slack', capabilities: { chat: true } },
+  { providerKey: 'discord', displayName: 'Discord', capabilities: { chat: true } },
+  { providerKey: 'teams', displayName: 'Teams', capabilities: { chat: true } },
+  { providerKey: 'pagerduty', displayName: 'PagerDuty', capabilities: { paging: true } },
+  { providerKey: 'webhook', displayName: 'Webhook', capabilities: { http: true } },
+  { providerKey: 'email', displayName: 'Email', capabilities: { email: true } },
+  { providerKey: 'sms', displayName: 'SMS', capabilities: { sms: true } },
+] as const;
+
+export const FEATURE_FLAG_DEFAULTS = [
+  { key: 'alerting_enabled', entitlementKey: 'in_app_alerts', description: 'Enables Alerting V2.' },
+  { key: 'policy_simulation', entitlementKey: 'in_app_alerts', description: 'Enables policy simulation.' },
+  { key: 'correlation', entitlementKey: 'in_app_alerts', description: 'Enables incident correlation.' },
+  { key: 'maintenance', entitlementKey: 'in_app_alerts', description: 'Enables maintenance suppression.' },
+  { key: 'escalation', entitlementKey: 'in_app_alerts', description: 'Enables escalation policies.' },
+  { key: 'digest', entitlementKey: 'email_alerts', description: 'Enables digest notifications.' },
+  { key: 'anomaly_detection', entitlementKey: 'ai_alert_analysis', description: 'Enables anomaly detection.' },
+  { key: 'ai', entitlementKey: 'ai_alert_analysis', description: 'Enables AI alert analysis.' },
+] as const;
+
+export const DASHBOARD_WIDGET_DEFAULTS = [
+  'open_incidents',
+  'critical_incidents',
+  'policies',
+  'notification_health',
+  'connector_health',
+  'mttr',
+  'mtta',
+  'alert_volume',
+] as const;
+
+export const SAVED_VIEW_DEFAULTS = [
+  { key: 'all_incidents', name: 'All Incidents', filters: {} },
+  { key: 'critical', name: 'Critical', filters: { severity: ['critical'] } },
+  { key: 'production', name: 'Production', filters: { environment: 'production' } },
+  { key: 'acknowledged', name: 'Acknowledged', filters: { state: 'acknowledged' } },
+  { key: 'resolved', name: 'Resolved', filters: { state: 'resolved' } },
+  { key: 'open', name: 'Open', filters: { state: ['triggered', 'acknowledged', 'escalated', 'muted'] } },
+] as const;
+
+export const USAGE_COUNTER_KEYS = [
+  'policies_count',
+  'custom_policies_count',
+  'project_subscriptions_count',
+  'notifications_count',
+  'sms_count',
+  'connector_deliveries_count',
+  'incidents_count',
+  'maintenance_windows_count',
+  'escalations_count',
+] as const;

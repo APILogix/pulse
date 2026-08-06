@@ -38,7 +38,7 @@ const logFields: Record<string, FieldDef> = {
 export const logsResource: ExplorerResource = {
   name: 'logs',
   table: 'events_logs',
-  timeColumn: 'timestamp',
+  timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: logFields,
   searchFields: ['message', 'logger', 'loggerName', 'name', 'endpoint', 'service'],
@@ -53,9 +53,9 @@ export const logsResource: ExplorerResource = {
     status:   'statusCode',
     tenant:   'tenantId',
   },
-  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'timestamp', 'level', 'name', 'message',
+    'id', 'projectId', 'environment', 'occurredAt', 'level', 'name', 'message',
     'logCategory', 'endpoint', 'statusCode', 'durationMs',
     'service', 'traceId', 'requestId',
   ],

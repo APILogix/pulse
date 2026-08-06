@@ -188,31 +188,31 @@ END $$;
 
 -- Dimension indexes required by the geo, release, session, sdk, and span workers.
 CREATE INDEX IF NOT EXISTS idx_events_requests_geo_time
-  ON events_requests(organization_id, project_id, geo_country_code, timestamp DESC)
+  ON events_requests(organization_id, project_id, geo_country_code, occurred_at DESC)
   WHERE geo_country_code IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_release_time
-  ON events_requests(organization_id, project_id, release, timestamp DESC)
+  ON events_requests(organization_id, project_id, release, occurred_at DESC)
   WHERE release IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_release_time
-  ON events_errors(organization_id, project_id, release, timestamp DESC)
+  ON events_errors(organization_id, project_id, release, occurred_at DESC)
   WHERE release IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_session_time
-  ON events_requests(organization_id, project_id, session_id, timestamp DESC)
+  ON events_requests(organization_id, project_id, session_id, occurred_at DESC)
   WHERE session_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_db_time
-  ON events_spans(organization_id, project_id, db_system, timestamp DESC)
+  ON events_spans(organization_id, project_id, db_system, occurred_at DESC)
   WHERE db_system IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_host_time
-  ON events_spans(organization_id, project_id, http_host, timestamp DESC)
+  ON events_spans(organization_id, project_id, http_host, occurred_at DESC)
   WHERE http_host IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_sdk_time
-  ON events_requests(organization_id, project_id, sdk_name, sdk_version, timestamp DESC)
+  ON events_requests(organization_id, project_id, sdk_name, sdk_version, occurred_at DESC)
   WHERE sdk_name IS NOT NULL;
 
 -- ---------------------------------------------------------------------------

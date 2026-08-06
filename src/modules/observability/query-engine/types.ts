@@ -90,6 +90,7 @@ export interface ExplorerQuery {
  */
 export interface QueryContext {
   organizationId: string;
+  userId?: string;
   /** When set, the caller is scoped to a single project. */
   projectId?: string;
   /** When set, the caller is scoped to a single environment. */

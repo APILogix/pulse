@@ -4,8 +4,8 @@ export declare const NotificationChannelSchema: z.ZodEnum<{
     push: "push";
     sms: "sms";
     email: "email";
-    webhook: "webhook";
     slack: "slack";
+    webhook: "webhook";
 }>;
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
@@ -31,8 +31,8 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         push: "push";
         sms: "sms";
         email: "email";
-        webhook: "webhook";
         slack: "slack";
+        webhook: "webhook";
     }>;
     category: z.ZodEnum<{
         error: "error";
@@ -42,9 +42,9 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         billing: "billing";
         usage: "usage";
         cron: "cron";
+        performance: "performance";
         all: "all";
         deployment: "deployment";
-        performance: "performance";
     }>;
     userIds: z.ZodArray<z.ZodString>;
 }, z.core.$strip>;

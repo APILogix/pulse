@@ -23,7 +23,7 @@ const traceFields: Record<string, FieldDef> = {
 export const tracesResource: ExplorerResource = {
   name: 'traces',
   table: 'events_traces',
-  timeColumn: 'timestamp',
+  timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: traceFields,
   searchFields: ['rootSpanName', 'endpoint', 'service', 'traceId'],
@@ -36,11 +36,10 @@ export const tracesResource: ExplorerResource = {
     status: 'rootSpanStatus',
     kind: 'spanKind',
   },
-  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'timestamp', 'traceId', 'rootSpanName', 'spanCount',
-    'totalDurationMs', 'durationMs', 'endpoint', 'httpMethod', 'statusCode',
-    'rootSpanStatus', 'spanKind', 'service', 'isPartial', 'requestId',
+    'id', 'occurredAt', 'httpMethod', 'endpoint', 'durationMs',
+    'statusCode', 'rootSpanStatus', 'spanCount', 'environment', 'isPartial',
   ],
   preferredIndexes: [
     'idx_events_traces_tenant_env_time',

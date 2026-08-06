@@ -16,14 +16,14 @@ const profileFields: Record<string, FieldDef> = {
 export const profilesResource: ExplorerResource = {
   name: 'profiles',
   table: 'events_profiles',
-  timeColumn: 'timestamp',
+  timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: profileFields,
   searchFields: ['profileType', 'service'],
   searchAliases: { ...commonSearchAliases, type: 'profileType', profile: 'profileType' },
-  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'timestamp', 'profileType', 'service', 'durationMs', 'requestId',
+    'id', 'projectId', 'environment', 'occurredAt', 'profileType', 'service', 'durationMs', 'requestId',
   ],
   preferredIndexes: ['idx_events_profiles_tenant_env_time'],
   errorPredicate: "severity IN ('error','critical','fatal')",

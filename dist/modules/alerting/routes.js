@@ -6,6 +6,7 @@ import { policiesRoutes } from './policies/policies.routes.js';
 import { templatesRoutes } from './templates/templates.routes.js';
 import { routingRoutes } from './routing/routing.routes.js';
 import { metricsRoutes } from './metrics/metrics.routes.js';
+import { policyRoutes } from './policy/policy.routes.js';
 export async function alertingRoutes(fastify) {
     await fastify.register(rulesRoutes);
     // Rule bindings + effective rule resolution (ADR-0004). Registered after rulesRoutes so the
@@ -17,5 +18,6 @@ export async function alertingRoutes(fastify) {
     await fastify.register(templatesRoutes);
     await fastify.register(routingRoutes);
     await fastify.register(metricsRoutes);
+    await fastify.register(policyRoutes);
 }
 //# sourceMappingURL=routes.js.map

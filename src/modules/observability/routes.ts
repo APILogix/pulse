@@ -51,6 +51,16 @@ export function buildObservabilityRoutes(controller: ObservabilityController) {
     fastify.get('/navigation', guard, wrap(controller.navigation));
     fastify.get('/resources', guard, wrap(controller.resources));
 
+    // ── Dedicated Error Groups API ─────────────────────────────────
+    fastify.get('/error-groups', guard, wrap(controller.errorGroupList));
+    fastify.get('/error-groups/summary', guard, wrap(controller.errorGroupSummary));
+    fastify.get('/error-groups/:id', guard, wrap(controller.errorGroupDetail));
+    fastify.get('/error-groups/:id/history', guard, wrap(controller.errorGroupHistory));
+    fastify.get('/error-groups/:id/events', guard, wrap(controller.errorGroupEvents));
+    fastify.patch('/error-groups/:id/status', guard, wrap(controller.updateErrorGroupStatus));
+    fastify.post('/error-groups/:id/resolve', guard, wrap(controller.updateErrorGroupStatus));
+    fastify.post('/error-groups/:id/merge', guard, wrap(controller.mergeErrorGroups));
+
     // ── Per-resource explorer surface (static paths before :id) ─────
     fastify.get('/:resource', guard, wrap(controller.list));
     fastify.get('/:resource/summary', guard, wrap(controller.summary));
@@ -59,6 +69,7 @@ export function buildObservabilityRoutes(controller: ObservabilityController) {
     fastify.get('/:resource/facets', guard, wrap(controller.facets));
     fastify.get('/:resource/stream', guard, wrap(controller.stream));
     fastify.post('/:resource/ask', guard, wrap(controller.askList));
+    fastify.post('/:resource/analyze', guard, wrap(controller.analyzeBulk));
 
     // ── Detail + relationships + per-event AI ───────────────────────
     fastify.get('/:resource/:id', guard, wrap(controller.detail));

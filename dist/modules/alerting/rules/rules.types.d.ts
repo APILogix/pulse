@@ -4,9 +4,9 @@ export { AlertSeveritySchema } from '../common.js';
 export type { AlertSeverity } from '../common.js';
 export declare const ConditionTypeSchema: z.ZodEnum<{
     threshold: "threshold";
+    static: "static";
     change: "change";
     anomaly: "anomaly";
-    static: "static";
     composite: "composite";
 }>;
 export type ConditionType = z.infer<typeof ConditionTypeSchema>;
@@ -25,8 +25,8 @@ export declare const ConditionOperatorSchema: z.ZodEnum<{
 export type ConditionOperator = z.infer<typeof ConditionOperatorSchema>;
 export declare const ActionTypeSchema: z.ZodEnum<{
     group: "group";
-    notify: "notify";
     webhook: "webhook";
+    notify: "notify";
     suppress: "suppress";
     escalate: "escalate";
 }>;
@@ -35,9 +35,9 @@ export declare const AGGREGATE_FUNCTIONS: readonly ["avg", "sum", "count", "max"
 export declare const RuleConditionSchema: z.ZodObject<{
     conditionType: z.ZodDefault<z.ZodEnum<{
         threshold: "threshold";
+        static: "static";
         change: "change";
         anomaly: "anomaly";
-        static: "static";
         composite: "composite";
     }>>;
     conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -71,8 +71,8 @@ export type RuleConditionInput = z.infer<typeof RuleConditionSchema>;
 export declare const RuleActionSchema: z.ZodObject<{
     actionType: z.ZodDefault<z.ZodEnum<{
         group: "group";
-        notify: "notify";
         webhook: "webhook";
+        notify: "notify";
         suppress: "suppress";
         escalate: "escalate";
     }>>;
@@ -113,9 +113,9 @@ export declare const CreateRuleSchema: z.ZodObject<{
     conditions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         conditionType: z.ZodDefault<z.ZodEnum<{
             threshold: "threshold";
+            static: "static";
             change: "change";
             anomaly: "anomaly";
-            static: "static";
             composite: "composite";
         }>>;
         conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -148,8 +148,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
     actions: z.ZodDefault<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            notify: "notify";
             webhook: "webhook";
+            notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
         }>>;
@@ -178,8 +178,6 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         warning: "warning";
         critical: "critical";
     }>>>;
-    labels: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
-    annotations: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     evaluationIntervalSeconds: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     cooldownSeconds: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     autoResolveAfterMinutes: z.ZodOptional<z.ZodOptional<z.ZodNumber>>;
@@ -188,12 +186,14 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     groupingEnabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     groupingKeyTemplate: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     groupingWaitSeconds: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
+    labels: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
+    annotations: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     conditions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         conditionType: z.ZodDefault<z.ZodEnum<{
             threshold: "threshold";
+            static: "static";
             change: "change";
             anomaly: "anomaly";
-            static: "static";
             composite: "composite";
         }>>;
         conditionGroupId: z.ZodOptional<z.ZodString>;
@@ -226,8 +226,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
     actions: z.ZodOptional<z.ZodArray<z.ZodObject<{
         actionType: z.ZodDefault<z.ZodEnum<{
             group: "group";
-            notify: "notify";
             webhook: "webhook";
+            notify: "notify";
             suppress: "suppress";
             escalate: "escalate";
         }>>;

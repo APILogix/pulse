@@ -16,14 +16,14 @@ const errorFields = {
 export const errorsResource = {
     name: 'errors',
     table: 'events_errors',
-    timeColumn: 'timestamp',
+    timeColumn: 'occurredAt',
     idColumn: 'id',
     fields: errorFields,
     searchFields: ['message', 'errorName', 'fingerprint'],
     searchAliases: { ...commonSearchAliases, error: 'errorName', exception: 'errorName', fingerprint: 'fingerprint' },
-    defaultSort: { field: 'timestamp', direction: 'desc' },
+    defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'timestamp', 'severity', 'errorName', 'message',
+        'id', 'projectId', 'environment', 'occurredAt', 'severity', 'errorName', 'message',
         'fingerprint', 'traceId', 'requestId', 'userId', 'service', 'release', 'source', 'handled',
     ],
     preferredIndexes: ['idx_events_errors_tenant_env_time', 'idx_events_errors_fingerprint_time'],

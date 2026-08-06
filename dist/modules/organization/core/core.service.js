@@ -55,13 +55,20 @@ export class CoreService {
             const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');
             // 2. Billing provisioning: creates subscription, subscription_events, and usage_current_period
             const billing = await this.deps.billingProvisioning.provisionDefaultSubscription(client, created.organization.id);
-            // 3. Sync org status with the billing subscription status
+            // 3. Provision Alerting V2 configuration in the same transaction.
+            await this.deps.provisionAlertingWorkspace(client, {
+                organizationId: created.organization.id,
+                initializedBy: meta.actorUserId,
+                subscriptionId: billing.subscriptionId,
+                planId: billing.planId,
+            });
+            // 4. Sync org status with the billing subscription status
             //    (e.g. 'active' if default plan has trial_days=0, 'trialing' if trial_days>0)
             if (billing.status !== 'trialing') {
                 await client.query(`UPDATE organizations SET status=$1, updated_at=NOW() WHERE id=$2`, [billing.status, created.organization.id]);
                 created.organization.status = billing.status;
             }
-            // 4. Audit log
+            // 5. Audit log
             await client.query(`INSERT INTO organization_audit_logs (
            org_id, actor_user_id, actor_email, actor_ip, actor_user_agent, actor_session_id,
            action, entity_type, entity_id, entity_name, request_id, http_method, endpoint,
@@ -79,15 +86,6 @@ export class CoreService {
             ]);
             return created.organization;
         });
-        if (this.deps.seedDefaultAlertPresets) {
-            try {
-                const seededCount = await this.deps.seedDefaultAlertPresets(provisioned.id);
-                this.deps.log.info({ orgId: provisioned.id, seededCount }, "Default alert presets seeded for organization");
-            }
-            catch (error) {
-                this.deps.log.warn({ err: error, orgId: provisioned.id }, "Failed to seed default alert presets for organization");
-            }
-        }
         syncOrganizationLookupToLogDbBestEffort(provisioned.id, "organization.created");
         return toOrgDto(provisioned);
     }

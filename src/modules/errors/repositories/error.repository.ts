@@ -48,14 +48,13 @@ export class ErrorRepository {
         extra,
         metadata,
         ai_response,
-        timestamp,
         occurred_at,
         payload
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
         $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-        $31, $32, $33, $34, $35, $36, $37, $38, $39, $39,
+        $31, $32, $33, $34, $35, $36, $37, $38, $39,
         $40
       )
       ON CONFLICT (organization_id, event_id, occurred_at) DO NOTHING
@@ -101,7 +100,7 @@ export class ErrorRepository {
       record.extra ? JSON.stringify(record.extra) : JSON.stringify({}),
       record.metadata ? JSON.stringify(record.metadata) : JSON.stringify({}),
       record.ai_response ? JSON.stringify(record.ai_response) : null,
-      record.timestamp,
+      record.occurred_at ?? record.timestamp ?? new Date(),
       record.payload
     ]);
 
@@ -120,7 +119,7 @@ export class ErrorRepository {
 
   async findByGroup(projectId: string, errorGroupId: string): Promise<ErrorGroupEventRecord[]> {
     const result = await this.pool.query(
-      `SELECT * FROM events_errors WHERE project_id = $1 AND error_group_id = $2 ORDER BY timestamp DESC`,
+      `SELECT * FROM events_errors WHERE project_id = $1 AND error_group_id = $2 ORDER BY occurred_at DESC`,
       [projectId, errorGroupId]
     );
     return result.rows;

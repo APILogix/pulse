@@ -55,19 +55,19 @@ function hotFunctionStatement(params: readonly unknown[], topK: number): RollupS
       hit_count_sum, profile_count, self_share_pct, sample_count
     )
     WITH touched AS (
-      SELECT DISTINCT date_trunc('hour', e.timestamp) AS bucket
+      SELECT DISTINCT date_trunc('hour', e.occurred_at) AS bucket
         FROM ${PROFILE_SOURCE} e
        WHERE e.organization_id = $1
          AND e.project_id IS NOT NULL
          AND e.ingested_at >= $2 AND e.ingested_at < $3
-         AND e.timestamp   >= $4
+         AND e.occurred_at   >= $4
     ),
     bounds AS (SELECT MIN(bucket) AS lo, MAX(bucket) AS hi FROM touched),
     nodes AS (
       SELECT e.organization_id,
              e.project_id,
              e.environment,
-             date_trunc('hour', e.timestamp)                     AS bucket,
+             date_trunc('hour', e.occurred_at)                     AS bucket,
              COALESCE(e.service, 'unknown')                      AS service,
              COALESCE(node->'callFrame'->>'functionName', '(anonymous)') AS function_name,
              COALESCE(node->'callFrame'->>'url', '')             AS script_url,
@@ -75,15 +75,15 @@ function hotFunctionStatement(params: readonly unknown[], topK: number): RollupS
              COALESCE((node->>'hitCount')::bigint, 0)            AS hit_count,
              e.id                                                AS profile_id
         FROM ${PROFILE_SOURCE} e
-        JOIN touched t ON date_trunc('hour', e.timestamp) = t.bucket
+        JOIN touched t ON date_trunc('hour', e.occurred_at) = t.bucket
         CROSS JOIN LATERAL jsonb_array_elements(
           CASE WHEN jsonb_typeof(e.profile_data->'nodes') = 'array'
                THEN e.profile_data->'nodes' ELSE '[]'::jsonb END
         ) AS node
        WHERE e.organization_id = $1
          AND e.project_id IS NOT NULL
-         AND e.timestamp >= (SELECT lo FROM bounds)
-         AND e.timestamp <  (SELECT hi FROM bounds) + INTERVAL '1 hour'
+         AND e.occurred_at >= (SELECT lo FROM bounds)
+         AND e.occurred_at <  (SELECT hi FROM bounds) + INTERVAL '1 hour'
     ),
     grouped AS (
       SELECT organization_id, project_id, environment, bucket, service,

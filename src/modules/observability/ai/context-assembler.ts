@@ -18,7 +18,7 @@ export const AI_INTENTS: readonly AIIntent[] = AI_INTENT_VALUES;
 
 /** Seed fields safe to include verbatim (bounded). Everything else is dropped. */
 const SEED_ALLOW = new Set([
-  'id', 'timestamp', 'environment', 'service', 'endpoint', 'release', 'severity', 'level',
+  'id', 'timestamp', 'occurred_at', 'environment', 'service', 'endpoint', 'release', 'severity', 'level',
   'method', 'url', 'route', 'status_code', 'latency_ms', 'duration_ms', 'message', 'name',
   'error_name', 'fingerprint', 'source', 'mechanism', 'trace_id', 'span_id', 'request_id',
   'user_id', 'db_system', 'db_operation', 'http_status_code', 'kind', 'status', 'metric_name',

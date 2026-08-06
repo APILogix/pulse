@@ -42,6 +42,7 @@ import { projectApiKeyRoutes } from "./api-keys/api-key.routes.js";
 
 import { projectMemberRoutes } from "./members/member.routes.js";
 import { projectConnectorSubscriptionRoutes } from "./alerts/subscriptions/connector-subscription.routes.js";
+import { projectPolicyRoutes } from "./alerts/policies/project-policy.routes.js";
 import { thresholdRoutes } from "./alerts/thresholds/threshold.routes.js";
 import { projectAlertChannelRoutes } from "./alerts/channels/channel.routes.js";
 import { projectAnalyticsRoutes } from "./usage/analytics.routes.js";
@@ -59,6 +60,7 @@ export async function projectsRoutes(fastify: FastifyInstance): Promise<void> {
   await fastify.register(projectDeliveryLogRoutes);
   await fastify.register(projectCoreRoutes);
   await fastify.register(projectMemberRoutes);
+  await fastify.register(projectPolicyRoutes);
   await fastify.register(projectConnectorSubscriptionRoutes);
   await fastify.register(thresholdRoutes, { prefix: "/:projectId/alert-thresholds" });
   await fastify.register(projectAlertChannelRoutes, { prefix: "/:projectId/alert-channels" });

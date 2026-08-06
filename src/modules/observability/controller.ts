@@ -25,6 +25,27 @@ const AskBody = z.object({
   question: z.string().max(2000).optional(),
 });
 
+const BulkAnalyzeBody = z.object({
+  selectionMode: z.enum(['selected', 'filtered']).optional().default('filtered'),
+  selectedIds: z.array(z.string()).optional().default([]),
+  selectAll: z.boolean().optional().default(false),
+  filters: z.record(z.string(), z.unknown()).optional().default({}),
+  search: z.string().optional().default(''),
+  timeRange: z.unknown().optional(),
+  prompt: z.string().max(2000).optional(),
+  intent: z.enum(AI_INTENT_VALUES).optional().default('explain'),
+});
+
+const ErrorGroupIdParams = z.object({ orgId: z.string().uuid(), id: z.string().min(1).max(128) });
+const UpdateErrorGroupStatusBody = z.object({
+  status: z.enum(['open', 'resolved', 'ignored', 'archived', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED']),
+  reason: z.string().max(1000).optional(),
+  comment: z.string().max(1000).optional(),
+});
+const MergeErrorGroupBody = z.object({
+  targetGroupId: z.string().uuid(),
+});
+
 type AuthedRequest = FastifyRequest & { user: { id: string } };
 
 export class ObservabilityController {
@@ -113,6 +134,13 @@ export class ObservabilityController {
     return reply.send({ success: true, data: await this.service.askList(resource, ctx, request.query ?? {}, body.intent, body.question) });
   };
 
+  analyzeBulk = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { resource } = ResourceParams.parse(request.params);
+    const body = BulkAnalyzeBody.parse(request.body ?? {});
+    const ctx = await this.context(request);
+    return reply.send({ success: true, data: await this.service.analyzeBulk(resource, ctx, body) });
+  };
+
   /** SSE live tail (Phase 13). */
   stream = async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const { resource } = ResourceParams.parse(request.params);
@@ -122,5 +150,56 @@ export class ObservabilityController {
       intervalMs: 2500,
       fetchSince: (since) => this.service.pollSince(resource, ctx, rawQuery, since),
     });
+  };
+
+  // ── Dedicated Error Groups API Endpoints ─────────────────────────
+
+  errorGroupList = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const ctx = await this.context(request);
+    const result = await this.service.list('error-groups', ctx, request.query ?? {});
+    return reply.send(result);
+  };
+
+  errorGroupSummary = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const ctx = await this.context(request);
+    const summary = await this.service.summary('error-groups', ctx, request.query ?? {});
+    return reply.send({ success: true, data: summary });
+  };
+
+  errorGroupDetail = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const ctx = await this.context(request);
+    const data = await this.service.getErrorGroupFullDetail(ctx, id);
+    return reply.send({ success: true, data });
+  };
+
+  errorGroupHistory = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const ctx = await this.context(request);
+    const data = await this.service.getErrorGroupHistory(ctx, id);
+    return reply.send({ success: true, data });
+  };
+
+  errorGroupEvents = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const ctx = await this.context(request);
+    const data = await this.service.getErrorGroupEvents(ctx, id);
+    return reply.send({ success: true, data });
+  };
+
+  updateErrorGroupStatus = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const body = UpdateErrorGroupStatusBody.parse(request.body ?? {});
+    const ctx = await this.context(request);
+    const data = await this.service.updateErrorGroupStatus(ctx, id, body.status, body.comment ?? body.reason);
+    return reply.send({ success: true, data });
+  };
+
+  mergeErrorGroups = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const body = MergeErrorGroupBody.parse(request.body ?? {});
+    const ctx = await this.context(request);
+    const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId);
+    return reply.send({ success: true, data });
   };
 }

@@ -41,7 +41,7 @@ describe('ErrorIngestionService', () => {
     
     await errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
     );
 
     expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
@@ -57,7 +57,7 @@ describe('ErrorIngestionService', () => {
 
     await expect(errorIngestionService.ingestError(
       { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
     )).rejects.toThrow('DB Error');
 
     expect(mockClient.query).toHaveBeenCalledWith('BEGIN');

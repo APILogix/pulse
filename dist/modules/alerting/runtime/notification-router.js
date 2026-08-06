@@ -58,13 +58,27 @@ export class AlertNotificationRouter {
                 await this.mark(job, 'suppressed', startedAt, 'missing_connector');
                 return 'suppressed';
             }
-            const queueName = `${CONNECTOR_JOBS.send}-${job.channel_kind}`;
-            await pgboss.send(queueName, {
+            const queueName = env.ALERTING_V2_READ
+                ? `connector.v2.${job.channel_kind}`
+                : `${CONNECTOR_JOBS.send}-${job.channel_kind}`;
+            const transport = {
                 organizationId: job.organization_id,
+                notificationJobId: job.id,
                 connectorId: job.connector_id,
+                channelKind: job.channel_kind,
+                severity: toConnectorSeverity(job.severity),
+                idempotencyKey: job.idempotency_key,
+                correlationId: job.alert_key,
                 payload: job.payload,
-                routeId: job.route_id,
-            }, {
+            };
+            await pgboss.send(queueName, env.ALERTING_V2_READ
+                ? transport
+                : {
+                    organizationId: job.organization_id,
+                    connectorId: job.connector_id,
+                    payload: job.payload,
+                    routeId: job.route_id,
+                }, {
                 priority: CONNECTOR_PRIORITY[toConnectorSeverity(job.severity)] ?? job.priority,
                 retryLimit: 0,
                 retryDelay: 60,

@@ -369,22 +369,15 @@ export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf
  * against the (project_id, event_id) identity indexes; RETURNING keeps
  * rowCount truthful — it counts only ACTUALLY inserted rows. */
 function buildInsert(table: string, cols: string[], rows: unknown[][], returning = 'id'): { text: string; values: unknown[] } {
-  const timestampIndex = cols.indexOf('timestamp');
-  const insertCols = timestampIndex >= 0 && !cols.includes('occurred_at')
-    ? [...cols, 'occurred_at']
-    : cols;
-  const insertRows = insertCols === cols
-    ? rows
-    : rows.map((row) => [...row, row[timestampIndex]]);
   const values: unknown[] = [];
   const tuples: string[] = [];
   let p = 1;
-  for (const row of insertRows) {
+  for (const row of rows) {
     tuples.push(`(${row.map(() => `$${p++}`).join(', ')})`);
     values.push(...row);
   }
   return {
-    text: `INSERT INTO ${table} (${insertCols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
+    text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
     values,
   };
 }
@@ -524,11 +517,7 @@ export class TelemetryWriter {
     if (rows.length === 0) return 0;
 
     const result = await db.query(
-      `INSERT INTO telemetry_outbox (
-         organization_id, project_id, environment, signal_kind, event_id,
-         severity, fast_path, attributes, occurred_at
-       )
-       WITH input AS (
+      `WITH input AS (
          SELECT *
            FROM UNNEST(
              $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
@@ -541,15 +530,21 @@ export class TelemetryWriter {
            FROM input
          ON CONFLICT DO NOTHING
          RETURNING organization_id, idempotency_key
+       ), inserted AS (
+         INSERT INTO telemetry_outbox (
+           organization_id, project_id, environment, signal_kind, event_id,
+           severity, fast_path, attributes, occurred_at
+         )
+         SELECT t.organization_id, t.project_id, t.environment, t.signal_kind, t.event_id,
+                t.severity, t.fast_path, t.attributes, t.occurred_at
+           FROM input t
+           JOIN reserved r
+             ON r.organization_id = t.organization_id
+            AND r.idempotency_key = t.signal_kind || ':' || t.event_id
+         ON CONFLICT DO NOTHING
+         RETURNING id
        )
-       SELECT t.organization_id, t.project_id, t.environment, t.signal_kind, t.event_id,
-              t.severity, t.fast_path, t.attributes, t.occurred_at
-         FROM input t
-         JOIN reserved r
-           ON r.organization_id = t.organization_id
-          AND r.idempotency_key = t.signal_kind || ':' || t.event_id
-       ON CONFLICT DO NOTHING
-       RETURNING id`,
+       SELECT COUNT(*)::int AS count FROM inserted`,
       [
         rows.map((row) => row[0]),
         rows.map((row) => row[1]),
@@ -562,7 +557,7 @@ export class TelemetryWriter {
         rows.map((row) => row[8]),
       ],
     );
-    return result.rowCount ?? 0;
+    return Number(result.rows[0]?.count ?? 0);
   }
 
   private async writeTyped(type: string, list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
@@ -633,7 +628,7 @@ export class TelemetryWriter {
        'application_name', 'application_version',
        'stack_frames', 'breadcrumbs', 'contexts', 
        'endpoint', 'status_code', 'status_text', 'handled', 'duration_ms', 'attributes', 'user_id',
-       'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
+       'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
       'event_id',
     );
@@ -693,7 +688,7 @@ export class TelemetryWriter {
        'trace_id', 'span_id', 'request_id', 'session_id',
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
        'user_id', 'user_ip',
-       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response',
+       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
        'tenant_id', 'logger_name', 'message_category', 'message_source',
        'endpoint', 'status_code', 'name', 'attributes'],
       rows,
@@ -773,12 +768,11 @@ export class TelemetryWriter {
         JSON.stringify(metadataFor(event, environment)),                     // 44. metadata
         payloadFor(event),                                                   // 45. payload
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
-        iso(resolveTimestamp(event)),                                        // 47. timestamp
+        iso(resolveTimestamp(event)),                                        // 47. occurred_at
       ];
     });
     // is_slow / is_error are GENERATED columns — do NOT insert them.
     // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
-    // timestamp is mapped to (timestamp, occurred_at) by buildInsert.
     const { text, values } = buildInsert(
       'events_requests',
       ['id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
@@ -787,7 +781,7 @@ export class TelemetryWriter {
        'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
        'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
        'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
-       'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'timestamp'],
+       'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'],
       rows,
     );
     const res = await db.query(text, values);
@@ -815,7 +809,7 @@ export class TelemetryWriter {
         kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
         e.name, e.statusMessage ?? null, endpoint,
         iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
-        num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)), iso(resolveTimestamp(event)),
+        num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)),
         str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
         str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
         str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32),
@@ -844,7 +838,7 @@ export class TelemetryWriter {
       ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
        'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
        'name', 'message', 'endpoint', 'start_time', 'end_time',
-       'duration_ms', 'exclusive_duration_ms', 'occurred_at', 'timestamp',
+       'duration_ms', 'exclusive_duration_ms', 'occurred_at',
        'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
        'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',
        'net_transport', 'net_host_name', 'net_host_ip', 'net_host_port', 'net_peer_ip', 'net_peer_port',
@@ -889,7 +883,7 @@ export class TelemetryWriter {
         e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
         str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
         str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt, occurredAt,
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt,
         str(rawUserAgent, 1024), str(rawClientIp, 255),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
@@ -901,7 +895,7 @@ export class TelemetryWriter {
        'duration_ms', 'total_duration_ms', 'response_size', 'span_count', 'is_partial',
        'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-       'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp', 'occurred_at',
+       'sdk_name', 'sdk_version', 'attributes', 'metadata', 'occurred_at',
        'user_agent', 'client_ip_hash', 'payload', 'ai_response'],
       rows,
     );
@@ -933,7 +927,7 @@ export class TelemetryWriter {
        'messaging_system', 'messaging_destination', 'messaging_operation',
        'request_id', 'session_id', 'user_id', 'tenant_id',
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-       'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload'],
+       'sdk_name', 'sdk_version', 'metadata', 'payload'],
       rows,
     );
     await db.query(text, values);
@@ -988,7 +982,7 @@ export class TelemetryWriter {
       str(rec(event).service, 100), scoped.environment, str(sdkMetadataField(event, scoped.environment, 'release'), 100),
       str(sdkMetadataField(event, scoped.environment, 'serverName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationVersion'), 50),
       str(sdkMetadataField(event, scoped.environment, 'sdkName'), 50), str(sdkMetadataField(event, scoped.environment, 'sdkVersion'), 50),
-      JSON.stringify(metadataFor(event, scoped.environment)), timestamp, payloadFor(event),
+      JSON.stringify(metadataFor(event, scoped.environment)), payloadFor(event),
     ]);
     const children = Array.isArray(s.children) ? s.children : [];
     for (const child of children) this.collectTraceSpanRows(scoped, child, spanId, depth + 1, timestamp, rows);
@@ -1076,7 +1070,7 @@ export class TelemetryWriter {
        'application_name', 'application_version',
        'sdk_name', 'sdk_version',
        // JSONB
-       'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'],
+       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1192,7 +1186,7 @@ export class TelemetryWriter {
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
        'user_id', 'user_ip',
        'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
-       'metadata', 'timestamp', 'payload', 'ai_response'],
+       'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1221,7 +1215,7 @@ export class TelemetryWriter {
       'events_profiles',
       ['organization_id', 'project_id', 'api_key_name', 'event_id', 'profile_type',
        'trace_id', 'span_id', 'request_id', 'session_id', 'user_id', 'start_time', 'end_time', 'duration_ms',
-       'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
+       'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1323,7 +1317,7 @@ export class TelemetryWriter {
        'application_name', 'application_version',
        'sdk_name', 'sdk_version',
        // JSONB
-       'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'],
+       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1349,7 +1343,7 @@ export class TelemetryWriter {
       'events_replays',
       ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
        'events', 'trace_id', 'span_id', 'request_id', 'user_id',
-       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'],
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
     );
     const res = await db.query(text, values);

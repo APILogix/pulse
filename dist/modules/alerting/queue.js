@@ -8,6 +8,8 @@ import { ConnectorRepository } from '../connectors/repository.js';
 import { AlertRuntimeEngines } from './runtime/engines.js';
 import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
+import { AlertDecisionEngine } from './decision/decision.engine.js';
+import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
 export const ALERT_JOBS = {
     formBatches: 'alert.form-batches',
     processBatch: 'alert.process-batch',
@@ -17,6 +19,10 @@ export const ALERT_JOBS = {
     cleanup: 'alert.cleanup',
     deadLetter: 'alert-dead-letter',
     deadLetterRetry: 'alert.dead-letter-retry',
+    decide: 'alert.decide',
+    escalate: 'alert.escalate',
+    correlate: 'alert.correlate',
+    digest: 'notification.digest',
     evaluateFast: 'alert.evaluate.fast',
     evaluateWindow: 'alert.evaluate.window',
     evaluateOperational: 'alert.evaluate.operational',
@@ -83,6 +89,15 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     await safeCreateQueue(ALERT_JOBS.cleanup);
     await safeCreateQueue(ALERT_JOBS.deadLetter);
     await safeCreateQueue(ALERT_JOBS.deadLetterRetry);
+    await safeCreateQueue(ALERT_JOBS.decide, {
+        retryLimit: 5,
+        retryDelay: 1,
+        retryBackoff: true,
+        expireInSeconds: 300,
+    });
+    await safeCreateQueue(ALERT_JOBS.escalate);
+    await safeCreateQueue(ALERT_JOBS.correlate);
+    await safeCreateQueue(ALERT_JOBS.digest);
     await safeCreateQueue(ALERT_JOBS.evaluateFast);
     await safeCreateQueue(ALERT_JOBS.evaluateWindow);
     await safeCreateQueue(ALERT_JOBS.evaluateOperational);
@@ -93,6 +108,8 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool);
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
+    const decisionEngine = new AlertDecisionEngine(runtimePool, logger);
+    const snapshotEscalation = new SnapshotEscalationWorker(logger);
     // ── process-batch: the high-throughput worker ──────────────────────────
     // pg-boss v12 concurrency options: `localConcurrency` = number of workers
     // polling/processing independently, `batchSize` = jobs fetched per poll.
@@ -210,6 +227,29 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
         ]);
         log.info({ events, batches, attempts, deadLetters, throttles }, 'Alerting retention cleanup finished');
     }));
+    await pgboss.work(ALERT_JOBS.decide, { localConcurrency: 8, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map(async (job) => {
+            const result = await decisionEngine.decide({
+                ...job.data,
+                observedAt: new Date(job.data.observedAt),
+            });
+            await Promise.all(result.notificationJobs.map((notificationJob) => pgboss.send(ALERT_JOBS.notificationRouter, { notificationJobId: notificationJob.id }, {
+                retryLimit: 3,
+                retryDelay: 1,
+                retryBackoff: true,
+                expireInSeconds: 300,
+            })));
+        }));
+    }));
+    await pgboss.work(ALERT_JOBS.escalate, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
+        if (!env.ESCALATION_V2)
+            return;
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map((job) => snapshotEscalation.run(job.data)));
+    }));
+    await pgboss.work(ALERT_JOBS.correlate, { localConcurrency: 2, batchSize: 1 }, (async () => undefined));
+    await pgboss.work(ALERT_JOBS.digest, { localConcurrency: 2, batchSize: 1 }, (async () => undefined));
     await pgboss.work(ALERT_JOBS.evaluateFast, { localConcurrency: 8, batchSize: 1 }, (async (arg) => {
         const jobs = allJobs(arg);
         await Promise.all(jobs.map((job) => runtimeEngines.evaluateFast(job.data)));
@@ -244,6 +284,10 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     await pgboss.schedule(ALERT_JOBS.orphanSweep, '*/5 * * * *', {}, { singletonKey: 'alert-orphan-sweep' });
     await pgboss.schedule(ALERT_JOBS.deadLetterRetry, '*/5 * * * *', {}, { singletonKey: 'alert-dead-letter-retry' });
     await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' });
+    if (env.ESCALATION_V2) {
+        await pgboss.schedule(ALERT_JOBS.correlate, '*/1 * * * *', {}, { singletonKey: 'alert-correlate' });
+        await pgboss.schedule(ALERT_JOBS.digest, '*/1 * * * *', {}, { singletonKey: 'notification-digest' });
+    }
     const runtimeTimers = startRuntimeDispatchTimers(runtimePool, log);
     log.info({ ...cfg }, 'Alerting workers registered');
     return {

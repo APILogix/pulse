@@ -1,0 +1,80 @@
+/**
+ * Error Groups explorer resource.
+ * Backed by `error_groups` table in `logdb`.
+ */
+import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
+import { makeMapRow } from './common.js';
+
+const ERROR_GROUP_STATUS = ['open', 'resolved', 'ignored', 'archived', 'regressed', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED', 'REGRESSED'] as const;
+const ERROR_GROUP_SEVERITY = ['warning', 'error', 'fatal', 'critical', 'info', 'debug'] as const;
+
+/** Exact fields backed by logdb error_groups table */
+const errorGroupFields: Record<string, FieldDef> = {
+  id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
+  organizationId: { column: 'organization_id', type: 'uuid', filterable: true, projectable: true, label: 'Organization ID' },
+  projectId: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project' },
+  fingerprint: { column: 'fingerprint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Fingerprint' },
+  status: { column: 'status', type: 'enum', enumValues: ERROR_GROUP_STATUS, filterable: true, projectable: true, label: 'Status' },
+  occurrenceCount: { column: 'occurrence_count', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Occurrences' },
+  firstSeen: { column: 'first_seen_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'First Seen' },
+  firstSeenAt: { column: 'first_seen_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'First Seen At' },
+  lastSeen: { column: 'last_seen_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Last Seen' },
+  lastSeenAt: { column: 'last_seen_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Last Seen At' },
+  firstEventId: { column: 'first_event_id', type: 'string', filterable: true, projectable: true, label: 'First Event ID' },
+  latestEventId: { column: 'latest_event_id', type: 'string', filterable: true, projectable: true, label: 'Latest Event ID' },
+  highestSeverity: { column: 'highest_severity', type: 'enum', enumValues: ERROR_GROUP_SEVERITY, filterable: true, projectable: true, label: 'Highest Severity' },
+  latestSeverity: { column: 'latest_severity', type: 'enum', enumValues: ERROR_GROUP_SEVERITY, filterable: true, projectable: true, label: 'Latest Severity' },
+  isRegression: { column: 'is_regression', type: 'boolean', filterable: true, projectable: true, label: 'Is Regression' },
+  regressionCount: { column: 'regression_count', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Regression Count' },
+  lastRegressedAt: { column: 'last_regressed_at', type: 'timestamp', filterable: true, projectable: true, label: 'Last Regressed At' },
+  latestRelease: { column: 'latest_release', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Latest Release' },
+  latestSdkVersion: { column: 'latest_sdk_version', type: 'string', filterable: true, projectable: true, label: 'SDK Version' },
+  latestApplicationVersion: { column: 'latest_application_version', type: 'string', filterable: true, projectable: true, label: 'App Version' },
+  lastErrorMessage: { column: 'last_error_message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Last Error Message' },
+  lastErrorName: { column: 'last_error_name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Last Error Name' },
+  lastStatusCode: { column: 'last_status_code', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Last Status Code' },
+  lastTraceId: { column: 'last_trace_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Trace ID' },
+  lastRequestId: { column: 'last_request_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Request ID' },
+  mergedInto: { column: 'merged_into', type: 'uuid', filterable: true, projectable: true, label: 'Merged Into' },
+  isMerged: { column: 'is_merged', type: 'boolean', filterable: true, projectable: true, label: 'Is Merged' },
+  version: { column: 'version', type: 'number', filterable: true, projectable: true, label: 'Version' },
+  createdAt: { column: 'created_at', type: 'timestamp', filterable: true, projectable: true, label: 'Created At' },
+  updatedAt: { column: 'updated_at', type: 'timestamp', filterable: true, projectable: true, label: 'Updated At' },
+};
+
+export const errorGroupsResource: ExplorerResource = {
+  name: 'error-groups',
+  table: 'error_groups',
+  timeColumn: 'last_seen_at',
+  idColumn: 'id',
+  fields: errorGroupFields,
+  searchFields: ['lastErrorName', 'lastErrorMessage', 'fingerprint', 'latestRelease'],
+  searchAliases: {
+    fingerprint: 'fingerprint',
+    status: 'status',
+    release: 'latestRelease',
+    error: 'lastErrorName',
+    message: 'lastErrorMessage',
+    severity: 'latestSeverity',
+    trace: 'lastTraceId',
+    request: 'lastRequestId',
+  },
+  defaultSort: { field: 'lastSeen', direction: 'desc' },
+  defaultProjection: [
+    'id', 'fingerprint', 'status', 'occurrenceCount', 'firstSeen', 'lastSeen',
+    'highestSeverity', 'latestSeverity', 'isRegression', 'latestRelease',
+    'lastErrorName', 'lastErrorMessage', 'lastStatusCode', 'lastTraceId',
+  ],
+  preferredIndexes: ['idx_error_groups_project_status_last_seen', 'idx_error_groups_project_occurrence'],
+  summary: {
+    total: 'COUNT(*)::bigint',
+    open: "(COUNT(*) FILTER (WHERE status = 'open' OR status = 'OPEN'))::bigint",
+    resolved: "(COUNT(*) FILTER (WHERE status = 'resolved' OR status = 'RESOLVED'))::bigint",
+    ignored: "(COUNT(*) FILTER (WHERE status = 'ignored' OR status = 'IGNORED'))::bigint",
+    archived: "(COUNT(*) FILTER (WHERE status = 'archived' OR status = 'ARCHIVED'))::bigint",
+    regressions: "(COUNT(*) FILTER (WHERE is_regression = true))::bigint",
+    totalOccurrences: 'COALESCE(SUM(occurrence_count), 0)::bigint',
+  },
+  mapRow: makeMapRow(['occurrenceCount', 'regressionCount', 'lastStatusCode', 'version']),
+};
+

@@ -29,7 +29,7 @@ describe('ErrorIngestionService', () => {
     it('should successfully ingest an error transactionally', async () => {
         vi.mocked(mockGroupingService.handleGroup).mockResolvedValue({ id: 'group-id', isNew: true, isRegression: false, status: 'OPEN' });
         vi.mocked(mockErrorRepo.insert).mockResolvedValue(true);
-        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} });
+        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} });
         expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
         expect(mockGroupingService.handleGroup).toHaveBeenCalled();
         expect(mockErrorRepo.insert).toHaveBeenCalled();
@@ -39,7 +39,7 @@ describe('ErrorIngestionService', () => {
     });
     it('should rollback transaction on failure', async () => {
         vi.mocked(mockGroupingService.handleGroup).mockRejectedValue(new Error('DB Error'));
-        await expect(errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} })).rejects.toThrow('DB Error');
+        await expect(errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} })).rejects.toThrow('DB Error');
         expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
         expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
         expect(mockClient.release).toHaveBeenCalled();

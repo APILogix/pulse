@@ -9,6 +9,7 @@
  */
 import type { FastifyInstance, FastifyPluginOptions, FastifyReply, FastifyRequest } from 'fastify';
 import { authenticate } from '../../shared/middleware/auth.js';
+import { idempotency, cacheIdempotencyResponse } from '../../shared/middleware/idempotency.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import {
@@ -97,6 +98,11 @@ function strip<T>(obj: T): T {
 export async function organizationRoutes(fastify: FastifyInstance, _options: FastifyPluginOptions): Promise<void> {
   const svc = fastify.organization.service;
   const auth = { preHandler: [authenticate] };
+  const organizationCreationIdempotency = idempotency();
+
+  fastify.addHook('onSend', async (request, reply, payload) => {
+    await cacheIdempotencyResponse(request, reply, payload);
+  });
 
   // SDK Remote Config routes (/:orgId/sdk-configs ...).
   registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
@@ -106,7 +112,7 @@ export async function organizationRoutes(fastify: FastifyInstance, _options: Fas
   // ORGANIZATION CRUD
   // ═══════════════════════════════════════════════
 
-  fastify.post('/', auth, withErrorHandling(async (request, reply) => {
+  fastify.post('/', { preHandler: [authenticate, organizationCreationIdempotency] }, withErrorHandling(async (request, reply) => {
     const body = CreateOrganizationSchema.parse(request.body);
     const result = await svc.createOrganization(buildMeta(request), strip(body) as any);
     return reply.code(201).send({ success: true, data: result });

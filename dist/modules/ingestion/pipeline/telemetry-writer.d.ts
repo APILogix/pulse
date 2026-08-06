@@ -5,6 +5,7 @@ export interface ScopedEvent {
     projectId: string;
     /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
     orgId: string | null;
+    apiKeyName?: string | undefined;
     /** Normalized string supplied by the SDK envelope; never an environment UUID. */
     environment: string;
     event: NormalizedEvent;
@@ -59,7 +60,7 @@ export declare class TelemetryWriter {
      * at-least-once retries are never billed twice.
      */
     writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
-    writeBatchDetailedWithOutbox(client: PoolClient, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
+    writeBatchDetailedWithOutbox(clientOrScoped: PoolClient | ScopedEvent[], scopedParam?: ScopedEvent[]): Promise<DetailedWriteResult>;
     private writeBatchDetailedUsing;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;

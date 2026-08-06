@@ -1,10 +1,15 @@
 import type { FastifyBaseLogger } from "fastify";
+import type { PoolClient } from "pg";
 import { NotFoundError, OrgStatusError } from "../shared/errors.js";
 import type { RequestMeta, CursorPaginationQuery, OrgRole } from "../shared/types.js";
 import type { CoreRepository } from "./core.repository.js";
 import { BillingProvisioningService } from "../../billing/provisioning/service.js";
 import type { OrganizationRow, OrgSettingsRow, OrganizationDto, OrgSettingsDto, UserOrganizationDto } from "./core.schema.js";
 import { syncOrganizationLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
+import type {
+  AlertingProvisioningContext,
+  AlertingProvisioningSummary,
+} from "../../alerting/workspace/alerting-workspace.types.js";
 
 // Helper function to map to DTO
 export function toOrgDto(row: OrganizationRow): OrganizationDto {
@@ -52,7 +57,10 @@ export interface CoreServiceDeps {
   listOrgApiKeyHashes?: (orgId: string) => Promise<string[]>; // for cascading delete caching
   deleteApiKeyCache?: (hash: string) => void;
   billingProvisioning: BillingProvisioningService;
-  seedDefaultAlertPresets?: (orgId: string) => Promise<number>;
+  provisionAlertingWorkspace: (
+    client: PoolClient,
+    context: AlertingProvisioningContext,
+  ) => Promise<AlertingProvisioningSummary>;
 }
 
 export class CoreService {
@@ -73,7 +81,15 @@ export class CoreService {
       // 2. Billing provisioning: creates subscription, subscription_events, and usage_current_period
       const billing = await this.deps.billingProvisioning.provisionDefaultSubscription(client, created.organization.id);
 
-      // 3. Sync org status with the billing subscription status
+      // 3. Provision Alerting V2 configuration in the same transaction.
+      await this.deps.provisionAlertingWorkspace(client, {
+        organizationId: created.organization.id,
+        initializedBy: meta.actorUserId,
+        subscriptionId: billing.subscriptionId,
+        planId: billing.planId,
+      });
+
+      // 4. Sync org status with the billing subscription status
       //    (e.g. 'active' if default plan has trial_days=0, 'trialing' if trial_days>0)
       if (billing.status !== 'trialing') {
         await client.query(
@@ -83,7 +99,7 @@ export class CoreService {
         created.organization.status = billing.status as any;
       }
 
-      // 4. Audit log
+      // 5. Audit log
       await client.query(
         `INSERT INTO organization_audit_logs (
            org_id, actor_user_id, actor_email, actor_ip, actor_user_agent, actor_session_id,
@@ -104,14 +120,6 @@ export class CoreService {
       );
       return created.organization;
     });
-    if (this.deps.seedDefaultAlertPresets) {
-      try {
-        const seededCount = await this.deps.seedDefaultAlertPresets(provisioned.id);
-        this.deps.log.info({ orgId: provisioned.id, seededCount }, "Default alert presets seeded for organization");
-      } catch (error) {
-        this.deps.log.warn({ err: error, orgId: provisioned.id }, "Failed to seed default alert presets for organization");
-      }
-    }
     syncOrganizationLookupToLogDbBestEffort(provisioned.id, "organization.created");
     return toOrgDto(provisioned);
   }

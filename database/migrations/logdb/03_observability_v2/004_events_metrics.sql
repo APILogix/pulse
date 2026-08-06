@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS events_metrics (
   ai_response JSONB,
 
   -- Timekeeping
-  timestamp TIMESTAMPTZ NOT NULL,
   occurred_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -105,13 +104,13 @@ CREATE INDEX IF NOT EXISTS idx_events_metrics_service
 
 -- Metric-specific filters
 CREATE INDEX IF NOT EXISTS idx_events_metrics_name_time
-  ON events_metrics (organization_id, project_id, metric_name, timestamp DESC);
+  ON events_metrics (organization_id, project_id, metric_name, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_metrics_name_occurred
   ON events_metrics (metric_name, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_metrics_metric_type_time
   ON events_metrics (organization_id, project_id, metric_type, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_metrics_request_time
-  ON events_metrics (organization_id, project_id, request_id, timestamp DESC)
+  ON events_metrics (organization_id, project_id, request_id, occurred_at DESC)
   WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_events_metrics_endpoint_time
   ON events_metrics (organization_id, project_id, endpoint, occurred_at DESC)

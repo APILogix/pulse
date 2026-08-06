@@ -30,7 +30,7 @@ describe('Error Grouping System Integration', () => {
             .mockResolvedValueOnce({ rows: [{ id: 'new-group-id' }] }) // upsertGroup
             .mockResolvedValueOnce({ rows: [] }) // insert
             .mockResolvedValueOnce({ rows: [] }); // COMMIT
-        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} });
+        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} });
         const upsertCall = mockClient.query.mock.calls[1][0];
         expect(upsertCall).toContain('INSERT INTO error_groups');
         expect(upsertCall).toContain('ON CONFLICT (project_id, fingerprint) DO UPDATE');
@@ -40,7 +40,7 @@ describe('Error Grouping System Integration', () => {
             .mockResolvedValueOnce({ rows: [] }) // BEGIN
             .mockResolvedValueOnce({ rows: [{ id: 'group-id' }] }) // upsertGroup
             .mockRejectedValueOnce(new Error('Insertion failed')); // insert
-        await expect(errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} })).rejects.toThrow('Insertion failed');
+        await expect(errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} })).rejects.toThrow('Insertion failed');
         expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
         expect(domainEventBus.publish).not.toHaveBeenCalled();
     });
@@ -48,7 +48,7 @@ describe('Error Grouping System Integration', () => {
         mockClient.query
             .mockResolvedValue({ rowCount: 1, rows: [{ id: 'concurrent-group-id', is_new: false, is_regression: false, status: 'OPEN' }] });
         // 10 concurrent requests
-        const promises = Array.from({ length: 10 }).map((_, i) => errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: `evt-${i}`, severity: 'error' }, { id: `${i}`, organization_id: 'org-1', project_id: 'proj-1', event_id: `evt-${i}`, fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} }));
+        const promises = Array.from({ length: 10 }).map((_, i) => errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: `evt-${i}`, severity: 'error' }, { id: `${i}`, organization_id: 'org-1', project_id: 'proj-1', event_id: `evt-${i}`, fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }));
         await Promise.all(promises);
         expect(mockClient.query).toHaveBeenCalledTimes(10 * 4); // BEGIN, upsert, insert, COMMIT for each
         expect(domainEventBus.publish).toHaveBeenCalledTimes(10);
@@ -63,7 +63,7 @@ describe('Error Grouping System Integration', () => {
             .mockResolvedValueOnce({ rows: [{ id: 'group-id', is_new: false, is_regression: false, status: 'OPEN' }] }) // Upsert Group
             .mockResolvedValueOnce({ rowCount: 0 }) // Insert Event (simulate DO NOTHING by returning 0 rows)
             .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
-        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-dup', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', timestamp: new Date(), payload: {} });
+        await errorIngestionService.ingestError({ projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-dup', severity: 'error' }, { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} });
         // It should rollback and NOT publish
         expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
         expect(domainEventBus.publish).not.toHaveBeenCalled();

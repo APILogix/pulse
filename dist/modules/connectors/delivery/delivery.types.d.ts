@@ -13,8 +13,8 @@ export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 export declare const FailureCategorySchema: z.ZodEnum<{
     unknown: "unknown";
     timeout: "timeout";
-    auth_error: "auth_error";
     rate_limit: "rate_limit";
+    auth_error: "auth_error";
     invalid_config: "invalid_config";
     invalid_payload: "invalid_payload";
     network_error: "network_error";

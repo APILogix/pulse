@@ -34,6 +34,7 @@ export interface ErrorGroup {
 }
 
 export interface CreateErrorGroupParams {
+  organizationId?: string;
   projectId: string;
   fingerprint: string;
   eventId: string;
@@ -44,6 +45,7 @@ export interface CreateErrorGroupParams {
 }
 
 export interface UpdateErrorGroupParams {
+  organizationId?: string;
   projectId: string;
   fingerprint: string;
   eventId: string;
@@ -92,7 +94,7 @@ export interface ErrorGroupEventRecord {
   extra?: any;
   metadata?: any;
   ai_response?: any;
-  timestamp: Date;
-  occurred_at?: Date;
+  occurred_at: Date;
+  timestamp?: Date;
   payload: any;
 }

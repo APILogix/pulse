@@ -71,8 +71,8 @@ export function createMetricsWorker(
         'MAX(e.value)',
         // Last value within the bucket, resolved without a window function so the
         // statement stays a single grouped aggregate.
-        '(ARRAY_AGG(e.value ORDER BY e.timestamp DESC))[1]',
-        'MAX(e.timestamp)',
+        '(ARRAY_AGG(e.value ORDER BY e.occurred_at DESC))[1]',
+        'MAX(e.occurred_at)',
         // Prefer SDK-computed percentiles; fall back to the observed distribution.
         `COALESCE(AVG(e.p50), ${AGG.percentile('e.value', 0.5)})`,
         `COALESCE(AVG(e.p95), ${AGG.percentile('e.value', 0.95)})`,

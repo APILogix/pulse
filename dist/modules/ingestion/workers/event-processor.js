@@ -28,7 +28,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { env } from '../../../config/env.js';
 import { pgboss } from '../../../lib/pgboss.js';
-import { normalizeEvent, normalizeSdkEnvironment, } from '../pipeline/event-normalizer.js';
+import { normalizeEvent, normalizeSdkEnvironment, resolveTimestamp, } from '../pipeline/event-normalizer.js';
 import { TelemetryWriter, errorFingerprint, errorNameOf, } from '../pipeline/telemetry-writer.js';
 import { UsageCounter } from '../usage/usage-counter.js';
 import { INGEST_DLQ_INTAKE_QUEUE, } from '../queue/ingest-queues.js';
@@ -103,6 +103,7 @@ export class EventProcessor {
         const type = payload?.eventType;
         const projectId = payload?.projectId ?? '';
         const orgId = payload?.organizationId ?? '';
+        const apiKeyName = payload?.metadata?.apiKeyName;
         const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
         const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
         if (!environment)
@@ -130,7 +131,7 @@ export class EventProcessor {
             if (typeof eventId !== 'string' || eventId.length === 0) {
                 event.eventId = deterministicEventId(projectId, environment, type, event);
             }
-            scoped.push({ projectId, orgId, environment, event });
+            scoped.push({ projectId, orgId, environment, apiKeyName, event });
         }
         // Route validation rejects to the DLQ intake queue (one message per job).
         // If this send throws, the job fails and retries — rejects are never lost.
@@ -158,8 +159,10 @@ export class EventProcessor {
                     const e = s.event;
                     const errorName = errorNameOf(s.event);
                     const fingerprint = errorFingerprint(s.event, errorName);
+                    const req = e.context?.request || e.context || {};
                     return {
                         groupParams: {
+                            organizationId: s.orgId,
                             projectId: s.projectId,
                             fingerprint,
                             eventId: e.eventId,
@@ -175,12 +178,41 @@ export class EventProcessor {
                             id: typeof e.id === 'string' ? e.id : randomUUID(),
                             organization_id: s.orgId,
                             project_id: s.projectId,
+                            api_key_name: s.apiKeyName ?? '',
+                            environment: s.environment,
                             event_id: e.eventId,
+                            request_id: e.requestId ?? null,
+                            trace_id: e.traceId ?? null,
+                            span_id: e.spanId ?? null,
+                            parent_span_id: e.parentSpanId ?? null,
+                            session_id: e.sessionId ?? null,
+                            user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
                             fingerprint,
                             message: e.message || errorName,
                             error_name: errorName,
                             severity: e.level || e.severity || 'error',
-                            timestamp: new Date(e.timestamp),
+                            mechanism: e.mechanism ?? null,
+                            handled: typeof e.handled === 'boolean' ? e.handled : null,
+                            method: e.method ?? req.method ?? null,
+                            route: e.route ?? req.route ?? null,
+                            url: e.url ?? req.url ?? null,
+                            status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
+                            status_text: e.statusText ?? req.statusText ?? null,
+                            stack_frames: e.stack ?? [],
+                            breadcrumbs: e.breadcrumbs ?? [],
+                            context: e.context ?? {},
+                            service: e.service ?? null,
+                            server_name: e.serverName ?? e.metadata?.serverName ?? null,
+                            release: e.release ?? e.metadata?.release ?? null,
+                            sdk_name: e.sdkName ?? e.sdk?.name ?? e.metadata?.sdkName ?? null,
+                            sdk_version: e.sdkVersion ?? e.sdk?.version ?? e.metadata?.sdkVersion ?? null,
+                            application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
+                            application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
+                            tags: e.tags ?? {},
+                            extra: e.extra ?? {},
+                            metadata: e.metadata ?? {},
+                            ai_response: e.aiResponse ?? null,
+                            occurred_at: new Date(resolveTimestamp(e)),
                             payload: e
                         }
                     };
@@ -189,6 +221,9 @@ export class EventProcessor {
                 result.totalInserted = errorResult.inserted;
                 result.totalReceived = errorBatch.length;
                 errorDomainEvents = errorResult.domainEvents;
+                if (result.totalInserted > 0) {
+                    await this.writer.appendTelemetryOutbox(scoped, client);
+                }
             }
             else {
                 result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);

@@ -58,18 +58,37 @@ function sdkMetadataField(ev, environment, key) {
 }
 const REQUEST_ATTRIBUTE_DUPLICATES = new Set([
     'endpoint', 'method', 'duration_ms', 'durationMs', 'latency', 'latency_ms',
-    'statusCode', 'status_code', 'responseSize', 'response_size',
-    'traceId', 'trace_id', 'spanId', 'span_id', 'requestId', 'request_id',
-    'projectId', 'project_id', 'organizationId', 'organization_id',
-    'environment', 'applicationName', 'application_name',
-    'applicationVersion', 'application_version', 'sdkName', 'sdk_name',
-    'sdkVersion', 'sdk_version', 'release', 'timestamp', 'route', 'url',
+    'statusCode', 'status_code', 'responseSize', 'response_size', 'bodySize', 'body_size',
+    'traceId', 'trace_id', 'spanId', 'span_id', 'parentSpanId', 'parent_span_id',
+    'requestId', 'request_id', 'sessionId', 'session_id', 'userId', 'user_id', 'user',
+    'tenantId', 'tenant_id', 'projectId', 'project_id', 'organizationId', 'organization_id',
+    'environment', 'applicationName', 'application_name', 'applicationVersion', 'application_version',
+    'sdkName', 'sdk_name', 'sdkVersion', 'sdk_version', 'release', 'timestamp', 'route', 'url',
+    'service', 'framework', 'serverName', 'server_name',
+    'spanCount', 'span_count', 'rootSpanStatus', 'root_span_status', 'isPartial', 'is_partial',
+    'clientIp', 'client_ip', 'userAgent', 'user_agent', 'referer',
 ]);
 function requestAttributes(ev) {
     const r = rec(ev);
-    const attributes = r.attributes && typeof r.attributes === 'object' && !Array.isArray(r.attributes)
-        ? { ...r.attributes }
-        : {};
+    const attributes = {};
+    if (r.headers && typeof r.headers === 'object' && !Array.isArray(r.headers)) {
+        attributes.headers = r.headers;
+    }
+    if (r.query && typeof r.query === 'object' && !Array.isArray(r.query)) {
+        attributes.query = r.query;
+    }
+    if (r.body && typeof r.body === 'object' && !Array.isArray(r.body)) {
+        attributes.body = r.body;
+    }
+    if (r.attributes && typeof r.attributes === 'object' && !Array.isArray(r.attributes)) {
+        Object.assign(attributes, r.attributes);
+    }
+    if (r.extra && typeof r.extra === 'object' && !Array.isArray(r.extra)) {
+        Object.assign(attributes, r.extra);
+    }
+    if (r.tags && typeof r.tags === 'object' && !Array.isArray(r.tags)) {
+        attributes.tags = r.tags;
+    }
     for (const key of REQUEST_ATTRIBUTE_DUPLICATES)
         delete attributes[key];
     return attributes;
@@ -364,22 +383,15 @@ export function errorFingerprint(event, errorName = errorNameOf(event)) {
  * against the (project_id, event_id) identity indexes; RETURNING keeps
  * rowCount truthful — it counts only ACTUALLY inserted rows. */
 function buildInsert(table, cols, rows, returning = 'id') {
-    const timestampIndex = cols.indexOf('timestamp');
-    const insertCols = timestampIndex >= 0 && !cols.includes('occurred_at')
-        ? [...cols, 'occurred_at']
-        : cols;
-    const insertRows = insertCols === cols
-        ? rows
-        : rows.map((row) => [...row, row[timestampIndex]]);
     const values = [];
     const tuples = [];
     let p = 1;
-    for (const row of insertRows) {
+    for (const row of rows) {
         tuples.push(`(${row.map(() => `$${p++}`).join(', ')})`);
         values.push(...row);
     }
     return {
-        text: `INSERT INTO ${table} (${insertCols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
+        text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
         values,
     };
 }
@@ -411,12 +423,36 @@ export class TelemetryWriter {
     async writeBatchDetailed(scoped) {
         return this.writeBatchDetailedUsing(this.pool, scoped);
     }
-    async writeBatchDetailedWithOutbox(client, scoped) {
-        const result = await this.writeBatchDetailedUsing(client, scoped);
-        if (result.totalInserted > 0) {
-            await this.appendTelemetryOutbox(scoped, client);
+    async writeBatchDetailedWithOutbox(clientOrScoped, scopedParam) {
+        if (Array.isArray(clientOrScoped)) {
+            const scoped = clientOrScoped;
+            const client = await this.pool.connect();
+            try {
+                await client.query('BEGIN');
+                const result = await this.writeBatchDetailedUsing(client, scoped);
+                if (result.totalInserted > 0) {
+                    await this.appendTelemetryOutbox(scoped, client);
+                }
+                await client.query('COMMIT');
+                return result;
+            }
+            catch (err) {
+                await client.query('ROLLBACK').catch(() => undefined);
+                throw err;
+            }
+            finally {
+                client.release();
+            }
         }
-        return result;
+        else {
+            const client = clientOrScoped;
+            const scoped = scopedParam ?? [];
+            const result = await this.writeBatchDetailedUsing(client, scoped);
+            if (result.totalInserted > 0) {
+                await this.appendTelemetryOutbox(scoped, client);
+            }
+            return result;
+        }
     }
     async writeBatchDetailedUsing(db, scoped) {
         const result = {
@@ -470,10 +506,45 @@ export class TelemetryWriter {
         });
         if (rows.length === 0)
             return 0;
-        const { text, values } = buildInsert('telemetry_outbox', ['organization_id', 'project_id', 'environment', 'signal_kind', 'event_id',
-            'severity', 'fast_path', 'attributes', 'occurred_at'], rows, 'id');
-        const result = await db.query(text, values);
-        return result.rowCount ?? 0;
+        const result = await db.query(`WITH input AS (
+         SELECT *
+           FROM UNNEST(
+             $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
+             $6::logdb_severity[], $7::boolean[], $8::jsonb[], $9::timestamptz[]
+           ) AS t(organization_id, project_id, environment, signal_kind, event_id,
+                  severity, fast_path, attributes, occurred_at)
+       ), reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         SELECT 'telemetry_outbox', organization_id, signal_kind || ':' || event_id
+           FROM input
+         ON CONFLICT DO NOTHING
+         RETURNING organization_id, idempotency_key
+       ), inserted AS (
+         INSERT INTO telemetry_outbox (
+           organization_id, project_id, environment, signal_kind, event_id,
+           severity, fast_path, attributes, occurred_at
+         )
+         SELECT t.organization_id, t.project_id, t.environment, t.signal_kind, t.event_id,
+                t.severity, t.fast_path, t.attributes, t.occurred_at
+           FROM input t
+           JOIN reserved r
+             ON r.organization_id = t.organization_id
+            AND r.idempotency_key = t.signal_kind || ':' || t.event_id
+         ON CONFLICT DO NOTHING
+         RETURNING id
+       )
+       SELECT COUNT(*)::int AS count FROM inserted`, [
+            rows.map((row) => row[0]),
+            rows.map((row) => row[1]),
+            rows.map((row) => row[2]),
+            rows.map((row) => row[3]),
+            rows.map((row) => row[4]),
+            rows.map((row) => row[5]),
+            rows.map((row) => row[6]),
+            rows.map((row) => row[7]),
+            rows.map((row) => row[8]),
+        ]);
+        return Number(result.rows[0]?.count ?? 0);
     }
     async writeTyped(type, list, db) {
         switch (type) {
@@ -498,7 +569,7 @@ export class TelemetryWriter {
     // ── events_errors ─────────────────────────────────────────────────────────
     async writeErrors(list, db) {
         const ids = list.map(({ event }) => this.eventId(event));
-        const rows = list.map(({ projectId, orgId, environment, event }, i) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }, i) => {
             const e = event;
             const r = rec(event);
             const errorName = errorNameOf(event);
@@ -516,7 +587,7 @@ export class TelemetryWriter {
             if (r.user)
                 attributes.user = r.user;
             return [
-                orgId, projectId, ids[i], fingerprint, e.message,
+                orgId, projectId, apiKeyName ?? '', ids[i], fingerprint, e.message,
                 errorName, eventSeverity(e.severity, 'error'),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(e.mechanism ?? r.mechanism, 50), str(r.service, 100),
@@ -529,19 +600,19 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'event_id', 'fingerprint', 'message',
+        const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'message',
             'error_name', 'severity', 'trace_id', 'span_id', 'request_id', 'session_id',
             'mechanism', 'service', 'environment', 'release', 'server_name',
             'application_name', 'application_version',
             'stack_frames', 'breadcrumbs', 'contexts',
             'endpoint', 'status_code', 'status_text', 'handled', 'duration_ms', 'attributes', 'user_id',
-            'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'], rows, 'event_id');
+            'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows, 'event_id');
         const res = await db.query(text, values);
         // Pair each returned event_id with its first unpaired input occurrence, so
         // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
         // is not double-counted by downstream error grouping.
         const unpaired = new Map();
-        for (const row of res.rows)
+        for (const row of (res?.rows ?? []))
             unpaired.set(row.event_id, (unpaired.get(row.event_id) ?? 0) + 1);
         const insertedErrors = [];
         for (let i = 0; i < list.length; i++) {
@@ -555,11 +626,11 @@ export class TelemetryWriter {
                     unpaired.set(id, n - 1);
             }
         }
-        return { inserted: res.rowCount ?? 0, insertedErrors };
+        return { inserted: res?.rowCount ?? 0, insertedErrors };
     }
     // ── events_messages ─────────────────────────────────────────────────────────
     async writeMessages(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const tags = plainObject(r.tags) ?? {};
@@ -572,7 +643,7 @@ export class TelemetryWriter {
             const messageCategory = classifyMessageCategory(e.message, tags, loggerName, ctx);
             const messageSource = classifyMessageSource(sdkName, loggerName);
             return [
-                orgId, projectId, this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
                 str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
                 str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
@@ -585,11 +656,11 @@ export class TelemetryWriter {
                 name, JSON.stringify(attrs)
             ];
         });
-        const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'event_id', 'message', 'severity',
+        const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
             'trace_id', 'span_id', 'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
-            'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response',
+            'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
             'tenant_id', 'logger_name', 'message_category', 'message_source',
             'endpoint', 'status_code', 'name', 'attributes'], rows);
         const res = await db.query(text, values);
@@ -599,52 +670,87 @@ export class TelemetryWriter {
     async writeRequests(list, db) {
         // Open the GeoIP databases once (no-op after first call; never throws).
         await this.enricher.init();
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
-            const endpoint = str(r.route, 500) ?? str(e.url, 8192);
+            const endpoint = str(r.route, 500) ?? str(e.url, 8192) ?? str(r.endpoint, 8192);
             const name = endpoint ? `${e.method} ${endpoint}`.slice(0, 1024) : e.method;
             const headers = (e.headers && typeof e.headers === 'object') ? e.headers : {};
             const rawUserAgent = r.userAgent ?? r.user_agent ?? headers['user-agent'] ?? headers['User-Agent'] ?? null;
             const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['x-real-ip'] ?? null;
-            // Enrich clientIp -> geo, userAgent -> browser/os/device. Populates the
-            // 14_observability/015 columns; missing data resolves to null ("Unknown").
+            // Enrich clientIp -> geo, userAgent -> browser/os/device.
             const g = this.enricher.enrich(rawClientIp, rawUserAgent);
+            const userId = str(r.user?.id ?? r.userId ?? r.user_id, 255);
+            const tenantId = str(r.tenantId ?? r.extra?.tenantId ?? r.tenant_id, 255);
+            const framework = str(r.framework ?? r.tags?.framework, 50);
+            const service = str(r.service ?? sdkMetadataField(event, environment, 'applicationName'), 100) ?? 'unknown';
+            const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? r.status_code);
+            const durationMs = num(e.latency ?? r.duration_ms ?? r.durationMs);
             return [
-                orgId, projectId, this.eventId(event), e.requestId, endpoint, name, e.method,
-                // duration_ms preserves fractional milliseconds.
-                e.statusCode, num(e.latency), str(r.framework, 50),
-                JSON.stringify(e.headers ?? {}), JSON.stringify(e.query ?? {}),
-                e.body != null ? JSON.stringify(e.body) : null,
-                num(e.bodySize), num(r.responseSize),
-                str(r.userId, 255), str(r.tenantId, 255), e.sessionId ?? null,
-                inet(rawClientIp), str(rawUserAgent, 1024), str(r.referer, 1024),
-                e.traceId ?? null, e.spanId ?? null,
-                str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-                str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-                str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(requestAttributes(event)), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
-                // Enrichment columns.
-                g.geoCountryCode, g.geoRegion, g.geoAsn, g.clientIpHash,
-                g.browserFamily, g.browserVersionMajor, g.osName, g.osVersionMajor,
-                g.deviceType, g.isBot, payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+                randomUUID(), // 1. id
+                orgId, // 2. organization_id
+                projectId, // 3. project_id
+                apiKeyName ?? 'unknown', // 4. api_key_name
+                this.eventId(event), // 5. event_id
+                str(e.requestId ?? r.requestId ?? r.request_id, 64) ?? this.eventId(event), // 6. request_id
+                e.traceId ?? str(r.traceId ?? r.trace_id, 64), // 7. trace_id
+                e.spanId ?? str(r.spanId ?? r.span_id, 64), // 8. span_id
+                str(r.parentSpanId ?? r.parent_span_id, 64), // 9. parent_span_id
+                e.sessionId ?? str(r.sessionId ?? r.session_id, 64), // 10. session_id
+                userId, // 11. user_id
+                tenantId, // 12. tenant_id
+                endpoint, // 13. endpoint
+                name, // 14. name
+                e.method, // 15. method
+                statusCode, // 16. status_code
+                durationMs, // 17. duration_ms
+                num(e.bodySize ?? r.body_size), // 18. body_size
+                num(r.responseSize ?? r.response_size), // 19. response_size
+                num(r.spanCount ?? r.span_count), // 20. span_count
+                str(r.rootSpanStatus ?? r.root_span_status, 32), // 21. root_span_status
+                bool(r.isPartial ?? r.is_partial), // 22. is_partial
+                g.clientIpHash, // 23. client_ip_hash
+                str(rawUserAgent, 1024), // 24. user_agent
+                str(r.referer ?? headers['referer'] ?? headers['Referer'], 1024), // 25. referer
+                g.geoCountryCode, // 26. geo_country_code
+                g.geoRegion, // 27. geo_region
+                g.geoAsn, // 28. geo_asn
+                g.browserFamily, // 29. browser_family
+                g.browserVersionMajor != null ? String(g.browserVersionMajor) : null, // 30. browser_version_major
+                g.osName, // 31. os_name
+                g.osVersionMajor != null ? String(g.osVersionMajor) : null, // 32. os_version_major
+                g.deviceType, // 33. device_type
+                g.isBot, // 34. is_bot
+                service, // 35. service
+                framework, // 36. framework
+                environment, // 37. environment
+                str(r.release ?? sdkMetadataField(event, environment, 'release'), 100), // 38. release
+                str(r.serverName ?? sdkMetadataField(event, environment, 'serverName'), 100), // 39. server_name
+                str(sdkMetadataField(event, environment, 'sdkName'), 50), // 40. sdk_name
+                str(sdkMetadataField(event, environment, 'sdkVersion'), 50), // 41. sdk_version
+                eventSeverity(r.severity, (statusCode ?? 200) >= 500 ? 'error' : 'info'), // 42. severity
+                JSON.stringify(requestAttributes(event)), // 43. attributes
+                JSON.stringify(metadataFor(event, environment)), // 44. metadata
+                payloadFor(event), // 45. payload
+                e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
+                iso(resolveTimestamp(event)), // 47. occurred_at
             ];
         });
         // is_slow / is_error are GENERATED columns — do NOT insert them.
-        const { text, values } = buildInsert('events_requests', ['organization_id', 'project_id', 'event_id', 'request_id', 'endpoint', 'name', 'method',
-            'status_code', 'duration_ms', 'framework', 'headers', 'query_params',
-            'body', 'body_size', 'response_size', 'user_id', 'tenant_id', 'session_id',
-            'client_ip', 'user_agent', 'referer', 'trace_id', 'span_id',
-            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp',
-            'geo_country_code', 'geo_region', 'geo_asn', 'client_ip_hash',
-            'browser_family', 'browser_version_major', 'os_name', 'os_version_major',
-            'device_type', 'is_bot', 'payload', 'ai_response'], rows);
+        // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
+        const { text, values } = buildInsert('events_requests', ['id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
+            'parent_span_id', 'session_id', 'user_id', 'tenant_id', 'endpoint', 'name', 'method',
+            'status_code', 'duration_ms', 'body_size', 'response_size', 'span_count', 'root_span_status', 'is_partial',
+            'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
+            'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
+            'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
+            'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_spans ─────────────────────────────────────────────────────────
     async writeSpans(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const attrs = plainObject(e.attributes) ?? {};
@@ -659,11 +765,11 @@ export class TelemetryWriter {
             const requestId = e.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255);
             const tenantId = str(r.tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255);
             return [
-                orgId, projectId, this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
                 kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
                 e.name, e.statusMessage ?? null, endpoint,
                 iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
-                num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)), iso(resolveTimestamp(event)),
+                num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)),
                 str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
                 str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
                 str(attrValue(attrs, 'http.host'), 255), str(attrValue(attrs, 'http.scheme'), 32),
@@ -687,10 +793,10 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
             'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'name', 'message', 'endpoint', 'start_time', 'end_time',
-            'duration_ms', 'exclusive_duration_ms', 'occurred_at', 'timestamp',
+            'duration_ms', 'exclusive_duration_ms', 'occurred_at',
             'http_method', 'http_route', 'http_url', 'http_target', 'http_host', 'http_scheme', 'http_flavor',
             'http_status_code', 'http_status_text', 'http_response_size', 'http_user_agent', 'client_ip_hash',
             'net_transport', 'net_host_name', 'net_host_ip', 'net_host_port', 'net_peer_ip', 'net_peer_port',
@@ -707,7 +813,7 @@ export class TelemetryWriter {
         return this.writeTracesInTransaction(list, db);
     }
     async writeTracesInTransaction(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const root = plainObject(e.rootSpan) ?? {};
@@ -723,24 +829,24 @@ export class TelemetryWriter {
             const rawClientIp = r.clientIp ?? r.client_ip ?? headers['x-forwarded-for'] ?? headers['X-Forwarded-For'] ?? attrValue(rootAttrs, 'http.client_ip') ?? null;
             const occurredAt = iso(resolveTimestamp(event));
             return [
-                orgId, projectId, this.eventId(event), e.traceId, rootSpanId, parentSpanId,
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), e.traceId, rootSpanId, parentSpanId,
                 str(root.name, 500), rootSpanId, str(root.kind, 32), spanStatus(root.status), endpoint, httpMethod, statusCode,
                 num(root.duration) ?? 0, num(e.totalDuration) ?? 0, responseSize, e.spanCount ?? 0, e.isPartial ?? false,
                 e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
                 e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
                 str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
                 str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-                str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt, occurredAt,
+                str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt,
                 str(rawUserAgent, 1024), str(rawClientIp, 255),
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'event_id', 'trace_id', 'span_id', 'parent_span_id',
+        const { text, values } = buildInsert('events_traces', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'trace_id', 'span_id', 'parent_span_id',
             'root_span_name', 'root_span_id', 'span_kind', 'root_span_status', 'endpoint', 'http_method', 'status_code',
             'duration_ms', 'total_duration_ms', 'response_size', 'span_count', 'is_partial',
             'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'attributes', 'metadata', 'timestamp', 'occurred_at',
+            'sdk_name', 'sdk_version', 'attributes', 'metadata', 'occurred_at',
             'user_agent', 'client_ip_hash', 'payload', 'ai_response'], rows);
         const res = await db.query(text, values);
         await this.writeTraceSpanTree(list, db);
@@ -756,7 +862,7 @@ export class TelemetryWriter {
         }
         if (rows.length === 0)
             return;
-        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
             'name', 'span_kind', 'span_type', 'span_status', 'message', 'endpoint',
             'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'start_time', 'end_time', 'duration_ms', 'exclusive_duration_ms', 'occurred_at',
@@ -768,7 +874,7 @@ export class TelemetryWriter {
             'messaging_system', 'messaging_destination', 'messaging_operation',
             'request_id', 'session_id', 'user_id', 'tenant_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
-            'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload'], rows);
+            'sdk_name', 'sdk_version', 'metadata', 'payload'], rows);
         await db.query(text, values);
     }
     collectTraceSpanRows(scoped, span, parentSpanId, depth, timestamp, rows) {
@@ -791,7 +897,7 @@ export class TelemetryWriter {
         const isCache = spanType === 'cache';
         const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
         rows.push([
-            scoped.orgId, scoped.projectId, eventId, spanId, event.traceId, parentSpanId,
+            scoped.orgId, scoped.projectId, scoped.apiKeyName ?? '', eventId, spanId, event.traceId, parentSpanId,
             name, kind, spanType, status, str(s.statusMessage, 1024), endpoint,
             parentSpanId == null, isHttp, isDb, isCache, isMessaging,
             s.startTime != null ? iso(Number(s.startTime)) : null,
@@ -822,7 +928,7 @@ export class TelemetryWriter {
             this.collectTraceSpanRows(scoped, child, spanId, depth + 1, timestamp, rows);
     }
     async writeMetrics(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const tags = plainObject(e.tags) ?? {};
@@ -843,7 +949,7 @@ export class TelemetryWriter {
             const p99 = num(e.p99 ?? r.p99);
             return [
                 // identity
-                orgId, projectId, this.eventId(event),
+                orgId, projectId, apiKeyName ?? '', this.eventId(event),
                 // metric identity
                 e.metricName, e.metricType,
                 metricUnit, str(e.metricNamespace ?? r.metricNamespace, 255), str(e.metricDescription ?? r.metricDescription, 1024),
@@ -880,7 +986,7 @@ export class TelemetryWriter {
             ];
         });
         const { text, values } = buildInsert('events_metrics', [
-            'organization_id', 'project_id', 'event_id',
+            'organization_id', 'project_id', 'api_key_name', 'event_id',
             // metric identity
             'metric_name', 'metric_type',
             'metric_unit', 'metric_namespace', 'metric_description',
@@ -901,14 +1007,14 @@ export class TelemetryWriter {
             'application_name', 'application_version',
             'sdk_name', 'sdk_version',
             // JSONB
-            'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'
+            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'
         ], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_logs ─────────────────────────────────────────────────────────
     async writeLogs(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const msg = e.message ?? '';
@@ -983,7 +1089,7 @@ export class TelemetryWriter {
                 }
             }
             return [
-                orgId, projectId, this.eventId(event), logLevel(e.level), msg,
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), logLevel(e.level), msg,
                 JSON.stringify(e.args ?? []), e.traceId ?? null, e.spanId ?? null,
                 str(e.parentSpanId ?? r.parentSpanId, 128), str(e.tenantId ?? r.tenantId, 255),
                 name, loggerName, logSource, logCategory, endpoint, httpMethod, statusCode, durationMs,
@@ -997,25 +1103,25 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_logs', ['organization_id', 'project_id', 'event_id', 'level', 'message',
+        const { text, values } = buildInsert('events_logs', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
             'args', 'trace_id', 'span_id', 'parent_span_id', 'tenant_id',
             'name', 'logger_name', 'log_source', 'log_category', 'endpoint', 'http_method', 'status_code', 'duration_ms',
             'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
             'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
-            'metadata', 'timestamp', 'payload', 'ai_response'], rows);
+            'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_profiles ─────────────────────────────────────────────────────────
     async writeProfiles(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             const ts = resolveTimestamp(event);
             return [
-                orgId, projectId, this.eventId(event), str(e.profileType, 20) ?? 'cpu',
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), str(e.profileType, 20) ?? 'cpu',
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255),
                 e.startTime != null ? iso(e.startTime) : iso(ts),
                 e.endTime != null ? iso(e.endTime) : null, num(e.duration),
@@ -1026,15 +1132,15 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_profiles', ['organization_id', 'project_id', 'event_id', 'profile_type',
+        const { text, values } = buildInsert('events_profiles', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'profile_type',
             'trace_id', 'span_id', 'request_id', 'session_id', 'user_id', 'start_time', 'end_time', 'duration_ms',
-            'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'], rows);
+            'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_cron_checkins ─────────────────────────────────────────────────────
     async writeCronCheckins(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             // Derived: is_success
@@ -1074,7 +1180,7 @@ export class TelemetryWriter {
             }
             return [
                 // identity
-                orgId, projectId, this.eventId(event),
+                orgId, projectId, apiKeyName ?? '', this.eventId(event),
                 // monitor
                 e.monitorSlug, str(e.monitorName ?? r.monitorName, 255),
                 // status + derived
@@ -1106,7 +1212,7 @@ export class TelemetryWriter {
             ];
         });
         const { text, values } = buildInsert('events_cron_checkins', [
-            'organization_id', 'project_id', 'event_id',
+            'organization_id', 'project_id', 'api_key_name', 'event_id',
             // monitor
             'monitor_slug', 'monitor_name',
             // status
@@ -1123,18 +1229,18 @@ export class TelemetryWriter {
             'application_name', 'application_version',
             'sdk_name', 'sdk_version',
             // JSONB
-            'tags', 'attributes', 'metadata', 'timestamp', 'payload', 'ai_response'
+            'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'
         ], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }
     // ── events_replays ─────────────────────────────────────────────────────────
     async writeReplays(list, db) {
-        const rows = list.map(({ projectId, orgId, environment, event }) => {
+        const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
             const e = event;
             const r = rec(event);
             return [
-                orgId, projectId, this.eventId(event), e.sessionId, e.segmentId,
+                orgId, projectId, apiKeyName ?? '', this.eventId(event), e.sessionId, e.segmentId,
                 JSON.stringify(e.events ?? []),
                 e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, str(r.userId, 255),
                 str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
@@ -1145,7 +1251,7 @@ export class TelemetryWriter {
         });
         const { text, values } = buildInsert('events_replays', ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
             'events', 'trace_id', 'span_id', 'request_id', 'user_id',
-            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'timestamp', 'payload', 'ai_response'], rows);
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
         const res = await db.query(text, values);
         return { inserted: res.rowCount ?? 0 };
     }

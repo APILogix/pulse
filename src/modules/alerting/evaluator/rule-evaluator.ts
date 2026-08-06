@@ -403,7 +403,7 @@ export class AlertRuleEvaluator {
     let threshold: unknown = condition.threshold_value;
 
     const scope = `organization_id = $2
-       AND timestamp >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
+       AND occurred_at >= now() - (GREATEST($1::int, 1) || ' minutes')::interval
        AND ($3::uuid IS NULL OR project_id = $3)`;
 
     switch (kind.name) {
@@ -463,7 +463,7 @@ export class AlertRuleEvaluator {
         break;
       }
       case 'inactivity_minutes':
-        sql = `SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(timestamp))) / 60.0, 1e9)::float8 AS value
+        sql = `SELECT COALESCE(EXTRACT(EPOCH FROM (now() - max(occurred_at))) / 60.0, 1e9)::float8 AS value
                FROM events_requests WHERE ${scope}`;
         break;
       case 'ai_failed_requests':
@@ -537,9 +537,9 @@ export class AlertRuleEvaluator {
       const active = await this.telemetry.query<{ organization_id: string }>(
         `SELECT t.organization_id
          FROM (
-           SELECT organization_id FROM events_requests WHERE timestamp >= now() - interval '24 hours'
+           SELECT organization_id FROM events_requests WHERE occurred_at >= now() - interval '24 hours'
            UNION
-           SELECT organization_id FROM events_errors WHERE timestamp >= now() - interval '24 hours'
+           SELECT organization_id FROM events_errors WHERE occurred_at >= now() - interval '24 hours'
          ) t
          GROUP BY t.organization_id
          LIMIT 500`,

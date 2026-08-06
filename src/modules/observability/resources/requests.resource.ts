@@ -20,7 +20,8 @@ const requestFields: Record<string, FieldDef> = {
   framework: { column: 'framework', type: 'string', filterable: true, projectable: true, label: 'Framework' },
   bodySize: { column: 'body_size', type: 'number', filterable: true, projectable: true, label: 'Request Size' },
   responseSize: { column: 'response_size', type: 'number', filterable: true, projectable: true, label: 'Response Size' },
-  clientIp: { column: 'client_ip', selectExpr: 'client_ip::text', type: 'string', filterable: true, projectable: true, label: 'IP' },
+  clientIp: { column: 'client_ip_hash', type: 'string', filterable: true, projectable: true, label: 'IP' },
+  clientIpHash: { column: 'client_ip_hash', type: 'string', filterable: true, projectable: true, label: 'IP Hash' },
   userAgent: { column: 'user_agent', type: 'string', filterable: true, searchable: true, projectable: true, label: 'User Agent' },
   referer: { column: 'referer', type: 'string', filterable: true, projectable: true, label: 'Referer' },
   geoCountry: { column: 'geo_country_code', type: 'string', filterable: true, projectable: true, label: 'Country' },
@@ -46,7 +47,7 @@ const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'latenc
 export const requestsResource: ExplorerResource = {
   name: 'requests',
   table: 'events_requests',
-  timeColumn: 'timestamp',
+  timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: requestFields,
   searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
@@ -60,11 +61,9 @@ export const requestsResource: ExplorerResource = {
     device: 'device',
     ip: 'clientIp',
   },
-  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'method', 'endpoint', 'name', 'statusCode', 'durationMs',
-    'timestamp', 'traceId', 'requestId', 'userId', 'service', 'release', 'sdkVersion',
-    'geoCountry', 'browser', 'os', 'device', 'clientIp', 'hasError', 'isSlow', 'hasTrace',
+    'id', 'occurredAt', 'method', 'endpoint', 'statusCode', 'durationMs', 'environment', 'traceId', 'hasTrace',
   ],
   preferredIndexes: [
     'idx_events_requests_tenant_env_time',

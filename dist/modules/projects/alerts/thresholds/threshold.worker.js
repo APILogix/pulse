@@ -156,7 +156,7 @@ export class ProjectThresholdWorker {
           ELSE NULL END::float8 AS value
          FROM events_requests
         WHERE organization_id=$1 AND project_id=$2
-          AND timestamp>=NOW()-($3::int*INTERVAL '1 minute')`, [threshold.organization_id, threshold.project_id, threshold.evaluation_window_minutes]);
+          AND occurred_at>=NOW()-($3::int*INTERVAL '1 minute')`, [threshold.organization_id, threshold.project_id, threshold.evaluation_window_minutes]);
             return result.rows[0]?.value ?? null;
         }
         if (threshold.metric_name === "ai_cost") {

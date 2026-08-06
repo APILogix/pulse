@@ -1,4 +1,5 @@
 import { authenticate } from '../../shared/middleware/auth.js';
+import { idempotency, cacheIdempotencyResponse } from '../../shared/middleware/idempotency.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/domain/constants.js';
 import { generateAccessToken } from '../auth/infrastructure/crypto/jwt.js';
 import { AcceptInvitationSchema, AuditLogQuerySchema, BillingSummaryResponseSchema, CreateInvitationSchema, CreateOrganizationSchema, CreateQuotaRequestSchema, CreateScimTokenSchema, CreateSsoProviderSchema, CursorPaginationSchema, IdParamsSchema, InvitationListQuerySchema, InvitationIdParamsSchema, InvitationParamsSchema, InvitationValidateQuerySchema, MemberParamsSchema, MembersListQuerySchema, OrgIdParamsSchema, OrganizationError, QuotaRequestParamsSchema, RemoveMemberSchema, ReviewQuotaRequestSchema, ScimTokenParamsSchema, SecurityEventsQuerySchema, SlugParamsSchema, SsoProviderParamsSchema, SuspendMemberSchema, SwitchOrganizationSchema, TransferOwnershipSchema, UpdateMemberRoleSchema, UpdateOrganizationSchema, UpdateSettingsSchema, UpdateSsoProviderSchema, UsageLimitsResponseSchema, } from './types.js';
@@ -50,13 +51,17 @@ function strip(obj) {
 export async function organizationRoutes(fastify, _options) {
     const svc = fastify.organization.service;
     const auth = { preHandler: [authenticate] };
+    const organizationCreationIdempotency = idempotency();
+    fastify.addHook('onSend', async (request, reply, payload) => {
+        await cacheIdempotencyResponse(request, reply, payload);
+    });
     // SDK Remote Config routes (/:orgId/sdk-configs ...).
     registerSdkConfigRoutes(fastify, fastify.organization.sdkConfigService);
     await registerDomainRoutes(fastify, svc.domains);
     // ═══════════════════════════════════════════════
     // ORGANIZATION CRUD
     // ═══════════════════════════════════════════════
-    fastify.post('/', auth, withErrorHandling(async (request, reply) => {
+    fastify.post('/', { preHandler: [authenticate, organizationCreationIdempotency] }, withErrorHandling(async (request, reply) => {
         const body = CreateOrganizationSchema.parse(request.body);
         const result = await svc.createOrganization(buildMeta(request), strip(body));
         return reply.code(201).send({ success: true, data: result });

@@ -41,6 +41,10 @@ export declare const ALERT_JOBS: {
     readonly cleanup: "alert.cleanup";
     readonly deadLetter: "alert-dead-letter";
     readonly deadLetterRetry: "alert.dead-letter-retry";
+    readonly decide: "alert.decide";
+    readonly escalate: "alert.escalate";
+    readonly correlate: "alert.correlate";
+    readonly digest: "notification.digest";
     readonly evaluateFast: "alert.evaluate.fast";
     readonly evaluateWindow: "alert.evaluate.window";
     readonly evaluateOperational: "alert.evaluate.operational";

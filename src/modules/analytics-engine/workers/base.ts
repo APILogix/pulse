@@ -77,7 +77,7 @@ export interface BucketRecomputeOptions {
 export function buildBucketRecomputeSql(options: BucketRecomputeOptions): string {
   const {
     source,
-    timeColumn = 'timestamp',
+    timeColumn = 'occurred_at',
     ingestColumn = 'ingested_at',
     window,
     where,

@@ -7,9 +7,9 @@ export declare const AlertCategorySchema: z.ZodEnum<{
     billing: "billing";
     usage: "usage";
     cron: "cron";
+    performance: "performance";
     all: "all";
     deployment: "deployment";
-    performance: "performance";
 }>;
 export type AlertCategory = z.infer<typeof AlertCategorySchema>;
 export declare const ProjectConnectorSubscriptionParamsSchema: z.ZodObject<{
@@ -28,9 +28,9 @@ export declare const CreateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         billing: "billing";
         usage: "usage";
         cron: "cron";
+        performance: "performance";
         all: "all";
         deployment: "deployment";
-        performance: "performance";
     }>>>;
     severityThreshold: z.ZodDefault<z.ZodEnum<{
         error: "error";
@@ -60,9 +60,9 @@ export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         billing: "billing";
         usage: "usage";
         cron: "cron";
+        performance: "performance";
         all: "all";
         deployment: "deployment";
-        performance: "performance";
     }>>>;
     severityThreshold: z.ZodOptional<z.ZodEnum<{
         error: "error";

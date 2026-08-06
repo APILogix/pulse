@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS events_messages (
   ai_response JSONB,
 
   -- Timekeeping
-  timestamp TIMESTAMPTZ NOT NULL,
   occurred_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -70,7 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_events_messages_tenant_time
 CREATE INDEX IF NOT EXISTS idx_events_messages_tenant_env_time
   ON events_messages (organization_id, project_id, environment, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_messages_project_time
-  ON events_messages (organization_id, project_id, timestamp DESC);
+  ON events_messages (organization_id, project_id, occurred_at DESC);
 
 -- Trace / service joins
 CREATE INDEX IF NOT EXISTS idx_events_messages_trace
@@ -82,12 +81,12 @@ CREATE INDEX IF NOT EXISTS idx_events_messages_service
 
 -- Message-specific filters
 CREATE INDEX IF NOT EXISTS idx_events_messages_project_severity_time
-  ON events_messages (organization_id, project_id, severity, timestamp DESC);
+  ON events_messages (organization_id, project_id, severity, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_messages_project_request
-  ON events_messages (organization_id, project_id, request_id, timestamp DESC)
+  ON events_messages (organization_id, project_id, request_id, occurred_at DESC)
   WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_events_messages_project_trace
-  ON events_messages (organization_id, project_id, trace_id, timestamp DESC)
+  ON events_messages (organization_id, project_id, trace_id, occurred_at DESC)
   WHERE trace_id IS NOT NULL;
 
 -- JSONB search

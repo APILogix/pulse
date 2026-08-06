@@ -46,7 +46,7 @@ const metricFields: Record<string, FieldDef> = {
 export const metricsResource: ExplorerResource = {
   name: 'metrics',
   table: 'events_metrics',
-  timeColumn: 'timestamp',
+  timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: metricFields,
   searchFields: ['metricName', 'service', 'endpoint'],
@@ -60,9 +60,9 @@ export const metricsResource: ExplorerResource = {
     method: 'httpMethod',
     namespace: 'metricNamespace',
   },
-  defaultSort: { field: 'timestamp', direction: 'desc' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'timestamp', 'metricName', 'metricType', 'value', 'metricUnit',
+    'id', 'projectId', 'environment', 'occurredAt', 'metricName', 'metricType', 'value', 'metricUnit',
     'metricCategory', 'aggregationType', 'endpoint', 'httpMethod', 'statusCode',
     'service', 'requestId', 'traceId', 'p95', 'p99',
   ],

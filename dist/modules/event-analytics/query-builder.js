@@ -41,7 +41,7 @@ export class AnalyticsQueryBuilder {
     next() {
         return `$${this.params.length + 1}`;
     }
-    whereTimeRange(start, end, column = 'timestamp') {
+    whereTimeRange(start, end, column = 'occurred_at') {
         this.conditions.push(`${column} >= ${this.next()}`);
         this.params.push(start);
         this.conditions.push(`${column} < ${this.next()}`);
