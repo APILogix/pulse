@@ -231,7 +231,7 @@ export async function runRollupWorker(
   params: RunRollupWorkerParams,
 ): Promise<WorkerRunResult> {
   const { pool, logger, now, config } = ctx;
-  const timeColumn = params.sizingTimeColumn ?? 'timestamp';
+  const timeColumn = params.sizingTimeColumn ?? 'occurred_at';
   const ingestColumn = params.sizingIngestColumn ?? 'ingested_at';
 
   const watermark = await watermarks.acquire(params.workerId, job.orgId, params.window, now);

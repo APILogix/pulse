@@ -9,9 +9,9 @@
  */
 import type { ExplorerQuery, FilterClause, QueryContext, SortDirection } from './types.js';
 import type { ExplorerResource } from './field-registry.js';
-import { resolveField } from './field-registry.js';
+import { isPublicField, resolveField } from './field-registry.js';
 import { ParamBag, buildOperatorFragment } from './operators.js';
-import { decodeCursor } from './cursor.js';
+import { decodeCursor, cursorScopeFingerprint } from './cursor.js';
 import { QueryValidationError } from './errors.js';
 
 export interface BuiltStatement {
@@ -81,12 +81,12 @@ export function buildScopePredicates(
   const preds: string[] = [];
   preds.push(`organization_id = ${bag.next(ctx.organizationId)}`);
 
-  const projectId = query.projectId ?? ctx.projectId;
-  if (projectId) {
-    preds.push(`project_id = ${bag.next(projectId)}`);
-  }
-  if (ctx.allowedProjectIds && ctx.allowedProjectIds.length > 0) {
-    preds.push(`project_id = ANY(${bag.next(ctx.allowedProjectIds)})`);
+  if (ctx.projectId) {
+    preds.push(`project_id = ${bag.next(ctx.projectId)}`);
+  } else if (ctx.allowedProjectIds !== undefined) {
+    preds.push(ctx.allowedProjectIds.length > 0
+      ? `project_id = ANY(${bag.next(ctx.allowedProjectIds)})`
+      : 'FALSE');
   }
 
   const environment = query.environment ?? ctx.environment;
@@ -107,27 +107,19 @@ export function buildScopePredicates(
 }
 
 /** Choose the projected field set (requested ∩ projectable, or defaults). */
-function resolveProjection(resource: ExplorerResource, fields: string[] | undefined): string[] {
+function resolveProjection(resource: ExplorerResource): string[] {
   const projectable = Object.entries(resource.fields)
-    .filter(([, def]) => def.projectable !== false)
+    .filter(([name, def]) => isPublicField(name, def))
     .map(([name]) => name);
 
-  if (!fields || fields.length === 0) {
-    return resource.defaultProjection && resource.defaultProjection.length > 0
-      ? resource.defaultProjection
-      : projectable;
-  }
-  for (const f of fields) {
-    if (!projectable.includes(f)) {
-      throw new QueryValidationError(`Field '${f}' is not projectable for resource '${resource.name}'`, { field: f });
-    }
-  }
-  return fields;
+  return resource.defaultProjection && resource.defaultProjection.length > 0
+    ? resource.defaultProjection.filter((name) => projectable.includes(name))
+    : projectable;
 }
 
 /** Build the SELECT list, always including the internal cursor columns. */
-function buildSelectList(resource: ExplorerResource, fields: string[] | undefined): string {
-  const chosen = resolveProjection(resource, fields);
+function buildSelectList(resource: ExplorerResource): string {
+  const chosen = resolveProjection(resource);
   const parts: string[] = [];
   for (const name of chosen) {
     if (name.includes('"')) throw new QueryValidationError(`Invalid field name '${name}'`);
@@ -166,16 +158,24 @@ export function buildListStatement(
   const scanDir: SortDirection = backward ? invert(sortDir) : sortDir;
 
   if (query.cursor) {
-    const cursor = decodeCursor(query.cursor);
+  const cursor = decodeCursor(query.cursor, {
+    resource: resource.name,
+    sortField: query.sort.field,
+    sortDirection: query.sort.direction,
+    scope: cursorScopeFingerprint(resource, ctx, query),
+  });
     const cmp = scanDir === 'desc' ? '<' : '>';
     const tParam = bag.next(new Date(cursor.t));
     const idParam = bag.next(cursor.id);
     preds.push(`(${resource.timeColumn}, ${resource.idColumn}) ${cmp} (${tParam}, ${idParam})`);
   }
 
-  const orderSql = `${resource.timeColumn} ${scanDir.toUpperCase()}, ${resource.idColumn} ${scanDir.toUpperCase()}`;
+  const sortDef = resource.fields[query.sort.field];
+  const sortColumn = sortDef?.column ?? resource.timeColumn;
+  assertIdent(sortColumn, 'sort column');
+  const orderSql = `${sortColumn} ${scanDir.toUpperCase()}, ${resource.idColumn} ${scanDir.toUpperCase()}`;
   const limitParam = bag.next(query.limit + 1);
-  const select = buildSelectList(resource, query.fields);
+  const select = buildSelectList(resource);
 
   const sql = `SELECT ${select} FROM ${resource.table} WHERE ${preds.join(' AND ')} ORDER BY ${orderSql} LIMIT ${limitParam}`;
   return { sql, params: bag.params, reversed: backward, limit: query.limit };

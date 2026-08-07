@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Event-analytics module â€” types, Zod schemas, DTOs, and errors.
  *
  * Operates on the Pulse SDK event tables created in
@@ -17,7 +17,7 @@ import { AppError } from '../../shared/errors/app-error.js';
 // TIME RANGE + GRANULARITY
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-export const TimeRangeKeySchema = z.enum(['1h', '24h', '7d', '30d', '90d']);
+export const TimeRangeKeySchema = z.enum(['15m', '1h', '6h', '24h', '3d', '7d', '30d', '90d']);
 export type TimeRangeKey = z.infer<typeof TimeRangeKeySchema>;
 
 export const GranularitySchema = z.enum(['hour', 'day', 'week']);
@@ -25,8 +25,11 @@ export type Granularity = z.infer<typeof GranularitySchema>;
 
 /** Milliseconds for each named range. */
 export const RANGE_MS: Record<TimeRangeKey, number> = {
+  '15m': 15 * 60 * 1000,
   '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
   '90d': 90 * 24 * 60 * 60 * 1000,

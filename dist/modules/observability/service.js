@@ -1,4 +1,4 @@
-import { ExplorerQueryEngine, ExplorerNotFoundError, UnknownResourceError, buildExplorerQuery, buildFacets, } from './query-engine/index.js';
+import { ExplorerQueryEngine, ExplorerNotFoundError, UnknownResourceError, buildExplorerQuery, buildFacets, projectPublicRow, } from './query-engine/index.js';
 import { explorerRegistry } from './resources/index.js';
 import { ObservabilityRepository } from './repository.js';
 import { CorrelationEngine } from './correlation/engine.js';
@@ -61,7 +61,6 @@ export class ObservabilityService {
             sort: { field: 'occurredAt', direction: 'asc' },
             direction: 'forward',
             limit: max,
-            live: true,
         };
         const result = await this.engine.list(resource, ctx, query);
         return result.items;
@@ -77,10 +76,10 @@ export class ObservabilityService {
         const facts = assembleContext(name, raw, bundle, timeline).facts;
         return {
             resource: name,
-            entity: resource.mapRow(raw),
-            attributes: raw.attributes ?? null,
-            metadata: raw.metadata ?? null,
-            payload: raw.payload ?? null,
+            entity: projectPublicRow(resource, resource.mapRow(raw)),
+            attributes: null,
+            metadata: null,
+            payload: null,
             trace: bundle.trace,
             spanTree: bundle.spanTree,
             spans: bundle.spans,
@@ -166,6 +165,66 @@ export class ObservabilityService {
         return this.investigator.investigate(context, intent, question);
     }
     /**
+     * Bulk AI investigation for a selected array of row IDs or filtered result set.
+     */
+    async analyzeBulk(name, ctx, body) {
+        const resource = this.resource(name);
+        let sample = [];
+        let summary = {};
+        let statistics = {};
+        const isSelectedMode = body.selectionMode === 'selected' && body.selectedIds && body.selectedIds.length > 0 && !body.selectAll;
+        if (isSelectedMode && body.selectedIds && body.selectedIds.length <= 100) {
+            sample = await this.repository.fetchRawByIds(resource, ctx, body.selectedIds);
+            summary = { selectedCount: sample.length };
+        }
+        else {
+            const rawQuery = {
+                filters: body.filters,
+                search: body.search,
+                timeRange: body.timeRange,
+            };
+            const query = buildExplorerQuery(rawQuery, resource.defaultSort);
+            const [listed, sum, stats] = await Promise.all([
+                this.engine.list(resource, ctx, { ...query, limit: 50 }),
+                this.engine.summary(resource, ctx, query).catch(() => ({})),
+                this.engine.statistics(resource, ctx, query).catch(() => ({})),
+            ]);
+            sample = listed.items;
+            summary = sum;
+            statistics = stats;
+        }
+        const promptText = body.prompt ?? "Summarize key issues and findings across selected items";
+        const seed = {
+            resource: name,
+            selectionMode: body.selectionMode ?? (isSelectedMode ? 'selected' : 'filtered'),
+            selectedCount: body.selectedIds?.length ?? 0,
+            summary,
+            statistics,
+            sample: sample.slice(0, 20),
+            userPrompt: promptText,
+            timestamp: new Date().toISOString(),
+        };
+        const bundle = {
+            keys: { traceId: null, requestId: null, spanId: null, sessionId: null, userId: null },
+            trace: null,
+            spanTree: null,
+            spans: [],
+            logs: [],
+            relatedErrors: [],
+            relatedRequests: [],
+            metrics: [],
+            profiles: [],
+            crons: [],
+            counts: { errors: 0, logs: 0, spans: 0, requests: 0, metrics: 0, profiles: 0, crons: 0 },
+        };
+        const context = assembleContext(name, seed, bundle, []);
+        context.facts.push(`Selection Mode: ${body.selectionMode ?? 'filtered'}`);
+        if (body.prompt)
+            context.facts.push(`User Question: ${body.prompt}`);
+        context.facts.push(`Analyzed ${sample.length} records: ${JSON.stringify(sample.slice(0, 10))}`);
+        return this.investigator.investigate(context, body.intent ?? 'explain', promptText);
+    }
+    /**
      * Detail timeline: occurrence trend for the event's natural group key over a
      * bounded window around the event. Errors group by fingerprint, requests by
      * route; other resources return an empty trend (their detail is point-in-time).
@@ -184,7 +243,6 @@ export class ObservabilityService {
             sort: resource.defaultSort,
             direction: 'forward',
             limit: 1,
-            live: false,
         };
         return this.engine.timeline(resource, ctx, query, 'hour');
     }
@@ -251,6 +309,84 @@ export class ObservabilityService {
             { label: 'Alerting', route: '/observability/alerting' },
             { label: 'Settings', route: '/observability/settings' },
         ];
+    }
+    /**
+     * Rich detail for an Error Group including latest stack frames and trends (24h, 7d, 30d).
+     */
+    async getErrorGroupFullDetail(ctx, groupId) {
+        const resource = this.resource('error-groups');
+        const raw = await this.repository.fetchRawById(resource, ctx, groupId);
+        if (!raw)
+            throw new ExplorerNotFoundError('Error Group');
+        const mapped = projectPublicRow(resource, resource.mapRow(raw));
+        const fingerprint = String(raw.fingerprint ?? '');
+        const [sample, trends] = await Promise.all([
+            this.repository.getErrorGroupStackFrames(ctx, groupId, fingerprint),
+            this.repository.getErrorGroupTrends(ctx, groupId, fingerprint),
+        ]);
+        const firstSeen = raw.first_seen_at ?? raw.firstSeen ?? raw.created_at;
+        const lastSeen = raw.last_seen_at ?? raw.lastSeen ?? raw.updated_at;
+        const occurrenceCount = Number(raw.occurrence_count ?? raw.occurrenceCount ?? 1);
+        const regressionCount = Number(raw.regression_count ?? raw.regressionCount ?? 0);
+        return {
+            ...mapped,
+            id: raw.id,
+            fingerprint: raw.fingerprint,
+            status: String(raw.status ?? 'open').toLowerCase(),
+            occurrenceCount,
+            firstSeen,
+            lastSeen,
+            highestSeverity: (raw.highest_severity ?? raw.highestSeverity ?? 'error').toString().toLowerCase(),
+            latestSeverity: (raw.latest_severity ?? raw.latestSeverity ?? 'error').toString().toLowerCase(),
+            isRegression: Boolean(raw.is_regression ?? raw.isRegression),
+            regressionCount,
+            lastRegressedAt: raw.last_regressed_at ?? raw.lastRegressedAt ?? null,
+            latestRelease: raw.latest_release ?? raw.latestRelease ?? null,
+            latestSdkVersion: raw.latest_sdk_version ?? raw.latestSdkVersion ?? null,
+            latestApplicationVersion: raw.latest_application_version ?? raw.latestApplicationVersion ?? null,
+            lastErrorMessage: raw.last_error_message ?? raw.lastErrorMessage ?? '',
+            lastErrorName: raw.last_error_name ?? raw.lastErrorName ?? 'Error',
+            lastStatusCode: sample?.statusCode ?? raw.last_status_code ?? raw.lastStatusCode ?? null,
+            lastTraceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? null,
+            lastRequestId: raw.last_request_id ?? raw.lastRequestId ?? null,
+            isMerged: Boolean(raw.is_merged ?? raw.isMerged),
+            mergedInto: raw.merged_into ?? raw.mergedInto ?? null,
+            stackFrames: sample?.stackFrames ?? [],
+            route: sample?.route ?? raw.route ?? '',
+            traceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? null,
+            trend24h: trends.trend24h,
+            trend7d: trends.trend7d,
+            trend30d: trends.trend30d,
+        };
+    }
+    /** Fetch audit timeline history for an error group. */
+    async getErrorGroupHistory(ctx, groupId) {
+        return this.repository.getErrorGroupHistory(ctx, groupId);
+    }
+    /** Fetch related telemetry error events for an error group. */
+    async getErrorGroupEvents(ctx, groupId, limit = 50) {
+        const resource = this.resource('error-groups');
+        const raw = await this.repository.fetchRawById(resource, ctx, groupId);
+        const fingerprint = raw ? String(raw.fingerprint ?? '') : undefined;
+        return this.repository.getRelatedErrorEvents(ctx, groupId, fingerprint, limit);
+    }
+    /** Update error group status with audit logging. */
+    async updateErrorGroupStatus(ctx, groupId, status, comment) {
+        const actorId = ctx.userId ?? 'system';
+        const updated = await this.repository.updateErrorGroupStatus(ctx, groupId, status, actorId, comment);
+        if (!updated)
+            throw new ExplorerNotFoundError('Error Group');
+        const resource = this.resource('error-groups');
+        return projectPublicRow(resource, resource.mapRow(updated));
+    }
+    /** Merge source error group into target error group. */
+    async mergeErrorGroup(ctx, sourceGroupId, targetGroupId) {
+        const actorId = ctx.userId ?? 'system';
+        const updated = await this.repository.mergeErrorGroups(ctx, sourceGroupId, targetGroupId, actorId);
+        if (!updated)
+            throw new ExplorerNotFoundError('Error Group target or source');
+        const resource = this.resource('error-groups');
+        return projectPublicRow(resource, resource.mapRow(updated));
     }
 }
 //# sourceMappingURL=service.js.map

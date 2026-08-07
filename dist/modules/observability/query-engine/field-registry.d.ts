@@ -26,10 +26,7 @@ export interface FieldDef {
     /** Restrict operators; defaults are derived from the field type. */
     operators?: readonly FilterOperator[];
 }
-/**
- * A telemetry resource an explorer queries. `mapRow` shapes a raw DB row into
- * the API model; everything else is metadata the engine consumes.
- */
+export declare function isPublicField(name: string, def: FieldDef): boolean;
 export interface ExplorerResource<TRow = Record<string, unknown>> {
     /** Stable public name, e.g. `requests`. */
     name: string;
@@ -82,6 +79,12 @@ export declare function resolveField(resource: ExplorerResource, ref: string, ba
 export declare function operatorsForField(def: FieldDef): FilterOperator[];
 /** Build the toolbar facet list from the registry (static; no DB round-trip). */
 export declare function buildFacets(resource: ExplorerResource): FacetDef[];
+/** Build a server-owned public projection for a resource. */
+export declare function buildPublicProjection(resource: ExplorerResource): string;
+/** Build an explicit detail projection including server-only correlation data. */
+export declare function buildDetailProjection(resource: ExplorerResource): string;
+/** Redact a raw detail row down to the resource's public fields. */
+export declare function projectPublicRow(resource: ExplorerResource, row: Record<string, unknown>): Record<string, unknown>;
 /** Registry of all explorer resources. Fail-closed lookup. */
 export declare class ResourceRegistry {
     private readonly resources;

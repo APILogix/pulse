@@ -38,7 +38,6 @@ export type PageDirection = 'forward' | 'backward';
  */
 export interface ExplorerQuery {
     timeRange: TimeRange;
-    projectId?: string;
     environment?: string;
     /** Free-text + structured search string (parsed into filters + text). */
     search?: string;
@@ -49,9 +48,6 @@ export interface ExplorerQuery {
     cursor?: string;
     direction: PageDirection;
     limit: number;
-    /** Projection allow-list of public field names. Empty ⇒ default projection. */
-    fields?: string[];
-    live: boolean;
 }
 /**
  * Tenant + permission context resolved once per request. The engine injects
@@ -59,11 +55,15 @@ export interface ExplorerQuery {
  */
 export interface QueryContext {
     organizationId: string;
+    userId?: string;
     /** When set, the caller is scoped to a single project. */
     projectId?: string;
     /** When set, the caller is scoped to a single environment. */
     environment?: string;
-    /** When set, restricts visible projects to this allow-list (RBAC). */
+    /**
+     * Server-resolved project allow-list. An empty array is authoritative and
+     * means the caller must see no project-scoped rows.
+     */
     allowedProjectIds?: string[];
     role?: string;
     plan?: string;

@@ -6,20 +6,40 @@ const ResourceParams = z.object({ orgId: z.string().uuid(), resource: z.string()
 const IdParams = ResourceParams.extend({ id: z.string().min(1).max(128) });
 const RelatedParams = IdParams.extend({ relation: z.string().min(1).max(40) });
 const ScopeQuery = z.object({
-    projectId: z.string().uuid().optional(),
-    environment: z.string().trim().min(1).max(64).optional(),
+    environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
 });
 const TimelineQuery = z.object({ interval: z.enum(['minute', 'hour', 'day']).default('hour') });
 const AskBody = z.object({
     intent: z.enum(AI_INTENT_VALUES).default('explain'),
     question: z.string().max(2000).optional(),
 });
+const BulkAnalyzeBody = z.object({
+    selectionMode: z.enum(['selected', 'filtered']).optional().default('filtered'),
+    selectedIds: z.array(z.string()).optional().default([]),
+    selectAll: z.boolean().optional().default(false),
+    filters: z.record(z.string(), z.unknown()).optional().default({}),
+    search: z.string().optional().default(''),
+    timeRange: z.unknown().optional(),
+    prompt: z.string().max(2000).optional(),
+    intent: z.enum(AI_INTENT_VALUES).optional().default('explain'),
+});
+const ErrorGroupIdParams = z.object({ orgId: z.string().uuid(), id: z.string().min(1).max(128) });
+const UpdateErrorGroupStatusBody = z.object({
+    status: z.enum(['open', 'resolved', 'ignored', 'archived', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED']),
+    reason: z.string().max(1000).optional(),
+    comment: z.string().max(1000).optional(),
+});
+const MergeErrorGroupBody = z.object({
+    targetGroupId: z.string().uuid(),
+});
 export class ObservabilityController {
     service;
     resolver;
-    constructor(service, resolver) {
+    releasesRepository;
+    constructor(service, resolver, releasesRepository) {
         this.service = service;
         this.resolver = resolver;
+        this.releasesRepository = releasesRepository;
     }
     /** Resolve the tenant/permission context for a request. */
     async context(request) {
@@ -29,10 +49,13 @@ export class ObservabilityController {
         return this.resolver.resolve({
             organizationId: orgId,
             userId,
-            projectId: scope.projectId,
             environment: scope.environment,
         });
     }
+    releases = async (request, reply) => {
+        const ctx = await this.context(request);
+        return reply.send(await this.releasesRepository.list(ctx, request.query ?? {}));
+    };
     navigation = async (request, reply) => {
         OrgParams.parse(request.params);
         return reply.send({ success: true, data: this.service.getNavigation() });
@@ -89,6 +112,12 @@ export class ObservabilityController {
         const ctx = await this.context(request);
         return reply.send({ success: true, data: await this.service.askList(resource, ctx, request.query ?? {}, body.intent, body.question) });
     };
+    analyzeBulk = async (request, reply) => {
+        const { resource } = ResourceParams.parse(request.params);
+        const body = BulkAnalyzeBody.parse(request.body ?? {});
+        const ctx = await this.context(request);
+        return reply.send({ success: true, data: await this.service.analyzeBulk(resource, ctx, body) });
+    };
     /** SSE live tail (Phase 13). */
     stream = async (request, reply) => {
         const { resource } = ResourceParams.parse(request.params);
@@ -98,6 +127,49 @@ export class ObservabilityController {
             intervalMs: 2500,
             fetchSince: (since) => this.service.pollSince(resource, ctx, rawQuery, since),
         });
+    };
+    // ── Dedicated Error Groups API Endpoints ─────────────────────────
+    errorGroupList = async (request, reply) => {
+        const ctx = await this.context(request);
+        const result = await this.service.list('error-groups', ctx, request.query ?? {});
+        return reply.send(result);
+    };
+    errorGroupSummary = async (request, reply) => {
+        const ctx = await this.context(request);
+        const summary = await this.service.summary('error-groups', ctx, request.query ?? {});
+        return reply.send({ success: true, data: summary });
+    };
+    errorGroupDetail = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const ctx = await this.context(request);
+        const data = await this.service.getErrorGroupFullDetail(ctx, id);
+        return reply.send({ success: true, data });
+    };
+    errorGroupHistory = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const ctx = await this.context(request);
+        const data = await this.service.getErrorGroupHistory(ctx, id);
+        return reply.send({ success: true, data });
+    };
+    errorGroupEvents = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const ctx = await this.context(request);
+        const data = await this.service.getErrorGroupEvents(ctx, id);
+        return reply.send({ success: true, data });
+    };
+    updateErrorGroupStatus = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const body = UpdateErrorGroupStatusBody.parse(request.body ?? {});
+        const ctx = await this.context(request);
+        const data = await this.service.updateErrorGroupStatus(ctx, id, body.status, body.comment ?? body.reason);
+        return reply.send({ success: true, data });
+    };
+    mergeErrorGroups = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const body = MergeErrorGroupBody.parse(request.body ?? {});
+        const ctx = await this.context(request);
+        const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId);
+        return reply.send({ success: true, data });
     };
 }
 //# sourceMappingURL=controller.js.map

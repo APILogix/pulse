@@ -19,6 +19,32 @@ import { num, numOrNull, ratePct } from './formatters.js';
 import type { AnalyticsQueryScope, WindowSize } from '../types.js';
 import { ALL_PROJECTS_SENTINEL } from '../types.js';
 
+const ROLLUP_BASES = new Set([
+  'request_metrics',
+  'endpoint_metrics',
+  'service_metrics',
+  'error_metrics',
+  'error_group_metrics',
+  'log_metrics',
+  'metric_series',
+  'runtime_metrics',
+  'gc_metrics',
+  'span_metrics',
+  'trace_metrics',
+  'cron_metrics',
+  'profile_metrics',
+]);
+const TOP_ENTITY_VALUE_COLUMNS = new Set(['total_count', 'error_count', 'client_error_count', 'call_count', 'request_count']);
+const TOP_ENTITY_ORDER_COLUMNS = new Set(['value', 'error_count', 'client_error_count', 'p95', 'p50']);
+const TOP_ENTITY_EXTRA_COLUMNS = new Set([
+  'entity_label', 'method', 'route', 'service', 'error_count', 'client_error_count', 'bytes_out',
+  'db_system', 'db_name', 'db_operation', 'db_collection', 'statement_pattern', 'dependency_kind',
+  'dependency_host', 'source_service', 'target_service', 'monitor_slug', 'last_status', 'country_code',
+  'country_name', 'region', 'dimension', 'dimension_value', 'error_name', 'message_template', 'mechanism',
+  'severity_max', 'gc_type', 'span_name', 'kind', 'metric_type', 'unit', 'release', 'sdk_name', 'sdk_version',
+  'lifecycle', 'latency_p50_ms', 'latency_p95_ms', 'latency_p99_ms', 'latency_max_ms', 'latency_avg',
+]);
+
 /** Tenant/time predicate shared by every rollup query. */
 function scopeWhere(alias = 'r'): string {
   return `${alias}.organization_id = $1
@@ -39,6 +65,7 @@ function scopeParams(scope: AnalyticsQueryScope, range = scope.range): unknown[]
 }
 
 function tableFor(base: string, window: WindowSize, available: readonly WindowSize[]): string {
+  if (!ROLLUP_BASES.has(base)) throw new Error(`Unsupported analytics rollup '${base}'`);
   // Fall back to the coarsest available tier when the requested one does not
   // exist for this domain (e.g. runtime has no 5m tier).
   if (available.includes(window)) return `${base}_${window}`;
@@ -284,10 +311,16 @@ export class AnalyticsReadRepository {
       range?: { from: Date; to: Date };
     },
   ): Promise<Array<Record<string, unknown>>> {
+    if (!ROLLUP_BASES.has(params.base)) throw new Error(`Unsupported analytics rollup '${params.base}'`);
+    if (!TOP_ENTITY_VALUE_COLUMNS.has(params.valueColumn)) throw new Error(`Unsupported analytics value column '${params.valueColumn}'`);
     const table = tableFor(params.base, scope.window, params.available);
     const extra = params.extraColumns ?? [];
+    const invalidExtra = extra.find((column) => !TOP_ENTITY_EXTRA_COLUMNS.has(column));
+    if (invalidExtra) throw new Error(`Unsupported analytics projection '${invalidExtra}'`);
     const orderBy = params.orderBy ?? 'value';
+    if (!TOP_ENTITY_ORDER_COLUMNS.has(orderBy)) throw new Error(`Unsupported analytics order column '${orderBy}'`);
     const direction = (params.direction ?? 'desc').toUpperCase();
+    if (direction !== 'ASC' && direction !== 'DESC') throw new Error('Invalid analytics sort direction');
 
     const extraProjections = extra
       .map((column) => {
@@ -400,6 +433,7 @@ export class AnalyticsReadRepository {
 
     const sortColumn = scope.sort?.column ?? 'occurrences';
     const sortDirection = (scope.sort?.direction ?? 'desc').toUpperCase();
+    if (sortDirection !== 'ASC' && sortDirection !== 'DESC') throw new Error('Invalid analytics sort direction');
     const sortExpression =
       sortColumn === 'lastSeen'
         ? 'last_seen_at'

@@ -7,7 +7,7 @@
 export * from './types.js';
 export * from './errors.js';
 export { ParamBag, ALL_OPERATORS, COMPARISON_OPERATORS, TEXT_OPERATORS, buildOperatorFragment, coerceScalar, } from './operators.js';
-export { type FieldDef, type ExplorerResource, type ResolvedField, ResourceRegistry, resolveField, operatorsForField, defaultOperatorsFor, buildFacets, } from './field-registry.js';
+export { type FieldDef, type ExplorerResource, type ResolvedField, ResourceRegistry, resolveField, operatorsForField, defaultOperatorsFor, buildFacets, buildPublicProjection, buildDetailProjection, projectPublicRow, } from './field-registry.js';
 export { encodeCursor, decodeCursor, type CursorPayload } from './cursor.js';
 export { parseSearch, type ParsedSearch } from './search-parser.js';
 export { buildExplorerQuery, resolveTimeRange, RawExplorerQuerySchema, RANGE_MS, type RawExplorerQuery, } from './query-schema.js';

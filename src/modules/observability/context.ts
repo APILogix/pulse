@@ -25,18 +25,18 @@ const DEFAULT_RETENTION_DAYS = 90;
 export interface ResolveContextInput {
   organizationId: string;
   userId: string;
-  projectId?: string | undefined;
   environment?: string | undefined;
 }
 
 export class ObservabilityContextResolver {
   constructor(private readonly pool: Pool) {}
 
-  /** Resolve role + plan retention and assemble the {@link QueryContext}. */
+  /** Resolve role, visible projects, and plan retention for one request. */
   async resolve(input: ResolveContextInput): Promise<QueryContext> {
-    const [role, planKey] = await Promise.all([
+    const [role, planKey, allowedProjectIds] = await Promise.all([
       this.resolveRole(input.organizationId, input.userId),
       this.resolvePlan(input.organizationId),
+      this.resolveAllowedProjectIds(input.organizationId, input.userId),
     ]);
 
     const retentionDays = PLAN_RETENTION_DAYS[planKey] ?? DEFAULT_RETENTION_DAYS;
@@ -48,19 +48,57 @@ export class ObservabilityContextResolver {
       role,
       plan: planKey,
       retentionFloor,
+      allowedProjectIds,
     };
-    if (input.projectId !== undefined) ctx.projectId = input.projectId;
     if (input.environment !== undefined) ctx.environment = input.environment;
     return ctx;
   }
 
-  /** Role from the org membership row (same source as `requireOrgAccess`). */
+  /** Role from the active org membership row (same source as `requireOrgAccess`). */
   private async resolveRole(organizationId: string, userId: string): Promise<string> {
     const result = await this.pool.query<{ role: string }>(
-      `SELECT role FROM organization_members WHERE org_id = $1 AND user_id = $2 LIMIT 1`,
+      `SELECT role
+         FROM organization_members
+        WHERE org_id = $1 AND user_id = $2 AND status = 'active'
+        LIMIT 1`,
       [organizationId, userId],
     );
     return result.rows[0]?.role ?? 'member';
+  }
+
+  /**
+   * Resolve project visibility from server-side membership only. The empty
+   * array is intentional: it prevents an organization with no visible
+   * projects from becoming an unscoped telemetry query.
+   */
+  private async resolveAllowedProjectIds(organizationId: string, userId: string): Promise<string[]> {
+    const result = await this.pool.query<{ id: string }>(
+      `SELECT p.id
+         FROM projects p
+        WHERE p.org_id = $1
+          AND p.deleted_at IS NULL
+          AND (
+            EXISTS (
+              SELECT 1
+                FROM organization_members om
+               WHERE om.org_id = p.org_id
+                 AND om.user_id = $2
+                 AND om.status = 'active'
+                 AND om.role IN ('owner', 'admin')
+            )
+            OR EXISTS (
+              SELECT 1
+                FROM project_members pm
+               WHERE pm.project_id = p.id
+                 AND pm.organization_id = p.org_id
+                 AND pm.user_id = $2
+                 AND pm.status = 'active'
+            )
+          )
+        ORDER BY p.id ASC`,
+      [organizationId, userId],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   /**

@@ -5,7 +5,7 @@
 import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
 import { makeMapRow } from './common.js';
 
-const ERROR_GROUP_STATUS = ['open', 'resolved', 'ignored', 'archived', 'regressed', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED', 'REGRESSED'] as const;
+const ERROR_GROUP_STATUS = ['open', 'resolved', 'ignored', 'archived', 'regressed'] as const;
 const ERROR_GROUP_SEVERITY = ['warning', 'error', 'fatal', 'critical', 'info', 'debug'] as const;
 
 /** Exact fields backed by logdb error_groups table */
@@ -38,8 +38,8 @@ const errorGroupFields: Record<string, FieldDef> = {
   mergedInto: { column: 'merged_into', type: 'uuid', filterable: true, projectable: true, label: 'Merged Into' },
   isMerged: { column: 'is_merged', type: 'boolean', filterable: true, projectable: true, label: 'Is Merged' },
   version: { column: 'version', type: 'number', filterable: true, projectable: true, label: 'Version' },
-  createdAt: { column: 'created_at', type: 'timestamp', filterable: true, projectable: true, label: 'Created At' },
-  updatedAt: { column: 'updated_at', type: 'timestamp', filterable: true, projectable: true, label: 'Updated At' },
+  createdAt: { column: 'created_at', type: 'timestamp', filterable: false, projectable: false, label: 'Created At' },
+  updatedAt: { column: 'updated_at', type: 'timestamp', filterable: false, projectable: false, label: 'Updated At' },
 };
 
 export const errorGroupsResource: ExplorerResource = {
@@ -61,7 +61,7 @@ export const errorGroupsResource: ExplorerResource = {
   },
   defaultSort: { field: 'lastSeen', direction: 'desc' },
   defaultProjection: [
-    'id', 'fingerprint', 'status', 'occurrenceCount', 'firstSeen', 'lastSeen',
+    'id', 'fingerprint', 'status', 'occurrenceCount', 'firstSeen', 'firstSeenAt', 'lastSeen', 'lastSeenAt',
     'highestSeverity', 'latestSeverity', 'isRegression', 'latestRelease',
     'lastErrorName', 'lastErrorMessage', 'lastStatusCode', 'lastTraceId',
   ],

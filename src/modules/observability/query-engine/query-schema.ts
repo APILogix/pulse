@@ -20,6 +20,7 @@ export const RANGE_MS: Record<string, number> = {
   '1h': 60 * 60 * 1000,
   '6h': 6 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
   '30d': 30 * 24 * 60 * 60 * 1000,
   '90d': 90 * 24 * 60 * 60 * 1000,
@@ -38,35 +39,80 @@ const FilterClauseSchema = z.object({
 
 /** Raw, wire-level query parameters shared by every explorer list endpoint. */
 export const RawExplorerQuerySchema = z.object({
-  search: z.string().max(2000).optional(),
+  search: z.string().trim().min(1).max(2000).optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
-  range: z.enum(['15m', '1h', '6h', '24h', '7d', '30d', '90d']).optional(),
+  range: z.enum(['15m', '1h', '6h', '24h', '3d', '7d', '30d', '90d']).optional(),
   environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
-  projectId: z.string().uuid().optional(),
-  sort: z.string().max(128).optional(),
-  cursor: z.string().max(4096).optional(),
+  sort: z.string().trim().min(1).max(128).optional(),
+  cursor: z.string().trim().min(1).max(4096).optional(),
   direction: z.enum(['forward', 'backward']).default('forward'),
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  fields: z.string().max(2000).optional(),
   filters: z.string().max(20000).optional(),
-  // z.coerce.boolean() treats the string "false" as true; parse explicitly.
-  live: z
-    .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
-    .optional()
-    .transform((v) => (v === undefined ? undefined : typeof v === 'boolean' ? v : v === 'true' || v === '1')),
-});
+  status: z.union([z.string(), z.number()]).optional(),
+  statusCode: z.union([z.string(), z.number()]).optional(),
+  statusClass: z.string().optional(),
+  rootSpanStatus: z.string().optional(),
+  rootSpanName: z.string().optional(),
+  service: z.string().optional(),
+  method: z.string().optional(),
+  duration: z.union([z.string(), z.number()]).optional(),
+  durationMs: z.union([z.string(), z.number()]).optional(),
+  project: z.string().optional(),
+  projectSlug: z.string().optional(),
+  severity: z.string().optional(),
+  level: z.string().optional(),
+  handled: z.union([z.string(), z.boolean()]).optional(),
+  isHandled: z.union([z.string(), z.boolean()]).optional(),
+}).strict();
+
+/** Reject tenant and projection controls before endpoint-specific handling. */
+export function assertPublicExplorerQuery(input: unknown): void {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return;
+  const forbidden = ['projectId', 'project_id', 'organizationId', 'organization_id', 'orgId', 'org_id', 'fields', 'live'];
+  const found = forbidden.find((key) => Object.prototype.hasOwnProperty.call(input, key));
+  if (found) throw new QueryValidationError(`Query parameter '${found}' is not supported`);
+}
 export type RawExplorerQuery = z.infer<typeof RawExplorerQuerySchema>;
 
 /** Resolve explicit from/to or a named range into a concrete window. */
 export function resolveTimeRange(raw: { from?: Date; to?: Date; range?: string }): TimeRange {
-  const to = raw.to ?? new Date();
-  if (raw.from) {
-    if (raw.from >= to) throw new QueryValidationError('`from` must be before `to`');
-    return { from: raw.from, to };
+  const rangeMs = (raw.range && RANGE_MS[raw.range]) ? RANGE_MS[raw.range]! : RANGE_MS['24h']!;
+
+  let from = raw.from;
+  let to = raw.to;
+
+  if (from && to) {
+    if (from.getTime() === to.getTime()) {
+      // User selected exact same start and end time/date (e.g. 2026-08-07 to 2026-08-07)
+      // Expand 'to' by 24h (or rangeMs) so data for that day is included instead of matching 0 rows
+      to = new Date(from.getTime() + (raw.range ? rangeMs : 24 * 60 * 60 * 1000));
+    } else if (from > to) {
+      // Swapped timestamps, fix order
+      const temp = from;
+      from = to;
+      to = temp;
+    }
+    return { from, to };
   }
-  const ms = RANGE_MS[raw.range ?? '24h'] ?? RANGE_MS['24h']!;
-  return { from: new Date(to.getTime() - ms), to };
+
+  if (from && !to) {
+    // Only 'from' provided: set 'to' to from + rangeMs (default 24h)
+    to = new Date(from.getTime() + rangeMs);
+    return { from, to };
+  }
+
+  if (!from && to) {
+    // Only 'to' provided: set 'from' to to - rangeMs (default 24h)
+    from = new Date(to.getTime() - rangeMs);
+    return { from, to };
+  }
+
+  // Neither from nor to provided: use relative range ending at now
+  const now = new Date();
+  to = now;
+  from = new Date(now.getTime() - rangeMs);
+  return { from, to };
 }
 
 /** Parse `field:dir` (dir optional) against the resource's default sort. */
@@ -94,18 +140,13 @@ function parseFilters(raw: string | undefined): FilterClause[] {
   return result.data.map((c) => (c.value === undefined ? { field: c.field, op: c.op } : { field: c.field, op: c.op, value: c.value }));
 }
 
-function splitCsv(raw: string | undefined): string[] | undefined {
-  if (!raw) return undefined;
-  const parts = raw.split(',').map((p) => p.trim()).filter((p) => p.length > 0);
-  return parts.length > 0 ? parts : undefined;
-}
-
 /**
  * Build a validated {@link ExplorerQuery} from raw request query params.
  * `defaultSort` comes from the resource so each explorer keeps its natural
  * ordering (usually time DESC).
  */
 export function buildExplorerQuery(rawInput: unknown, defaultSort: SortClause): ExplorerQuery {
+  assertPublicExplorerQuery(rawInput);
   const parsed = RawExplorerQuerySchema.safeParse(rawInput ?? {});
   if (!parsed.success) {
     throw new QueryValidationError('Invalid explorer query', { issues: parsed.error.issues });
@@ -117,21 +158,82 @@ export function buildExplorerQuery(rawInput: unknown, defaultSort: SortClause): 
   if (raw.range !== undefined) timeInput.range = raw.range;
   const timeRange = resolveTimeRange(timeInput);
   const sort = parseSort(raw.sort, defaultSort);
-  const fields = splitCsv(raw.fields);
   const direction: PageDirection = raw.direction;
+
+  const explicitFilters: FilterClause[] = parseFilters(raw.filters);
+
+  // Status code / statusClass / rootSpanStatus
+  const rawStatus = raw.statusCode ?? raw.status ?? raw.statusClass ?? raw.rootSpanStatus;
+  if (rawStatus !== undefined && String(rawStatus).trim().length > 0) {
+    const sStr = String(rawStatus).trim();
+    if (sStr.endsWith('xx')) {
+      const prefix = parseInt(sStr.charAt(0), 10);
+      if (!isNaN(prefix)) {
+        explicitFilters.push({ field: 'statusCode', op: 'gte', value: prefix * 100 });
+        explicitFilters.push({ field: 'statusCode', op: 'lt', value: (prefix + 1) * 100 });
+      }
+    } else {
+      const num = Number(sStr);
+      if (Number.isFinite(num)) {
+        explicitFilters.push({ field: 'statusCode', op: 'eq', value: num });
+      } else {
+        explicitFilters.push({ field: 'rootSpanStatus', op: 'eq', value: sStr.toLowerCase() });
+      }
+    }
+  }
+
+  // Method
+  if (raw.method !== undefined && raw.method.trim().length > 0) {
+    explicitFilters.push({ field: 'method', op: 'eq', value: raw.method.trim().toUpperCase() });
+  }
+
+  // Duration
+  const rawDur = raw.durationMs ?? raw.duration;
+  if (rawDur !== undefined && String(rawDur).trim().length > 0) {
+    const dStr = String(rawDur).trim();
+    if (dStr.includes(':')) {
+      const [opStr, numStr] = dStr.split(':');
+      const num = Number(numStr);
+      if (Number.isFinite(num)) {
+        explicitFilters.push({ field: 'durationMs', op: (opStr as FilterOperator) || 'gte', value: num });
+      }
+    } else {
+      const num = Number(dStr);
+      if (Number.isFinite(num)) {
+        explicitFilters.push({ field: 'durationMs', op: 'gte', value: num });
+      }
+    }
+  }
+
+  // Project (slug)
+  const rawProj = raw.projectSlug ?? raw.project;
+  if (rawProj !== undefined && rawProj.trim().length > 0) {
+    explicitFilters.push({ field: 'project', op: 'eq', value: rawProj.trim() });
+  }
+
+  // Severity / Level
+  const rawSev = raw.severity ?? raw.level;
+  if (rawSev !== undefined && rawSev.trim().length > 0) {
+    explicitFilters.push({ field: 'severity', op: 'eq', value: rawSev.trim().toLowerCase() });
+  }
+
+  // Handled / Unhandled
+  const rawHandled = raw.handled ?? raw.isHandled;
+  if (rawHandled !== undefined && String(rawHandled).trim().length > 0) {
+    const hStr = String(rawHandled).trim().toLowerCase();
+    const boolVal = hStr === 'true' || hStr === '1' || hStr === 'handled';
+    explicitFilters.push({ field: 'handled', op: 'eq', value: boolVal });
+  }
 
   const query: ExplorerQuery = {
     timeRange,
-    filters: parseFilters(raw.filters),
+    filters: explicitFilters,
     sort,
     direction,
     limit: raw.limit,
-    live: raw.live ?? false,
   };
   if (raw.search !== undefined) query.search = raw.search;
-  if (raw.projectId !== undefined) query.projectId = raw.projectId;
   if (raw.environment !== undefined) query.environment = raw.environment;
   if (raw.cursor !== undefined) query.cursor = raw.cursor;
-  if (fields !== undefined) query.fields = fields;
   return query;
 }

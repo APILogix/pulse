@@ -27,7 +27,7 @@ export async function streamPoll(
   reply: FastifyReply,
   options: StreamOptions,
 ): Promise<void> {
-  const timeField = options.timeField ?? 'timestamp';
+  const timeField = options.timeField ?? 'occurred_at';
   const heartbeatMs = options.heartbeatMs ?? 15_000;
 
   // Take over the response: Fastify will not try to send its own reply.

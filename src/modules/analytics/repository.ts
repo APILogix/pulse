@@ -306,8 +306,12 @@ export class AnalyticsRepository {
       const startedAt = Date.now();
       const [items, count] = await Promise.all([
         client.query(
-          `SELECT *,total_count AS occurrences,last_seen_at AS last_seen,
-                  (status='resolved') AS is_resolved
+          `SELECT *, total_count AS "occurrenceCount",
+                  first_seen_at AS "firstSeenAt",
+                  last_seen_at AS "lastSeenAt",
+                  last_error_name AS "lastErrorName", last_error_message AS "lastErrorMessage",
+                  highest_severity AS "highestSeverity", latest_release AS "latestRelease",
+                  is_regression AS "isRegression", (status='resolved') AS is_resolved
              FROM analytics_error_groups
             WHERE ${whereSql}
             ORDER BY last_seen_at DESC

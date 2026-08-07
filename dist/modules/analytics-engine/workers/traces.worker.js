@@ -115,24 +115,24 @@ export function createTracesWorker(watermarks) {
                     const edgeSql = `
             INSERT INTO ${EDGE_TABLE} (${EDGE_COLUMNS.join(',')})
             WITH touched AS (
-              SELECT DISTINCT date_trunc('hour', s.timestamp) AS bucket
+              SELECT DISTINCT date_trunc('hour', s.occurred_at) AS bucket
                 FROM ${SPAN_SOURCE} s
                WHERE s.organization_id = $1
                  AND s.project_id IS NOT NULL
                  AND s.ingested_at >= $2 AND s.ingested_at < $3
-                 AND s.timestamp   >= $4
+                 AND s.occurred_at   >= $4
             ),
             bounds AS (SELECT MIN(bucket) AS lo, MAX(bucket) AS hi FROM touched),
             scoped AS (
               SELECT s.organization_id, s.project_id, s.environment, s.trace_id,
                      s.span_id, s.parent_span_id, s.service, s.status, s.duration_ms,
-                     date_trunc('hour', s.timestamp) AS bucket
+                     date_trunc('hour', s.occurred_at) AS bucket
                 FROM ${SPAN_SOURCE} s
-                JOIN touched t ON date_trunc('hour', s.timestamp) = t.bucket
+                JOIN touched t ON date_trunc('hour', s.occurred_at) = t.bucket
                WHERE s.organization_id = $1
                  AND s.project_id IS NOT NULL
-                 AND s.timestamp >= (SELECT lo FROM bounds)
-                 AND s.timestamp <  (SELECT hi FROM bounds) + INTERVAL '1 hour'
+                 AND s.occurred_at >= (SELECT lo FROM bounds)
+                 AND s.occurred_at <  (SELECT hi FROM bounds) + INTERVAL '1 hour'
             ),
             edges AS (
               SELECT child.organization_id,

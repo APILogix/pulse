@@ -921,7 +921,7 @@ export class TelemetryWriter {
             str(rec(event).service, 100), scoped.environment, str(sdkMetadataField(event, scoped.environment, 'release'), 100),
             str(sdkMetadataField(event, scoped.environment, 'serverName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationVersion'), 50),
             str(sdkMetadataField(event, scoped.environment, 'sdkName'), 50), str(sdkMetadataField(event, scoped.environment, 'sdkVersion'), 50),
-            JSON.stringify(metadataFor(event, scoped.environment)), timestamp, payloadFor(event),
+            JSON.stringify(metadataFor(event, scoped.environment)), payloadFor(event),
         ]);
         const children = Array.isArray(s.children) ? s.children : [];
         for (const child of children)

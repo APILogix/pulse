@@ -6,12 +6,15 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { ObservabilityService } from './service.js';
 import type { ObservabilityContextResolver } from './context.js';
+import type { ObservabilityReleasesRepository } from './releases.repository.js';
 export declare class ObservabilityController {
     private readonly service;
     private readonly resolver;
-    constructor(service: ObservabilityService, resolver: ObservabilityContextResolver);
+    private readonly releasesRepository;
+    constructor(service: ObservabilityService, resolver: ObservabilityContextResolver, releasesRepository: ObservabilityReleasesRepository);
     /** Resolve the tenant/permission context for a request. */
     private context;
+    releases: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     navigation: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     resources: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     facets: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
@@ -23,7 +26,15 @@ export declare class ObservabilityController {
     related: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     askEvent: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     askList: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    analyzeBulk: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     /** SSE live tail (Phase 13). */
     stream: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    errorGroupList: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    errorGroupSummary: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    errorGroupDetail: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    errorGroupHistory: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    errorGroupEvents: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    updateErrorGroupStatus: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    mergeErrorGroups: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
 }
 //# sourceMappingURL=controller.d.ts.map

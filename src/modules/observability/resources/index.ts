@@ -12,6 +12,8 @@ import { spansResource } from './spans.resource.js';
 import { metricsResource } from './metrics.resource.js';
 import { cronsResource } from './crons.resource.js';
 import { profilesResource } from './profiles.resource.js';
+import { replaysResource } from './replays.resource.js';
+import { sessionsResource } from './sessions.resource.js';
 import { errorGroupsResource } from './error-groups.resource.js';
 
 export const explorerRegistry = new ResourceRegistry();
@@ -24,6 +26,8 @@ explorerRegistry.register(spansResource);
 explorerRegistry.register(metricsResource);
 explorerRegistry.register(cronsResource);
 explorerRegistry.register(profilesResource);
+explorerRegistry.register(replaysResource);
+explorerRegistry.register(sessionsResource);
 explorerRegistry.register(errorGroupsResource);
 
 export {

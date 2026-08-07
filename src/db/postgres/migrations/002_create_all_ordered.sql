@@ -7144,4 +7144,296 @@ CREATE TRIGGER trg_user_preferences_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION set_updated_at();
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Source: 18_alerting_workspace (Canonical Draft Domain Reconciled)
+-- ═══════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS alerting_workspaces (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  initialized_by VARCHAR(100) NOT NULL,
+  initialization_version VARCHAR(100) NOT NULL,
+  provisioning_status VARCHAR(20) NOT NULL DEFAULT 'initializing'
+    CHECK (provisioning_status IN ('initializing', 'ready', 'failed')),
+  completed_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT alerting_workspace_ready_completion CHECK (
+    provisioning_status <> 'ready' OR completed_at IS NOT NULL
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_workspaces_status
+  ON alerting_workspaces(provisioning_status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS alerting_policy_categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  slug VARCHAR(100) NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  description TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0 CHECK (sort_order >= 0),
+  is_system BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_policy_category_org_slug UNIQUE (organization_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_policy_categories_org_order
+  ON alerting_policy_categories(organization_id, sort_order, slug);
+
+CREATE TABLE IF NOT EXISTS alerting_policy_catalog (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  slug VARCHAR(150) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  category_id UUID NOT NULL REFERENCES alerting_policy_categories(id) ON DELETE RESTRICT,
+  severity alert_severity NOT NULL,
+  default_threshold JSONB NOT NULL DEFAULT '{}'::jsonb,
+  recovery_threshold JSONB NOT NULL DEFAULT '{}'::jsonb,
+  cooldown_seconds INTEGER NOT NULL CHECK (cooldown_seconds >= 0),
+  evaluation_window_seconds INTEGER NOT NULL CHECK (evaluation_window_seconds > 0),
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  is_system BOOLEAN NOT NULL DEFAULT TRUE,
+  current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_policy_catalog_org_slug UNIQUE (organization_id, slug),
+  CONSTRAINT ck_alerting_policy_catalog_threshold_object CHECK (jsonb_typeof(default_threshold) = 'object'),
+  CONSTRAINT ck_alerting_policy_catalog_recovery_object CHECK (jsonb_typeof(recovery_threshold) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_policy_catalog_org_category
+  ON alerting_policy_catalog(organization_id, category_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_alerting_policy_catalog_org_severity
+  ON alerting_policy_catalog(organization_id, severity, enabled);
+
+CREATE TABLE IF NOT EXISTS alerting_policy_versions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  policy_id UUID NOT NULL REFERENCES alerting_policy_catalog(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  definition JSONB NOT NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_policy_version UNIQUE (policy_id, version),
+  CONSTRAINT ck_alerting_policy_version_definition CHECK (jsonb_typeof(definition) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_policy_versions_org_created
+  ON alerting_policy_versions(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerting_policy_versions_policy
+  ON alerting_policy_versions(policy_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS alerting_routing_defaults (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  severity VARCHAR(20) NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low')),
+  destination_type VARCHAR(30) NOT NULL CHECK (destination_type IN ('email', 'dashboard', 'none')),
+  connector_id UUID REFERENCES connector_configs(id) ON DELETE SET NULL,
+  route_id UUID REFERENCES notification_routes(id) ON DELETE SET NULL,
+  is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  priority INTEGER NOT NULL DEFAULT 100 CHECK (priority >= 0),
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_routing_default UNIQUE (organization_id, severity, priority),
+  CONSTRAINT ck_alerting_routing_default_config CHECK (jsonb_typeof(config) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_routing_defaults_org_severity
+  ON alerting_routing_defaults(organization_id, severity, priority);
+
+CREATE TABLE IF NOT EXISTS alerting_escalation_policies_v2 (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  system_key VARCHAR(100) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT NOT NULL,
+  acknowledgement_timeout_seconds INTEGER NOT NULL CHECK (acknowledgement_timeout_seconds >= 0),
+  repeat_interval_seconds INTEGER NOT NULL CHECK (repeat_interval_seconds >= 0),
+  max_repeats INTEGER NOT NULL CHECK (max_repeats >= 0),
+  cancellation_rules JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_default BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_escalation_policy_org_key UNIQUE (organization_id, system_key),
+  CONSTRAINT ck_alerting_escalation_cancellation_rules CHECK (jsonb_typeof(cancellation_rules) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_escalation_policies_org_default
+  ON alerting_escalation_policies_v2(organization_id, is_default, system_key);
+
+CREATE TABLE IF NOT EXISTS alerting_escalation_steps_v2 (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  policy_id UUID NOT NULL REFERENCES alerting_escalation_policies_v2(id) ON DELETE CASCADE,
+  step_number INTEGER NOT NULL CHECK (step_number >= 1),
+  wait_seconds INTEGER NOT NULL CHECK (wait_seconds >= 0),
+  connector_ids UUID[] NOT NULL DEFAULT '{}',
+  route_ids UUID[] NOT NULL DEFAULT '{}',
+  notify_on_call BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_escalation_step UNIQUE (policy_id, step_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_alerting_escalation_steps_policy
+  ON alerting_escalation_steps_v2(policy_id, step_number);
+
+CREATE TABLE IF NOT EXISTS alerting_settings (
+  workspace_id UUID PRIMARY KEY REFERENCES alerting_workspaces(id) ON DELETE CASCADE,
+  timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
+  default_evaluation_window_seconds INTEGER NOT NULL DEFAULT 300 CHECK (default_evaluation_window_seconds > 0),
+  default_cooldown_seconds INTEGER NOT NULL DEFAULT 900 CHECK (default_cooldown_seconds >= 0),
+  retention_days INTEGER NOT NULL DEFAULT 90 CHECK (retention_days > 0),
+  default_severity alert_severity NOT NULL DEFAULT 'warning',
+  default_routing_key VARCHAR(100) NOT NULL DEFAULT 'severity_default',
+  default_escalation_policy_id UUID REFERENCES alerting_escalation_policies_v2(id) ON DELETE SET NULL,
+  maximum_incident_age_seconds INTEGER NOT NULL DEFAULT 604800 CHECK (maximum_incident_age_seconds > 0),
+  digest_defaults JSONB NOT NULL DEFAULT '{"enabled":true,"frequency":"daily"}'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT ck_alerting_settings_digest_defaults CHECK (jsonb_typeof(digest_defaults) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS alerting_provider_catalog (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  provider_key VARCHAR(50) NOT NULL,
+  display_name VARCHAR(100) NOT NULL,
+  status VARCHAR(30) NOT NULL DEFAULT 'not_configured'
+    CHECK (status IN ('not_configured', 'available', 'disabled')),
+  capabilities JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_provider_catalog_org_key UNIQUE (organization_id, provider_key),
+  CONSTRAINT ck_alerting_provider_capabilities CHECK (jsonb_typeof(capabilities) = 'object'),
+  CONSTRAINT ck_alerting_provider_metadata CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS alerting_dashboard_widgets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES alerting_workspaces(id) ON DELETE CASCADE,
+  widget_key VARCHAR(100) NOT NULL,
+  display_name VARCHAR(150) NOT NULL,
+  position JSONB NOT NULL DEFAULT '{}'::jsonb,
+  configuration JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_visible BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_dashboard_widget UNIQUE (workspace_id, widget_key),
+  CONSTRAINT ck_alerting_dashboard_position CHECK (jsonb_typeof(position) = 'object'),
+  CONSTRAINT ck_alerting_dashboard_configuration CHECK (jsonb_typeof(configuration) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS alerting_saved_views (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID NOT NULL REFERENCES alerting_workspaces(id) ON DELETE CASCADE,
+  view_key VARCHAR(100) NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  filters JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_system BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_saved_view UNIQUE (workspace_id, view_key),
+  CONSTRAINT ck_alerting_saved_view_filters CHECK (jsonb_typeof(filters) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS alerting_entitlements (
+  workspace_id UUID PRIMARY KEY REFERENCES alerting_workspaces(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+  subscription_id UUID REFERENCES organization_subscriptions(id) ON DELETE SET NULL,
+  plan_key VARCHAR(100) NOT NULL,
+  limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+  features JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_version INTEGER NOT NULL DEFAULT 1 CHECK (source_version >= 1),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT ck_alerting_entitlements_limits CHECK (jsonb_typeof(limits) = 'object'),
+  CONSTRAINT ck_alerting_entitlements_features CHECK (jsonb_typeof(features) = 'object')
+);
+
+CREATE TABLE IF NOT EXISTS alerting_usage_counters (
+  workspace_id UUID PRIMARY KEY REFERENCES alerting_workspaces(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+  policies_count BIGINT NOT NULL DEFAULT 0 CHECK (policies_count >= 0),
+  custom_policies_count BIGINT NOT NULL DEFAULT 0 CHECK (custom_policies_count >= 0),
+  project_subscriptions_count BIGINT NOT NULL DEFAULT 0 CHECK (project_subscriptions_count >= 0),
+  notifications_count BIGINT NOT NULL DEFAULT 0 CHECK (notifications_count >= 0),
+  sms_count BIGINT NOT NULL DEFAULT 0 CHECK (sms_count >= 0),
+  connector_deliveries_count BIGINT NOT NULL DEFAULT 0 CHECK (connector_deliveries_count >= 0),
+  incidents_count BIGINT NOT NULL DEFAULT 0 CHECK (incidents_count >= 0),
+  maintenance_windows_count BIGINT NOT NULL DEFAULT 0 CHECK (maintenance_windows_count >= 0),
+  escalations_count BIGINT NOT NULL DEFAULT 0 CHECK (escalations_count >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alerting_policy_catalog_id_org
+  ON alerting_policy_catalog(id, organization_id);
+
+CREATE TABLE IF NOT EXISTS alerting_project_policy_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  policy_id UUID NOT NULL REFERENCES alerting_policy_catalog(id) ON DELETE CASCADE,
+  state VARCHAR(20) NOT NULL DEFAULT 'subscribed'
+    CHECK (state IN ('subscribed', 'paused', 'muted', 'disabled', 'archived')),
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ,
+  CONSTRAINT uq_alerting_project_policy_subscription_id_org UNIQUE (id, organization_id),
+  CONSTRAINT fk_alerting_policy_subscription_policy_tenant
+    FOREIGN KEY (policy_id, organization_id) REFERENCES alerting_policy_catalog(id, organization_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS alerting_project_policy_overrides (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  subscription_id UUID NOT NULL REFERENCES alerting_project_policy_subscriptions(id) ON DELETE CASCADE,
+  threshold JSONB,
+  cooldown_seconds INTEGER CHECK (cooldown_seconds IS NULL OR cooldown_seconds >= 0),
+  channels JSONB,
+  severity alert_severity,
+  maintenance_windows JSONB,
+  evaluation_window_seconds INTEGER CHECK (evaluation_window_seconds IS NULL OR evaluation_window_seconds > 0),
+  environment VARCHAR(100),
+  escalation_policy_id UUID REFERENCES alerting_escalation_policies_v2(id) ON DELETE SET NULL,
+  mute_schedule JSONB,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT uq_alerting_project_policy_override UNIQUE (subscription_id),
+  CONSTRAINT ck_alerting_override_channels CHECK (channels IS NULL OR jsonb_typeof(channels) = 'array'),
+  CONSTRAINT ck_alerting_override_maintenance CHECK (maintenance_windows IS NULL OR jsonb_typeof(maintenance_windows) = 'array'),
+  CONSTRAINT ck_alerting_override_mute CHECK (mute_schedule IS NULL OR jsonb_typeof(mute_schedule) = 'object'),
+  CONSTRAINT fk_alerting_override_subscription_tenant
+    FOREIGN KEY (subscription_id, organization_id) REFERENCES alerting_project_policy_subscriptions(id, organization_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alerting_project_policy_subscription_live
+  ON alerting_project_policy_subscriptions(project_id, policy_id)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alerting_project_policy_subscriptions_org_project
+  ON alerting_project_policy_subscriptions(organization_id, project_id, state)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alerting_project_policy_subscriptions_policy
+  ON alerting_project_policy_subscriptions(organization_id, policy_id)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alerting_project_policy_overrides_org_subscription
+  ON alerting_project_policy_overrides(organization_id, subscription_id);
+
 COMMIT;

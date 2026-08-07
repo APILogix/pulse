@@ -14,11 +14,15 @@ const errorFields: Record<string, FieldDef> = {
   route: { column: 'route', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Route' },
   mechanism: { column: 'mechanism', type: 'string', filterable: true, projectable: true, label: 'Mechanism' },
   handled: { column: 'handled', type: 'boolean', filterable: true, projectable: true, label: 'Handled' },
+  isHandled: { column: 'handled', type: 'boolean', filterable: true, projectable: true, label: 'Is Handled' },
   userEmail: { column: 'attributes', selectExpr: "attributes->'user'->>'email'", type: 'string', filterable: true, searchable: true, projectable: true, label: 'User Email' },
   userIp: { column: 'attributes', selectExpr: "attributes->'user'->>'ip'", type: 'string', filterable: true, projectable: true, label: 'User IP' },
   serverName: { column: 'server_name', type: 'string', filterable: true, projectable: true, label: 'Server' },
   appName: { column: 'application_name', type: 'string', filterable: true, projectable: true, label: 'Application' },
   appVersion: { column: 'application_version', type: 'string', filterable: true, projectable: true, label: 'Application Version' },
+  project: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_errors.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
+  projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_errors.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
+  projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_errors.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
 };
 
 export const errorsResource: ExplorerResource = {

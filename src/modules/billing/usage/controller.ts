@@ -42,6 +42,18 @@ export class UsageController {
     }
   };
 
+  getQuotaSummary = async (request: FastifyRequest, reply: FastifyReply) => {
+    const req = request as RequestWithUser;
+    try {
+      const orgId = await this.resolveOrgId(req, request);
+
+      const result = await this.service.getQuotaSummary(orgId);
+      return reply.send(result);
+    } catch (error) {
+      return handleBillingError(error, reply);
+    }
+  };
+
   getDailyUsage = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {

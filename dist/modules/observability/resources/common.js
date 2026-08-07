@@ -3,7 +3,10 @@ export const SEVERITY_VALUES = ['debug', 'info', 'warning', 'error', 'critical',
 export const commonFields = {
     id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
     eventId: { column: 'event_id', type: 'string', filterable: true, projectable: true, label: 'Event ID' },
-    projectId: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project' },
+    organizationId: { column: 'organization_id', type: 'uuid', filterable: false, projectable: false, label: 'Organization ID' },
+    projectId: { column: 'project_id', type: 'uuid', filterable: false, projectable: false, label: 'Project' },
+    tenantId: { column: 'tenant_id', type: 'string', filterable: false, projectable: false, label: 'Tenant ID' },
+    apiKeyName: { column: 'api_key_name', type: 'string', filterable: false, projectable: false, label: 'API Key' },
     environment: { column: 'environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
     traceId: { column: 'trace_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Trace ID' },
     spanId: { column: 'span_id', type: 'string', filterable: true, projectable: true, label: 'Span ID' },
@@ -19,19 +22,43 @@ export const commonFields = {
     message: { column: 'message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Message' },
     name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
     durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
+    statusCode: { column: 'status_code', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Status Code' },
     occurredAt: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
-    timestamp: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
-    ingestedAt: { column: 'ingested_at', type: 'timestamp', filterable: true, projectable: true, label: 'Ingested At' },
+    ingestedAt: { column: 'ingested_at', type: 'timestamp', filterable: false, projectable: false, label: 'Ingested At' },
+    createdAt: { column: 'created_at', type: 'timestamp', filterable: false, projectable: false, label: 'Created At' },
+    attributes: { column: 'attributes', type: 'json', filterable: false, projectable: false, label: 'Attributes' },
+    metadata: { column: 'metadata', type: 'json', filterable: false, projectable: false, label: 'Metadata' },
+    payload: { column: 'payload', type: 'json', filterable: false, projectable: false, label: 'Payload' },
 };
 /** Search key aliases common to every resource. */
 export const commonSearchAliases = {
+    // Correlation
     trace: 'traceId',
+    trace_id: 'traceId',
+    traceid: 'traceId',
     span: 'spanId',
+    span_id: 'spanId',
+    spanid: 'spanId',
+    parent_span: 'parentSpanId',
+    parent_span_id: 'parentSpanId',
     session: 'sessionId',
+    session_id: 'sessionId',
+    sessionid: 'sessionId',
     user: 'userId',
-    svc: 'service',
-    env: 'environment',
-    msg: 'message',
+    // System & Environment
+    service: 'service',
+    environment: 'environment',
+    release: 'release',
+    sdkVersion: 'sdkVersion',
+    sdkName: 'sdkName',
+    // Status & Performance
+    statusCode: 'statusCode',
+    durationMs: 'durationMs',
+    // Content & Classification
+    message: 'message',
+    name: 'name',
+    severity: 'severity',
+    level: 'severity',
 };
 /**
  * Build a resource `mapRow` that normalizes pg output: drops the internal

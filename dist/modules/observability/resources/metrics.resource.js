@@ -39,7 +39,7 @@ const metricFields = {
 export const metricsResource = {
     name: 'metrics',
     table: 'events_metrics',
-    timeColumn: 'occurredAt',
+    timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: metricFields,
     searchFields: ['metricName', 'service', 'endpoint'],
@@ -55,7 +55,7 @@ export const metricsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'occurredAt', 'metricName', 'metricType', 'value', 'metricUnit',
+        'id', 'environment', 'occurredAt', 'metricName', 'metricType', 'value', 'metricUnit',
         'metricCategory', 'aggregationType', 'endpoint', 'httpMethod', 'statusCode',
         'service', 'requestId', 'traceId', 'p95', 'p99',
     ],

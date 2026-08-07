@@ -4,6 +4,7 @@ import { logger } from '../../config/logger.js';
 import { aiConfig } from '../../config/ai.js';
 import { OpenAIProvider } from '../ai/openai-client.js';
 import { ObservabilityRepository } from './repository.js';
+import { ObservabilityReleasesRepository } from './releases.repository.js';
 import { ObservabilityContextResolver } from './context.js';
 import { CorrelationEngine } from './correlation/engine.js';
 import { AIInvestigator } from './ai/investigator.js';
@@ -13,6 +14,7 @@ import { buildObservabilityRoutes } from './routes.js';
 const moduleLogger = logger.child({ component: 'observability-module' });
 async function observabilityModule(fastify, _options) {
     const repository = new ObservabilityRepository();
+    const releases = new ObservabilityReleasesRepository(pool);
     const correlation = new CorrelationEngine(repository);
     // Only construct the AI provider when explicitly enabled; otherwise the
     // investigator degrades to deterministic heuristic analysis.
@@ -20,7 +22,7 @@ async function observabilityModule(fastify, _options) {
     const investigator = new AIInvestigator(provider, fastify.log);
     const service = new ObservabilityService(repository, correlation, investigator);
     const resolver = new ObservabilityContextResolver(pool);
-    const controller = new ObservabilityController(service, resolver);
+    const controller = new ObservabilityController(service, resolver, releases);
     fastify.decorate('observability', { service, controller });
     await fastify.register(buildObservabilityRoutes(controller), {
         prefix: '/organizations/:orgId/observability',

@@ -6,11 +6,11 @@ const requestFields = {
     endpoint: { column: 'endpoint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Endpoint' },
     name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
     durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
-    latencyMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
     framework: { column: 'framework', type: 'string', filterable: true, projectable: true, label: 'Framework' },
     bodySize: { column: 'body_size', type: 'number', filterable: true, projectable: true, label: 'Request Size' },
     responseSize: { column: 'response_size', type: 'number', filterable: true, projectable: true, label: 'Response Size' },
-    clientIp: { column: 'client_ip', selectExpr: 'client_ip::text', type: 'string', filterable: true, projectable: true, label: 'IP' },
+    clientIp: { column: 'client_ip_hash', type: 'string', filterable: true, projectable: true, label: 'IP' },
+    clientIpHash: { column: 'client_ip_hash', type: 'string', filterable: true, projectable: true, label: 'IP Hash' },
     userAgent: { column: 'user_agent', type: 'string', filterable: true, searchable: true, projectable: true, label: 'User Agent' },
     referer: { column: 'referer', type: 'string', filterable: true, projectable: true, label: 'Referer' },
     geoCountry: { column: 'geo_country_code', type: 'string', filterable: true, projectable: true, label: 'Country' },
@@ -30,18 +30,18 @@ const requestFields = {
     appVersion: { column: 'application_version', type: 'string', filterable: true, projectable: true, label: 'Application Version' },
     tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
 };
-const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'latencyMs', 'geoAsn'];
+const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'geoAsn'];
 export const requestsResource = {
     name: 'requests',
     table: 'events_requests',
-    timeColumn: 'occurredAt',
+    timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: requestFields,
     searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
     searchAliases: {
         ...commonSearchAliases,
         status: 'statusCode',
-        latency: 'latencyMs',
+        latency: 'durationMs',
         country: 'geoCountry',
         browser: 'browser',
         os: 'os',
@@ -50,9 +50,7 @@ export const requestsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'method', 'endpoint', 'name', 'statusCode', 'durationMs',
-        'occurredAt', 'traceId', 'requestId', 'userId', 'service', 'release', 'sdkVersion',
-        'geoCountry', 'browser', 'os', 'device', 'clientIp', 'hasError', 'isSlow', 'hasTrace',
+        'id', 'occurredAt', 'method', 'endpoint', 'statusCode', 'durationMs', 'environment', 'traceId', 'hasTrace',
     ],
     preferredIndexes: [
         'idx_events_requests_tenant_env_time',

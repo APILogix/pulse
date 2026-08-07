@@ -1,0 +1,49 @@
+import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
+import { makeMapRow, SEVERITY_VALUES } from './common.js';
+
+const replayFields: Record<string, FieldDef> = {
+  id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
+  eventId: { column: 'event_id', type: 'string', filterable: true, projectable: true, label: 'Event ID' },
+  organizationId: { column: 'organization_id', type: 'uuid', filterable: false, projectable: false },
+  projectId: { column: 'project_id', type: 'uuid', filterable: false, projectable: false },
+  environment: { column: 'environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
+  traceId: { column: 'trace_id', type: 'string', filterable: true, projectable: true, label: 'Trace ID' },
+  spanId: { column: 'span_id', type: 'string', filterable: true, projectable: true, label: 'Span ID' },
+  sessionId: { column: 'session_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Session ID' },
+  userId: { column: 'user_id', type: 'string', filterable: true, projectable: false, label: 'User' },
+  requestId: { column: 'request_id', type: 'string', filterable: true, projectable: true, label: 'Request ID' },
+  segmentId: { column: 'segment_id', type: 'number', filterable: true, projectable: true, label: 'Segment' },
+  name: { column: 'name', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Name' },
+  message: { column: 'message', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Message' },
+  service: { column: 'service', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Service' },
+  endpoint: { column: 'endpoint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Endpoint' },
+  release: { column: 'release', type: 'string', filterable: true, projectable: true, label: 'Release' },
+  severity: { column: 'severity', type: 'enum', enumValues: SEVERITY_VALUES, filterable: true, projectable: true, label: 'Severity' },
+  statusCode: { column: 'status_code', type: 'number', filterable: true, projectable: true, label: 'Status Code' },
+  durationMs: { column: 'duration_ms', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Duration (ms)' },
+  occurredAt: { column: 'occurred_at', type: 'timestamp', filterable: true, sortable: true, projectable: true, label: 'Occurred At' },
+};
+
+export const replaysResource: ExplorerResource = {
+  name: 'replays',
+  table: 'events_replays',
+  timeColumn: 'occurred_at',
+  idColumn: 'id',
+  fields: replayFields,
+  searchFields: ['sessionId', 'name', 'message', 'service', 'endpoint'],
+  searchAliases: { session: 'sessionId', replay: 'name', endpoint: 'endpoint' },
+  defaultSort: { field: 'occurredAt', direction: 'desc' },
+  defaultProjection: ['id', 'eventId', 'environment', 'occurredAt', 'sessionId', 'name', 'service', 'endpoint', 'release'],
+  preferredIndexes: ['idx_events_replays_tenant_env_time', 'idx_events_replays_service'],
+  errorPredicate: "severity IN ('error','critical','fatal')",
+  summary: {
+    total: 'COUNT(*)::bigint',
+    uniqueSessions: 'COUNT(DISTINCT session_id)::bigint',
+    uniqueUsers: 'COUNT(DISTINCT user_id)::bigint',
+  },
+  statistics: {
+    avgDuration: 'AVG(duration_ms)',
+    maxDuration: 'MAX(duration_ms)',
+  },
+  mapRow: makeMapRow(['segmentId', 'statusCode', 'durationMs']),
+};

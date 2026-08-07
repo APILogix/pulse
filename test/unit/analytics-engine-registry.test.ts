@@ -243,7 +243,7 @@ describe('analytics engine — bucket recompute SQL', () => {
     const sql = buildBucketRecomputeSql(baseOptions);
     expect(sql).toContain('e.ingested_at >= $2');
     expect(sql).toContain('e.ingested_at <  $3');
-    expect(sql).toContain("date_trunc('minute', e.timestamp)");
+    expect(sql).toContain("date_trunc('minute', e.occurred_at)");
   });
 
   it('recomputes whole buckets, not just newly ingested rows', () => {
@@ -257,7 +257,7 @@ describe('analytics engine — bucket recompute SQL', () => {
 
   it('clamps the recompute floor with the $4 grace parameter', () => {
     const sql = buildBucketRecomputeSql(baseOptions);
-    expect(sql).toContain('e.timestamp   >= $4');
+    expect(sql).toContain('e.occurred_at   >= $4');
   });
 
   it('emits project and environment sentinel roll-up rows', () => {

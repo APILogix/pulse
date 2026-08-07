@@ -8,7 +8,14 @@
  */
 import type { QueryResultRow } from 'pg';
 import { logDB } from '../../config/log-database.js';
-import type { ExplorerResource, QueryContext, QueryExecutor } from './query-engine/index.js';
+import {
+  buildDetailProjection,
+  buildPublicProjection,
+  projectPublicRow,
+  type ExplorerResource,
+  type QueryContext,
+  type QueryExecutor,
+} from './query-engine/index.js';
 
 /** Columns that may be used as a correlation key. Fixed allow-list. */
 export const CORRELATION_COLUMNS = [
@@ -50,20 +57,17 @@ export class ObservabilityRepository implements QueryExecutor {
       throw new Error(`Illegal correlation column: ${input.column}`);
     }
     const { resource, ctx } = input;
+    const limit = Math.max(1, Math.min(Math.trunc(input.limit), 100));
     const params: unknown[] = [ctx.organizationId, input.value, input.from, input.to];
-    let sql = `SELECT * FROM ${resource.table}
+    let sql = `SELECT ${buildPublicProjection(resource)} FROM ${resource.table}
                WHERE organization_id = $1 AND ${input.column} = $2
                AND ${resource.timeColumn} >= $3 AND ${resource.timeColumn} < $4`;
-    const projectId = ctx.projectId;
-    if (projectId) {
-      params.push(projectId);
-      sql += ` AND project_id = $${params.length}`;
-    }
+    sql += this.projectPredicate(ctx, params);
     if (input.excludeId) {
       params.push(input.excludeId);
       sql += ` AND ${resource.idColumn} <> $${params.length}`;
     }
-    params.push(input.limit);
+    params.push(limit);
     sql += ` ORDER BY ${resource.timeColumn} ASC LIMIT $${params.length}`;
 
     const rows = await this.run<Record<string, unknown>>(sql, params);
@@ -80,11 +84,9 @@ export class ObservabilityRepository implements QueryExecutor {
     id: string,
   ): Promise<Record<string, unknown> | null> {
     const params: unknown[] = [ctx.organizationId, id];
-    let sql = `SELECT * FROM ${resource.table} WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
-    if (ctx.projectId) {
-      params.push(ctx.projectId);
-      sql += ` AND project_id = $${params.length}`;
-    }
+    let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
+               WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
+    sql += this.projectPredicate(ctx, params);
     sql += ` LIMIT 1`;
     const rows = await this.run<Record<string, unknown>>(sql, params);
     return rows[0] ?? null;
@@ -99,59 +101,61 @@ export class ObservabilityRepository implements QueryExecutor {
     ids: string[],
   ): Promise<Array<Record<string, unknown>>> {
     if (ids.length === 0) return [];
-    const params: unknown[] = [ctx.organizationId, ids];
-    let sql = `SELECT * FROM ${resource.table} WHERE organization_id = $1 AND ${resource.idColumn}::text = ANY($2::text[])`;
-    if (ctx.projectId) {
-      params.push(ctx.projectId);
-      sql += ` AND project_id = $${params.length}`;
-    }
+    const params: unknown[] = [ctx.organizationId, ids.slice(0, 100)];
+    let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
+               WHERE organization_id = $1 AND ${resource.idColumn}::text = ANY($2::text[])`;
+    sql += this.projectPredicate(ctx, params);
     sql += ` LIMIT 100`;
     const rows = await this.run<Record<string, unknown>>(sql, params);
-    return rows.map((row) => resource.mapRow(row) as Record<string, unknown>);
+    return rows.map((row) => projectPublicRow(resource, resource.mapRow(row) as Record<string, unknown>));
+  }
+
+  /** Build a server-owned project predicate for a scoped repository query. */
+  private projectPredicate(ctx: QueryContext, params: unknown[], alias?: string): string {
+    const column = alias ? `${alias}.project_id` : 'project_id';
+    if (ctx.projectId) {
+      params.push(ctx.projectId);
+      return ` AND ${column} = $${params.length}`;
+    }
+    if (ctx.allowedProjectIds !== undefined) {
+      if (ctx.allowedProjectIds.length === 0) return ' AND FALSE';
+      params.push(ctx.allowedProjectIds);
+      return ` AND ${column} = ANY($${params.length})`;
+    }
+    return '';
   }
 
   /**
    * Fetch audit log history for an error group from `error_group_history`.
    */
   async getErrorGroupHistory(ctx: QueryContext, groupId: string): Promise<Array<Record<string, unknown>>> {
-    const sql = `
-      SELECT h.*, e.last_error_name
-      FROM error_group_history h
-      LEFT JOIN error_groups e ON e.id = h.group_id
-      WHERE h.group_id = $1
-      ORDER BY h.created_at DESC
-      LIMIT 100
-    `;
-    const rows = await logDB.queryWithRetry<Record<string, unknown>>(sql, [groupId], { operation: 'read' });
-    return rows.rows.map((r) => {
-      let oldValue = r.old_value;
-      if (typeof oldValue === 'string') {
-        try { oldValue = JSON.parse(oldValue); } catch {}
-      }
-      let newValue = r.new_value;
-      if (typeof newValue === 'string') {
-        try { newValue = JSON.parse(newValue); } catch {}
-      }
-      let metadata = r.metadata;
-      if (typeof metadata === 'string') {
-        try { metadata = JSON.parse(metadata); } catch {}
-      }
-      return {
-        id: r.id,
-        groupId: r.group_id,
-        group_id: r.group_id,
-        actor: r.actor_id ? String(r.actor_id) : 'System',
-        actor_id: r.actor_id,
-        timestamp: r.created_at,
-        created_at: r.created_at,
-        action: r.action,
-        oldValue: oldValue ?? undefined,
-        old_value: r.old_value ?? undefined,
-        newValue: newValue ?? undefined,
-        new_value: r.new_value ?? undefined,
-        metadata: metadata ?? undefined,
-      };
-    });
+    const params: unknown[] = [groupId, ctx.organizationId];
+    let sql = `
+      SELECT h.id, h.group_id, h.action, h.old_value, h.new_value, h.actor_id, h.metadata, h.created_at,
+             e.last_error_name
+        FROM error_group_history h
+        JOIN error_groups e ON e.id = h.group_id
+       WHERE h.group_id = $1
+         AND e.organization_id = $2`;
+    sql += this.projectPredicate(ctx, params, 'e');
+    sql += ` ORDER BY h.created_at DESC LIMIT 100`;
+
+    const rows = await logDB.queryWithRetry<Record<string, unknown>>(sql, params, { operation: 'read' });
+    return rows.rows.map((r) => ({
+      id: r.id,
+      groupId: r.group_id,
+      actor: r.actor_id ? String(r.actor_id) : 'System',
+      timestamp: r.created_at,
+      action: r.action,
+      oldValue: this.parseJsonValue(r.old_value),
+      newValue: this.parseJsonValue(r.new_value),
+      metadata: this.parseJsonValue(r.metadata),
+    }));
+  }
+
+  private parseJsonValue(value: unknown): unknown {
+    if (typeof value !== 'string') return value ?? undefined;
+    try { return JSON.parse(value); } catch { return value; }
   }
 
   /**
@@ -181,12 +185,9 @@ export class ObservabilityRepository implements QueryExecutor {
       sql += ` AND fingerprint = $2`;
     }
 
-    if (ctx.projectId) {
-      params.push(ctx.projectId);
-      sql += ` AND project_id = $${params.length}`;
-    }
+    sql += this.projectPredicate(ctx, params);
 
-    params.push(limit);
+    params.push(Math.max(1, Math.min(Math.trunc(limit), 100)));
     sql += ` ORDER BY occurred_at DESC LIMIT $${params.length}`;
 
     const result = await logDB.queryWithRetry<Record<string, unknown>>(sql, params, { operation: 'read' });
@@ -228,6 +229,7 @@ export class ObservabilityRepository implements QueryExecutor {
       sql += ` AND fingerprint = $2`;
     }
 
+    sql += this.projectPredicate(ctx, params);
     sql += ` ORDER BY occurred_at DESC LIMIT 1`;
 
     const result = await logDB.queryWithRetry<Record<string, unknown>>(sql, params, { operation: 'read' });
@@ -269,6 +271,8 @@ export class ObservabilityRepository implements QueryExecutor {
       params.push(fingerprint);
       whereClause += ` AND fingerprint = $2`;
     }
+
+    whereClause += this.projectPredicate(ctx, params);
 
     // 24h Hourly buckets
     const sql24h = `
@@ -318,29 +322,43 @@ export class ObservabilityRepository implements QueryExecutor {
     comment?: string,
   ): Promise<Record<string, unknown> | null> {
     return logDB.withTransaction(async (client) => {
+      const params: unknown[] = [groupId, ctx.organizationId];
+      let scope = '';
+      if (ctx.projectId) {
+        params.push(ctx.projectId);
+        scope = ` AND project_id = $${params.length}`;
+      } else if (ctx.allowedProjectIds !== undefined) {
+        if (ctx.allowedProjectIds.length === 0) return null;
+        params.push(ctx.allowedProjectIds);
+        scope = ` AND project_id = ANY($${params.length})`;
+      }
       const fetchRes = await client.query<Record<string, unknown>>(
-        `SELECT * FROM error_groups WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
-        [groupId, ctx.organizationId],
+        `SELECT id, organization_id, project_id, status, occurrence_count, version
+           FROM error_groups
+          WHERE id = $1 AND organization_id = $2${scope}
+          LIMIT 1 FOR UPDATE`,
+        params,
       );
       const existing = fetchRes.rows[0];
       if (!existing) return null;
 
-      const oldStatus = existing.status;
+      const oldStatus = String(existing.status ?? '').toLowerCase();
       const normalizedStatus = status.toLowerCase();
-
       const updateRes = await client.query<Record<string, unknown>>(
-        `UPDATE error_groups SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-        [normalizedStatus, groupId],
+        `UPDATE error_groups
+            SET status = $1, version = version + 1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3
+          RETURNING id, organization_id, project_id, fingerprint, status, occurrence_count, version, updated_at`,
+        [normalizedStatus, groupId, ctx.organizationId],
       );
 
-      const action =
-        normalizedStatus === 'resolved'
-          ? 'marked_resolved'
-          : normalizedStatus === 'ignored'
+      const action = normalizedStatus === 'resolved'
+        ? 'marked_resolved'
+        : normalizedStatus === 'ignored'
           ? 'ignored'
           : normalizedStatus === 'archived'
-          ? 'archived'
-          : 'reopened';
+            ? 'archived'
+            : 'reopened';
 
       await client.query(
         `INSERT INTO error_group_history (group_id, action, old_value, new_value, actor_id, metadata)
@@ -368,65 +386,80 @@ export class ObservabilityRepository implements QueryExecutor {
     targetGroupId: string,
     actorId: string,
   ): Promise<Record<string, unknown> | null> {
+    if (sourceGroupId === targetGroupId) return null;
+
     return logDB.withTransaction(async (client) => {
-      const sourceRes = await client.query<Record<string, unknown>>(
-        `SELECT * FROM error_groups WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
-        [sourceGroupId, ctx.organizationId],
-      );
-      const targetRes = await client.query<Record<string, unknown>>(
-        `SELECT * FROM error_groups WHERE id = $1 AND organization_id = $2 LIMIT 1 FOR UPDATE`,
-        [targetGroupId, ctx.organizationId],
-      );
+      const ids = [sourceGroupId, targetGroupId].sort();
+      const params: unknown[] = [ctx.organizationId, ids];
+      let scope = '';
+      if (ctx.projectId) {
+        params.push(ctx.projectId);
+        scope = ` AND project_id = $${params.length}`;
+      } else if (ctx.allowedProjectIds !== undefined) {
+        if (ctx.allowedProjectIds.length === 0) return null;
+        params.push(ctx.allowedProjectIds);
+        scope = ` AND project_id = ANY($${params.length})`;
+      }
 
-      const source = sourceRes.rows[0];
-      const target = targetRes.rows[0];
+      const locked = await client.query<Record<string, unknown>>(
+        `SELECT id, organization_id, project_id, status, occurrence_count, fingerprint
+           FROM error_groups
+          WHERE organization_id = $1 AND id = ANY($2::uuid[])${scope}
+          ORDER BY id
+          FOR UPDATE`,
+        params,
+      );
+      if (locked.rows.length !== 2) return null;
+
+      const source = locked.rows.find((row) => row.id === sourceGroupId);
+      const target = locked.rows.find((row) => row.id === targetGroupId);
       if (!source || !target) return null;
-
       const sourceOccurrences = Number(source.occurrence_count ?? 1);
 
-      // 1. Mark source group as merged & archived
       await client.query(
         `UPDATE error_groups
-         SET is_merged = true, merged_into = $1, status = 'archived', updated_at = NOW()
-         WHERE id = $2`,
-        [targetGroupId, sourceGroupId],
+            SET is_merged = true, merged_into = $1, status = 'archived', version = version + 1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3`,
+        [targetGroupId, sourceGroupId, ctx.organizationId],
       );
 
-      // 2. Increment target group occurrence count
       const updatedTargetRes = await client.query<Record<string, unknown>>(
         `UPDATE error_groups
-         SET occurrence_count = occurrence_count + $1, updated_at = NOW()
-         WHERE id = $2 RETURNING *`,
-        [sourceOccurrences, targetGroupId],
+            SET occurrence_count = occurrence_count + $1, version = version + 1, updated_at = NOW()
+          WHERE id = $2 AND organization_id = $3
+          RETURNING id, organization_id, project_id, fingerprint, status, occurrence_count, version, updated_at`,
+        [sourceOccurrences, targetGroupId, ctx.organizationId],
       );
 
-      // 3. Reassign related events in events_errors
+      const eventParams: unknown[] = [targetGroupId, sourceGroupId, ctx.organizationId];
+      let eventScope = '';
+      if (ctx.projectId) {
+        eventParams.push(ctx.projectId);
+        eventScope = ` AND project_id = $${eventParams.length}`;
+      } else if (ctx.allowedProjectIds !== undefined) {
+        eventParams.push(ctx.allowedProjectIds);
+        eventScope = ` AND project_id = ANY($${eventParams.length})`;
+      }
       await client.query(
-        `UPDATE events_errors SET error_group_id = $1 WHERE error_group_id = $2`,
-        [targetGroupId, sourceGroupId],
+        `UPDATE events_errors
+            SET error_group_id = $1
+          WHERE error_group_id = $2 AND organization_id = $3${eventScope}`,
+        eventParams,
       );
 
-      // 4. Record audit history for both
       await client.query(
         `INSERT INTO error_group_history (group_id, action, old_value, new_value, actor_id, metadata)
-         VALUES ($1, 'merged', $2, $3, $4, $5)`,
+         VALUES ($1, 'merged', $2, $3, $4, $5),
+                ($6, 'merged', $7, $8, $4, $9)`,
         [
           sourceGroupId,
           JSON.stringify({ status: source.status }),
           JSON.stringify({ mergedInto: targetGroupId, status: 'archived' }),
           actorId,
           JSON.stringify({ targetGroupId }),
-        ],
-      );
-
-      await client.query(
-        `INSERT INTO error_group_history (group_id, action, old_value, new_value, actor_id, metadata)
-         VALUES ($1, 'merged', $2, $3, $4, $5)`,
-        [
           targetGroupId,
           JSON.stringify({ occurrenceCount: target.occurrence_count }),
           JSON.stringify({ occurrenceCount: Number(target.occurrence_count) + sourceOccurrences }),
-          actorId,
           JSON.stringify({ mergedFromId: sourceGroupId }),
         ],
       );

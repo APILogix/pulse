@@ -11,6 +11,7 @@ const traceFields: Record<string, FieldDef> = {
   rootSpanId: { column: 'root_span_id', type: 'string', filterable: true, projectable: true, label: 'Root Span' },
   spanKind: { column: 'span_kind', type: 'string', filterable: true, projectable: true, label: 'Root Span Kind' },
   rootSpanStatus: { column: 'root_span_status', type: 'string', filterable: true, projectable: true, label: 'Root Span Status' },
+  status: { column: 'root_span_status', type: 'string', filterable: true, projectable: true, label: 'Status' },
   httpMethod: { column: 'http_method', type: 'string', filterable: true, projectable: true, label: 'HTTP Method' },
   responseSize: { column: 'response_size', type: 'number', filterable: true, projectable: true, label: 'Response Size' },
   spanCount: { column: 'span_count', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Spans' },
@@ -18,6 +19,9 @@ const traceFields: Record<string, FieldDef> = {
   isPartial: { column: 'is_partial', type: 'boolean', filterable: true, projectable: true, label: 'Partial' },
   requestId: { column: 'request_id', type: 'string', filterable: true, projectable: true, label: 'Request ID' },
   tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+  project: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_traces.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
+  projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_traces.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
+  projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_traces.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
 };
 
 export const tracesResource: ExplorerResource = {
@@ -39,7 +43,7 @@ export const tracesResource: ExplorerResource = {
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
     'id', 'occurredAt', 'httpMethod', 'endpoint', 'durationMs',
-    'statusCode', 'rootSpanStatus', 'spanCount', 'environment', 'isPartial',
+    'status', 'rootSpanStatus', 'spanCount', 'environment', 'isPartial', 'service',
   ],
   preferredIndexes: [
     'idx_events_traces_tenant_env_time',
@@ -51,16 +55,16 @@ export const tracesResource: ExplorerResource = {
   errorPredicate: "severity IN ('error','critical','fatal')",
   summary: {
     total: 'COUNT(*)::bigint',
-    avgSpans: 'AVG(span_count)',
+    avgSpans: 'ROUND(COALESCE(AVG(span_count), 0))::int',
     partial: '(COUNT(*) FILTER (WHERE is_partial))::bigint',
     uniqueOperations: 'COUNT(DISTINCT root_span_name)::bigint',
   },
   statistics: {
-    avgDuration: 'AVG(total_duration_ms)',
-    maxDuration: 'MAX(total_duration_ms)',
-    p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY total_duration_ms)',
-    p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY total_duration_ms)',
-    p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY total_duration_ms)',
+    avgDuration: 'ROUND(COALESCE(AVG(total_duration_ms), 0))::int',
+    maxDuration: 'COALESCE(MAX(total_duration_ms), 0)::int',
+    p50: 'ROUND(COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY total_duration_ms), 0))::int',
+    p95: 'ROUND(COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY total_duration_ms), 0))::int',
+    p99: 'ROUND(COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY total_duration_ms), 0))::int',
   },
   mapRow: makeMapRow(['totalDurationMs', 'spanCount', 'durationMs', 'statusCode', 'responseSize']),
 };

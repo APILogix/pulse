@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { ParamBag, coerceScalar, buildOperatorFragment } from '../../src/modules/observability/query-engine/operators.js';
-import { encodeCursor, decodeCursor } from '../../src/modules/observability/query-engine/cursor.js';
+import { encodeCursor, decodeCursor, cursorScopeFingerprint, createCursorPayload } from '../../src/modules/observability/query-engine/cursor.js';
 import { parseSearch } from '../../src/modules/observability/query-engine/search-parser.js';
 import { resolveField, buildFacets } from '../../src/modules/observability/query-engine/field-registry.js';
 import {
@@ -35,10 +35,9 @@ function baseQuery(overrides: Partial<ExplorerQuery> = {}): ExplorerQuery {
   return {
     timeRange: { from: new Date('2026-01-01T00:00:00Z'), to: new Date('2026-01-02T00:00:00Z') },
     filters: [],
-    sort: { field: 'timestamp', direction: 'desc' },
+    sort: { field: 'occurredAt', direction: 'desc' },
     direction: 'forward',
     limit: 50,
-    live: false,
     ...overrides,
   };
 }
@@ -103,13 +102,36 @@ describe('buildOperatorFragment', () => {
 });
 
 describe('keyset cursor', () => {
-  it('round-trips a payload', () => {
-    const enc = encodeCursor({ t: '2026-01-01T00:00:00.000Z', id: 'abc', d: 'desc' });
-    expect(decodeCursor(enc)).toEqual({ t: '2026-01-01T00:00:00.000Z', id: 'abc', d: 'desc' });
+  it('round-trips a signed scope-bound payload', () => {
+    const query = baseQuery();
+    const payload = createCursorPayload(requestsResource, ctx(), query, {
+      time: new Date('2026-01-01T00:00:00.000Z'),
+      id: 'abc',
+    });
+    const enc = encodeCursor(payload);
+    expect(decodeCursor(enc, {
+      resource: requestsResource.name,
+      sortField: query.sort.field,
+      sortDirection: query.sort.direction,
+      scope: cursorScopeFingerprint(requestsResource, ctx(), query),
+    })).toEqual(payload);
   });
-  it('rejects tampered cursors', () => {
+  it('rejects tampered and unsigned cursors', () => {
     expect(() => decodeCursor('not-base64-json')).toThrow(QueryValidationError);
     expect(() => decodeCursor(Buffer.from('{"t":"x","id":"y","d":"desc"}').toString('base64url'))).toThrow(QueryValidationError);
+  });
+  it('rejects a valid cursor for a different query scope', () => {
+    const query = baseQuery();
+    const enc = encodeCursor(createCursorPayload(requestsResource, ctx(), query, {
+      time: new Date('2026-01-01T00:00:00.000Z'),
+      id: 'abc',
+    }));
+    expect(() => decodeCursor(enc, {
+      resource: requestsResource.name,
+      sortField: query.sort.field,
+      sortDirection: query.sort.direction,
+      scope: cursorScopeFingerprint(requestsResource, ctx({ allowedProjectIds: ['22222222-2222-4222-8222-222222222222'] }), query),
+    })).toThrow(QueryValidationError);
   });
 });
 
@@ -119,7 +141,7 @@ describe('search DSL', () => {
     expect(filters).toEqual([
       { field: 'statusCode', op: 'eq', value: '500' },
       { field: 'method', op: 'eq', value: 'POST' },
-      { field: 'latencyMs', op: 'gt', value: '1000' },
+      { field: 'durationMs', op: 'gt', value: '1000' },
     ]);
   });
   it('turns comma values into an in filter', () => {
@@ -138,8 +160,8 @@ describe('search DSL', () => {
 
 describe('field resolution', () => {
   it('resolves a registered field to its column/selectExpr', () => {
-    expect(resolveField(requestsResource, 'latencyMs').expr).toBe('duration_ms');
-    expect(resolveField(requestsResource, 'clientIp').expr).toBe('client_ip::text');
+    expect(resolveField(requestsResource, 'durationMs').expr).toBe('duration_ms');
+    expect(resolveField(requestsResource, 'clientIp').expr).toBe('client_ip_hash');
   });
   it('resolves JSON path fields by binding the key as a parameter', () => {
     const bag = new ParamBag();
@@ -164,8 +186,8 @@ describe('SQL builder', () => {
     const preds = buildScopePredicates(requestsResource, ctx(), baseQuery(), bag, []);
     expect(preds[0]).toBe('organization_id = $1');
     expect(bag.params[0]).toBe(ORG);
-    expect(preds.some((p) => p.includes('timestamp >='))).toBe(true);
-    expect(preds.some((p) => p.includes('timestamp <'))).toBe(true);
+    expect(preds.some((p) => p.includes('occurred_at >='))).toBe(true);
+    expect(preds.some((p) => p.includes('occurred_at <'))).toBe(true);
   });
 
   it('adds project and environment predicates from context', () => {
@@ -180,7 +202,7 @@ describe('SQL builder', () => {
   it('builds a keyset list statement with ORDER BY, no OFFSET, and LIMIT+1', () => {
     const { sql, params, limit } = buildListStatement(requestsResource, ctx(), baseQuery({ limit: 25 }), []);
     expect(sql).toContain('FROM events_requests');
-    expect(sql).toContain('ORDER BY timestamp DESC, id DESC');
+    expect(sql).toContain('ORDER BY occurred_at DESC, id DESC');
     expect(sql).not.toContain('OFFSET');
     expect(sql).toContain('AS "__id"');
     expect(sql).toContain('AS "__t"');
@@ -189,14 +211,18 @@ describe('SQL builder', () => {
   });
 
   it('adds a tuple keyset predicate when a cursor is supplied', () => {
-    const cursor = encodeCursor({ t: '2026-01-01T12:00:00.000Z', id: 'row-9', d: 'desc' });
-    const { sql } = buildListStatement(requestsResource, ctx(), baseQuery({ cursor }), []);
-    expect(sql).toMatch(/\(timestamp, id\) < \(\$\d+, \$\d+\)/);
+    const query = baseQuery();
+    const cursor = encodeCursor(createCursorPayload(requestsResource, ctx(), query, {
+      time: new Date('2026-01-01T12:00:00.000Z'),
+      id: 'row-9',
+    }));
+    const { sql } = buildListStatement(requestsResource, ctx(), { ...query, cursor }, []);
+    expect(sql).toMatch(/\(occurred_at, id\) < \(\$\d+, \$\d+\)/);
   });
 
   it('reverses the scan order for backward pagination', () => {
     const { sql, reversed } = buildListStatement(requestsResource, ctx(), baseQuery({ direction: 'backward' }), []);
-    expect(sql).toContain('ORDER BY timestamp ASC, id ASC');
+    expect(sql).toContain('ORDER BY occurred_at ASC, id ASC');
     expect(reversed).toBe(true);
   });
 
@@ -222,25 +248,40 @@ describe('SQL builder', () => {
 });
 
 describe('HTTP → DSL parsing', () => {
-  it('parses filters JSON, sort, fields CSV, and range', () => {
+  it('parses filters, canonical sort, and range', () => {
     const q = buildExplorerQuery(
       {
         range: '24h',
-        sort: 'latencyMs:asc',
-        fields: 'id,method,url',
+        sort: 'occurredAt:asc',
         filters: JSON.stringify([{ field: 'statusCode', op: 'gte', value: 500 }]),
       },
       requestsResource.defaultSort,
     );
-    expect(q.sort).toEqual({ field: 'latencyMs', direction: 'asc' });
-    expect(q.fields).toEqual(['id', 'method', 'url']);
+    expect(q.sort).toEqual({ field: 'occurredAt', direction: 'asc' });
     expect(q.filters).toEqual([{ field: 'statusCode', op: 'gte', value: 500 }]);
     expect(q.timeRange.to.getTime() - q.timeRange.from.getTime()).toBe(24 * 60 * 60 * 1000);
   });
 
-  it('parses live=false correctly (no coercion footgun)', () => {
-    expect(buildExplorerQuery({ live: 'false' }, requestsResource.defaultSort).live).toBe(false);
-    expect(buildExplorerQuery({ live: 'true' }, requestsResource.defaultSort).live).toBe(true);
+  it('rejects client tenant and projection controls', () => {
+    expect(() => buildExplorerQuery({ projectId: ORG }, requestsResource.defaultSort)).toThrow(QueryValidationError);
+    expect(() => buildExplorerQuery({ fields: 'id' }, requestsResource.defaultSort)).toThrow(QueryValidationError);
+  });
+
+  it('fails closed for an empty authorized project set', () => {
+    const bag = new ParamBag();
+    const predicates = buildScopePredicates(
+      requestsResource,
+      ctx({ allowedProjectIds: [] }),
+      baseQuery(),
+      bag,
+      [],
+    );
+    expect(predicates).toContain('FALSE');
+  });
+
+  it('registers replay and session resources', () => {
+    expect(explorerRegistry.has('replays')).toBe(true);
+    expect(explorerRegistry.has('sessions')).toBe(true);
   });
 
   it('rejects invalid filters JSON', () => {
@@ -292,6 +333,11 @@ describe('ExplorerQueryEngine', () => {
     await expect(
       engine.list(requestsResource, ctx(), baseQuery({ filters: [{ field: 'ghost', op: 'eq', value: 1 }] })),
     ).rejects.toThrow(QueryValidationError);
+  });
+
+  it('rejects expensive short free-text searches', async () => {
+    const engine = new ExplorerQueryEngine(new FakeExecutor([]));
+    await expect(engine.list(requestsResource, ctx(), baseQuery({ search: 'x' }))).rejects.toThrow(QueryValidationError);
   });
 });
 

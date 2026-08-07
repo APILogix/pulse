@@ -50,7 +50,7 @@ export const cronsResource: ExplorerResource = {
   },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'occurredAt',
+    'id', 'environment', 'occurredAt',
     'monitorSlug', 'monitorName', 'status', 'isSuccess',
     'durationMs', 'checkinType', 'service',
     'requestId', 'traceId',

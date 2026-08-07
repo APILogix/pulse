@@ -14,16 +14,21 @@ import type { QueryContext } from './query-engine/index.js';
 export interface ResolveContextInput {
     organizationId: string;
     userId: string;
-    projectId?: string | undefined;
     environment?: string | undefined;
 }
 export declare class ObservabilityContextResolver {
     private readonly pool;
     constructor(pool: Pool);
-    /** Resolve role + plan retention and assemble the {@link QueryContext}. */
+    /** Resolve role, visible projects, and plan retention for one request. */
     resolve(input: ResolveContextInput): Promise<QueryContext>;
-    /** Role from the org membership row (same source as `requireOrgAccess`). */
+    /** Role from the active org membership row (same source as `requireOrgAccess`). */
     private resolveRole;
+    /**
+     * Resolve project visibility from server-side membership only. The empty
+     * array is intentional: it prevents an organization with no visible
+     * projects from becoming an unscoped telemetry query.
+     */
+    private resolveAllowedProjectIds;
     /**
      * Best-effort plan resolution. Retention is a refinement, not a gate, so a
      * schema mismatch or missing plan must never break exploration — it falls

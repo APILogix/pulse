@@ -1,5 +1,5 @@
 import type { UsageRepository } from './repository.js';
-import { CurrentUsageResponseSchema } from './schemas.js';
+import { CurrentUsageResponseSchema, QuotaSummaryResponseSchema } from './schemas.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
 
 const POSTGRES_BIGINT_MAX = '9223372036854775807';
@@ -81,6 +81,38 @@ export class UsageService {
     // For this redesign, we directly hit the PG fast-path function.
     await this.repository.incrementEventUsage(orgId, count);
     return { success: true };
+  }
+
+  async getQuotaSummary(orgId: string) {
+    const usage = await this.repository.getCurrentUsage(orgId);
+    if (!usage) {
+      const now = new Date();
+      const endOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59, 999));
+      return QuotaSummaryResponseSchema.parse({
+        success: true,
+        data: {
+          eventsLeft: 0,
+          totalEvents: 0,
+          billingCycleEndDate: endOfMonth.toISOString(),
+          aiCreditsTotal: 0,
+          aiCreditsLeft: 0,
+        }
+      });
+    }
+
+    const totalEvents = toUsageNumber(usage.event_limit);
+    const aiCreditsTotal = toUsageNumber(usage.ai_credit_limit);
+
+    return QuotaSummaryResponseSchema.parse({
+      success: true,
+      data: {
+        eventsLeft: totalEvents < 0 ? -1 : Math.max(0, toUsageNumber(usage.remaining_events)),
+        totalEvents,
+        billingCycleEndDate: usage.period_end.toISOString(),
+        aiCreditsTotal,
+        aiCreditsLeft: aiCreditsTotal < 0 ? -1 : Math.max(0, toUsageNumber(usage.remaining_ai_credits)),
+      }
+    });
   }
 
   async getDailyUsage(orgId: string, startDate?: Date, endDate?: Date) {

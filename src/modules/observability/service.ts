@@ -19,6 +19,7 @@ import {
   UnknownResourceError,
   buildExplorerQuery,
   buildFacets,
+  projectPublicRow,
 } from './query-engine/index.js';
 import type { ExplorerResource, FacetDef } from './query-engine/index.js';
 import { explorerRegistry } from './resources/index.js';
@@ -131,7 +132,6 @@ export class ObservabilityService {
       sort: { field: 'occurredAt', direction: 'asc' },
       direction: 'forward',
       limit: max,
-      live: true,
     };
     const result = await this.engine.list(resource, ctx, query);
     return result.items;
@@ -149,10 +149,10 @@ export class ObservabilityService {
 
     return {
       resource: name,
-      entity: resource.mapRow(raw),
-      attributes: raw.attributes ?? null,
-      metadata: raw.metadata ?? null,
-      payload: raw.payload ?? null,
+      entity: projectPublicRow(resource, resource.mapRow(raw) as Record<string, unknown>),
+      attributes: null,
+      metadata: null,
+      payload: null,
       trace: bundle.trace,
       spanTree: bundle.spanTree,
       spans: bundle.spans,
@@ -356,7 +356,6 @@ export class ObservabilityService {
       sort: resource.defaultSort,
       direction: 'forward',
       limit: 1,
-      live: false,
     };
     return this.engine.timeline(resource, ctx, query, 'hour');
   }
@@ -435,7 +434,7 @@ export class ObservabilityService {
     const raw = await this.repository.fetchRawById(resource, ctx, groupId);
     if (!raw) throw new ExplorerNotFoundError('Error Group');
 
-    const mapped = resource.mapRow(raw);
+    const mapped = projectPublicRow(resource, resource.mapRow(raw) as Record<string, unknown>);
     const fingerprint = String(raw.fingerprint ?? '');
 
     const [sample, trends] = await Promise.all([
@@ -452,33 +451,30 @@ export class ObservabilityService {
       ...mapped,
       id: raw.id,
       fingerprint: raw.fingerprint,
-      status: String(raw.status ?? 'OPEN').toLowerCase(),
+      status: String(raw.status ?? 'open').toLowerCase(),
       occurrenceCount,
-      occurrence_count: occurrenceCount,
       firstSeen,
       firstSeenAt: firstSeen,
-      first_seen_at: firstSeen,
       lastSeen,
       lastSeenAt: lastSeen,
-      last_seen_at: lastSeen,
       highestSeverity: (raw.highest_severity ?? raw.highestSeverity ?? 'error').toString().toLowerCase(),
       latestSeverity: (raw.latest_severity ?? raw.latestSeverity ?? 'error').toString().toLowerCase(),
       isRegression: Boolean(raw.is_regression ?? raw.isRegression),
       regressionCount,
       lastRegressedAt: raw.last_regressed_at ?? raw.lastRegressedAt ?? null,
-      latestRelease: raw.latest_release ?? raw.latestRelease ?? 'v1.0.0',
-      latestSdkVersion: raw.latest_sdk_version ?? raw.latestSdkVersion ?? '1.0.0',
-      latestApplicationVersion: raw.latest_application_version ?? raw.latestApplicationVersion ?? '1.0.0',
+      latestRelease: raw.latest_release ?? raw.latestRelease ?? null,
+      latestSdkVersion: raw.latest_sdk_version ?? raw.latestSdkVersion ?? null,
+      latestApplicationVersion: raw.latest_application_version ?? raw.latestApplicationVersion ?? null,
       lastErrorMessage: raw.last_error_message ?? raw.lastErrorMessage ?? '',
       lastErrorName: raw.last_error_name ?? raw.lastErrorName ?? 'Error',
-      lastStatusCode: sample?.statusCode ?? raw.last_status_code ?? raw.lastStatusCode ?? 500,
-      lastTraceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? '',
-      lastRequestId: raw.last_request_id ?? raw.lastRequestId ?? '',
+      lastStatusCode: sample?.statusCode ?? raw.last_status_code ?? raw.lastStatusCode ?? null,
+      lastTraceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? null,
+      lastRequestId: raw.last_request_id ?? raw.lastRequestId ?? null,
       isMerged: Boolean(raw.is_merged ?? raw.isMerged),
       mergedInto: raw.merged_into ?? raw.mergedInto ?? null,
       stackFrames: sample?.stackFrames ?? [],
       route: sample?.route ?? raw.route ?? '',
-      traceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? '',
+      traceId: sample?.traceId ?? raw.last_trace_id ?? raw.lastTraceId ?? null,
       trend24h: trends.trend24h,
       trend7d: trends.trend7d,
       trend30d: trends.trend30d,
@@ -509,7 +505,7 @@ export class ObservabilityService {
     const updated = await this.repository.updateErrorGroupStatus(ctx, groupId, status, actorId, comment);
     if (!updated) throw new ExplorerNotFoundError('Error Group');
     const resource = this.resource('error-groups');
-    return resource.mapRow(updated);
+    return projectPublicRow(resource, resource.mapRow(updated) as Record<string, unknown>);
   }
 
   /** Merge source error group into target error group. */
@@ -522,6 +518,6 @@ export class ObservabilityService {
     const updated = await this.repository.mergeErrorGroups(ctx, sourceGroupId, targetGroupId, actorId);
     if (!updated) throw new ExplorerNotFoundError('Error Group target or source');
     const resource = this.resource('error-groups');
-    return resource.mapRow(updated);
+    return projectPublicRow(resource, resource.mapRow(updated) as Record<string, unknown>);
   }
 }

@@ -23,6 +23,9 @@ export {
   operatorsForField,
   defaultOperatorsFor,
   buildFacets,
+  buildPublicProjection,
+  buildDetailProjection,
+  projectPublicRow,
 } from './field-registry.js';
 export { encodeCursor, decodeCursor, type CursorPayload } from './cursor.js';
 export { parseSearch, type ParsedSearch } from './search-parser.js';

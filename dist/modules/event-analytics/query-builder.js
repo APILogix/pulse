@@ -130,7 +130,7 @@ export class AnalyticsQueryBuilder {
      * expressions (already safe, server-defined — never user input).
      */
     timeSeries(bucket, extraSelects = '') {
-        const trunc = `DATE_TRUNC('${bucket}', timestamp)`;
+        const trunc = `DATE_TRUNC('${bucket}', occurred_at)`;
         const extra = extraSelects ? `, ${extraSelects}` : '';
         return {
             sql: `

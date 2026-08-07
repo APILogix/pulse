@@ -1,22 +1,34 @@
-/**
- * Stable keyset cursor. The cursor encodes the boundary row's `(time, id)`
- * tuple and the sort direction it was produced under, so forward/backward
- * paging is deterministic and index-backed on billions of rows. Cursors are
- * opaque base64url — clients must treat them as tokens.
- */
-import type { SortDirection } from './types.js';
+import type { ExplorerQuery, QueryContext, SortDirection } from './types.js';
+import type { ExplorerResource } from './field-registry.js';
 export interface CursorPayload {
+    /** Cursor format version. */
+    v: 1;
     /** ISO timestamp of the boundary row's time column. */
     t: string;
     /** Boundary row id (second key of the pagination tuple). */
     id: string;
-    /** Sort direction the cursor was built under. */
+    /** Sort field used to create the cursor. */
+    f: string;
+    /** Sort direction used to create the cursor. */
     d: SortDirection;
+    /** Registered resource name. */
+    r: string;
+    /** HMAC-bound query and tenant scope fingerprint. */
+    s: string;
+    /** Unix epoch expiry in milliseconds. */
+    e: number;
 }
+export interface CursorExpectation {
+    resource: string;
+    sortField: string;
+    sortDirection: SortDirection;
+    scope: string;
+}
+export declare function cursorScopeFingerprint(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery): string;
+export declare function createCursorPayload(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery, boundary: {
+    time: Date;
+    id: string;
+}): CursorPayload;
 export declare function encodeCursor(payload: CursorPayload): string;
-/**
- * Decode + validate a cursor. Returns a typed payload or throws a
- * {@link QueryValidationError} on any tampering/corruption (fail-closed).
- */
-export declare function decodeCursor(cursor: string): CursorPayload;
+export declare function decodeCursor(cursor: string, expected?: CursorExpectation): CursorPayload;
 //# sourceMappingURL=cursor.d.ts.map

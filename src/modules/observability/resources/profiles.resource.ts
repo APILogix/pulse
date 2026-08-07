@@ -23,7 +23,7 @@ export const profilesResource: ExplorerResource = {
   searchAliases: { ...commonSearchAliases, type: 'profileType', profile: 'profileType' },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'occurredAt', 'profileType', 'service', 'durationMs', 'requestId',
+    'id', 'environment', 'occurredAt', 'profileType', 'service', 'durationMs', 'requestId',
   ],
   preferredIndexes: ['idx_events_profiles_tenant_env_time'],
   errorPredicate: "severity IN ('error','critical','fatal')",

@@ -25,24 +25,26 @@ const FilterClauseSchema = z.object({
 });
 /** Raw, wire-level query parameters shared by every explorer list endpoint. */
 export const RawExplorerQuerySchema = z.object({
-    search: z.string().max(2000).optional(),
+    search: z.string().trim().min(1).max(2000).optional(),
     from: z.coerce.date().optional(),
     to: z.coerce.date().optional(),
     range: z.enum(['15m', '1h', '6h', '24h', '7d', '30d', '90d']).optional(),
     environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
-    projectId: z.string().uuid().optional(),
-    sort: z.string().max(128).optional(),
-    cursor: z.string().max(4096).optional(),
+    sort: z.string().trim().min(1).max(128).optional(),
+    cursor: z.string().trim().min(1).max(4096).optional(),
     direction: z.enum(['forward', 'backward']).default('forward'),
     limit: z.coerce.number().int().min(1).max(200).default(50),
-    fields: z.string().max(2000).optional(),
     filters: z.string().max(20000).optional(),
-    // z.coerce.boolean() treats the string "false" as true; parse explicitly.
-    live: z
-        .union([z.boolean(), z.enum(['true', 'false', '1', '0'])])
-        .optional()
-        .transform((v) => (v === undefined ? undefined : typeof v === 'boolean' ? v : v === 'true' || v === '1')),
-});
+}).strict();
+/** Reject tenant and projection controls before endpoint-specific handling. */
+export function assertPublicExplorerQuery(input) {
+    if (typeof input !== 'object' || input === null || Array.isArray(input))
+        return;
+    const forbidden = ['projectId', 'project_id', 'organizationId', 'organization_id', 'orgId', 'org_id', 'fields', 'live'];
+    const found = forbidden.find((key) => Object.prototype.hasOwnProperty.call(input, key));
+    if (found)
+        throw new QueryValidationError(`Query parameter '${found}' is not supported`);
+}
 /** Resolve explicit from/to or a named range into a concrete window. */
 export function resolveTimeRange(raw) {
     const to = raw.to ?? new Date();
@@ -81,18 +83,13 @@ function parseFilters(raw) {
     }
     return result.data.map((c) => (c.value === undefined ? { field: c.field, op: c.op } : { field: c.field, op: c.op, value: c.value }));
 }
-function splitCsv(raw) {
-    if (!raw)
-        return undefined;
-    const parts = raw.split(',').map((p) => p.trim()).filter((p) => p.length > 0);
-    return parts.length > 0 ? parts : undefined;
-}
 /**
  * Build a validated {@link ExplorerQuery} from raw request query params.
  * `defaultSort` comes from the resource so each explorer keeps its natural
  * ordering (usually time DESC).
  */
 export function buildExplorerQuery(rawInput, defaultSort) {
+    assertPublicExplorerQuery(rawInput);
     const parsed = RawExplorerQuerySchema.safeParse(rawInput ?? {});
     if (!parsed.success) {
         throw new QueryValidationError('Invalid explorer query', { issues: parsed.error.issues });
@@ -107,7 +104,6 @@ export function buildExplorerQuery(rawInput, defaultSort) {
         timeInput.range = raw.range;
     const timeRange = resolveTimeRange(timeInput);
     const sort = parseSort(raw.sort, defaultSort);
-    const fields = splitCsv(raw.fields);
     const direction = raw.direction;
     const query = {
         timeRange,
@@ -115,18 +111,13 @@ export function buildExplorerQuery(rawInput, defaultSort) {
         sort,
         direction,
         limit: raw.limit,
-        live: raw.live ?? false,
     };
     if (raw.search !== undefined)
         query.search = raw.search;
-    if (raw.projectId !== undefined)
-        query.projectId = raw.projectId;
     if (raw.environment !== undefined)
         query.environment = raw.environment;
     if (raw.cursor !== undefined)
         query.cursor = raw.cursor;
-    if (fields !== undefined)
-        query.fields = fields;
     return query;
 }
 //# sourceMappingURL=query-schema.js.map

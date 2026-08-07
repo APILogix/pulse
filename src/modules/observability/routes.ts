@@ -50,6 +50,7 @@ export function buildObservabilityRoutes(controller: ObservabilityController) {
     // ── Discovery / navigation ──────────────────────────────────────
     fastify.get('/navigation', guard, wrap(controller.navigation));
     fastify.get('/resources', guard, wrap(controller.resources));
+    fastify.get('/releases', guard, wrap(controller.releases));
 
     // ── Dedicated Error Groups API ─────────────────────────────────
     fastify.get('/error-groups', guard, wrap(controller.errorGroupList));

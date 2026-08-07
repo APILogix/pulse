@@ -30,7 +30,7 @@ export function windowInterval(window) {
  * docs/analytics/07-rollup-tables.md §1.
  */
 export function buildBucketRecomputeSql(options) {
-    const { source, timeColumn = 'timestamp', ingestColumn = 'ingested_at', window, where, entityKeyExpr, entityLabelExpr, aggregates, columns, includeSentinelRows = true, } = options;
+    const { source, timeColumn = 'occurred_at', ingestColumn = 'ingested_at', window, where, entityKeyExpr, entityLabelExpr, aggregates, columns, includeSentinelRows = true, } = options;
     const bucket = bucketExpression(`e.${timeColumn}`, window);
     const baseWhere = [
         'e.organization_id = $1',
@@ -113,7 +113,7 @@ async function countSlice(pool, params) {
  */
 export async function runRollupWorker(ctx, job, watermarks, params) {
     const { pool, logger, now, config } = ctx;
-    const timeColumn = params.sizingTimeColumn ?? 'timestamp';
+    const timeColumn = params.sizingTimeColumn ?? 'occurred_at';
     const ingestColumn = params.sizingIngestColumn ?? 'ingested_at';
     const watermark = await watermarks.acquire(params.workerId, job.orgId, params.window, now);
     const spanMinutes = AnalyticsWatermarkRepository.effectiveSpanMinutes(Math.min(params.maxSpanMinutes, config.maxWindowSpanMinutes), watermark.consecutiveFailures);

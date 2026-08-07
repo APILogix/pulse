@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { QueryContext } from './query-engine/index.js';
 import type { ObservabilityService } from './service.js';
 import type { ObservabilityContextResolver } from './context.js';
+import type { ObservabilityReleasesRepository } from './releases.repository.js';
 import { AI_INTENT_VALUES } from './ai/context-assembler.js';
 import { streamPoll } from './live/sse.js';
 
@@ -16,8 +17,7 @@ const ResourceParams = z.object({ orgId: z.string().uuid(), resource: z.string()
 const IdParams = ResourceParams.extend({ id: z.string().min(1).max(128) });
 const RelatedParams = IdParams.extend({ relation: z.string().min(1).max(40) });
 const ScopeQuery = z.object({
-  projectId: z.string().uuid().optional(),
-  environment: z.string().trim().min(1).max(64).optional(),
+  environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
 });
 const TimelineQuery = z.object({ interval: z.enum(['minute', 'hour', 'day']).default('hour') });
 const AskBody = z.object({
@@ -52,6 +52,7 @@ export class ObservabilityController {
   constructor(
     private readonly service: ObservabilityService,
     private readonly resolver: ObservabilityContextResolver,
+    private readonly releasesRepository: ObservabilityReleasesRepository,
   ) {}
 
   /** Resolve the tenant/permission context for a request. */
@@ -62,10 +63,14 @@ export class ObservabilityController {
     return this.resolver.resolve({
       organizationId: orgId,
       userId,
-      projectId: scope.projectId,
       environment: scope.environment,
     });
   }
+
+  releases = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const ctx = await this.context(request);
+    return reply.send(await this.releasesRepository.list(ctx, request.query ?? {}));
+  };
 
   navigation = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
     OrgParams.parse(request.params);

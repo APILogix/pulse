@@ -26,7 +26,7 @@ const cronFields = {
 export const cronsResource = {
     name: 'crons',
     table: 'events_cron_checkins',
-    timeColumn: 'occurredAt',
+    timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: cronFields,
     searchFields: ['monitorSlug', 'monitorName', 'service'],
@@ -41,7 +41,7 @@ export const cronsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'occurredAt',
+        'id', 'environment', 'occurredAt',
         'monitorSlug', 'monitorName', 'status', 'isSuccess',
         'durationMs', 'checkinType', 'service',
         'requestId', 'traceId',

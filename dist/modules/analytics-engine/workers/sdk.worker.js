@@ -51,8 +51,8 @@ export function createSdkWorker(watermarks) {
             AGG.count(),
             AGG.filterCount('e.status_code >= 500'),
             'COUNT(DISTINCT e.project_id)::int',
-            'MIN(e.timestamp)',
-            'MAX(e.timestamp)',
+            'MIN(e.occurred_at)',
+            'MAX(e.occurred_at)',
             AGG.count(),
         ],
     }, watermarks);

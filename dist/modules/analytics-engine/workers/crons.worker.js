@@ -80,8 +80,8 @@ export function createCronsWorker(watermarks) {
                             AGG.filterCount(`${STATUS} IN ('in_progress','running')`),
                             // Missed runs are a state-table concern (needs cross-bucket history).
                             '0::bigint',
-                            `(ARRAY_AGG(${STATUS} ORDER BY e.timestamp DESC))[1]`,
-                            'MAX(e.timestamp)',
+                            `(ARRAY_AGG(${STATUS} ORDER BY e.occurred_at DESC))[1]`,
+                            'MAX(e.occurred_at)',
                             AGG.sum('e.duration_ms'),
                             AGG.max('e.duration_ms'),
                             AGG.percentile('e.duration_ms', 0.5),
@@ -107,19 +107,19 @@ export function createCronsWorker(watermarks) {
             WITH recent AS (
               SELECT e.organization_id, e.project_id, e.environment,
                      ${MONITOR} AS monitor_slug,
-                     e.timestamp, ${STATUS} AS status, e.duration_ms,
+                     e.occurred_at, ${STATUS} AS status, e.duration_ms,
                      ROW_NUMBER() OVER (
                        PARTITION BY e.organization_id, e.project_id, e.environment, ${MONITOR}
-                       ORDER BY e.timestamp DESC
+                       ORDER BY e.occurred_at DESC
                      ) AS rn,
-                     LAG(e.timestamp) OVER (
+                     LAG(e.occurred_at) OVER (
                        PARTITION BY e.organization_id, e.project_id, e.environment, ${MONITOR}
-                       ORDER BY e.timestamp
+                       ORDER BY e.occurred_at
                      ) AS prev_at
                 FROM ${SOURCE} e
                WHERE e.organization_id = $1
                  AND e.project_id IS NOT NULL
-                 AND e.timestamp >= $4 - INTERVAL '7 days'
+                 AND e.occurred_at >= $4 - INTERVAL '7 days'
                  AND ${MONITOR} IN (
                    SELECT DISTINCT ${MONITOR}
                      FROM ${SOURCE} e
@@ -131,7 +131,7 @@ export function createCronsWorker(watermarks) {
             gaps AS (
               SELECT organization_id, project_id, environment, monitor_slug,
                      PERCENTILE_CONT(0.5) WITHIN GROUP (
-                       ORDER BY EXTRACT(EPOCH FROM (timestamp - prev_at))
+                       ORDER BY EXTRACT(EPOCH FROM (occurred_at - prev_at))
                      ) AS median_gap_seconds
                 FROM windowed
                WHERE prev_at IS NOT NULL
@@ -139,7 +139,7 @@ export function createCronsWorker(watermarks) {
             ),
             latest AS (
               SELECT organization_id, project_id, environment, monitor_slug,
-                     status, timestamp AS last_checkin_at, duration_ms
+                     status, occurred_at AS last_checkin_at, duration_ms
                 FROM windowed
                WHERE rn = 1
             ),

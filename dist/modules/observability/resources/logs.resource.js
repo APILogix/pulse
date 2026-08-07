@@ -30,7 +30,7 @@ const logFields = {
 export const logsResource = {
     name: 'logs',
     table: 'events_logs',
-    timeColumn: 'occurredAt',
+    timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: logFields,
     searchFields: ['message', 'logger', 'loggerName', 'name', 'endpoint', 'service'],
@@ -47,7 +47,7 @@ export const logsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'projectId', 'environment', 'occurredAt', 'level', 'name', 'message',
+        'id', 'environment', 'occurredAt', 'level', 'name', 'message',
         'logCategory', 'endpoint', 'statusCode', 'durationMs',
         'service', 'traceId', 'requestId',
     ],

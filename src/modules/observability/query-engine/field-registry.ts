@@ -38,6 +38,16 @@ export interface FieldDef {
  * A telemetry resource an explorer queries. `mapRow` shapes a raw DB row into
  * the API model; everything else is metadata the engine consumes.
  */
+const INTERNAL_FIELD_NAMES = new Set([
+  'organizationId', 'projectId', 'tenantId', 'apiKeyName', 'userId',
+  'userEmail', 'userIp', 'clientIp', 'clientIpHash', 'netHostIp', 'netPeerIp',
+  'ingestedAt', 'createdAt', 'attributes', 'metadata', 'payload', 'aiResponse', 'profileData',
+]);
+
+export function isPublicField(name: string, def: FieldDef): boolean {
+  return def.projectable !== false && !INTERNAL_FIELD_NAMES.has(name);
+}
+
 export interface ExplorerResource<TRow = Record<string, unknown>> {
   /** Stable public name, e.g. `requests`. */
   name: string;
@@ -162,7 +172,7 @@ export function operatorsForField(def: FieldDef): FilterOperator[] {
 export function buildFacets(resource: ExplorerResource): FacetDef[] {
   const facets: FacetDef[] = [];
   for (const [name, def] of Object.entries(resource.fields)) {
-    if (def.filterable === false) continue;
+    if (def.filterable === false || !isPublicField(name, def)) continue;
     const facet: FacetDef = {
       field: name,
       label: def.label ?? name,
@@ -173,6 +183,56 @@ export function buildFacets(resource: ExplorerResource): FacetDef[] {
     facets.push(facet);
   }
   return facets;
+}
+
+/** Build a server-owned public projection for a resource. */
+export function buildPublicProjection(resource: ExplorerResource): string {
+  const names = resource.defaultProjection?.length
+    ? resource.defaultProjection.filter((name) => {
+      const def = resource.fields[name];
+      return def !== undefined && isPublicField(name, def);
+    })
+    : Object.entries(resource.fields)
+      .filter(([name, def]) => isPublicField(name, def))
+      .map(([name]) => name);
+
+  return names.map((name) => {
+    const def = resource.fields[name];
+    if (!def || !IDENT_RE.test(def.column) || name.includes('"')) {
+      throw new QueryValidationError(`Invalid public projection field '${name}'`);
+    }
+    return `${def.selectExpr ?? def.column} AS "${name}"`;
+  }).join(', ');
+}
+
+/** Build an explicit detail projection including server-only correlation data. */
+export function buildDetailProjection(resource: ExplorerResource): string {
+  const columns = new Set<string>();
+  for (const def of Object.values(resource.fields)) {
+    if (IDENT_RE.test(def.column)) columns.add(def.column);
+  }
+  columns.add(resource.idColumn);
+  columns.add(resource.timeColumn);
+
+  const physical = [...columns].map((column) => `${column} AS "${column}"`);
+  const publicFields = Object.entries(resource.fields)
+    .filter(([name, def]) => isPublicField(name, def))
+    .filter(([name, def]) => name !== def.column && !name.includes('"'))
+    .map(([name, def]) => `${def.selectExpr ?? def.column} AS "${name}"`);
+  return [...physical, ...publicFields].join(', ');
+}
+
+/** Redact a raw detail row down to the resource's public fields. */
+export function projectPublicRow(
+  resource: ExplorerResource,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(resource.fields)) {
+    if (!isPublicField(name, def)) continue;
+    if (Object.prototype.hasOwnProperty.call(row, name)) projected[name] = row[name];
+  }
+  return projected;
 }
 
 /** Registry of all explorer resources. Fail-closed lookup. */

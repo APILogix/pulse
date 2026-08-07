@@ -3,7 +3,7 @@
  * logged and swallowed so a transient DB blip does not kill the stream.
  */
 export async function streamPoll(request, reply, options) {
-    const timeField = options.timeField ?? 'timestamp';
+    const timeField = options.timeField ?? 'occurred_at';
     const heartbeatMs = options.heartbeatMs ?? 15_000;
     // Take over the response: Fastify will not try to send its own reply.
     reply.hijack();

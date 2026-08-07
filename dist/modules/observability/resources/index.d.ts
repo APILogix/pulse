@@ -12,6 +12,7 @@ import { spansResource } from './spans.resource.js';
 import { metricsResource } from './metrics.resource.js';
 import { cronsResource } from './crons.resource.js';
 import { profilesResource } from './profiles.resource.js';
+import { errorGroupsResource } from './error-groups.resource.js';
 export declare const explorerRegistry: ResourceRegistry;
-export { requestsResource, errorsResource, logsResource, tracesResource, spansResource, metricsResource, cronsResource, profilesResource, };
+export { requestsResource, errorsResource, logsResource, tracesResource, spansResource, metricsResource, cronsResource, profilesResource, errorGroupsResource, };
 //# sourceMappingURL=index.d.ts.map

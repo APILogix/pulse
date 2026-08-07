@@ -6,44 +6,44 @@ import { logDB } from "../../config/log-database.js";
  * restoring the removed generic events/request_events/error_events schema.
  */
 const UNIFIED_EVENTS_SQL = `
-  SELECT id,event_id,'error'::text AS type,project_id,environment,timestamp,
+  SELECT id,event_id,'error'::text AS type,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text AS method,NULL::text AS url,
          NULL::numeric AS latency_ms,message,error_name,service,trace_id,user_id
     FROM events_errors
   UNION ALL
-  SELECT id,event_id,'request'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'request'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,method,url,latency_ms,message,NULL::text,service,trace_id,user_id
     FROM events_requests
   UNION ALL
-  SELECT id,event_id,'log'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'log'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_logs
   UNION ALL
-  SELECT id,event_id,'metric'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'metric'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_metrics
   UNION ALL
-  SELECT id,event_id,'span'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'span'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_spans
   UNION ALL
-  SELECT id,event_id,'trace'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'trace'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_traces
   UNION ALL
-  SELECT id,event_id,'message'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'message'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_messages
   UNION ALL
-  SELECT id,event_id,'profile'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'profile'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_profiles
   UNION ALL
-  SELECT id,event_id,'replay'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'replay'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_replays
   UNION ALL
-  SELECT id,event_id,'cron_checkin'::text,project_id,environment,timestamp,
+  SELECT id,event_id,'cron_checkin'::text,project_id,environment,occurred_at AS timestamp,
          payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
     FROM events_cron_checkins
 `;
@@ -56,7 +56,7 @@ export class AnalyticsRepository {
     async listEvents(projectId, query) {
         const limit = this.clampLimit(query.limit);
         const params = [projectId, query.from, query.to];
-        const where = ["e.project_id = $1", "e.timestamp BETWEEN $2 AND $3"];
+        const where = ["e.project_id = $1", "e.occurred_at BETWEEN $2 AND $3"];
         let index = params.length;
         if (query.environment) {
             params.push(query.environment);
@@ -86,7 +86,7 @@ export class AnalyticsRepository {
         if (cursor) {
             params.push(cursor.timestamp, cursor.id);
             const operator = query.sort === "asc" ? ">" : "<";
-            where.push(`(e.timestamp,e.id) ${operator} ($${++index},$${++index})`);
+            where.push(`(e.occurred_at,e.id) ${operator} ($${++index},$${++index})`);
         }
         params.push(limit + 1);
         const limitParam = ++index;
@@ -95,12 +95,12 @@ export class AnalyticsRepository {
         return this.withProjectContext(projectId, async (client) => {
             const startedAt = Date.now();
             const result = await client.query(`WITH unified_events AS (${UNIFIED_EVENTS_SQL})
-         SELECT e.id,e.event_id,e.type,e.environment,e.timestamp,e.method,e.url,
+         SELECT e.id,e.event_id,e.type,e.environment,e.occurred_at,e.method,e.url,
                 e.status_code,e.latency_ms,e.service,e.trace_id,
                 (e.type='error' OR COALESCE(e.status_code,0) >= 500) AS has_error
            FROM unified_events e
           WHERE ${whereSql}
-          ORDER BY e.timestamp ${order},e.id ${order}
+          ORDER BY e.occurred_at ${order},e.id ${order}
           LIMIT $${limitParam}`, params);
             const hasMore = result.rows.length > limit;
             const rows = result.rows.slice(0, limit);
@@ -121,7 +121,7 @@ export class AnalyticsRepository {
                     hasError: row.has_error,
                 })),
                 hasMore,
-                nextCursor: hasMore && last ? this.encodeCursor(last.timestamp, last.id) : null,
+                nextCursor: hasMore && last ? this.encodeCursor(last.occurred_at, last.id) : null,
                 queryTimeMs: Date.now() - startedAt,
             };
         });
@@ -139,22 +139,22 @@ export class AnalyticsRepository {
             const environment = typeof row.environment === "string" ? row.environment : null;
             let trace = [];
             if (traceId && environment) {
-                const related = await client.query(`SELECT 'trace'::text AS type,to_jsonb(t) AS details,t.timestamp
+                const related = await client.query(`SELECT 'trace'::text AS type,to_jsonb(t) AS details,t.occurred_at
              FROM events_traces t
             WHERE t.project_id=$1 AND t.trace_id=$2 AND t.environment=$3
            UNION ALL
-           SELECT 'span'::text,to_jsonb(s),s.timestamp
+           SELECT 'span'::text,to_jsonb(s),s.occurred_at
              FROM events_spans s
             WHERE s.project_id=$1 AND s.trace_id=$2 AND s.environment=$3
            UNION ALL
-           SELECT 'request'::text,to_jsonb(r),r.timestamp
+           SELECT 'request'::text,to_jsonb(r),r.occurred_at
              FROM events_requests r
             WHERE r.project_id=$1 AND r.trace_id=$2 AND r.environment=$3
            UNION ALL
-           SELECT 'error'::text,to_jsonb(e),e.timestamp
+           SELECT 'error'::text,to_jsonb(e),e.occurred_at
              FROM events_errors e
             WHERE e.project_id=$1 AND e.trace_id=$2 AND e.environment=$3
-           ORDER BY timestamp ASC`, [projectId, traceId, environment]);
+           ORDER BY occurred_at ASC`, [projectId, traceId, environment]);
                 trace = related.rows.map((relatedRow) => ({
                     type: relatedRow.type,
                     ...relatedRow.details,
@@ -178,7 +178,7 @@ export class AnalyticsRepository {
          'unique_users',COUNT(DISTINCT user_id)
        ) AS data
        FROM events_requests
-       WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+       WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
          AND ($4::text IS NULL OR environment=$4)`, [projectId, range.from, range.to, range.environment ?? null]);
     }
     async getDashboard(projectId, range) {
@@ -192,7 +192,7 @@ export class AnalyticsRepository {
              'error_rate_pct',COALESCE(ROUND(COUNT(*) FILTER (WHERE status_code >= 500) * 100.0 / NULLIF(COUNT(*),0),2),0)
            ) AS data
            FROM events_requests
-           WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+           WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
              AND ($4::text IS NULL OR environment=$4)`, params),
                 this.queryData(client, `SELECT jsonb_build_object(
              'total',COALESCE(SUM(total_count),0),
@@ -206,7 +206,7 @@ export class AnalyticsRepository {
                   url,method,COUNT(*)::int AS requests,
                   COALESCE(ROUND(AVG(latency_ms)),0)::int AS avg_latency_ms
              FROM events_requests
-            WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+            WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
               AND ($4::text IS NULL OR environment=$4) AND url IS NOT NULL
             GROUP BY url,method ORDER BY requests DESC LIMIT 10`, params),
                 this.queryRows(client, `SELECT fingerprint,error_name,message_template AS last_message,
@@ -223,7 +223,7 @@ export class AnalyticsRepository {
              '5xx',COUNT(*) FILTER (WHERE status_code >= 500)
            ) AS data
            FROM events_requests
-           WHERE project_id=$1 AND timestamp BETWEEN $2 AND $3
+           WHERE project_id=$1 AND occurred_at BETWEEN $2 AND $3
              AND ($4::text IS NULL OR environment=$4)`, params),
             ]);
             return {

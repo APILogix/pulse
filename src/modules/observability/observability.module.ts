@@ -15,6 +15,7 @@ import { aiConfig } from '../../config/ai.js';
 import { OpenAIProvider, type AIProvider } from '../ai/openai-client.js';
 
 import { ObservabilityRepository } from './repository.js';
+import { ObservabilityReleasesRepository } from './releases.repository.js';
 import { ObservabilityContextResolver } from './context.js';
 import { CorrelationEngine } from './correlation/engine.js';
 import { AIInvestigator } from './ai/investigator.js';
@@ -38,6 +39,7 @@ async function observabilityModule(
   _options: FastifyPluginOptions,
 ): Promise<void> {
   const repository = new ObservabilityRepository();
+  const releases = new ObservabilityReleasesRepository(pool);
   const correlation = new CorrelationEngine(repository);
 
   // Only construct the AI provider when explicitly enabled; otherwise the
@@ -47,7 +49,7 @@ async function observabilityModule(
 
   const service = new ObservabilityService(repository, correlation, investigator);
   const resolver = new ObservabilityContextResolver(pool);
-  const controller = new ObservabilityController(service, resolver);
+  const controller = new ObservabilityController(service, resolver, releases);
 
   fastify.decorate('observability', { service, controller });
 

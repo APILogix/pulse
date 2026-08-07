@@ -18,9 +18,9 @@ import type {
   TimelineBucket,
 } from './types.js';
 import type { ExplorerResource } from './field-registry.js';
-import { buildFacets, operatorsForField } from './field-registry.js';
+import { buildFacets, buildPublicProjection, isPublicField, operatorsForField } from './field-registry.js';
 import { parseSearch } from './search-parser.js';
-import { encodeCursor } from './cursor.js';
+import { createCursorPayload, encodeCursor } from './cursor.js';
 import {
   buildListStatement,
   buildStatisticsStatement,
@@ -70,10 +70,19 @@ function toNullableNumberMap(row: Record<string, unknown> | undefined): Record<s
   return out;
 }
 
-function rowCursor(row: Record<string, unknown>, dir: SortDirection): string {
-  const t = row.__t;
-  const iso = t instanceof Date ? t.toISOString() : new Date(String(t)).toISOString();
-  return encodeCursor({ t: iso, id: String(row.__id), d: dir });
+function rowCursor(
+  row: Record<string, unknown>,
+  resource: ExplorerResource,
+  ctx: QueryContext,
+  query: ExplorerQuery,
+): string {
+  const rawTime = row.__t;
+  const time = rawTime instanceof Date ? rawTime : new Date(String(rawTime));
+  if (Number.isNaN(time.getTime())) throw new QueryValidationError('Query returned an invalid pagination timestamp');
+  return encodeCursor(createCursorPayload(resource, ctx, query, {
+    time,
+    id: String(row.__id),
+  }));
 }
 
 export class ExplorerQueryEngine {
@@ -90,15 +99,19 @@ export class ExplorerQueryEngine {
     for (const clause of filters) {
       // JSON path fields (attr:foo) are validated at resolve time; registered
       // fields also get an operator allow-list check here.
-      if (!clause.field.includes(':')) {
+      if (clause.field.includes(':')) {
+        throw new QueryValidationError(`JSON path filters are not supported for '${resource.name}'`);
+      }
+
+      {
         const def = resource.fields[clause.field];
         if (!def) {
           throw new QueryValidationError(`Unknown filter field '${clause.field}' for '${resource.name}'`, {
             field: clause.field,
           });
         }
-        if (def.filterable === false) {
-          throw new QueryValidationError(`Field '${clause.field}' is not filterable`);
+        if (def.filterable === false || !isPublicField(clause.field, def)) {
+          throw new QueryValidationError(`Field '${clause.field}' is not publicly filterable`);
         }
         if (!operatorsForField(def).includes(clause.op)) {
           throw new QueryValidationError(`Operator '${clause.op}' not allowed for field '${clause.field}'`);
@@ -106,13 +119,29 @@ export class ExplorerQueryEngine {
       }
     }
 
-    // Sort must target a sortable field (or the time column).
-    const sortField = query.sort.field;
-    if (sortField !== resource.timeColumn) {
-      const def = resource.fields[sortField];
-      if (def && def.sortable === false) {
-        throw new QueryValidationError(`Field '${sortField}' is not sortable`);
+    if (filters.length > 50) {
+      throw new QueryValidationError('A maximum of 50 filters is supported');
+    }
+
+    for (const clause of filters) {
+      if (Array.isArray(clause.value) && clause.value.length > 50) {
+        throw new QueryValidationError(`Filter '${clause.field}' has too many values`);
       }
+    }
+
+    if (parsed.text.length > 5) {
+      throw new QueryValidationError('A maximum of 5 search terms is supported');
+    }
+    if (parsed.text.some((term) => term.trim().length > 0 && term.trim().length < 3)) {
+      throw new QueryValidationError('Search terms must contain at least 3 characters');
+    }
+
+    const sortField = query.sort.field;
+    const sortDef = resource.fields[sortField];
+    const isTimeSort = sortField === resource.timeColumn
+      || sortDef?.column === resource.timeColumn;
+    if (!isTimeSort) {
+      throw new QueryValidationError(`Only time sorting is supported for keyset pagination; received '${sortField}'`);
     }
 
     return { query: { ...query, filters }, freeText: parsed.text };
@@ -141,7 +170,7 @@ export class ExplorerQueryEngine {
         : Promise.resolve<Record<string, unknown>[]>([]),
     ]);
 
-    const pagination = this.paginate(rawRows, listStmt.reversed, listStmt.limit, query);
+    const pagination = this.paginate(rawRows, listStmt.reversed, listStmt.limit, query, queryResource, ctx);
     const pageRows = pagination.rows;
     const items = pageRows.map((row) => resource.mapRow(row));
 
@@ -170,6 +199,8 @@ export class ExplorerQueryEngine {
     reversed: boolean,
     limit: number,
     query: ExplorerQuery,
+    resource: ExplorerResource,
+    ctx: QueryContext,
   ): { rows: Array<Record<string, unknown>>; meta: PaginationMeta } {
     const hasMore = rawRows.length > limit;
     let rows = hasMore ? rawRows.slice(0, limit) : rawRows.slice();
@@ -184,8 +215,8 @@ export class ExplorerQueryEngine {
     const hasPrevious = backward ? hasMore : Boolean(query.cursor);
 
     const meta: PaginationMeta = {
-      nextCursor: hasNext && last ? rowCursor(last, sortDir) : null,
-      previousCursor: hasPrevious && first ? rowCursor(first, sortDir) : null,
+      nextCursor: hasNext && last ? rowCursor(last, resource, ctx, query) : null,
+      previousCursor: hasPrevious && first ? rowCursor(first, resource, ctx, query) : null,
       hasNext,
       hasPrevious,
       limit,
@@ -241,11 +272,17 @@ export class ExplorerQueryEngine {
     if (!/^[a-z_][a-z0-9_]*$/i.test(resource.idColumn)) {
       throw new QueryValidationError('Invalid id column');
     }
+    const queryResource = resource as ExplorerResource<Record<string, unknown>>;
     const params: unknown[] = [ctx.organizationId, id];
-    let sql = `SELECT * FROM ${resource.table} WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
+    let sql = `SELECT ${buildPublicProjection(queryResource)} FROM ${resource.table}
+               WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
     if (ctx.projectId) {
       params.push(ctx.projectId);
       sql += ` AND project_id = $${params.length}`;
+    } else if (ctx.allowedProjectIds !== undefined) {
+      if (ctx.allowedProjectIds.length === 0) return null;
+      params.push(ctx.allowedProjectIds);
+      sql += ` AND project_id = ANY($${params.length})`;
     }
     sql += ` LIMIT 1`;
     const rows = await this.executor.run<Record<string, unknown>>(sql, params);

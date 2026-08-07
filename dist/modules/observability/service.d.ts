@@ -77,6 +77,19 @@ export declare class ObservabilityService {
      */
     askList(name: string, ctx: QueryContext, rawQuery: unknown, intent: AIIntent, question?: string): Promise<AIInvestigationResult>;
     /**
+     * Bulk AI investigation for a selected array of row IDs or filtered result set.
+     */
+    analyzeBulk(name: string, ctx: QueryContext, body: {
+        selectionMode?: 'selected' | 'filtered' | undefined;
+        selectedIds?: string[] | undefined;
+        selectAll?: boolean | undefined;
+        filters?: Record<string, unknown> | undefined;
+        search?: string | undefined;
+        timeRange?: unknown;
+        prompt?: string | undefined;
+        intent?: AIIntent | undefined;
+    }): Promise<AIInvestigationResult>;
+    /**
      * Detail timeline: occurrence trend for the event's natural group key over a
      * bounded window around the event. Errors group by fingerprint, requests by
      * route; other resources return an empty trend (their detail is point-in-time).
@@ -85,5 +98,17 @@ export declare class ObservabilityService {
     private groupFilter;
     /** Sidebar / information architecture (Phase 1). */
     getNavigation(): NavNode[];
+    /**
+     * Rich detail for an Error Group including latest stack frames and trends (24h, 7d, 30d).
+     */
+    getErrorGroupFullDetail(ctx: QueryContext, groupId: string): Promise<Record<string, unknown>>;
+    /** Fetch audit timeline history for an error group. */
+    getErrorGroupHistory(ctx: QueryContext, groupId: string): Promise<Array<Record<string, unknown>>>;
+    /** Fetch related telemetry error events for an error group. */
+    getErrorGroupEvents(ctx: QueryContext, groupId: string, limit?: number): Promise<Array<Record<string, unknown>>>;
+    /** Update error group status with audit logging. */
+    updateErrorGroupStatus(ctx: QueryContext, groupId: string, status: string, comment?: string): Promise<Record<string, unknown>>;
+    /** Merge source error group into target error group. */
+    mergeErrorGroup(ctx: QueryContext, sourceGroupId: string, targetGroupId: string): Promise<Record<string, unknown>>;
 }
 //# sourceMappingURL=service.d.ts.map

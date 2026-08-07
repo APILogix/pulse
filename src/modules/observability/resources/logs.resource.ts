@@ -33,6 +33,10 @@ const logFields: Record<string, FieldDef> = {
   tenantId:    { column: 'tenant_id',    type: 'string',  filterable: true, projectable: true, label: 'Tenant ID' },
   // ── User ─────────────────────────────────────────────────────────────────────
   userIp:      { column: 'user_ip',      selectExpr: 'user_ip::text', type: 'string', filterable: true, projectable: true, label: 'User IP' },
+  // ── Project ──────────────────────────────────────────────────────────────────
+  project:     { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_logs.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
+  projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_logs.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
+  projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_logs.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
 };
 
 export const logsResource: ExplorerResource = {
@@ -55,7 +59,7 @@ export const logsResource: ExplorerResource = {
   },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'projectId', 'environment', 'occurredAt', 'level', 'name', 'message',
+    'id', 'environment', 'occurredAt', 'level', 'name', 'message',
     'logCategory', 'endpoint', 'statusCode', 'durationMs',
     'service', 'traceId', 'requestId',
   ],

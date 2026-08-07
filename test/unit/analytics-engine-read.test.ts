@@ -323,8 +323,8 @@ describe('analytics v2 — architectural invariants', () => {
     // Strip comments so documentation references to events_* do not trip the check.
     const withoutComments = source
       .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
       .split('\n')
-      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
       .join('\n');
 
     expect(withoutComments).not.toMatch(/FROM\s+events_/i);
@@ -336,9 +336,12 @@ describe('analytics v2 — architectural invariants', () => {
       new URL('../../src/modules/analytics-engine/read/dashboard.repository.ts', import.meta.url),
     );
     const source = await readFile(path, 'utf8');
+    const withoutComments = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
 
     // Capture both literal table names and template-interpolated ones.
-    const referenced = [...source.matchAll(/\bFROM\s+(\$\{)?([a-z_][a-z0-9_]*)/gi)]
+    const referenced = [...withoutComments.matchAll(/\bFROM\s+(\$\{)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[2])
       .filter((name): name is string => Boolean(name));
 

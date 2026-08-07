@@ -21,7 +21,6 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
         "90d": "90d";
     }>>;
     environment: z.ZodOptional<z.ZodString>;
-    projectId: z.ZodOptional<z.ZodString>;
     sort: z.ZodOptional<z.ZodString>;
     cursor: z.ZodOptional<z.ZodString>;
     direction: z.ZodDefault<z.ZodEnum<{
@@ -29,15 +28,10 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
         backward: "backward";
     }>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
-    fields: z.ZodOptional<z.ZodString>;
     filters: z.ZodOptional<z.ZodString>;
-    live: z.ZodPipe<z.ZodOptional<z.ZodUnion<readonly [z.ZodBoolean, z.ZodEnum<{
-        0: "0";
-        1: "1";
-        true: "true";
-        false: "false";
-    }>]>>, z.ZodTransform<boolean | undefined, boolean | "0" | "1" | "true" | "false" | undefined>>;
-}, z.core.$strip>;
+}, z.core.$strict>;
+/** Reject tenant and projection controls before endpoint-specific handling. */
+export declare function assertPublicExplorerQuery(input: unknown): void;
 export type RawExplorerQuery = z.infer<typeof RawExplorerQuerySchema>;
 /** Resolve explicit from/to or a named range into a concrete window. */
 export declare function resolveTimeRange(raw: {
