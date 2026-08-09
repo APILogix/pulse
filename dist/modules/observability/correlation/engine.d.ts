@@ -11,6 +11,7 @@ import type { QueryContext } from '../query-engine/index.js';
 import type { ObservabilityRepository } from '../repository.js';
 export interface CorrelationKeys {
     traceId: string | null;
+    tracePublicId?: string | null;
     requestId: string | null;
     spanId: string | null;
     sessionId: string | null;

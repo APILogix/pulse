@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import type { ErrorGroup, CreateErrorGroupParams } from '../models/error-group.model.ts';
+import type { ErrorGroup, ErrorGroupStatus, CreateErrorGroupParams } from '../models/error-group.model.js';
 export interface SnapshotParams {
     message?: string;
     errorName?: string;
@@ -8,26 +8,30 @@ export interface SnapshotParams {
     requestId?: string;
 }
 export type UpsertErrorGroupParams = CreateErrorGroupParams & SnapshotParams;
+export interface GroupMutationResult {
+    id: string;
+    isNew: boolean;
+    status: ErrorGroupStatus;
+    isRegression: boolean;
+    regressionCount?: number;
+}
 export declare class ErrorGroupRepository {
     private readonly pool;
     constructor(pool: Pool);
-    /**
-     * Atomically upserts an error group based on (project_id, fingerprint).
-     * It handles group creation and updating statistics on repeat occurrences,
-     * as well as regression detection (moving RESOLVED back to REGRESSED).
-     */
-    upsertGroup(client: PoolClient, params: UpsertErrorGroupParams): Promise<{
-        id: string;
-        isNew: boolean;
-        status: string;
-        isRegression: boolean;
-    }>;
+    upsertGroup(client: PoolClient, params: UpsertErrorGroupParams): Promise<GroupMutationResult>;
+    private updateExistingGroup;
+    private lockByFingerprint;
+    private resolveEffectiveGroup;
+    private isNewer;
+    private insertHistory;
+    private insertRegressionOutbox;
     findByFingerprint(projectId: string, fingerprint: string): Promise<ErrorGroup | null>;
-    resolve(client: PoolClient, projectId: string, id: string): Promise<void>;
+    resolve(client: PoolClient, projectId: string, id: string, release?: string | null): Promise<void>;
     ignore(client: PoolClient, projectId: string, id: string): Promise<void>;
     reopen(client: PoolClient, projectId: string, id: string): Promise<void>;
     archive(client: PoolClient, projectId: string, id: string): Promise<void>;
-    assign(client: PoolClient, projectId: string, id: string, userId: string): Promise<void>;
+    private updateStatus;
+    assign(_client: PoolClient, _projectId: string, _id: string, _userId: string): Promise<void>;
     private mapToDomain;
 }
 //# sourceMappingURL=error-group.repository.d.ts.map

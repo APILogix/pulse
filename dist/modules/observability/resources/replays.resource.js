@@ -1,6 +1,7 @@
 import { makeMapRow, SEVERITY_VALUES } from './common.js';
 const replayFields = {
     id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
+    publicId: { column: 'public_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Public ID' },
     eventId: { column: 'event_id', type: 'string', filterable: true, projectable: true, label: 'Event ID' },
     organizationId: { column: 'organization_id', type: 'uuid', filterable: false, projectable: false },
     projectId: { column: 'project_id', type: 'uuid', filterable: false, projectable: false },
@@ -27,10 +28,10 @@ export const replaysResource = {
     timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: replayFields,
-    searchFields: ['sessionId', 'name', 'message', 'service', 'endpoint'],
-    searchAliases: { session: 'sessionId', replay: 'name', endpoint: 'endpoint' },
+    searchFields: ['publicId', 'sessionId', 'name', 'message', 'service', 'endpoint'],
+    searchAliases: { public_id: 'publicId', publicId: 'publicId', session: 'sessionId', replay: 'name', endpoint: 'endpoint' },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
-    defaultProjection: ['id', 'eventId', 'environment', 'occurredAt', 'sessionId', 'name', 'service', 'endpoint', 'release'],
+    defaultProjection: ['id', 'publicId', 'eventId', 'environment', 'occurredAt', 'sessionId', 'name', 'service', 'endpoint', 'release'],
     preferredIndexes: ['idx_events_replays_tenant_env_time', 'idx_events_replays_service'],
     errorPredicate: "severity IN ('error','critical','fatal')",
     summary: {

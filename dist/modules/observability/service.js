@@ -4,15 +4,18 @@ import { ObservabilityRepository } from './repository.js';
 import { CorrelationEngine } from './correlation/engine.js';
 import { AIInvestigator } from './ai/investigator.js';
 import { assembleContext, AI_INTENTS } from './ai/context-assembler.js';
+import { LifecycleConflictError } from '../errors/services/issue-lifecycle.service.js';
 export class ObservabilityService {
     repository;
     correlation;
     investigator;
+    lifecycle;
     engine;
-    constructor(repository, correlation, investigator) {
+    constructor(repository, correlation, investigator, lifecycle) {
         this.repository = repository;
         this.correlation = correlation;
         this.investigator = investigator;
+        this.lifecycle = lifecycle;
         this.engine = new ExplorerQueryEngine(repository);
     }
     /** Resolve a resource by name, failing closed on unknown names. */
@@ -74,9 +77,16 @@ export class ObservabilityService {
         const bundle = await this.correlation.correlate(name, ctx, raw);
         const timeline = await this.detailTimeline(name, ctx, raw);
         const facts = assembleContext(name, raw, bundle, timeline).facts;
+        const entity = projectPublicRow(resource, resource.mapRow(raw));
+        if (bundle.trace && !entity.tracePublicId) {
+            const tracePubId = (bundle.trace.publicId ?? bundle.trace.public_id);
+            if (tracePubId) {
+                entity.tracePublicId = tracePubId;
+            }
+        }
         return {
             resource: name,
-            entity: projectPublicRow(resource, resource.mapRow(raw)),
+            entity,
             attributes: null,
             metadata: null,
             payload: null,
@@ -331,16 +341,25 @@ export class ObservabilityService {
         return {
             ...mapped,
             id: raw.id,
+            publicId: raw.public_id ?? raw.publicId ?? null,
             fingerprint: raw.fingerprint,
-            status: String(raw.status ?? 'open').toLowerCase(),
+            status: String(raw.status ?? 'OPEN').toUpperCase(),
             occurrenceCount,
             firstSeen,
+            firstSeenAt: firstSeen,
             lastSeen,
+            lastSeenAt: lastSeen,
             highestSeverity: (raw.highest_severity ?? raw.highestSeverity ?? 'error').toString().toLowerCase(),
             latestSeverity: (raw.latest_severity ?? raw.latestSeverity ?? 'error').toString().toLowerCase(),
-            isRegression: Boolean(raw.is_regression ?? raw.isRegression),
+            isRegression: regressionCount > 0 && (raw.last_regressed_at ?? raw.lastRegressedAt) != null,
             regressionCount,
             lastRegressedAt: raw.last_regressed_at ?? raw.lastRegressedAt ?? null,
+            fingerprintVersion: Number(raw.fingerprint_version ?? raw.fingerprintVersion ?? 1),
+            resolvedAt: raw.resolved_at ?? raw.resolvedAt ?? null,
+            resolvedRelease: raw.resolved_release ?? raw.resolvedRelease ?? null,
+            latestEnvironment: raw.latest_environment ?? raw.latestEnvironment ?? null,
+            latestService: raw.latest_service ?? raw.latestService ?? null,
+            version: Number(raw.version ?? 1),
             latestRelease: raw.latest_release ?? raw.latestRelease ?? null,
             latestSdkVersion: raw.latest_sdk_version ?? raw.latestSdkVersion ?? null,
             latestApplicationVersion: raw.latest_application_version ?? raw.latestApplicationVersion ?? null,
@@ -370,23 +389,62 @@ export class ObservabilityService {
         const fingerprint = raw ? String(raw.fingerprint ?? '') : undefined;
         return this.repository.getRelatedErrorEvents(ctx, groupId, fingerprint, limit);
     }
-    /** Update error group status with audit logging. */
-    async updateErrorGroupStatus(ctx, groupId, status, comment) {
-        const actorId = ctx.userId ?? 'system';
-        const updated = await this.repository.updateErrorGroupStatus(ctx, groupId, status, actorId, comment);
-        if (!updated)
-            throw new ExplorerNotFoundError('Error Group');
-        const resource = this.resource('error-groups');
-        return projectPublicRow(resource, resource.mapRow(updated));
+    /** Update error group status through the canonical lifecycle service. */
+    async updateErrorGroupStatus(ctx, groupId, status, comment, expectedVersion, release) {
+        if (!this.lifecycle)
+            throw new Error('ERROR_GROUP_LIFECYCLE_UNAVAILABLE');
+        const projectId = await this.resolveGroupProject(ctx, groupId);
+        const normalized = status.toUpperCase();
+        const options = {
+            ...(ctx.userId ? { actorId: ctx.userId } : {}),
+            ...(comment ? { reason: comment } : {}),
+            ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+            ...(release !== undefined ? { release } : {}),
+        };
+        if (normalized === 'RESOLVED')
+            await this.lifecycle.resolve(projectId, groupId, options);
+        else if (normalized === 'IGNORED')
+            await this.lifecycle.ignore(projectId, groupId, options);
+        else if (normalized === 'ARCHIVED')
+            await this.lifecycle.archive(projectId, groupId, options);
+        else if (normalized === 'OPEN')
+            await this.lifecycle.reopen(projectId, groupId, options);
+        else
+            throw new Error(`INVALID_ERROR_GROUP_STATUS:${status}`);
+        return this.getErrorGroupFullDetail(ctx, groupId);
     }
-    /** Merge source error group into target error group. */
-    async mergeErrorGroup(ctx, sourceGroupId, targetGroupId) {
-        const actorId = ctx.userId ?? 'system';
-        const updated = await this.repository.mergeErrorGroups(ctx, sourceGroupId, targetGroupId, actorId);
-        if (!updated)
-            throw new ExplorerNotFoundError('Error Group target or source');
-        const resource = this.resource('error-groups');
-        return projectPublicRow(resource, resource.mapRow(updated));
+    /** Merge source error group into target group through the canonical lifecycle service. */
+    async mergeErrorGroup(ctx, sourceGroupId, targetGroupId, reason, expectedVersion) {
+        if (!this.lifecycle)
+            throw new Error('ERROR_GROUP_LIFECYCLE_UNAVAILABLE');
+        const projectId = await this.resolveGroupProject(ctx, sourceGroupId);
+        await this.lifecycle.merge(projectId, sourceGroupId, targetGroupId, {
+            ...(ctx.userId ? { actorId: ctx.userId } : {}),
+            ...(reason ? { reason } : {}),
+            ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+        });
+        return this.getErrorGroupFullDetail(ctx, targetGroupId);
+    }
+    async unmergeErrorGroup(ctx, groupId, reason, expectedVersion) {
+        if (!this.lifecycle)
+            throw new Error('ERROR_GROUP_LIFECYCLE_UNAVAILABLE');
+        const projectId = await this.resolveGroupProject(ctx, groupId);
+        await this.lifecycle.unmerge(projectId, groupId, {
+            ...(ctx.userId ? { actorId: ctx.userId } : {}),
+            ...(reason ? { reason } : {}),
+            ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+        });
+        return this.getErrorGroupFullDetail(ctx, groupId);
+    }
+    async resolveGroupProject(ctx, groupId) {
+        const raw = await this.repository.fetchRawById(this.resource('error-groups'), ctx, groupId);
+        if (!raw)
+            throw new ExplorerNotFoundError('Error Group');
+        const projectId = String(raw.project_id ?? '');
+        if (!projectId || (ctx.allowedProjectIds && !ctx.allowedProjectIds.includes(projectId))) {
+            throw new ExplorerNotFoundError('Error Group');
+        }
+        return projectId;
     }
 }
 //# sourceMappingURL=service.js.map

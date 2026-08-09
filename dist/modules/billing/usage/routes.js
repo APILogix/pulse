@@ -8,6 +8,7 @@ export async function usageRoutes(fastify, options) {
     const controller = new UsageController(service);
     fastify.addHook('preHandler', authenticate);
     fastify.get('/current', controller.getCurrentUsage);
+    fastify.get('/quota-summary', controller.getQuotaSummary);
     fastify.get('/daily', controller.getDailyUsage);
     fastify.get('/project-attribution', controller.getProjectAttribution);
     fastify.get('/api-key-attribution', controller.getApiKeyAttribution);

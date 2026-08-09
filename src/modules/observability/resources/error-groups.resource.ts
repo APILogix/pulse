@@ -5,14 +5,20 @@
 import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
 import { makeMapRow } from './common.js';
 
-const ERROR_GROUP_STATUS = ['open', 'resolved', 'ignored', 'archived', 'regressed'] as const;
+const ERROR_GROUP_STATUS = ['OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED'] as const;
 const ERROR_GROUP_SEVERITY = ['warning', 'error', 'fatal', 'critical', 'info', 'debug'] as const;
 
 /** Exact fields backed by logdb error_groups table */
 const errorGroupFields: Record<string, FieldDef> = {
   id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
+  publicId: { column: 'public_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Public ID' },
   organizationId: { column: 'organization_id', type: 'uuid', filterable: true, projectable: true, label: 'Organization ID' },
   projectId: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project' },
+  project: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project' },
+  projectSlug: { column: 'project_id', type: 'uuid', filterable: true, projectable: true, label: 'Project Slug' },
+  environment: { column: 'latest_environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
+  severity: { column: 'latest_severity', type: 'enum', enumValues: ERROR_GROUP_SEVERITY, filterable: true, projectable: true, label: 'Severity' },
+  release: { column: 'latest_release', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Release' },
   fingerprint: { column: 'fingerprint', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Fingerprint' },
   status: { column: 'status', type: 'enum', enumValues: ERROR_GROUP_STATUS, filterable: true, projectable: true, label: 'Status' },
   occurrenceCount: { column: 'occurrence_count', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Occurrences' },
@@ -24,7 +30,12 @@ const errorGroupFields: Record<string, FieldDef> = {
   latestEventId: { column: 'latest_event_id', type: 'string', filterable: true, projectable: true, label: 'Latest Event ID' },
   highestSeverity: { column: 'highest_severity', type: 'enum', enumValues: ERROR_GROUP_SEVERITY, filterable: true, projectable: true, label: 'Highest Severity' },
   latestSeverity: { column: 'latest_severity', type: 'enum', enumValues: ERROR_GROUP_SEVERITY, filterable: true, projectable: true, label: 'Latest Severity' },
-  isRegression: { column: 'is_regression', type: 'boolean', filterable: true, projectable: true, label: 'Is Regression' },
+  fingerprintVersion: { column: 'fingerprint_version', type: 'number', filterable: true, projectable: true, label: 'Fingerprint Version' },
+  resolvedAt: { column: 'resolved_at', type: 'timestamp', filterable: true, projectable: true, label: 'Resolved At' },
+  resolvedRelease: { column: 'resolved_release', type: 'string', filterable: true, projectable: true, label: 'Resolved Release' },
+  latestEnvironment: { column: 'latest_environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
+  latestService: { column: 'latest_service', type: 'string', filterable: true, projectable: true, label: 'Service' },
+  isRegression: { column: 'is_regression', selectExpr: "(regression_count > 0 AND last_regressed_at IS NOT NULL)", type: 'boolean', filterable: true, projectable: true, label: 'Regression' },
   regressionCount: { column: 'regression_count', type: 'number', filterable: true, sortable: true, projectable: true, label: 'Regression Count' },
   lastRegressedAt: { column: 'last_regressed_at', type: 'timestamp', filterable: true, projectable: true, label: 'Last Regressed At' },
   latestRelease: { column: 'latest_release', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Latest Release' },
@@ -48,21 +59,30 @@ export const errorGroupsResource: ExplorerResource = {
   timeColumn: 'last_seen_at',
   idColumn: 'id',
   fields: errorGroupFields,
-  searchFields: ['lastErrorName', 'lastErrorMessage', 'fingerprint', 'latestRelease'],
+  searchFields: ['publicId', 'lastErrorName', 'lastErrorMessage', 'fingerprint', 'latestRelease'],
   searchAliases: {
+    public_id: 'publicId',
+    publicId: 'publicId',
     fingerprint: 'fingerprint',
     status: 'status',
     release: 'latestRelease',
+    latestRelease: 'latestRelease',
     error: 'lastErrorName',
     message: 'lastErrorMessage',
     severity: 'latestSeverity',
+    latestSeverity: 'latestSeverity',
     trace: 'lastTraceId',
     request: 'lastRequestId',
+    project: 'project',
+    project_slug: 'project',
+    projectSlug: 'project',
+    environment: 'latestEnvironment',
+    latestEnvironment: 'latestEnvironment',
   },
   defaultSort: { field: 'lastSeen', direction: 'desc' },
   defaultProjection: [
-    'id', 'fingerprint', 'status', 'occurrenceCount', 'firstSeen', 'firstSeenAt', 'lastSeen', 'lastSeenAt',
-    'highestSeverity', 'latestSeverity', 'isRegression', 'latestRelease',
+    'id', 'publicId', 'fingerprint', 'status', 'occurrenceCount', 'firstSeen', 'firstSeenAt', 'lastSeen', 'lastSeenAt',
+    'highestSeverity', 'latestSeverity', 'regressionCount', 'lastRegressedAt', 'fingerprintVersion', 'resolvedAt', 'resolvedRelease', 'latestRelease',
     'lastErrorName', 'lastErrorMessage', 'lastStatusCode', 'lastTraceId',
   ],
   preferredIndexes: ['idx_error_groups_project_status_last_seen', 'idx_error_groups_project_occurrence'],
@@ -72,7 +92,7 @@ export const errorGroupsResource: ExplorerResource = {
     resolved: "(COUNT(*) FILTER (WHERE status = 'resolved' OR status = 'RESOLVED'))::bigint",
     ignored: "(COUNT(*) FILTER (WHERE status = 'ignored' OR status = 'IGNORED'))::bigint",
     archived: "(COUNT(*) FILTER (WHERE status = 'archived' OR status = 'ARCHIVED'))::bigint",
-    regressions: "(COUNT(*) FILTER (WHERE is_regression = true))::bigint",
+    regressions: "(COUNT(*) FILTER (WHERE regression_count > 0 AND last_regressed_at IS NOT NULL))::bigint",
     totalOccurrences: 'COALESCE(SUM(occurrence_count), 0)::bigint',
   },
   mapRow: makeMapRow(['occurrenceCount', 'regressionCount', 'lastStatusCode', 'version']),

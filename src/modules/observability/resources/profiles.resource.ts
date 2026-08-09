@@ -19,11 +19,11 @@ export const profilesResource: ExplorerResource = {
   timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: profileFields,
-  searchFields: ['profileType', 'service'],
+  searchFields: ['publicId', 'profileType', 'service'],
   searchAliases: { ...commonSearchAliases, type: 'profileType', profile: 'profileType' },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'environment', 'occurredAt', 'profileType', 'service', 'durationMs', 'requestId',
+    'id', 'publicId', 'environment', 'occurredAt', 'profileType', 'service', 'durationMs', 'requestId',
   ],
   preferredIndexes: ['idx_events_profiles_tenant_env_time'],
   errorPredicate: "severity IN ('error','critical','fatal')",

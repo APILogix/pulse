@@ -19,6 +19,7 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     environment: z.ZodOptional<z.ZodString>;
     sort: z.ZodOptional<z.ZodString>;
@@ -29,6 +30,21 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
     }>>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     filters: z.ZodOptional<z.ZodString>;
+    status: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
+    statusCode: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
+    statusClass: z.ZodOptional<z.ZodString>;
+    rootSpanStatus: z.ZodOptional<z.ZodString>;
+    rootSpanName: z.ZodOptional<z.ZodString>;
+    service: z.ZodOptional<z.ZodString>;
+    method: z.ZodOptional<z.ZodString>;
+    duration: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
+    durationMs: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodNumber]>>;
+    project: z.ZodOptional<z.ZodString>;
+    projectSlug: z.ZodOptional<z.ZodString>;
+    severity: z.ZodOptional<z.ZodString>;
+    level: z.ZodOptional<z.ZodString>;
+    handled: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
+    isHandled: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
 }, z.core.$strict>;
 /** Reject tenant and projection controls before endpoint-specific handling. */
 export declare function assertPublicExplorerQuery(input: unknown): void;

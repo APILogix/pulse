@@ -41,9 +41,17 @@ const UpdateErrorGroupStatusBody = z.object({
   status: z.enum(['open', 'resolved', 'ignored', 'archived', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED']),
   reason: z.string().max(1000).optional(),
   comment: z.string().max(1000).optional(),
+  expectedVersion: z.number().int().positive().optional(),
+  release: z.string().max(100).optional(),
 });
 const MergeErrorGroupBody = z.object({
-  targetGroupId: z.string().uuid(),
+  targetGroupId: z.string().min(1).max(128),
+  reason: z.string().max(1000).optional(),
+  expectedVersion: z.number().int().positive().optional(),
+});
+const UnmergeErrorGroupBody = z.object({
+  reason: z.string().max(1000).optional(),
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 type AuthedRequest = FastifyRequest & { user: { id: string } };
@@ -116,7 +124,25 @@ export class ObservabilityController {
   detail = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
     const { resource, id } = IdParams.parse(request.params);
     const ctx = await this.context(request);
+    if (resource === 'requests') {
+      return reply.send({ success: true, data: await this.service.detailRequest(ctx, id) });
+    }
+    if (resource === 'errors') {
+      return reply.send({ success: true, data: await this.service.detailError(ctx, id) });
+    }
     return reply.send({ success: true, data: await this.service.detail(resource, ctx, id) });
+  };
+
+  developerTools = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { resource, id } = IdParams.parse(request.params);
+    const ctx = await this.context(request);
+    if (resource !== 'requests') {
+      return reply.code(404).send({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Developer tools are only available for requests' },
+      });
+    }
+    return reply.send({ success: true, data: await this.service.requestDeveloperTools(ctx, id) });
   };
 
   related = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
@@ -196,7 +222,14 @@ export class ObservabilityController {
     const { id } = ErrorGroupIdParams.parse(request.params);
     const body = UpdateErrorGroupStatusBody.parse(request.body ?? {});
     const ctx = await this.context(request);
-    const data = await this.service.updateErrorGroupStatus(ctx, id, body.status, body.comment ?? body.reason);
+    const data = await this.service.updateErrorGroupStatus(
+      ctx,
+      id,
+      body.status,
+      body.comment ?? body.reason,
+      body.expectedVersion,
+      body.release,
+    );
     return reply.send({ success: true, data });
   };
 
@@ -204,7 +237,15 @@ export class ObservabilityController {
     const { id } = ErrorGroupIdParams.parse(request.params);
     const body = MergeErrorGroupBody.parse(request.body ?? {});
     const ctx = await this.context(request);
-    const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId);
+    const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId, body.reason, body.expectedVersion);
+    return reply.send({ success: true, data });
+  };
+
+  unmergeErrorGroup = async (request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> => {
+    const { id } = ErrorGroupIdParams.parse(request.params);
+    const body = UnmergeErrorGroupBody.parse(request.body ?? {});
+    const ctx = await this.context(request);
+    const data = await this.service.unmergeErrorGroup(ctx, id, body.reason, body.expectedVersion);
     return reply.send({ success: true, data });
   };
 }

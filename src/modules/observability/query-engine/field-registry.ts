@@ -209,7 +209,7 @@ export function buildPublicProjection(resource: ExplorerResource): string {
 export function buildDetailProjection(resource: ExplorerResource): string {
   const columns = new Set<string>();
   for (const def of Object.values(resource.fields)) {
-    if (IDENT_RE.test(def.column)) columns.add(def.column);
+    if (!def.selectExpr && IDENT_RE.test(def.column)) columns.add(def.column);
   }
   columns.add(resource.idColumn);
   columns.add(resource.timeColumn);

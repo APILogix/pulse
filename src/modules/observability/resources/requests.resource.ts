@@ -36,15 +36,33 @@ const requestFields: Record<string, FieldDef> = {
   hasError: { column: 'is_error', type: 'boolean', filterable: true, projectable: true, label: 'Has Error' },
   hasTrace: { column: 'trace_id', selectExpr: '(trace_id IS NOT NULL)', type: 'boolean', filterable: false, projectable: true, label: 'Has Trace' },
   serverName: { column: 'server_name', type: 'string', filterable: true, projectable: true, label: 'Server' },
-  appName: { column: 'application_name', type: 'string', filterable: true, projectable: true, label: 'Application' },
-  appVersion: { column: 'application_version', type: 'string', filterable: true, projectable: true, label: 'Application Version' },
   tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+  aiResponse: { column: 'ai_response', type: 'json', filterable: false, projectable: false, label: 'AI Response' },
   project: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
   projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
   projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
 };
 
+// Events_requests table does not have a message column
+delete requestFields.message;
+
 const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'geoAsn'];
+
+const requestsSearchAliases: Record<string, string> = {
+  ...commonSearchAliases,
+  status: 'statusCode',
+  latency: 'durationMs',
+  duration: 'durationMs',
+  project: 'project',
+  project_slug: 'project',
+  country: 'geoCountry',
+  browser: 'browser',
+  os: 'os',
+  device: 'device',
+  ip: 'clientIp',
+};
+// `events_requests` has no message column, so the common alias is invalid here.
+delete requestsSearchAliases.message;
 
 export const requestsResource: ExplorerResource = {
   name: 'requests',
@@ -52,24 +70,12 @@ export const requestsResource: ExplorerResource = {
   timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: requestFields,
-  searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
-  searchAliases: {
-    ...commonSearchAliases,
-    status: 'statusCode',
-    latency: 'durationMs',
-    duration: 'durationMs',
-    project: 'project',
-    project_slug: 'project',
-    country: 'geoCountry',
-    browser: 'browser',
-    os: 'os',
-    device: 'device',
-    ip: 'clientIp',
-  },
+  searchFields: ['publicId', 'endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
+  searchAliases: requestsSearchAliases,
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'occurredAt', 'method', 'endpoint', 'statusCode',
-    'durationMs', 'environment', 'traceId',
+    'id', 'publicId', 'occurredAt', 'method', 'endpoint', 'statusCode',
+    'durationMs', 'environment', 'traceId', 'tracePublicId',
   ],
   preferredIndexes: [
     'idx_events_requests_tenant_env_time',

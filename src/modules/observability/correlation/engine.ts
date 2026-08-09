@@ -19,6 +19,7 @@ const MAX_PER_TYPE = 100;
 
 export interface CorrelationKeys {
   traceId: string | null;
+  tracePublicId?: string | null;
   requestId: string | null;
   spanId: string | null;
   sessionId: string | null;
@@ -161,8 +162,12 @@ export class CorrelationEngine {
     crons: Array<Record<string, unknown>>,
   ): CorrelationBundle {
     const spanTree = trace ? (trace.spansTree ?? trace.spans_tree ?? null) : null;
+    const tracePublicId = trace ? (asString(trace.publicId) ?? asString(trace.public_id)) : null;
     return {
-      keys,
+      keys: {
+        ...keys,
+        ...(tracePublicId ? { tracePublicId } : {}),
+      },
       trace,
       spanTree,
       spans,

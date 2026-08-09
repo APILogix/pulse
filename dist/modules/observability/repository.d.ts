@@ -32,12 +32,12 @@ export declare class ObservabilityRepository implements QueryExecutor {
      */
     fetchCorrelated(input: CorrelationFetch): Promise<Array<Record<string, unknown>>>;
     /**
-     * Fetch a single row by id, returning the raw row (all columns) so detail
+     * Fetch a single row by id or public_id, returning the raw row (all columns) so detail
      * assembly can read correlation keys the projection would omit.
      */
     fetchRawById(resource: ExplorerResource, ctx: QueryContext, id: string): Promise<Record<string, unknown> | null>;
     /**
-     * Fetch multiple raw rows by array of IDs for bulk AI analysis.
+     * Fetch multiple raw rows by array of IDs or public_ids for bulk AI analysis.
      */
     fetchRawByIds(resource: ExplorerResource, ctx: QueryContext, ids: string[]): Promise<Array<Record<string, unknown>>>;
     /** Build a server-owned project predicate for a scoped repository query. */

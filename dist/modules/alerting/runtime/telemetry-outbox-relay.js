@@ -11,14 +11,33 @@ export class TelemetryOutboxRelay {
         const rows = await this.claim(limit);
         if (rows.length === 0)
             return 0;
+        const semantic = rows.filter((row) => row.signal_kind === 'error_group_regressed');
+        const telemetry = rows.filter((row) => row.signal_kind !== 'error_group_regressed');
+        let published = 0;
+        for (const row of semantic) {
+            try {
+                await pgboss.send('alert.error-group-regressed', row.attributes, {
+                    singletonKey: `error-group-regressed:${row.organization_id}:${row.event_id}`,
+                    expireInSeconds: 120,
+                    retryLimit: 3,
+                    retryDelay: 1,
+                    retryBackoff: true,
+                });
+                await this.markPublished([row]);
+                published += 1;
+            }
+            catch (err) {
+                await this.markFailed([row], err instanceof Error ? err.message : String(err));
+                this.log.warn({ err, row: row.id }, 'Error-group regression outbox publish failed');
+            }
+        }
         const groups = new Map();
-        for (const row of rows) {
+        for (const row of telemetry) {
             const key = JSON.stringify([row.organization_id, row.project_id, row.environment]);
             const list = groups.get(key) ?? [];
             list.push(row);
             groups.set(key, list);
         }
-        let published = 0;
         for (const group of groups.values()) {
             const first = group[0];
             try {

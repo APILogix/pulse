@@ -51,6 +51,7 @@ export declare const ALERT_JOBS: {
     readonly evaluateAi: "alert.evaluate.ai";
     readonly notificationRouter: "alert.notification-router";
     readonly telemetryOutboxRelay: "alert.telemetry-outbox-relay";
+    readonly errorGroupRegressed: "alert.error-group-regressed";
 };
 export interface AlertingWorkerConfig {
     teamSize?: number;

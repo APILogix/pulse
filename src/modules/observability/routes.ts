@@ -17,6 +17,18 @@ function handleError(error: unknown, request: FastifyRequest, reply: FastifyRepl
     request.log.warn({ err: error, path: request.url }, 'Observability stream error after headers sent');
     return;
   }
+  if (error instanceof Error && error.name === 'LifecycleConflictError') {
+    return reply.code(409).send({
+      success: false,
+      error: { code: 'CONFLICT', message: error.message },
+    });
+  }
+  if (error instanceof Error && (error.message === 'GROUP_NOT_FOUND' || error.name === 'ExplorerNotFoundError')) {
+    return reply.code(404).send({
+      success: false,
+      error: { code: 'NOT_FOUND', message: 'Error Group not found' },
+    });
+  }
   if (error instanceof AppError) {
     return reply.code(error.statusCode).send({
       success: false,
@@ -61,6 +73,7 @@ export function buildObservabilityRoutes(controller: ObservabilityController) {
     fastify.patch('/error-groups/:id/status', guard, wrap(controller.updateErrorGroupStatus));
     fastify.post('/error-groups/:id/resolve', guard, wrap(controller.updateErrorGroupStatus));
     fastify.post('/error-groups/:id/merge', guard, wrap(controller.mergeErrorGroups));
+    fastify.post('/error-groups/:id/unmerge', guard, wrap(controller.unmergeErrorGroup));
 
     // ── Per-resource explorer surface (static paths before :id) ─────
     fastify.get('/:resource', guard, wrap(controller.list));
@@ -74,6 +87,7 @@ export function buildObservabilityRoutes(controller: ObservabilityController) {
 
     // ── Detail + relationships + per-event AI ───────────────────────
     fastify.get('/:resource/:id', guard, wrap(controller.detail));
+    fastify.get('/:resource/:id/developer-tools', guard, wrap(controller.developerTools));
     fastify.get('/:resource/:id/related/:relation', guard, wrap(controller.related));
     fastify.post('/:resource/:id/ask', guard, wrap(controller.askEvent));
   };

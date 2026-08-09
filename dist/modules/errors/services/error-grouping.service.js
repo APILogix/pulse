@@ -3,17 +3,8 @@ export class ErrorGroupingService {
     constructor(errorGroupRepo) {
         this.errorGroupRepo = errorGroupRepo;
     }
-    /**
-     * Finds or creates an error group, updates statistics and detects regressions.
-     * This logic is largely delegated to the atomic SQL in the repository.
-     * Must be called within an active transaction.
-     */
     async handleGroup(client, params) {
-        // The repository method upsertGroup handles:
-        // 1. Finding or creating the group atomically.
-        // 2. Updating occurrence counters and last_seen_at.
-        // 3. Detecting regressions (if status == 'RESOLVED', changes to 'REGRESSED').
-        return await this.errorGroupRepo.upsertGroup(client, params);
+        return this.errorGroupRepo.upsertGroup(client, params);
     }
 }
 //# sourceMappingURL=error-grouping.service.js.map

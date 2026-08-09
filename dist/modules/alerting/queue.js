@@ -29,6 +29,7 @@ export const ALERT_JOBS = {
     evaluateAi: 'alert.evaluate.ai',
     notificationRouter: 'alert.notification-router',
     telemetryOutboxRelay: 'alert.telemetry-outbox-relay',
+    errorGroupRegressed: 'alert.error-group-regressed',
 };
 const BATCH_SIZE = 100;
 const DEFAULTS = {
@@ -104,6 +105,12 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     await safeCreateQueue(ALERT_JOBS.evaluateAi);
     await safeCreateQueue(ALERT_JOBS.notificationRouter);
     await safeCreateQueue(ALERT_JOBS.telemetryOutboxRelay);
+    await safeCreateQueue(ALERT_JOBS.errorGroupRegressed, {
+        retryLimit: 3,
+        retryDelay: 1,
+        retryBackoff: true,
+        expireInSeconds: 300,
+    });
     const runtimePool = telemetryPool ?? pool;
     const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool);
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
@@ -274,6 +281,24 @@ export async function registerAlertingWorkers(logger, config = {}, projectSubscr
     }));
     await pgboss.work(ALERT_JOBS.telemetryOutboxRelay, { localConcurrency: 2, batchSize: 1 }, (async () => {
         await telemetryOutboxRelay.run(250);
+    }));
+    await pgboss.work(ALERT_JOBS.errorGroupRegressed, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
+        const jobs = allJobs(arg);
+        await Promise.all(jobs.map(async (job) => {
+            const payload = job.data;
+            await runtimeEngines.evaluateFast({
+                organizationId: String(payload.organizationId ?? ''),
+                projectId: String(payload.projectId ?? ''),
+                environment: typeof payload.environment === 'string' ? payload.environment : null,
+                events: [{
+                        type: 'error',
+                        eventId: String(payload.eventId ?? ''),
+                        message: String(payload.eventType ?? 'ErrorGroupRegressed'),
+                        severity: String(payload.severity ?? 'error'),
+                        fingerprint: String(payload.fingerprint ?? ''),
+                    }],
+            });
+        }));
     }));
     // ── Schedules (cron) ────────────────────────────────────────────────────
     // pg-boss cron is minute-granularity; sub-minute cadence is approximated by

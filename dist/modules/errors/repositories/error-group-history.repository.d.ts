@@ -2,10 +2,19 @@ import type { Pool, PoolClient } from 'pg';
 export interface CreateHistoryParams {
     groupId: string;
     action: string;
-    oldValue?: Record<string, any> | null;
-    newValue?: Record<string, any> | null;
+    previousStatus?: string | null;
+    newStatus?: string | null;
     actorId?: string | null;
-    metadata?: Record<string, any> | null;
+    actorType?: string;
+    eventId?: string | null;
+    release?: string | null;
+    occurredAt?: Date | null;
+    reason?: string | null;
+    sourceGroupId?: string | null;
+    targetGroupId?: string | null;
+    oldValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+    metadata?: Record<string, unknown> | null;
 }
 export declare class ErrorGroupHistoryRepository {
     private readonly pool;

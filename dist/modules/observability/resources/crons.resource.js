@@ -29,7 +29,7 @@ export const cronsResource = {
     timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: cronFields,
-    searchFields: ['monitorSlug', 'monitorName', 'service'],
+    searchFields: ['publicId', 'monitorSlug', 'monitorName', 'service'],
     searchAliases: {
         ...commonSearchAliases,
         monitor: 'monitorSlug',
@@ -41,7 +41,7 @@ export const cronsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'environment', 'occurredAt',
+        'id', 'publicId', 'environment', 'occurredAt',
         'monitorSlug', 'monitorName', 'status', 'isSuccess',
         'durationMs', 'checkinType', 'service',
         'requestId', 'traceId',

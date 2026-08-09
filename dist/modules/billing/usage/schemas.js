@@ -27,4 +27,15 @@ export const CurrentUsageResponseSchema = z.object({
     success: z.literal(true),
     data: CurrentUsageDataSchema,
 }).strict();
+export const QuotaSummaryDataSchema = z.object({
+    eventsLeft: z.number(),
+    totalEvents: z.number(),
+    billingCycleEndDate: z.string().datetime(),
+    aiCreditsTotal: z.number(),
+    aiCreditsLeft: z.number(),
+}).strict();
+export const QuotaSummaryResponseSchema = z.object({
+    success: z.literal(true),
+    data: QuotaSummaryDataSchema,
+}).strict();
 //# sourceMappingURL=schemas.js.map

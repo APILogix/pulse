@@ -43,8 +43,26 @@ export declare const CurrentUsageResponseSchema: z.ZodObject<{
         membersUsed: z.ZodNumber;
     }, z.core.$strict>;
 }, z.core.$strict>;
+export declare const QuotaSummaryDataSchema: z.ZodObject<{
+    eventsLeft: z.ZodNumber;
+    totalEvents: z.ZodNumber;
+    billingCycleEndDate: z.ZodString;
+    aiCreditsTotal: z.ZodNumber;
+    aiCreditsLeft: z.ZodNumber;
+}, z.core.$strict>;
+export declare const QuotaSummaryResponseSchema: z.ZodObject<{
+    success: z.ZodLiteral<true>;
+    data: z.ZodObject<{
+        eventsLeft: z.ZodNumber;
+        totalEvents: z.ZodNumber;
+        billingCycleEndDate: z.ZodString;
+        aiCreditsTotal: z.ZodNumber;
+        aiCreditsLeft: z.ZodNumber;
+    }, z.core.$strict>;
+}, z.core.$strict>;
 export type GetUsageRecordsQuery = z.infer<typeof GetUsageRecordsSchema>;
 export type IncrementUsageBody = z.infer<typeof IncrementUsageSchema>;
 export type UsageAttributionQuery = z.infer<typeof UsageAttributionQuerySchema>;
 export type CurrentUsageResponse = z.infer<typeof CurrentUsageResponseSchema>;
+export type QuotaSummaryResponse = z.infer<typeof QuotaSummaryResponseSchema>;
 //# sourceMappingURL=schemas.d.ts.map

@@ -38,6 +38,7 @@ import type { Pool, PoolClient } from 'pg';
 import type { NormalizedEvent } from './event-normalizer.js';
 import { resolveTimestamp } from './event-normalizer.js';
 import { RequestEnricher } from './request-enrichment.js';
+import { computeErrorFingerprint, ERROR_FINGERPRINT_VERSION } from '../../errors/fingerprint.js';
 
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
@@ -359,8 +360,7 @@ export function errorNameOf(event: NormalizedEvent): string {
  */
 export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf(event)): string {
   const e = event as Extract<NormalizedEvent, { type: 'error' }>;
-  const explicit = typeof e.fingerprint === 'string' && e.fingerprint.length > 0 ? e.fingerprint : null;
-  return (explicit ?? `auto:${errorName}:${e.message.slice(0, 48)}`).slice(0, 64);
+  return computeErrorFingerprint(errorName, e.stack);
 }
 
 /** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
@@ -592,7 +592,6 @@ export class TelemetryWriter {
       const fingerprint = errorFingerprint(event, errorName);
       
       const req = (e.context?.request as any) || e.context || {};
-      const endpoint = str(e.route ?? r.route ?? req.route ?? req.endpoint ?? e.url ?? r.url ?? req.url, 8192);
       const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? req.statusCode ?? req.status_code);
       const statusText = str(
         e.statusText ?? r.statusText ?? req.statusText ?? req.status_text
@@ -600,35 +599,32 @@ export class TelemetryWriter {
         128,
       );
       const handled = bool(e.handled ?? r.handled);
-      const durationMs = num(req.duration ?? req.duration_ms ?? req.durationMs);
 
-      const attributes: Record<string, any> = { ...(r.extra as any) };
-      if (r.tags) attributes.tags = r.tags;
-      if (r.user) attributes.user = r.user;
-      
       return [
-        orgId, projectId, apiKeyName ?? '', ids[i], fingerprint, e.message,
+        orgId, projectId, apiKeyName ?? '', ids[i], fingerprint, ERROR_FINGERPRINT_VERSION, e.message,
         errorName, eventSeverity(e.severity, 'error'),
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
         str(e.mechanism ?? r.mechanism, 50), str(r.service, 100),
         environment, str(sdkMetadataField(event, environment, 'release'), 100), str(sdkMetadataField(event, environment, 'serverName'), 100),
         str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
         JSON.stringify(e.stack ?? []), JSON.stringify(e.breadcrumbs ?? []), JSON.stringify(e.context ?? {}),
-        endpoint ?? null, statusCode ?? null, statusText ?? null, handled, durationMs ?? null, JSON.stringify(attributes),
+        str(e.method ?? r.method ?? req.method, 32), str(e.route ?? r.route ?? req.route ?? req.endpoint, 8192), str(e.url ?? r.url ?? req.url, 8192),
+        statusCode ?? null, statusText ?? null, handled,
         str(r.userId ?? (r.user as any)?.id ?? (e.context as any)?.userId, 255),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
     const { text, values } = buildInsert(
       'events_errors',
-      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'message',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'fingerprint_version', 'message',
        'error_name', 'severity', 'trace_id', 'span_id', 'request_id', 'session_id',
        'mechanism', 'service', 'environment', 'release', 'server_name',
        'application_name', 'application_version',
-       'stack_frames', 'breadcrumbs', 'contexts', 
-       'endpoint', 'status_code', 'status_text', 'handled', 'duration_ms', 'attributes', 'user_id',
-       'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
+       'stack_frames', 'breadcrumbs', 'context', 'method', 'route', 'url',
+       'status_code', 'status_text', 'handled', 'user_id',
+       'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,
       'event_id',
     );

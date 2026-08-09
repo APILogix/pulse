@@ -26,10 +26,13 @@ const requestFields = {
     hasError: { column: 'is_error', type: 'boolean', filterable: true, projectable: true, label: 'Has Error' },
     hasTrace: { column: 'trace_id', selectExpr: '(trace_id IS NOT NULL)', type: 'boolean', filterable: false, projectable: true, label: 'Has Trace' },
     serverName: { column: 'server_name', type: 'string', filterable: true, projectable: true, label: 'Server' },
-    appName: { column: 'application_name', type: 'string', filterable: true, projectable: true, label: 'Application' },
-    appVersion: { column: 'application_version', type: 'string', filterable: true, projectable: true, label: 'Application Version' },
     tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+    project: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
+    projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
+    projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
 };
+// Events_requests table does not have a message column
+delete requestFields.message;
 const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'geoAsn'];
 export const requestsResource = {
     name: 'requests',
@@ -37,11 +40,14 @@ export const requestsResource = {
     timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: requestFields,
-    searchFields: ['endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
+    searchFields: ['publicId', 'endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
     searchAliases: {
         ...commonSearchAliases,
         status: 'statusCode',
         latency: 'durationMs',
+        duration: 'durationMs',
+        project: 'project',
+        project_slug: 'project',
         country: 'geoCountry',
         browser: 'browser',
         os: 'os',
@@ -50,7 +56,8 @@ export const requestsResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'occurredAt', 'method', 'endpoint', 'statusCode', 'durationMs', 'environment', 'traceId', 'hasTrace',
+        'id', 'publicId', 'occurredAt', 'method', 'endpoint', 'statusCode',
+        'durationMs', 'environment', 'traceId', 'tracePublicId',
     ],
     preferredIndexes: [
         'idx_events_requests_tenant_env_time',
@@ -66,11 +73,11 @@ export const requestsResource = {
         uniqueRoutes: 'COUNT(DISTINCT endpoint)::bigint',
     },
     statistics: {
-        avgLatency: 'AVG(duration_ms)',
-        maxLatency: 'MAX(duration_ms)',
-        p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)',
-        p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)',
-        p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms)',
+        avgLatency: 'ROUND(COALESCE(AVG(duration_ms), 0))::int',
+        maxLatency: 'COALESCE(MAX(duration_ms), 0)::int',
+        p50: 'ROUND(COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
+        p95: 'ROUND(COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
+        p99: 'ROUND(COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
         errorRate: '(COUNT(*) FILTER (WHERE is_error))::float8 / NULLIF(COUNT(*), 0)',
     },
     mapRow: makeMapRow(NUMERIC),

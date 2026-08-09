@@ -24,6 +24,16 @@ export declare class UsageService {
     incrementEventUsage(orgId: string, count?: number): Promise<{
         success: boolean;
     }>;
+    getQuotaSummary(orgId: string): Promise<{
+        success: true;
+        data: {
+            eventsLeft: number;
+            totalEvents: number;
+            billingCycleEndDate: string;
+            aiCreditsTotal: number;
+            aiCreditsLeft: number;
+        };
+    }>;
     getDailyUsage(orgId: string, startDate?: Date, endDate?: Date): Promise<{
         success: boolean;
         data: {

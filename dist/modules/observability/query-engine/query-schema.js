@@ -10,6 +10,7 @@ export const RANGE_MS = {
     '1h': 60 * 60 * 1000,
     '6h': 6 * 60 * 60 * 1000,
     '24h': 24 * 60 * 60 * 1000,
+    '3d': 3 * 24 * 60 * 60 * 1000,
     '7d': 7 * 24 * 60 * 60 * 1000,
     '30d': 30 * 24 * 60 * 60 * 1000,
     '90d': 90 * 24 * 60 * 60 * 1000,
@@ -28,13 +29,28 @@ export const RawExplorerQuerySchema = z.object({
     search: z.string().trim().min(1).max(2000).optional(),
     from: z.coerce.date().optional(),
     to: z.coerce.date().optional(),
-    range: z.enum(['15m', '1h', '6h', '24h', '7d', '30d', '90d']).optional(),
+    range: z.enum(['15m', '1h', '6h', '24h', '3d', '7d', '30d', '90d']).optional(),
     environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
     sort: z.string().trim().min(1).max(128).optional(),
     cursor: z.string().trim().min(1).max(4096).optional(),
     direction: z.enum(['forward', 'backward']).default('forward'),
     limit: z.coerce.number().int().min(1).max(200).default(50),
     filters: z.string().max(20000).optional(),
+    status: z.union([z.string(), z.number()]).optional(),
+    statusCode: z.union([z.string(), z.number()]).optional(),
+    statusClass: z.string().optional(),
+    rootSpanStatus: z.string().optional(),
+    rootSpanName: z.string().optional(),
+    service: z.string().optional(),
+    method: z.string().optional(),
+    duration: z.union([z.string(), z.number()]).optional(),
+    durationMs: z.union([z.string(), z.number()]).optional(),
+    project: z.string().optional(),
+    projectSlug: z.string().optional(),
+    severity: z.string().optional(),
+    level: z.string().optional(),
+    handled: z.union([z.string(), z.boolean()]).optional(),
+    isHandled: z.union([z.string(), z.boolean()]).optional(),
 }).strict();
 /** Reject tenant and projection controls before endpoint-specific handling. */
 export function assertPublicExplorerQuery(input) {
@@ -47,14 +63,38 @@ export function assertPublicExplorerQuery(input) {
 }
 /** Resolve explicit from/to or a named range into a concrete window. */
 export function resolveTimeRange(raw) {
-    const to = raw.to ?? new Date();
-    if (raw.from) {
-        if (raw.from >= to)
-            throw new QueryValidationError('`from` must be before `to`');
-        return { from: raw.from, to };
+    const rangeMs = (raw.range && RANGE_MS[raw.range]) ? RANGE_MS[raw.range] : RANGE_MS['24h'];
+    let from = raw.from;
+    let to = raw.to;
+    if (from && to) {
+        if (from.getTime() === to.getTime()) {
+            // User selected exact same start and end time/date (e.g. 2026-08-07 to 2026-08-07)
+            // Expand 'to' by 24h (or rangeMs) so data for that day is included instead of matching 0 rows
+            to = new Date(from.getTime() + (raw.range ? rangeMs : 24 * 60 * 60 * 1000));
+        }
+        else if (from > to) {
+            // Swapped timestamps, fix order
+            const temp = from;
+            from = to;
+            to = temp;
+        }
+        return { from, to };
     }
-    const ms = RANGE_MS[raw.range ?? '24h'] ?? RANGE_MS['24h'];
-    return { from: new Date(to.getTime() - ms), to };
+    if (from && !to) {
+        // Only 'from' provided: set 'to' to from + rangeMs (default 24h)
+        to = new Date(from.getTime() + rangeMs);
+        return { from, to };
+    }
+    if (!from && to) {
+        // Only 'to' provided: set 'from' to to - rangeMs (default 24h)
+        from = new Date(to.getTime() - rangeMs);
+        return { from, to };
+    }
+    // Neither from nor to provided: use relative range ending at now
+    const now = new Date();
+    to = now;
+    from = new Date(now.getTime() - rangeMs);
+    return { from, to };
 }
 /** Parse `field:dir` (dir optional) against the resource's default sort. */
 function parseSort(raw, fallback) {
@@ -105,9 +145,70 @@ export function buildExplorerQuery(rawInput, defaultSort) {
     const timeRange = resolveTimeRange(timeInput);
     const sort = parseSort(raw.sort, defaultSort);
     const direction = raw.direction;
+    const explicitFilters = parseFilters(raw.filters);
+    // Status code / statusClass / rootSpanStatus
+    const rawStatus = raw.statusCode ?? raw.status ?? raw.statusClass ?? raw.rootSpanStatus;
+    if (rawStatus !== undefined && String(rawStatus).trim().length > 0) {
+        const sStr = String(rawStatus).trim();
+        if (sStr.endsWith('xx')) {
+            const prefix = parseInt(sStr.charAt(0), 10);
+            if (!isNaN(prefix)) {
+                explicitFilters.push({ field: 'statusCode', op: 'gte', value: prefix * 100 });
+                explicitFilters.push({ field: 'statusCode', op: 'lt', value: (prefix + 1) * 100 });
+            }
+        }
+        else {
+            const num = Number(sStr);
+            if (Number.isFinite(num)) {
+                explicitFilters.push({ field: 'statusCode', op: 'eq', value: num });
+            }
+            else {
+                explicitFilters.push({ field: 'rootSpanStatus', op: 'eq', value: sStr.toLowerCase() });
+            }
+        }
+    }
+    // Method
+    if (raw.method !== undefined && raw.method.trim().length > 0) {
+        explicitFilters.push({ field: 'method', op: 'eq', value: raw.method.trim().toUpperCase() });
+    }
+    // Duration
+    const rawDur = raw.durationMs ?? raw.duration;
+    if (rawDur !== undefined && String(rawDur).trim().length > 0) {
+        const dStr = String(rawDur).trim();
+        if (dStr.includes(':')) {
+            const [opStr, numStr] = dStr.split(':');
+            const num = Number(numStr);
+            if (Number.isFinite(num)) {
+                explicitFilters.push({ field: 'durationMs', op: opStr || 'gte', value: num });
+            }
+        }
+        else {
+            const num = Number(dStr);
+            if (Number.isFinite(num)) {
+                explicitFilters.push({ field: 'durationMs', op: 'gte', value: num });
+            }
+        }
+    }
+    // Project (slug)
+    const rawProj = raw.projectSlug ?? raw.project;
+    if (rawProj !== undefined && rawProj.trim().length > 0) {
+        explicitFilters.push({ field: 'project', op: 'eq', value: rawProj.trim() });
+    }
+    // Severity / Level
+    const rawSev = raw.severity ?? raw.level;
+    if (rawSev !== undefined && rawSev.trim().length > 0) {
+        explicitFilters.push({ field: 'severity', op: 'eq', value: rawSev.trim().toLowerCase() });
+    }
+    // Handled / Unhandled
+    const rawHandled = raw.handled ?? raw.isHandled;
+    if (rawHandled !== undefined && String(rawHandled).trim().length > 0) {
+        const hStr = String(rawHandled).trim().toLowerCase();
+        const boolVal = hStr === 'true' || hStr === '1' || hStr === 'handled';
+        explicitFilters.push({ field: 'handled', op: 'eq', value: boolVal });
+    }
     const query = {
         timeRange,
-        filters: parseFilters(raw.filters),
+        filters: explicitFilters,
         sort,
         direction,
         limit: raw.limit,

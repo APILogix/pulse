@@ -30,7 +30,7 @@ export const tracesResource: ExplorerResource = {
   timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: traceFields,
-  searchFields: ['rootSpanName', 'endpoint', 'service', 'traceId'],
+  searchFields: ['publicId', 'rootSpanName', 'endpoint', 'service', 'traceId'],
   searchAliases: {
     ...commonSearchAliases,
     operation: 'rootSpanName',
@@ -42,7 +42,7 @@ export const tracesResource: ExplorerResource = {
   },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'occurredAt', 'httpMethod', 'endpoint', 'durationMs',
+    'id', 'publicId', 'occurredAt', 'httpMethod', 'endpoint', 'durationMs',
     'status', 'rootSpanStatus', 'spanCount', 'environment', 'isPartial', 'service',
   ],
   preferredIndexes: [

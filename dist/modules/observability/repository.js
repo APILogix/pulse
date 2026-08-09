@@ -1,4 +1,5 @@
 import { logDB } from '../../config/log-database.js';
+import { isPublicId } from '../../shared/utils/public-id-generator.js';
 import { buildDetailProjection, buildPublicProjection, projectPublicRow, } from './query-engine/index.js';
 /** Columns that may be used as a correlation key. Fixed allow-list. */
 export const CORRELATION_COLUMNS = [
@@ -41,27 +42,31 @@ export class ObservabilityRepository {
         return rows.map((row) => resource.mapRow(row));
     }
     /**
-     * Fetch a single row by id, returning the raw row (all columns) so detail
+     * Fetch a single row by id or public_id, returning the raw row (all columns) so detail
      * assembly can read correlation keys the projection would omit.
      */
     async fetchRawById(resource, ctx, id) {
+        const isPubId = isPublicId(id);
+        const targetColumn = isPubId ? 'public_id' : resource.idColumn;
         const params = [ctx.organizationId, id];
         let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
-               WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
+               WHERE organization_id = $1 AND ${targetColumn} = $2`;
         sql += this.projectPredicate(ctx, params);
         sql += ` LIMIT 1`;
         const rows = await this.run(sql, params);
         return rows[0] ?? null;
     }
     /**
-     * Fetch multiple raw rows by array of IDs for bulk AI analysis.
+     * Fetch multiple raw rows by array of IDs or public_ids for bulk AI analysis.
      */
     async fetchRawByIds(resource, ctx, ids) {
         if (ids.length === 0)
             return [];
+        const isPubId = ids.some(id => isPublicId(id));
+        const targetColumn = isPubId ? 'public_id' : resource.idColumn;
         const params = [ctx.organizationId, ids.slice(0, 100)];
         let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
-               WHERE organization_id = $1 AND ${resource.idColumn}::text = ANY($2::text[])`;
+               WHERE organization_id = $1 AND ${targetColumn}::text = ANY($2::text[])`;
         sql += this.projectPredicate(ctx, params);
         sql += ` LIMIT 100`;
         const rows = await this.run(sql, params);

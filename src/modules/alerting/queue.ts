@@ -64,6 +64,7 @@ export const ALERT_JOBS = {
   evaluateAi: 'alert.evaluate.ai',
   notificationRouter: 'alert.notification-router',
   telemetryOutboxRelay: 'alert.telemetry-outbox-relay',
+  errorGroupRegressed: 'alert.error-group-regressed',
 } as const;
 
 const BATCH_SIZE = 100;
@@ -171,6 +172,12 @@ export async function registerAlertingWorkers(
   await safeCreateQueue(ALERT_JOBS.evaluateAi);
   await safeCreateQueue(ALERT_JOBS.notificationRouter);
   await safeCreateQueue(ALERT_JOBS.telemetryOutboxRelay);
+  await safeCreateQueue(ALERT_JOBS.errorGroupRegressed, {
+    retryLimit: 3,
+    retryDelay: 1,
+    retryBackoff: true,
+    expireInSeconds: 300,
+  });
 
   const runtimePool = telemetryPool ?? pool;
   const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool);
@@ -443,6 +450,29 @@ export async function registerAlertingWorkers(
     { localConcurrency: 2, batchSize: 1 } as never,
     (async () => {
       await telemetryOutboxRelay.run(250);
+    }) as never,
+  );
+
+  await pgboss.work(
+    ALERT_JOBS.errorGroupRegressed,
+    { localConcurrency: 4, batchSize: 1 } as never,
+    (async (arg: unknown) => {
+      const jobs = allJobs<Record<string, unknown>>(arg);
+      await Promise.all(jobs.map(async (job) => {
+        const payload = job.data;
+        await runtimeEngines.evaluateFast({
+          organizationId: String(payload.organizationId ?? ''),
+          projectId: String(payload.projectId ?? ''),
+          environment: typeof payload.environment === 'string' ? payload.environment : null,
+          events: [{
+            type: 'error',
+            eventId: String(payload.eventId ?? ''),
+            message: String(payload.eventType ?? 'ErrorGroupRegressed'),
+            severity: String(payload.severity ?? 'error'),
+            fingerprint: String(payload.fingerprint ?? ''),
+          }],
+        } as never);
+      }));
     }) as never,
   );
 

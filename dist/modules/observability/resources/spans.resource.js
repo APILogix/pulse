@@ -48,7 +48,7 @@ export const spansResource = {
     timeColumn: 'occurred_at',
     idColumn: 'id',
     fields: spanFields,
-    searchFields: ['name', 'message', 'endpoint', 'service', 'dbStatement', 'httpUrl', 'httpTarget'],
+    searchFields: ['publicId', 'name', 'message', 'endpoint', 'service', 'dbStatement', 'httpUrl', 'httpTarget'],
     searchAliases: {
         ...commonSearchAliases,
         operation: 'name',
@@ -62,7 +62,7 @@ export const spansResource = {
     },
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
-        'id', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
+        'id', 'publicId', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
         'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
     ],
     preferredIndexes: ['idx_events_spans_trace_time', 'idx_events_spans_parent_time', 'idx_events_spans_type_time', 'idx_events_spans_endpoint_time'],
@@ -74,11 +74,11 @@ export const spansResource = {
         httpSpans: '(COUNT(*) FILTER (WHERE http_url IS NOT NULL OR http_route IS NOT NULL))::bigint',
     },
     statistics: {
-        avgDuration: 'AVG(duration_ms)',
-        maxDuration: 'MAX(duration_ms)',
-        p50: 'percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms)',
-        p95: 'percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)',
-        p99: 'percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms)',
+        avgDuration: 'ROUND(COALESCE(AVG(duration_ms), 0))::int',
+        maxDuration: 'COALESCE(MAX(duration_ms), 0)::int',
+        p50: 'ROUND(COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
+        p95: 'ROUND(COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
+        p99: 'ROUND(COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0))::int',
     },
     mapRow: makeMapRow(['durationMs', 'exclusiveDurationMs', 'httpStatusCode', 'statusCode', 'depth']),
 };

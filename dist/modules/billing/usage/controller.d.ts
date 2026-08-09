@@ -6,6 +6,7 @@ export declare class UsageController {
     private requestedOrgId;
     private resolveOrgId;
     getCurrentUsage: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    getQuotaSummary: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     getDailyUsage: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     incrementEventUsage: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
     getProjectAttribution: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;

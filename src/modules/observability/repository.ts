@@ -8,6 +8,7 @@
  */
 import type { QueryResultRow } from 'pg';
 import { logDB } from '../../config/log-database.js';
+import { isPublicId } from '../../shared/utils/public-id-generator.js';
 import {
   buildDetailProjection,
   buildPublicProjection,
@@ -16,6 +17,7 @@ import {
   type QueryContext,
   type QueryExecutor,
 } from './query-engine/index.js';
+import { errorsResource } from './resources/index.js';
 
 /** Columns that may be used as a correlation key. Fixed allow-list. */
 export const CORRELATION_COLUMNS = [
@@ -75,7 +77,7 @@ export class ObservabilityRepository implements QueryExecutor {
   }
 
   /**
-   * Fetch a single row by id, returning the raw row (all columns) so detail
+   * Fetch a single row by id or public_id, returning the raw row (all columns) so detail
    * assembly can read correlation keys the projection would omit.
    */
   async fetchRawById(
@@ -83,9 +85,11 @@ export class ObservabilityRepository implements QueryExecutor {
     ctx: QueryContext,
     id: string,
   ): Promise<Record<string, unknown> | null> {
+    const isPubId = isPublicId(id);
+    const targetColumn = isPubId ? 'public_id' : resource.idColumn;
     const params: unknown[] = [ctx.organizationId, id];
     let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
-               WHERE organization_id = $1 AND ${resource.idColumn} = $2`;
+               WHERE organization_id = $1 AND ${targetColumn} = $2`;
     sql += this.projectPredicate(ctx, params);
     sql += ` LIMIT 1`;
     const rows = await this.run<Record<string, unknown>>(sql, params);
@@ -93,7 +97,7 @@ export class ObservabilityRepository implements QueryExecutor {
   }
 
   /**
-   * Fetch multiple raw rows by array of IDs for bulk AI analysis.
+   * Fetch multiple raw rows by array of IDs or public_ids for bulk AI analysis.
    */
   async fetchRawByIds(
     resource: ExplorerResource,
@@ -101,13 +105,172 @@ export class ObservabilityRepository implements QueryExecutor {
     ids: string[],
   ): Promise<Array<Record<string, unknown>>> {
     if (ids.length === 0) return [];
+    const isPubId = ids.some(id => isPublicId(id));
+    const targetColumn = isPubId ? 'public_id' : resource.idColumn;
     const params: unknown[] = [ctx.organizationId, ids.slice(0, 100)];
     let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
-               WHERE organization_id = $1 AND ${resource.idColumn}::text = ANY($2::text[])`;
+               WHERE organization_id = $1 AND ${targetColumn}::text = ANY($2::text[])`;
     sql += this.projectPredicate(ctx, params);
     sql += ` LIMIT 100`;
     const rows = await this.run<Record<string, unknown>>(sql, params);
     return rows.map((row) => projectPublicRow(resource, resource.mapRow(row) as Record<string, unknown>));
+  }
+
+  /**
+   * Fast, bounded count of spans for a request's trace.
+   * Prefer trace_id (indexed); fall back to request_id when no trace is attached.
+   */
+  async countRelatedSpans(
+    ctx: QueryContext,
+    traceId: string | null,
+    requestId: string | null,
+    from: Date,
+    to: Date,
+  ): Promise<number> {
+    if (!traceId && !requestId) return 0;
+    const params: unknown[] = [ctx.organizationId, from, to];
+    let sql = `SELECT COUNT(*)::int AS count FROM events_spans
+               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
+    const conditions: string[] = [];
+    if (traceId) {
+      params.push(traceId);
+      conditions.push(`trace_id = $${params.length}`);
+    }
+    if (requestId) {
+      params.push(requestId);
+      conditions.push(`request_id = $${params.length}`);
+    }
+    sql += conditions.join(' OR ');
+    sql += `)`;
+    sql += this.projectPredicate(ctx, params);
+    const rows = await this.run<{ count: number }>(sql, params);
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /**
+   * Fast, bounded count of logs correlated to a request by trace_id or request_id.
+   * The time window is pinned to the request timestamp so partition pruning stays tight.
+   */
+  async countRelatedLogs(
+    ctx: QueryContext,
+    traceId: string | null,
+    requestId: string | null,
+    from: Date,
+    to: Date,
+  ): Promise<number> {
+    if (!traceId && !requestId) return 0;
+    const params: unknown[] = [ctx.organizationId, from, to];
+    let sql = `SELECT COUNT(*)::int AS count FROM events_logs
+               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
+    const conditions: string[] = [];
+    if (traceId) {
+      params.push(traceId);
+      conditions.push(`trace_id = $${params.length}`);
+    }
+    if (requestId) {
+      params.push(requestId);
+      conditions.push(`request_id = $${params.length}`);
+    }
+    sql += conditions.join(' OR ');
+    sql += `)`;
+    sql += this.projectPredicate(ctx, params);
+    const rows = await this.run<{ count: number }>(sql, params);
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /**
+   * Lightweight related errors for a request detail page.
+   * Returns only public_id + message; capped at a small limit to keep the response fast.
+   */
+  async fetchRelatedErrors(
+    ctx: QueryContext,
+    traceId: string | null,
+    requestId: string | null,
+    from: Date,
+    to: Date,
+    limit = 20,
+  ): Promise<Array<{ publicId: string; message: string }>> {
+    if (!traceId && !requestId) return [];
+    const params: unknown[] = [ctx.organizationId, from, to];
+    let sql = `SELECT public_id, message FROM events_errors
+               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
+    const conditions: string[] = [];
+    if (traceId) {
+      params.push(traceId);
+      conditions.push(`trace_id = $${params.length}`);
+    }
+    if (requestId) {
+      params.push(requestId);
+      conditions.push(`request_id = $${params.length}`);
+    }
+    sql += conditions.join(' OR ');
+    sql += `)`;
+    sql += this.projectPredicate(ctx, params);
+    params.push(Math.max(1, Math.min(Math.trunc(limit), 100)));
+    sql += ` ORDER BY occurred_at DESC LIMIT $${params.length}`;
+    const rows = await this.run<{ public_id: string; message: string }>(sql, params);
+    return rows.map((r) => ({ publicId: r.public_id, message: r.message ?? '' }));
+  }
+
+  /**
+   * Resolve a trace public_id from a trace_id. Used by request detail to build the
+   * clickable trace link without loading the full trace payload.
+   */
+  async fetchTracePublicId(ctx: QueryContext, traceId: string | null): Promise<string | null> {
+    if (!traceId) return null;
+    const params: unknown[] = [ctx.organizationId, traceId];
+    let sql = `SELECT public_id FROM events_traces
+               WHERE organization_id = $1 AND trace_id = $2`;
+    sql += this.projectPredicate(ctx, params);
+    sql += ` LIMIT 1`;
+    const rows = await this.run<{ public_id: string }>(sql, params);
+    return rows[0]?.public_id ?? null;
+  }
+
+  /**
+   * Resolve a request public_id from a request_id or event_id. Used by error
+   * detail to build the clickable request link without loading the full request
+   * payload. Matches `request_id` first, then falls back to `event_id` so SDK
+   * variants stay compatible.
+   */
+  async fetchRequestPublicId(ctx: QueryContext, requestId: string | null, from: Date, to: Date): Promise<string | null> {
+    if (!requestId) return null;
+    const params: unknown[] = [ctx.organizationId, requestId, from, to];
+    let sql = `SELECT public_id FROM events_requests
+               WHERE organization_id = $1
+                 AND occurred_at >= $3 AND occurred_at < $4
+                 AND (request_id = $2 OR event_id = $2)`;
+    sql += this.projectPredicate(ctx, params);
+    sql += ` ORDER BY occurred_at DESC LIMIT 1`;
+    const rows = await this.run<{ public_id: string }>(sql, params);
+    return rows[0]?.public_id ?? null;
+  }
+
+  /**
+   * Resolve an error group public_id from an error_group_id UUID or fingerprint.
+   */
+  async fetchErrorGroupPublicId(
+    ctx: QueryContext,
+    errorGroupId: string | null,
+    fingerprint?: string | null,
+  ): Promise<string | null> {
+    if (!errorGroupId && !fingerprint) return null;
+    const params: unknown[] = [ctx.organizationId];
+    let sql = `SELECT public_id FROM error_groups WHERE organization_id = $1 AND `;
+    if (errorGroupId && fingerprint) {
+      params.push(errorGroupId, fingerprint);
+      sql += `(id = $2 OR fingerprint = $3)`;
+    } else if (errorGroupId) {
+      params.push(errorGroupId);
+      sql += `id = $2`;
+    } else {
+      params.push(fingerprint);
+      sql += `fingerprint = $2`;
+    }
+    sql += this.projectPredicate(ctx, params);
+    sql += ` LIMIT 1`;
+    const rows = await this.run<{ public_id: string }>(sql, params);
+    return rows[0]?.public_id ?? null;
   }
 
   /** Build a server-owned project predicate for a scoped repository query. */
@@ -135,7 +298,7 @@ export class ObservabilityRepository implements QueryExecutor {
              e.last_error_name
         FROM error_group_history h
         JOIN error_groups e ON e.id = h.group_id
-       WHERE h.group_id = $1
+       WHERE (e.id::text = $1 OR e.public_id = $1)
          AND e.organization_id = $2`;
     sql += this.projectPredicate(ctx, params, 'e');
     sql += ` ORDER BY h.created_at DESC LIMIT 100`;
@@ -169,17 +332,18 @@ export class ObservabilityRepository implements QueryExecutor {
   ): Promise<Array<Record<string, unknown>>> {
     const params: unknown[] = [ctx.organizationId];
     let sql = `
-      SELECT id, occurred_at, message, severity, handled, route, status_code, trace_id
+      SELECT id, public_id, occurred_at, message, severity, handled, route, status_code, trace_id,
+             (SELECT t.public_id FROM events_traces t WHERE t.trace_id = events_errors.trace_id LIMIT 1) AS trace_public_id
       FROM events_errors
       WHERE organization_id = $1
     `;
 
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      sql += ` AND (error_group_id = $2 OR fingerprint = $3)`;
+      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      sql += ` AND error_group_id = $2`;
+      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
     } else if (fingerprint) {
       params.push(fingerprint);
       sql += ` AND fingerprint = $2`;
@@ -193,6 +357,7 @@ export class ObservabilityRepository implements QueryExecutor {
     const result = await logDB.queryWithRetry<Record<string, unknown>>(sql, params, { operation: 'read' });
     return result.rows.map((r) => ({
       id: r.id,
+      publicId: (r.public_id as string) ?? null,
       occurredAt: r.occurred_at,
       message: r.message ?? '',
       severity: (r.severity as string)?.toLowerCase() ?? 'error',
@@ -200,6 +365,7 @@ export class ObservabilityRepository implements QueryExecutor {
       route: r.route ?? '',
       statusCode: r.status_code ?? 500,
       traceId: r.trace_id ?? '',
+      tracePublicId: (r.trace_public_id as string) ?? null,
     }));
   }
 
@@ -220,10 +386,10 @@ export class ObservabilityRepository implements QueryExecutor {
 
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      sql += ` AND (error_group_id = $2 OR fingerprint = $3)`;
+      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      sql += ` AND error_group_id = $2`;
+      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
     } else if (fingerprint) {
       params.push(fingerprint);
       sql += ` AND fingerprint = $2`;
@@ -263,10 +429,10 @@ export class ObservabilityRepository implements QueryExecutor {
     let whereClause = `WHERE organization_id = $1`;
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      whereClause += ` AND (error_group_id = $2 OR fingerprint = $3)`;
+      whereClause += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      whereClause += ` AND error_group_id = $2`;
+      whereClause += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
     } else if (fingerprint) {
       params.push(fingerprint);
       whereClause += ` AND fingerprint = $2`;
@@ -309,6 +475,23 @@ export class ObservabilityRepository implements QueryExecutor {
     const trend30d = (res30d.rows.length > 0 ? res30d.rows.map((r) => r.count) : Array(7).fill(0));
 
     return { trend24h, trend7d, trend30d };
+  }
+
+  /**
+   * Fetch the latest raw error detail row for an Error Group public ID, ID, or fingerprint.
+   */
+  async fetchLatestErrorForGroup(
+    ctx: QueryContext,
+    groupIdentifier: string,
+  ): Promise<Record<string, unknown> | null> {
+    const params: unknown[] = [ctx.organizationId, groupIdentifier];
+    let sql = `SELECT ${buildDetailProjection(errorsResource)} FROM events_errors
+               WHERE organization_id = $1
+                 AND (error_group_public_id = $2 OR error_group_id::text = $2 OR fingerprint = $2)`;
+    sql += this.projectPredicate(ctx, params);
+    sql += ` ORDER BY occurred_at DESC LIMIT 1`;
+    const rows = await this.run<Record<string, unknown>>(sql, params);
+    return rows[0] ?? null;
   }
 
   /**
@@ -466,5 +649,71 @@ export class ObservabilityRepository implements QueryExecutor {
 
       return updatedTargetRes.rows[0] ?? null;
     });
+  }
+
+  /**
+   * Batch resolve trace public_ids for an array of trace_ids.
+   */
+  async fetchTracePublicIdMap(ctx: QueryContext, traceIds: string[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const cleanTraceIds = Array.from(new Set(traceIds.filter((t) => typeof t === 'string' && t.length > 0)));
+    if (cleanTraceIds.length === 0) return map;
+
+    const params: unknown[] = [ctx.organizationId, cleanTraceIds.slice(0, 200)];
+    let sql = `SELECT trace_id, public_id FROM events_traces
+               WHERE organization_id = $1 AND trace_id = ANY($2::text[])`;
+    sql += this.projectPredicate(ctx, params);
+
+    const rows = await this.run<{ trace_id: string; public_id: string }>(sql, params);
+    for (const r of rows) {
+      if (r.trace_id && r.public_id) map.set(r.trace_id, r.public_id);
+    }
+    return map;
+  }
+
+  /**
+   * Batch resolve latest event public_ids for an array of error group IDs or public IDs.
+   */
+  async fetchLatestEventPublicIdMap(ctx: QueryContext, groupIds: string[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    const cleanIds = Array.from(new Set(groupIds.filter((g) => typeof g === 'string' && g.length > 0)));
+    if (cleanIds.length === 0) return map;
+
+    const params: unknown[] = [ctx.organizationId, cleanIds.slice(0, 200)];
+    let sql = `SELECT DISTINCT ON (error_group_id) error_group_id, error_group_public_id, public_id
+               FROM events_errors
+              WHERE organization_id = $1
+                AND (error_group_id::text = ANY($2::text[]) OR error_group_public_id = ANY($2::text[]))`;
+    sql += this.projectPredicate(ctx, params);
+    sql += ` ORDER BY error_group_id, occurred_at DESC`;
+
+    const rows = await this.run<{ error_group_id: string; error_group_public_id: string; public_id: string }>(sql, params);
+    for (const r of rows) {
+      if (r.public_id) {
+        if (r.error_group_id) map.set(r.error_group_id, r.public_id);
+        if (r.error_group_public_id) map.set(r.error_group_public_id, r.public_id);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Resolve a project ID (UUID) from a project slug.
+   */
+  async resolveProjectIdFromSlug(ctx: QueryContext, slug: string): Promise<string | null> {
+    if (!slug || slug.trim().length === 0) return null;
+    const cleanSlug = slug.trim();
+    // If it's already a UUID, return as-is
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSlug)) {
+      return cleanSlug;
+    }
+    const params: unknown[] = [ctx.organizationId, cleanSlug];
+    const sql = `SELECT id FROM projects WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`;
+    try {
+      const rows = await logDB.queryWithRetry<{ id: string }>(sql, params, { operation: 'read' });
+      return rows.rows[0]?.id ?? null;
+    } catch {
+      return null;
+    }
   }
 }

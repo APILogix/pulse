@@ -32,6 +32,21 @@ export type AIMode = (typeof AI_MODES)[number];
 export const aiModeSchema = z.enum(AI_MODES);
 
 // ============================================
+// CANONICAL INVESTIGATION REQUEST
+// ============================================
+
+export const INVESTIGATION_RESOURCES = ['error', 'trace', 'request', 'logs', 'log'] as const;
+export type InvestigationResource = (typeof INVESTIGATION_RESOURCES)[number];
+export const investigationResourceSchema = z.enum(INVESTIGATION_RESOURCES);
+
+export const aiInvestigationRequestSchema = z.object({
+  resource: investigationResourceSchema,
+  publicId: z.string().trim().min(1).max(128),
+});
+
+export type AIInvestigationRequest = z.infer<typeof aiInvestigationRequestSchema>;
+
+// ============================================
 // RESPONSE STATUS
 // ============================================
 

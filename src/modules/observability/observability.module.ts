@@ -10,6 +10,10 @@ import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import fp from 'fastify-plugin';
 
 import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
+import { ErrorGroupRepository } from '../errors/repositories/error-group.repository.js';
+import { ErrorGroupHistoryRepository } from '../errors/repositories/error-group-history.repository.js';
+import { IssueLifecycleService } from '../errors/services/issue-lifecycle.service.js';
 import { logger } from '../../config/logger.js';
 import { aiConfig } from '../../config/ai.js';
 import { OpenAIProvider, type AIProvider } from '../ai/openai-client.js';
@@ -47,7 +51,12 @@ async function observabilityModule(
   const provider: AIProvider | null = aiConfig.enabled ? new OpenAIProvider(aiConfig, fastify.log) : null;
   const investigator = new AIInvestigator(provider, fastify.log);
 
-  const service = new ObservabilityService(repository, correlation, investigator);
+  const lifecycle = new IssueLifecycleService(
+    logDB.getPrimaryPool(),
+    new ErrorGroupRepository(logDB.getPrimaryPool()),
+    new ErrorGroupHistoryRepository(logDB.getPrimaryPool()),
+  );
+  const service = new ObservabilityService(repository, correlation, investigator, lifecycle);
   const resolver = new ObservabilityContextResolver(pool);
   const controller = new ObservabilityController(service, resolver, releases);
 

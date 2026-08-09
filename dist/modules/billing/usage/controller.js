@@ -32,6 +32,17 @@ export class UsageController {
             return handleBillingError(error, reply);
         }
     };
+    getQuotaSummary = async (request, reply) => {
+        const req = request;
+        try {
+            const orgId = await this.resolveOrgId(req, request);
+            const result = await this.service.getQuotaSummary(orgId);
+            return reply.send(result);
+        }
+        catch (error) {
+            return handleBillingError(error, reply);
+        }
+    };
     getDailyUsage = async (request, reply) => {
         const req = request;
         try {

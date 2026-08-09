@@ -45,7 +45,7 @@ export const logsResource: ExplorerResource = {
   timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: logFields,
-  searchFields: ['message', 'logger', 'loggerName', 'name', 'endpoint', 'service'],
+  searchFields: ['publicId', 'message', 'logger', 'loggerName', 'name', 'endpoint', 'service'],
   searchAliases: {
     ...commonSearchAliases,
     level:    'level',
@@ -59,7 +59,7 @@ export const logsResource: ExplorerResource = {
   },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'environment', 'occurredAt', 'level', 'name', 'message',
+    'id', 'publicId', 'environment', 'occurredAt', 'level', 'name', 'message',
     'logCategory', 'endpoint', 'statusCode', 'durationMs',
     'service', 'traceId', 'requestId',
   ],

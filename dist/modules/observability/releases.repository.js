@@ -6,6 +6,7 @@ const RANGE_MS = {
     '1h': 60 * 60 * 1000,
     '6h': 6 * 60 * 60 * 1000,
     '24h': 24 * 60 * 60 * 1000,
+    '3d': 3 * 24 * 60 * 60 * 1000,
     '7d': 7 * 24 * 60 * 60 * 1000,
     '30d': 30 * 24 * 60 * 60 * 1000,
     '90d': 90 * 24 * 60 * 60 * 1000,
@@ -13,7 +14,7 @@ const RANGE_MS = {
 const ReleaseQuerySchema = z.object({
     from: z.coerce.date().optional(),
     to: z.coerce.date().optional(),
-    range: z.enum(['15m', '1h', '6h', '24h', '7d', '30d', '90d']).optional(),
+    range: z.enum(['15m', '1h', '6h', '24h', '3d', '7d', '30d', '90d']).optional(),
     search: z.string().trim().min(1).max(2000).optional(),
     environment: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),

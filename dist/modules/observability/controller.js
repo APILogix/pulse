@@ -28,9 +28,17 @@ const UpdateErrorGroupStatusBody = z.object({
     status: z.enum(['open', 'resolved', 'ignored', 'archived', 'OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED']),
     reason: z.string().max(1000).optional(),
     comment: z.string().max(1000).optional(),
+    expectedVersion: z.number().int().positive().optional(),
+    release: z.string().max(100).optional(),
 });
 const MergeErrorGroupBody = z.object({
     targetGroupId: z.string().uuid(),
+    reason: z.string().max(1000).optional(),
+    expectedVersion: z.number().int().positive().optional(),
+});
+const UnmergeErrorGroupBody = z.object({
+    reason: z.string().max(1000).optional(),
+    expectedVersion: z.number().int().positive().optional(),
 });
 export class ObservabilityController {
     service;
@@ -161,14 +169,21 @@ export class ObservabilityController {
         const { id } = ErrorGroupIdParams.parse(request.params);
         const body = UpdateErrorGroupStatusBody.parse(request.body ?? {});
         const ctx = await this.context(request);
-        const data = await this.service.updateErrorGroupStatus(ctx, id, body.status, body.comment ?? body.reason);
+        const data = await this.service.updateErrorGroupStatus(ctx, id, body.status, body.comment ?? body.reason, body.expectedVersion, body.release);
         return reply.send({ success: true, data });
     };
     mergeErrorGroups = async (request, reply) => {
         const { id } = ErrorGroupIdParams.parse(request.params);
         const body = MergeErrorGroupBody.parse(request.body ?? {});
         const ctx = await this.context(request);
-        const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId);
+        const data = await this.service.mergeErrorGroup(ctx, id, body.targetGroupId, body.reason, body.expectedVersion);
+        return reply.send({ success: true, data });
+    };
+    unmergeErrorGroup = async (request, reply) => {
+        const { id } = ErrorGroupIdParams.parse(request.params);
+        const body = UnmergeErrorGroupBody.parse(request.body ?? {});
+        const ctx = await this.context(request);
+        const data = await this.service.unmergeErrorGroup(ctx, id, body.reason, body.expectedVersion);
         return reply.send({ success: true, data });
     };
 }

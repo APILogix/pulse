@@ -55,7 +55,7 @@ export const spansResource: ExplorerResource = {
   timeColumn: 'occurred_at',
   idColumn: 'id',
   fields: spanFields,
-  searchFields: ['name', 'message', 'endpoint', 'service', 'dbStatement', 'httpUrl', 'httpTarget'],
+  searchFields: ['publicId', 'name', 'message', 'endpoint', 'service', 'dbStatement', 'httpUrl', 'httpTarget'],
   searchAliases: {
     ...commonSearchAliases,
     operation: 'name',
@@ -69,7 +69,7 @@ export const spansResource: ExplorerResource = {
   },
   defaultSort: { field: 'occurredAt', direction: 'desc' },
   defaultProjection: [
-    'id', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
+    'id', 'publicId', 'environment', 'occurredAt', 'traceId', 'spanId', 'parentSpanId', 'name',
     'spanKind', 'spanType', 'spanStatus', 'endpoint', 'depth', 'service', 'durationMs', 'dbSystem', 'httpMethod', 'httpStatusCode',
   ],
   preferredIndexes: ['idx_events_spans_trace_time', 'idx_events_spans_parent_time', 'idx_events_spans_type_time', 'idx_events_spans_endpoint_time'],

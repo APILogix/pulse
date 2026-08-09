@@ -91,8 +91,12 @@ export class CorrelationEngine {
     }
     assemble(keys, trace, spans, logs, relatedErrors, relatedRequests, metrics, profiles, crons) {
         const spanTree = trace ? (trace.spansTree ?? trace.spans_tree ?? null) : null;
+        const tracePublicId = trace ? (asString(trace.publicId) ?? asString(trace.public_id)) : null;
         return {
-            keys,
+            keys: {
+                ...keys,
+                ...(tracePublicId ? { tracePublicId } : {}),
+            },
             trace,
             spanTree,
             spans,

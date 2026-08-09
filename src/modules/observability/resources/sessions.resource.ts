@@ -3,6 +3,7 @@ import { makeMapRow } from './common.js';
 
 const sessionFields: Record<string, FieldDef> = {
   id: { column: 'id', type: 'uuid', filterable: true, sortable: false, projectable: true, label: 'ID' },
+  publicId: { column: 'public_id', type: 'string', filterable: true, searchable: true, projectable: true, label: 'Public ID' },
   organizationId: { column: 'organization_id', type: 'uuid', filterable: false, projectable: false },
   projectId: { column: 'project_id', type: 'uuid', filterable: false, projectable: false },
   environment: { column: 'environment', type: 'string', filterable: true, projectable: true, label: 'Environment' },
@@ -20,10 +21,10 @@ export const sessionsResource: ExplorerResource = {
   timeColumn: 'started_at',
   idColumn: 'id',
   fields: sessionFields,
-  searchFields: ['sessionId'],
-  searchAliases: { session: 'sessionId' },
+  searchFields: ['publicId', 'sessionId'],
+  searchAliases: { public_id: 'publicId', publicId: 'publicId', session: 'sessionId' },
   defaultSort: { field: 'startedAt', direction: 'desc' },
-  defaultProjection: ['id', 'environment', 'sessionId', 'startedAt', 'endedAt', 'durationMs', 'isCrashed'],
+  defaultProjection: ['id', 'publicId', 'environment', 'sessionId', 'startedAt', 'endedAt', 'durationMs', 'isCrashed'],
   preferredIndexes: ['idx_analytics_sessions_org_time', 'idx_analytics_sessions_user'],
   summary: {
     total: 'COUNT(*)::bigint',

@@ -14,10 +14,13 @@ import { z } from 'zod';
 import { AppError } from '../../shared/errors/app-error.js';
 export declare const TimeRangeKeySchema: z.ZodEnum<{
     "1h": "1h";
+    "15m": "15m";
+    "6h": "6h";
     "24h": "24h";
     "7d": "7d";
     "30d": "30d";
     "90d": "90d";
+    "3d": "3d";
 }>;
 export type TimeRangeKey = z.infer<typeof TimeRangeKeySchema>;
 export declare const GranularitySchema: z.ZodEnum<{
@@ -50,10 +53,13 @@ export type TelemetryIdentityQuery = z.infer<typeof TelemetryIdentityQuerySchema
 export declare const TimeRangeQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -64,10 +70,13 @@ export type TimeRangeQuery = z.infer<typeof TimeRangeQuerySchema>;
 export declare const TrendsQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -94,10 +103,13 @@ export declare const SeverityFilterSchema: z.ZodEnum<{
 export declare const ListErrorsQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -154,10 +166,13 @@ export type RoutePerfQuery = z.infer<typeof RoutePerfQuerySchema>;
 export declare const ListRequestsQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -175,10 +190,13 @@ export type ListRequestsQuery = z.infer<typeof ListRequestsQuerySchema>;
 export declare const ListTracesQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -197,10 +215,13 @@ export type ListTracesQuery = z.infer<typeof ListTracesQuerySchema>;
 export declare const MetricSeriesQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -223,10 +244,13 @@ export type MetricSeriesQuery = z.infer<typeof MetricSeriesQuerySchema>;
 export declare const ListLogsQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -248,10 +272,13 @@ export type ListLogsQuery = z.infer<typeof ListLogsQuerySchema>;
 export declare const ListSessionsQuerySchema: z.ZodObject<{
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;
     to: z.ZodOptional<z.ZodCoercedDate<unknown>>;
@@ -337,10 +364,13 @@ export declare const ExportSchema: z.ZodObject<{
     }>>;
     range: z.ZodDefault<z.ZodEnum<{
         "1h": "1h";
+        "15m": "15m";
+        "6h": "6h";
         "24h": "24h";
         "7d": "7d";
         "30d": "30d";
         "90d": "90d";
+        "3d": "3d";
     }>>;
     projectId: z.ZodOptional<z.ZodString>;
     environment: z.ZodOptional<z.ZodString>;

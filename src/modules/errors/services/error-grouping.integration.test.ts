@@ -7,100 +7,49 @@ import type { Pool, PoolClient } from 'pg';
 import { domainEventBus } from '../../../shared/events/domain-event-bus.js';
 
 describe('Error Grouping System Integration', () => {
-  let errorIngestionService: ErrorIngestionService;
-  let mockPool: Pool;
-  let mockClient: PoolClient;
-  let errorGroupRepo: ErrorGroupRepository;
-  let errorRepo: ErrorRepository;
+  let service: ErrorIngestionService;
+  let pool: Pool;
+  let client: PoolClient;
 
   beforeEach(() => {
-    mockClient = {
-      query: vi.fn(),
-      release: vi.fn()
-    } as unknown as PoolClient;
-
-    mockPool = {
-      connect: vi.fn().mockResolvedValue(mockClient)
-    } as unknown as Pool;
-
-    errorGroupRepo = new ErrorGroupRepository(mockPool);
-    errorRepo = new ErrorRepository(mockPool);
-    const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
-    
-    errorIngestionService = new ErrorIngestionService(mockPool, errorGroupingService, errorRepo);
-    
+    client = { query: vi.fn(), release: vi.fn() } as unknown as PoolClient;
+    pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const groupRepo = new ErrorGroupRepository(pool);
+    const errorRepo = new ErrorRepository(pool);
+    service = new ErrorIngestionService(pool, new ErrorGroupingService(groupRepo), errorRepo);
     vi.spyOn(domainEventBus, 'publish').mockImplementation(() => {});
   });
 
-  it('Group Creation: First occurrence creates exactly one group', async () => {
-    (mockClient.query as any)
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 'new-group-id' }] }) // upsertGroup
-      .mockResolvedValueOnce({ rows: [] }) // insert
-      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+  it('uses event-first deduplication before group lookup', async () => {
+    (client.query as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'event-row' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'group-id' }] })
+      .mockResolvedValue({ rows: [] });
 
-    await errorIngestionService.ingestError(
-      { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
+    await service.ingestError(
+      { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), payload: {} },
     );
 
-    const upsertCall = (mockClient.query as any).mock.calls[1][0] as string;
-    expect(upsertCall).toContain('INSERT INTO error_groups');
-    expect(upsertCall).toContain('ON CONFLICT (project_id, fingerprint) DO UPDATE');
+    const calls = (client.query as ReturnType<typeof vi.fn>).mock.calls.map(([query]) => String(query));
+    expect(calls[1]).toContain('INSERT INTO events_errors');
+    expect(calls[2]).toContain('INSERT INTO error_groups');
   });
 
-  it('Transactions: If event insertion fails, no orphaned group should remain', async () => {
-    (mockClient.query as any)
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 'group-id' }] }) // upsertGroup
-      .mockRejectedValueOnce(new Error('Insertion failed')); // insert
+  it('does not run grouping for a duplicate event', async () => {
+    (client.query as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
 
-    await expect(errorIngestionService.ingestError(
-      { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
-    )).rejects.toThrow('Insertion failed');
-
-    expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
-    expect(domainEventBus.publish).not.toHaveBeenCalled();
-  });
-
-  it('Concurrency: Simulate many simultaneous ingestions with the same fingerprint', async () => {
-    (mockClient.query as any)
-      .mockResolvedValue({ rowCount: 1, rows: [{ id: 'concurrent-group-id', is_new: false, is_regression: false, status: 'OPEN' }] }); 
-      
-    // 10 concurrent requests
-    const promises = Array.from({ length: 10 }).map((_, i) => 
-      errorIngestionService.ingestError(
-        { projectId: 'proj-1', fingerprint: 'hash', eventId: `evt-${i}`, severity: 'error' },
-        { id: `${i}`, organization_id: 'org-1', project_id: 'proj-1', event_id: `evt-${i}`, fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
-      )
+    await service.ingestError(
+      { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-1', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), payload: {} },
     );
 
-    await Promise.all(promises);
-
-    expect(mockClient.query).toHaveBeenCalledTimes(10 * 4); // BEGIN, upsert, insert, COMMIT for each
-    expect(domainEventBus.publish).toHaveBeenCalledTimes(10);
-  });
-
-  it('Idempotency: Duplicate event_id ignores insertion and rolls back group counter bump', async () => {
-    // Clear the mocks from previous tests to observe exactly this test
-    vi.mocked(mockClient.query).mockClear();
-    vi.mocked(domainEventBus.publish).mockClear();
-
-    // Setup: Return a valid group from handleGroup (simulating real DB upsert)
-    (mockClient.query as any)
-      .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [{ id: 'group-id', is_new: false, is_regression: false, status: 'OPEN' }] }) // Upsert Group
-      .mockResolvedValueOnce({ rowCount: 0 }) // Insert Event (simulate DO NOTHING by returning 0 rows)
-      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
-
-    await errorIngestionService.ingestError(
-      { projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-dup', severity: 'error' },
-      { id: '1', organization_id: 'org-1', project_id: 'proj-1', event_id: 'evt-dup', fingerprint: 'hash', message: 'msg', error_name: 'Error', severity: 'error', occurred_at: new Date(), timestamp: new Date(), payload: {} }
-    );
-
-    // It should rollback and NOT publish
-    expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
-    expect(domainEventBus.publish).not.toHaveBeenCalled();
+    const calls = (client.query as ReturnType<typeof vi.fn>).mock.calls.map(([query]) => String(query));
+    expect(calls.some((query) => query.includes('INSERT INTO error_groups'))).toBe(false);
+    expect(calls).toContain('COMMIT');
   });
 });

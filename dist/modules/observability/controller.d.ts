@@ -36,5 +36,6 @@ export declare class ObservabilityController {
     errorGroupEvents: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     updateErrorGroupStatus: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     mergeErrorGroups: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    unmergeErrorGroup: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
 }
 //# sourceMappingURL=controller.d.ts.map

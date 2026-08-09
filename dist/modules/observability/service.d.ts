@@ -13,6 +13,7 @@ import { CorrelationEngine, type CorrelationBundle } from './correlation/engine.
 import { AIInvestigator, type AIInvestigationResult } from './ai/investigator.js';
 import { type AIIntent } from './ai/context-assembler.js';
 import type { TimelineInterval } from './query-engine/index.js';
+import type { IssueLifecycleService } from '../errors/services/issue-lifecycle.service.js';
 export interface EventDetail {
     resource: string;
     entity: Record<string, unknown>;
@@ -47,8 +48,9 @@ export declare class ObservabilityService {
     private readonly repository;
     private readonly correlation;
     private readonly investigator;
+    private readonly lifecycle?;
     private readonly engine;
-    constructor(repository: ObservabilityRepository, correlation: CorrelationEngine, investigator: AIInvestigator);
+    constructor(repository: ObservabilityRepository, correlation: CorrelationEngine, investigator: AIInvestigator, lifecycle?: IssueLifecycleService | undefined);
     /** Resolve a resource by name, failing closed on unknown names. */
     private resource;
     /** List of explorer resource names (for discovery/health). */
@@ -106,9 +108,11 @@ export declare class ObservabilityService {
     getErrorGroupHistory(ctx: QueryContext, groupId: string): Promise<Array<Record<string, unknown>>>;
     /** Fetch related telemetry error events for an error group. */
     getErrorGroupEvents(ctx: QueryContext, groupId: string, limit?: number): Promise<Array<Record<string, unknown>>>;
-    /** Update error group status with audit logging. */
-    updateErrorGroupStatus(ctx: QueryContext, groupId: string, status: string, comment?: string): Promise<Record<string, unknown>>;
-    /** Merge source error group into target error group. */
-    mergeErrorGroup(ctx: QueryContext, sourceGroupId: string, targetGroupId: string): Promise<Record<string, unknown>>;
+    /** Update error group status through the canonical lifecycle service. */
+    updateErrorGroupStatus(ctx: QueryContext, groupId: string, status: string, comment?: string, expectedVersion?: number, release?: string | null): Promise<Record<string, unknown>>;
+    /** Merge source error group into target group through the canonical lifecycle service. */
+    mergeErrorGroup(ctx: QueryContext, sourceGroupId: string, targetGroupId: string, reason?: string, expectedVersion?: number): Promise<Record<string, unknown>>;
+    unmergeErrorGroup(ctx: QueryContext, groupId: string, reason?: string, expectedVersion?: number): Promise<Record<string, unknown>>;
+    private resolveGroupProject;
 }
 //# sourceMappingURL=service.d.ts.map

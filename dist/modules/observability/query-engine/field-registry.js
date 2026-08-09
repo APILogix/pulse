@@ -126,7 +126,7 @@ export function buildPublicProjection(resource) {
 export function buildDetailProjection(resource) {
     const columns = new Set();
     for (const def of Object.values(resource.fields)) {
-        if (IDENT_RE.test(def.column))
+        if (!def.selectExpr && IDENT_RE.test(def.column))
             columns.add(def.column);
     }
     columns.add(resource.idColumn);
