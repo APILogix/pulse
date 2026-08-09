@@ -5,14 +5,14 @@ import { pgboss } from '../../../lib/pgboss.js';
 import { evaluateCondition, evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import type { AlertRuleConditionRow } from '../rules/rules.types.js';
 import type { EffectiveRule, EvaluationScope } from '../policy/resolve-rule.js';
-import {
-  AlertRuntimeRepository,
-  type AlertEngine,
-  type LogDbSeverity,
-  type NotificationChannelKind,
-  type NotificationJobInsert,
-} from './alert-runtime.repository.js';
+import { AlertRuntimeRepository, type AlertEngine } from './alert-runtime.repository.js';
 import { AlertRuntimeRuleCatalog, type AlertRuntimeTier, type RuntimeRuleRow } from './rule-catalog.js';
+import { AlertChannelRepository } from '../../projects/alerts/channels/channel.repository.js';
+import { AlertConfigRepository } from '../config/alert-config.repository.js';
+import { NotificationRoutingService } from './notification-routing.service.js';
+import { AlertDecisionEngine } from '../decision/decision.engine.js';
+import { resolveAllEffectiveThresholds } from '../policy/resolve-threshold.js';
+import { buildEffectiveProjectRule } from './effective-rule-contract.js';
 import type { ScopedEvent } from '../../ingestion/pipeline/telemetry-writer.js';
 import { resolveTimestamp } from '../../ingestion/pipeline/event-normalizer.js';
 
@@ -69,27 +69,28 @@ interface ScopePayload {
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 const ALL_ENVIRONMENTS = '__all__';
 const DEFAULT_MAX_SCOPES = 500;
-const SEVERITY_PRIORITY: Record<LogDbSeverity, number> = {
-  debug: 0,
-  info: 10,
-  warning: 30,
-  error: 70,
-  critical: 90,
-  fatal: 100,
-};
 
 export class AlertRuntimeEngines {
   private readonly catalog: AlertRuntimeRuleCatalog;
   private readonly runtime: AlertRuntimeRepository;
+  private readonly decision: AlertDecisionEngine;
   private readonly log: FastifyBaseLogger;
 
   constructor(
     logger: FastifyBaseLogger,
     private readonly logDb: Pool,
     private readonly controlDb: Pool,
+    routing?: NotificationRoutingService,
   ) {
     this.catalog = new AlertRuntimeRuleCatalog(controlDb);
     this.runtime = new AlertRuntimeRepository(logDb);
+    this.decision = new AlertDecisionEngine(logDb, logger, {
+      routing: routing ?? new NotificationRoutingService({
+        logger,
+        channelRepository: new AlertChannelRepository(controlDb),
+        configRepository: new AlertConfigRepository(controlDb),
+      }),
+    });
     this.log = logger.child({ component: 'alert-runtime-engines' });
   }
 
@@ -118,8 +119,14 @@ export class AlertRuntimeEngines {
         service: signal.service ?? null,
         endpoint: signal.endpoint ?? null,
       };
+      const signalRules = signalScope.projectId === scope.projectId
+        && signalScope.environment === scope.environment
+        && signalScope.service === null
+        && signalScope.endpoint === null
+        ? resolved
+        : await this.catalog.resolveRulesForScope(input.organizationId, 'fast', signalScope);
       const payload = fastSignalPayload(input.organizationId, signal);
-      for (const candidate of resolved) {
+      for (const candidate of signalRules) {
         await this.evaluateCandidate(candidate.rule, candidate.effective, signalScope, payload, 'fast', summary);
       }
     }
@@ -257,50 +264,45 @@ export class AlertRuntimeEngines {
     observed: number | null,
     threshold: number | null,
   ): Promise<void> {
-    const severity = toLogDbSeverity(effective.severity);
-    const alertKey = hash([
-      rule.organization_id,
-      rule.id,
-      effective.bindingId ?? 'base',
-      scope.projectId ?? 'org',
-      scope.environment ?? 'all',
-      scope.service ?? 'all',
-      scope.endpoint ?? 'all',
-    ].join(':'));
-    const fingerprint = `${rule.id}:${effective.bindingId ?? 'base'}:${scope.projectId ?? 'org'}:${payload.source}`;
-    const dedupKey = `${fingerprint}:${kind}`;
-    const event = await this.runtime.appendEvent({
+    const effectiveProjectRule = buildEffectiveProjectRule(rule, effective, scope);
+    if (!effectiveProjectRule) return;
+    const result = await this.decision.decide({
       organizationId: rule.organization_id,
       projectId: scope.projectId ?? null,
       environment: scope.environment ?? null,
       service: scope.service ?? null,
       endpoint: scope.endpoint ?? null,
-      ruleId: rule.id,
-      bindingId: effective.bindingId,
       ruleRevision: rule.current_revision,
-      kind,
-      severity,
-      priority: SEVERITY_PRIORITY[severity],
-      fingerprint,
-      dedupKey,
-      correlationKey: alertKey,
-      groupKey: rule.grouping_enabled ? `${rule.organization_id}:${rule.id}` : null,
-      source: payload.source,
-      engine,
-      idempotencyKey: hash(`${alertKey}:${kind}:${payload.observedAt.toISOString()}`),
-      observedValue: observed,
-      thresholdValue: threshold,
-      evidence: payload.evidence,
-      policySnapshot: {
-        ruleId: effective.ruleId,
+      policy: {
+        policyId: `${rule.organization_id}:${rule.id}:${rule.current_revision}`,
+        version: rule.current_revision,
+        organizationId: rule.organization_id,
+        projectId: scope.projectId ?? null,
+        ruleId: rule.id,
         bindingId: effective.bindingId,
-        revision: rule.current_revision,
+        ruleRevision: rule.current_revision,
+        effectiveRuleHash: effectiveProjectRule.hash,
+        scope,
+        enabled: effective.enabled,
         severity: effective.severity,
         cooldownSeconds: effective.cooldownSeconds,
         deduplicationWindowSeconds: effective.deduplicationWindowSeconds,
+        evaluationIntervalSeconds: effective.evaluationIntervalSeconds,
+        autoResolveAfterMinutes: effective.autoResolveAfterMinutes,
+        consecutiveBreaches: effective.consecutiveBreaches,
+        conditions: effective.conditions,
+        thresholds: resolveAllEffectiveThresholds(effective),
         requestedChannels: effective.requestedChannels,
+        recipientOverrides: effective.recipientOverrides,
+        escalationPolicyId: effective.escalationPolicyId,
         trace: effective.trace,
       },
+      source: payload.source,
+      observedAt: payload.observedAt,
+      kind,
+      observedValue: observed,
+      thresholdValue: threshold,
+      evidence: payload.evidence,
       labels: {
         ...payload.labels,
         rule_id: rule.id,
@@ -313,58 +315,10 @@ export class AlertRuntimeEngines {
           ? `${rule.name} breached (${observed ?? 'n/a'} vs ${threshold ?? 'n/a'})`
           : `${rule.name} recovered`,
       },
-      occurredAt: payload.observedAt,
+      category: categoryForRule(effective.conditions, payload.source),
+      conditionFieldPaths: effective.conditions.map((condition) => condition.field_path),
     });
-    if (!event) return;
-
-    await this.runtime.upsertState({
-      alertKey,
-      organizationId: rule.organization_id,
-      projectId: scope.projectId ?? null,
-      latestEventId: event.id,
-      state: kind === 'fired' ? 'firing' : 'resolved',
-      severity,
-      seenAt: payload.observedAt,
-      notifiedAt: kind === 'fired' ? payload.observedAt : null,
-      autoResolveAt: effective.autoResolveAfterMinutes
-        ? new Date(payload.observedAt.getTime() + effective.autoResolveAfterMinutes * 60_000)
-        : null,
-      escalationPolicyId: effective.escalationPolicyId,
-    });
-    await this.runtime.appendHistory({
-      organizationId: rule.organization_id,
-      alertKey,
-      alertEventId: event.id,
-      action: kind === 'fired' ? 'triggered' : 'resolved',
-      actorType: 'worker',
-      newState: kind === 'fired' ? 'firing' : 'resolved',
-      metadata: { engine, observed, threshold },
-    });
-
-    if (kind === 'fired') {
-      const connectorTargets = await this.resolveConnectorTargets(rule.organization_id, effective.requestedChannels);
-      const jobs = await this.runtime.insertNotificationJobs(notificationJobs({
-        rule,
-        effective,
-        scope,
-        alertEventId: event.id,
-        alertKey,
-        severity,
-        observed,
-        threshold,
-        payload,
-        connectorTargets,
-      }));
-      await this.runtime.appendLedger(jobs.map((job) => ({
-        organizationId: rule.organization_id,
-        ruleId: rule.id,
-        bindingId: effective.bindingId,
-        alertKey,
-        channelKind: job.channel_kind,
-        notificationJobId: job.id,
-      })));
-      await Promise.all(jobs.map((job) => this.enqueueNotificationJob(job.id)));
-    }
+    await Promise.all(result.notificationJobs.map((job) => this.enqueueNotificationJob(job.id)));
   }
 
   private async enqueueNotificationJob(notificationJobId: string): Promise<void> {
@@ -373,30 +327,6 @@ export class AlertRuntimeEngines {
       { notificationJobId },
       { retryLimit: 3, retryDelay: 10, retryBackoff: true, expireInSeconds: 600 } as never,
     );
-  }
-
-  private async resolveConnectorTargets(
-    organizationId: string,
-    requestedChannels: readonly string[],
-  ): Promise<Map<NotificationChannelKind, string>> {
-    const kinds = [...new Set(requestedChannels.map(toChannelKind).filter((value): value is NotificationChannelKind =>
-      value !== null && value !== 'in_app',
-    ))];
-    if (kinds.length === 0) return new Map();
-    const result = await this.controlDb.query<{ provider: NotificationChannelKind; id: string }>(
-      `SELECT DISTINCT ON (provider) provider::text AS provider, id
-         FROM connector_configs
-        WHERE organization_id = $1
-          AND provider = ANY($2::text[])
-          AND status = 'active'
-          AND deleted_at IS NULL
-        ORDER BY provider,
-          CASE WHEN provider_metadata->>'managedBy' = 'pulse' THEN 1 ELSE 0 END,
-          last_successful_delivery_at DESC NULLS LAST,
-          created_at ASC`,
-      [organizationId, kinds],
-    );
-    return new Map(result.rows.map((row) => [row.provider, row.id]));
   }
 
   private async loadRollupScopes(
@@ -839,68 +769,15 @@ function fastSignalPayload(organizationId: string, signal: FastSignalInput): Run
   };
 }
 
-function notificationJobs(input: {
-  rule: RuntimeRuleRow;
-  effective: EffectiveRule;
-  scope: EvaluationScope;
-  alertEventId: string;
-  alertKey: string;
-  severity: LogDbSeverity;
-  observed: number | null;
-  threshold: number | null;
-  payload: RuntimePayload;
-  connectorTargets: Map<NotificationChannelKind, string>;
-}): NotificationJobInsert[] {
-  const channels = input.effective.requestedChannels.length > 0
-    ? input.effective.requestedChannels
-    : ['in_app'];
-  const recipients = recipientRefs(input.effective.recipientOverrides);
-  const jobs: NotificationJobInsert[] = [];
-
-  for (const channel of channels) {
-    const channelKind = toChannelKind(channel);
-    if (!channelKind) continue;
-    const targetRefs = recipients.length > 0 ? recipients : [null];
-    for (const recipientRef of targetRefs) {
-      jobs.push({
-        organizationId: input.rule.organization_id,
-        projectId: input.scope.projectId ?? null,
-        alertEventId: input.alertEventId,
-        alertKey: input.alertKey,
-        channelKind,
-        connectorId: channelKind === 'in_app' || (channelKind === 'email' && recipientRef)
-          ? null
-          : input.connectorTargets.get(channelKind) ?? null,
-        recipientRef,
-        severity: input.severity,
-        priority: SEVERITY_PRIORITY[input.severity],
-        payload: {
-          notificationType: 'alert',
-          severity: input.severity,
-          title: `Alert: ${input.rule.name}`,
-          body: `${input.rule.name} breached (${input.observed ?? 'n/a'} vs ${input.threshold ?? 'n/a'})`,
-          correlationId: input.alertEventId,
-          dedupKey: input.alertKey,
-          metadata: {
-            ruleId: input.rule.id,
-            bindingId: input.effective.bindingId,
-            source: input.payload.source,
-            evidence: input.payload.evidence,
-          },
-        },
-        idempotencyKey: hash(`${input.alertKey}:${channelKind}:${recipientRef ?? 'default'}:0:0`),
-        billable: channelKind !== 'in_app',
-      });
-    }
-  }
-  return jobs;
-}
-
-function recipientRefs(overrides: Record<string, unknown> | null): Array<string | null> {
-  if (!overrides) return [];
-  const raw = overrides.recipients ?? overrides.emails ?? overrides.targets;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+function categoryForRule(conditions: AlertRuleConditionRow[], source: string): string {
+  const fieldPath = conditions[0]?.field_path?.toLowerCase() ?? '';
+  if (fieldPath.startsWith('security') || fieldPath.includes('auth')) return 'security';
+  if (fieldPath.startsWith('deployment')) return 'deployment';
+  if (fieldPath.startsWith('cron')) return 'cron';
+  if (fieldPath.startsWith('ai.')) return 'ai';
+  if (fieldPath.includes('latency') || fieldPath.includes('availability') || fieldPath.includes('error')) return 'performance';
+  if (source.includes('billing')) return 'billing';
+  return 'all';
 }
 
 function firstObservedValue(results: Array<{ actual: unknown; passed: boolean }>): number | null {
@@ -932,25 +809,6 @@ function hasSecuritySignal(record: Record<string, unknown>): boolean {
     || (typeof tags === 'object' && tags !== null && Object.values(tags).some((value) =>
       typeof value === 'string' && /security|critical/i.test(value),
     ));
-}
-
-function toLogDbSeverity(value: string): LogDbSeverity {
-  if (value === 'critical') return 'critical';
-  if (value === 'error') return 'error';
-  if (value === 'warning') return 'warning';
-  return 'info';
-}
-
-function toChannelKind(value: string): NotificationChannelKind | null {
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized === 'in_app' || normalized === 'email' || normalized === 'slack'
-    || normalized === 'discord' || normalized === 'teams' || normalized === 'pagerduty'
-    || normalized === 'webhook' || normalized === 'sms'
-  ) {
-    return normalized;
-  }
-  return null;
 }
 
 function metricSeriesScope(organizationId: string, row: Record<string, unknown>): ScopePayload {

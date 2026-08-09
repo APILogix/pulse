@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
+import { seedDefaultPresetsForOrgInTransaction } from '../evaluator/presets.js';
 import {
   DASHBOARD_WIDGET_DEFAULTS,
   ESCALATION_DEFAULTS,
@@ -50,6 +51,12 @@ export class AlertingWorkspaceRepository {
     if (!created && workspace.provisioning_status === 'ready') {
       return this.readySummary(workspace.id);
     }
+
+    const catalogRules = await seedDefaultPresetsForOrgInTransaction(
+      client,
+      context.organizationId,
+      context.initializedBy,
+    );
 
     const categoryIds = new Map<string, string>();
     for (const category of POLICY_CATEGORIES) {
@@ -345,6 +352,7 @@ export class AlertingWorkspaceRepository {
       initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
       categories: POLICY_CATEGORIES.length,
       policies: POLICY_DEFAULTS.length,
+      catalogRules,
       policyVersions,
       routingDefaults: ROUTING_DEFAULTS.length,
       escalationPolicies: ESCALATION_DEFAULTS.length,
@@ -362,6 +370,7 @@ export class AlertingWorkspaceRepository {
       initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
       categories: POLICY_CATEGORIES.length,
       policies: POLICY_DEFAULTS.length,
+      catalogRules: 0,
       policyVersions: POLICY_DEFAULTS.length,
       routingDefaults: ROUTING_DEFAULTS.length,
       escalationPolicies: ESCALATION_DEFAULTS.length,

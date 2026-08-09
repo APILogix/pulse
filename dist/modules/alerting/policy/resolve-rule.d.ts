@@ -68,6 +68,10 @@ export interface EvaluationScope {
     service?: string | null;
     endpoint?: string | null;
 }
+export interface EffectiveRuleResolutionOptions {
+    /** Runtime evaluation requires an explicit project binding for project scopes. */
+    requireProjectSubscription?: boolean;
+}
 /** One step of the resolution, retained so any decision can be explained. */
 export interface RuleResolutionTraceEntry {
     bindingId: string | null;
@@ -125,7 +129,7 @@ export declare function compareBindings(a: AlertRuleBindingRow, b: AlertRuleBind
  *                    filtered here so callers may pass the raw query result
  * @param scope      the evaluation context
  */
-export declare function resolveEffectiveRule(rule: AlertRuleRow, conditions: AlertRuleConditionRow[], bindings: AlertRuleBindingRow[], scope: EvaluationScope): EffectiveRule;
+export declare function resolveEffectiveRule(rule: AlertRuleRow, conditions: AlertRuleConditionRow[], bindings: AlertRuleBindingRow[], scope: EvaluationScope, options?: EffectiveRuleResolutionOptions): EffectiveRule;
 /**
  * True when two equal-depth bindings tied and the tie-break had to decide.
  * Surfaced so `alert_binding_conflicts_total` can be incremented by the caller.

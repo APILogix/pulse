@@ -33,6 +33,7 @@ import type { AlertRuleBindingRow } from '../policy/resolve-rule.js';
 
 export interface EffectiveRuleResult {
   rule: EffectiveRule;
+  ruleRevision: number;
   thresholds: EffectiveThreshold[];
   /** True when two bindings tied at the same depth and the tie-break decided. */
   conflict: boolean;
@@ -128,6 +129,7 @@ export class AlertRuleBindingsService {
     organizationId: string,
     ruleId: string,
     query: EffectiveRuleQuery,
+    options: { requireProjectSubscription?: boolean } = {},
   ): Promise<EffectiveRuleResult> {
     const rule = await this.config.findRuleById(organizationId, ruleId);
     if (!rule) throw new AlertNotFoundError('Alert rule');
@@ -145,7 +147,7 @@ export class AlertRuleBindingsService {
       endpoint: query.endpoint ?? null,
     };
 
-    const effective = resolveEffectiveRule(rule, conditions, bindings, scope);
+    const effective = resolveEffectiveRule(rule, conditions, bindings, scope, options);
     const conflict = hasEqualDepthConflict(bindings, scope);
     if (conflict) {
       recordBindingConflict(effective.resolvedScopeLevel);
@@ -157,6 +159,9 @@ export class AlertRuleBindingsService {
 
     return {
       rule: effective,
+      ruleRevision: 'current_revision' in rule && typeof rule.current_revision === 'number'
+        ? rule.current_revision
+        : 1,
       thresholds: resolveAllEffectiveThresholds(effective),
       conflict,
       appliedBindingIds: effective.trace

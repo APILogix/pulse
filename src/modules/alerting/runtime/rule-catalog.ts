@@ -181,21 +181,27 @@ export class AlertRuntimeRuleCatalog {
     tier: AlertRuntimeTier,
     scope: EvaluationScope,
   ): Promise<ResolvedRuntimeRule[]> {
-    const rules = await this.listRulesForTier(organizationId, tier);
+    if (!scope.projectId) return [];
+
+    const rules = (await this.listRulesForTier(organizationId, tier))
+      .filter((rule) => rule.project_id === null);
     const ruleIds = rules.map((rule) => rule.id);
     const [conditionsByRule, bindingsByRule] = await Promise.all([
       this.listConditions(ruleIds),
       this.listBindings(organizationId, ruleIds),
     ]);
 
-    return rules.map((rule) => ({
-      rule,
-      effective: resolveEffectiveRule(
+    return rules
+      .map((rule) => ({
         rule,
-        conditionsByRule.get(rule.id) ?? [],
-        bindingsByRule.get(rule.id) ?? [],
-        scope,
-      ),
-    }));
+        effective: resolveEffectiveRule(
+          rule,
+          conditionsByRule.get(rule.id) ?? [],
+          bindingsByRule.get(rule.id) ?? [],
+          scope,
+          { requireProjectSubscription: true },
+        ),
+      }))
+      .filter(({ effective }) => effective.enabled);
   }
 }

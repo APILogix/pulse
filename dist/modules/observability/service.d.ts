@@ -14,9 +14,16 @@ import { AIInvestigator, type AIInvestigationResult } from './ai/investigator.js
 import { type AIIntent } from './ai/context-assembler.js';
 import type { TimelineInterval } from './query-engine/index.js';
 import type { IssueLifecycleService } from '../errors/services/issue-lifecycle.service.js';
+import { type RequestDetailResponse, type RequestDeveloperToolsResponse } from './request-detail.js';
+import { type ErrorDetailResponse } from './error-detail.js';
 export interface EventDetail {
+    id?: string | undefined;
+    publicId?: string | undefined;
     resource: string;
     entity: Record<string, unknown>;
+    errorGroup?: {
+        publicId: string | null;
+    } | null | undefined;
     attributes: unknown;
     metadata: unknown;
     payload: unknown;
@@ -57,6 +64,7 @@ export declare class ObservabilityService {
     resourceNames(): string[];
     /** Toolbar facet metadata for a resource (available filters). */
     facets(name: string): FacetDef[];
+    private prepareQuery;
     list(name: string, ctx: QueryContext, rawQuery: unknown): Promise<ExplorerListResponse<Record<string, unknown>>>;
     summary(name: string, ctx: QueryContext, rawQuery: unknown): Promise<Record<string, number>>;
     statistics(name: string, ctx: QueryContext, rawQuery: unknown): Promise<Record<string, number | null>>;
@@ -68,6 +76,34 @@ export declare class ObservabilityService {
     pollSince(name: string, ctx: QueryContext, rawQuery: unknown, since: Date, max?: number): Promise<Array<Record<string, unknown>>>;
     /** Universal event detail: one correlated payload; the frontend joins nothing. */
     detail(name: string, ctx: QueryContext, id: string): Promise<EventDetail>;
+    /**
+     * Dedicated request-event detail.
+     *
+     * Returns the sectioned payload the request detail page expects. All data is
+     * fetched with bounded, indexed lookups:
+     *   - the request itself by public_id (unique index)
+     *   - related logs: COUNT only, via trace_id / request_id + time window
+     *   - related errors: lightweight public_id + message, capped at 20
+     *   - trace public id: single-row lookup by trace_id
+     */
+    detailRequest(ctx: QueryContext, id: string): Promise<RequestDetailResponse>;
+    /**
+     * Lazy raw dumps for the Developer Tools accordion on request detail.
+     * Not included in the canonical detail response — fetch only when expanded.
+     */
+    requestDeveloperTools(ctx: QueryContext, id: string): Promise<RequestDeveloperToolsResponse>;
+    /**
+     * Dedicated error-event detail.
+     *
+     * Returns the structured payload the error detail page expects. All data is
+     * fetched with bounded, indexed lookups:
+     *   - the error itself by public_id (unique index)
+     *   - related logs: COUNT only, via trace_id / request_id + time window
+     *   - trace public id: single-row lookup by trace_id
+     *   - request public id: single-row lookup by request_id / event_id
+     *   - error group public id: single-row lookup by error_group_id / fingerprint
+     */
+    detailError(ctx: QueryContext, id: string): Promise<ErrorDetailResponse>;
     /** Related events of one type for a detail page's lazy relationship tabs. */
     related(name: string, ctx: QueryContext, id: string, relation: string): Promise<Array<Record<string, unknown>>>;
     /** AI investigation for a single event (Explain / Root Cause / …). */

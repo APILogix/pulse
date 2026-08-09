@@ -45,6 +45,9 @@ export declare const RawExplorerQuerySchema: z.ZodObject<{
     level: z.ZodOptional<z.ZodString>;
     handled: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
     isHandled: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
+    isRegression: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
+    regression: z.ZodOptional<z.ZodUnion<readonly [z.ZodString, z.ZodBoolean]>>;
+    release: z.ZodOptional<z.ZodString>;
 }, z.core.$strict>;
 /** Reject tenant and projection controls before endpoint-specific handling. */
 export declare function assertPublicExplorerQuery(input: unknown): void;

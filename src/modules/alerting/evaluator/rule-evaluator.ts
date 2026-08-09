@@ -34,6 +34,8 @@ import { EventsService } from '../events/events.service.js';
 import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { seedDefaultPresetsForOrg } from './presets.js';
 import { ProjectThresholdWorker } from '../../projects/alerts/thresholds/threshold.worker.js';
+import { isEnabled } from '../../feature-flags/service.js';
+import { FEATURE_FLAGS } from '../../feature-flags/types.js';
 import type { AlertRuleConditionRow, AlertRuleRow } from '../types.js';
 
 const EVAL_SOURCE = 'rule-evaluator';
@@ -158,7 +160,14 @@ export class AlertRuleEvaluator {
        LIMIT $1`,
       [limit],
     );
-    return r.rows;
+    const rows = await Promise.all(r.rows.map(async (rule) => ({
+      rule,
+      v2: await isEnabled(FEATURE_FLAGS.ALERTING_V2_EVALUATION, {
+        organizationId: rule.organization_id,
+        projectId: rule.project_id,
+      }, false),
+    })));
+    return rows.filter((entry) => !entry.v2).map((entry) => entry.rule);
   }
 
   /**

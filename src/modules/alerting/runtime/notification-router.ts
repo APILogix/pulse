@@ -88,6 +88,8 @@ export class AlertNotificationRouter {
         severity: toConnectorSeverity(job.severity),
         idempotencyKey: job.idempotency_key,
         correlationId: job.alert_key,
+        ...(job.notification_type ? { notificationType: job.notification_type } : {}),
+        routingDecisionHash: job.routing_decision_hash,
         payload: job.payload,
       };
       await pgboss.send(
@@ -139,22 +141,15 @@ export class AlertNotificationRouter {
     startedAt: number,
     errorMessage?: string,
   ): Promise<void> {
-    await this.repo.setNotificationJobStatus(job.id, status);
-    await this.repo.appendDeliveryAttempts([{
+    await this.repo.recordNotificationDelivery({
       organizationId: job.organization_id,
-      projectId: job.project_id,
-      alertEventId: job.alert_event_id,
-      notificationJobId: job.id,
-      channelKind: job.channel_kind,
-      connectorId: job.connector_id,
-      routeId: job.route_id,
-      recipientUserId: job.recipient_user_id,
-      attemptNumber: 1,
-      status,
+      jobId: job.id,
+      jobStatus: status,
+      attemptStatus: status,
       errorCategory: errorMessage ? 'router' : null,
       errorMessage: errorMessage ?? null,
       latencyMs: Date.now() - startedAt,
-    }]);
+    });
   }
 }
 

@@ -11,6 +11,7 @@ export type AlertingProvisioningSummary = {
     initializationVersion: string;
     categories: number;
     policies: number;
+    catalogRules: number;
     policyVersions: number;
     routingDefaults: number;
     escalationPolicies: number;

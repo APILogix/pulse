@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { AlertRuleBindingsService } from '../config/bindings.service.js';
 import type { EffectiveRuleQuery } from '../config/bindings.types.js';
 import { AlertPolicyCache, policyCacheKey } from './policy.cache.js';
+import { hashCanonical } from '../runtime/effective-rule-contract.js';
 import type { AlertCandidate, EffectiveAlertPolicy, PolicyResolutionResult } from './types.js';
 
 export interface AlertPolicyEngineDeps {
@@ -19,7 +20,11 @@ export class AlertPolicyEngine {
     this.log = deps.logger.child({ component: 'alert-policy-engine' });
   }
 
-  async resolve(candidate: AlertCandidate, version = 1): Promise<PolicyResolutionResult> {
+  async resolve(
+    candidate: AlertCandidate,
+    version = 1,
+    options: { requireProjectSubscription?: boolean } = {},
+  ): Promise<PolicyResolutionResult> {
     const scope: EffectiveRuleQuery = {
       ...(candidate.projectId ? { projectId: candidate.projectId } : {}),
       ...(candidate.environment ? { environment: candidate.environment } : {}),
@@ -31,16 +36,29 @@ export class AlertPolicyEngine {
       environment: candidate.environment ?? null,
       service: candidate.service ?? null,
       endpoint: candidate.endpoint ?? null,
-    });
-    const cached = this.cache.get(key);
+    }, options);
+    const cacheable = options.requireProjectSubscription !== true;
+    const cached = cacheable ? this.cache.get(key) : undefined;
     if (cached) return cached;
 
-    const result = await this.bindings.resolveEffective(candidate.organizationId, candidate.ruleId, scope);
+    const result = await this.bindings.resolveEffective(candidate.organizationId, candidate.ruleId, scope, options);
     const policy: EffectiveAlertPolicy = {
-      policyId: `${candidate.organizationId}:${candidate.ruleId}:${version}`,
-      version,
+      policyId: `${candidate.organizationId}:${candidate.ruleId}:${result.ruleRevision}`,
+      version: result.ruleRevision,
       organizationId: candidate.organizationId,
+      projectId: candidate.projectId ?? null,
       ruleId: candidate.ruleId,
+      bindingId: result.rule.bindingId,
+      ruleRevision: result.ruleRevision,
+      effectiveRuleHash: hashCanonical({
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId ?? null,
+        ruleId: candidate.ruleId,
+        bindingId: result.rule.bindingId,
+        version,
+        rule: result.rule,
+        thresholds: result.thresholds,
+      }),
       scope: {
         organizationId: candidate.organizationId,
         projectId: candidate.projectId ?? null,
@@ -69,7 +87,7 @@ export class AlertPolicyEngine {
       conflict: result.conflict,
       appliedBindingIds: [...result.appliedBindingIds],
     } satisfies PolicyResolutionResult;
-    this.cache.set(key, resolved);
+    if (cacheable) this.cache.set(key, resolved);
     return resolved;
   }
 

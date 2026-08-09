@@ -4,8 +4,8 @@ export declare const NotificationChannelSchema: z.ZodEnum<{
     push: "push";
     sms: "sms";
     email: "email";
-    slack: "slack";
     webhook: "webhook";
+    slack: "slack";
 }>;
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
@@ -31,8 +31,8 @@ export declare const BulkSubscribeBodySchema: z.ZodObject<{
         push: "push";
         sms: "sms";
         email: "email";
-        slack: "slack";
         webhook: "webhook";
+        slack: "slack";
     }>;
     category: z.ZodEnum<{
         error: "error";

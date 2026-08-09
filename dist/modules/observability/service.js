@@ -5,6 +5,14 @@ import { CorrelationEngine } from './correlation/engine.js';
 import { AIInvestigator } from './ai/investigator.js';
 import { assembleContext, AI_INTENTS } from './ai/context-assembler.js';
 import { LifecycleConflictError } from '../errors/services/issue-lifecycle.service.js';
+import { errorsResource, requestsResource } from './resources/index.js';
+import { assertRequestPublicId, assembleRequestDetail, assembleRequestDeveloperTools, } from './request-detail.js';
+import { assertErrorPublicId, isErrorPublicId, assembleErrorDetail, } from './error-detail.js';
+import { assembleErrorGroupItem } from './error-group-assembler.js';
+/** Lookback window for request-related errors and logs (±10 minutes). */
+const REQUEST_RELATED_WINDOW_MS = 10 * 60 * 1000;
+/** Lookback window for error-related logs and request lookup (±10 minutes). */
+const ERROR_RELATED_WINDOW_MS = 10 * 60 * 1000;
 export class ObservabilityService {
     repository;
     correlation;
@@ -33,22 +41,73 @@ export class ObservabilityService {
     facets(name) {
         return buildFacets(this.resource(name));
     }
-    async list(name, ctx, rawQuery) {
+    async prepareQuery(name, ctx, rawQuery) {
         const resource = this.resource(name);
         const query = buildExplorerQuery(rawQuery, resource.defaultSort);
+        if (name === 'error-groups') {
+            const projFilterIndex = query.filters.findIndex((f) => f.field === 'project' || f.field === 'projectSlug');
+            if (projFilterIndex >= 0) {
+                const val = String(query.filters[projFilterIndex]?.value ?? '');
+                if (val) {
+                    const resolvedProjectId = await this.repository.resolveProjectIdFromSlug(ctx, val);
+                    if (resolvedProjectId) {
+                        query.filters[projFilterIndex] = { field: 'project', op: 'eq', value: resolvedProjectId };
+                    }
+                    else {
+                        query.filters[projFilterIndex] = { field: 'project', op: 'eq', value: '00000000-0000-0000-0000-000000000000' };
+                    }
+                }
+                else {
+                    query.filters.splice(projFilterIndex, 1);
+                }
+            }
+        }
+        return query;
+    }
+    async list(name, ctx, rawQuery) {
+        const resource = this.resource(name);
+        const query = await this.prepareQuery(name, ctx, rawQuery);
+        if (name === 'error-groups') {
+            const result = await this.engine.list(resource, ctx, query);
+            const traceIds = [];
+            const groupIds = [];
+            for (const item of result.items) {
+                const tId = String(item.last_trace_id ?? item.lastTraceId ?? '');
+                if (tId)
+                    traceIds.push(tId);
+                const gId = String(item.id ?? '');
+                const pId = String(item.public_id ?? item.publicId ?? '');
+                if (gId)
+                    groupIds.push(gId);
+                if (pId)
+                    groupIds.push(pId);
+            }
+            const [tracePublicIdMap, eventPublicIdMap] = await Promise.all([
+                this.repository.fetchTracePublicIdMap(ctx, traceIds),
+                this.repository.fetchLatestEventPublicIdMap(ctx, groupIds),
+            ]);
+            const canonicalItems = result.items.map((row) => assembleErrorGroupItem(row, tracePublicIdMap, eventPublicIdMap));
+            return {
+                ...result,
+                items: canonicalItems,
+            };
+        }
         return this.engine.list(resource, ctx, query);
     }
     async summary(name, ctx, rawQuery) {
         const resource = this.resource(name);
-        return this.engine.summary(resource, ctx, buildExplorerQuery(rawQuery, resource.defaultSort));
+        const query = await this.prepareQuery(name, ctx, rawQuery);
+        return this.engine.summary(resource, ctx, query);
     }
     async statistics(name, ctx, rawQuery) {
         const resource = this.resource(name);
-        return this.engine.statistics(resource, ctx, buildExplorerQuery(rawQuery, resource.defaultSort));
+        const query = await this.prepareQuery(name, ctx, rawQuery);
+        return this.engine.statistics(resource, ctx, query);
     }
     async timeline(name, ctx, rawQuery, interval) {
         const resource = this.resource(name);
-        return this.engine.timeline(resource, ctx, buildExplorerQuery(rawQuery, resource.defaultSort), interval);
+        const query = await this.prepareQuery(name, ctx, rawQuery);
+        return this.engine.timeline(resource, ctx, query, interval);
     }
     /**
      * Live tail: rows newer than `since` for the current filter set, ascending.
@@ -78,19 +137,56 @@ export class ObservabilityService {
         const timeline = await this.detailTimeline(name, ctx, raw);
         const facts = assembleContext(name, raw, bundle, timeline).facts;
         const entity = projectPublicRow(resource, resource.mapRow(raw));
-        if (bundle.trace && !entity.tracePublicId) {
-            const tracePubId = (bundle.trace.publicId ?? bundle.trace.public_id);
-            if (tracePubId) {
-                entity.tracePublicId = tracePubId;
+        const rawId = raw.id ?? entity.id;
+        const rawPublicId = raw.public_id ?? raw.publicId ?? entity.publicId;
+        const tracePubId = (bundle.trace?.publicId ?? bundle.trace?.public_id ?? entity.tracePublicId ?? raw.trace_public_id ?? raw.tracePublicId);
+        const traceId = (bundle.trace?.traceId ?? bundle.trace?.trace_id ?? entity.traceId ?? raw.trace_id ?? raw.traceId);
+        if (tracePubId) {
+            entity.tracePublicId = tracePubId;
+        }
+        if (tracePubId || traceId) {
+            entity.trace = {
+                ...(typeof entity.trace === 'object' && entity.trace ? entity.trace : {}),
+                ...(tracePubId ? { publicId: tracePubId } : {}),
+                ...(traceId ? { traceId } : {}),
+            };
+        }
+        let errorGroupObj = null;
+        let errorGroupPubId = (entity.errorGroupPublicId ?? raw.error_group_public_id ?? raw.errorGroupPublicId);
+        if (!errorGroupPubId && name === 'errors') {
+            const groupId = (raw.error_group_id ?? raw.errorGroupId);
+            const fp = raw.fingerprint;
+            if (groupId || fp) {
+                errorGroupPubId = (await this.repository.fetchErrorGroupPublicId(ctx, groupId, fp)) ?? undefined;
             }
         }
+        if (errorGroupPubId) {
+            entity.errorGroupPublicId = errorGroupPubId;
+            errorGroupObj = { publicId: errorGroupPubId };
+            entity.errorGroup = errorGroupObj;
+        }
+        const traceReturn = bundle.trace
+            ? {
+                ...bundle.trace,
+                ...(tracePubId ? { publicId: tracePubId } : {}),
+                ...(traceId ? { traceId } : {}),
+            }
+            : (tracePubId || traceId)
+                ? {
+                    publicId: tracePubId ?? null,
+                    traceId: traceId ?? null,
+                }
+                : null;
         return {
+            id: rawId,
+            publicId: rawPublicId,
             resource: name,
             entity,
+            errorGroup: errorGroupObj,
             attributes: null,
             metadata: null,
             payload: null,
-            trace: bundle.trace,
+            trace: traceReturn,
             spanTree: bundle.spanTree,
             spans: bundle.spans,
             logs: bundle.logs,
@@ -104,6 +200,113 @@ export class ObservabilityService {
             timeline,
             aiContext: { intents: AI_INTENTS, facts },
         };
+    }
+    /**
+     * Dedicated request-event detail.
+     *
+     * Returns the sectioned payload the request detail page expects. All data is
+     * fetched with bounded, indexed lookups:
+     *   - the request itself by public_id (unique index)
+     *   - related logs: COUNT only, via trace_id / request_id + time window
+     *   - related errors: lightweight public_id + message, capped at 20
+     *   - trace public id: single-row lookup by trace_id
+     */
+    async detailRequest(ctx, id) {
+        assertRequestPublicId(id);
+        const raw = await this.repository.fetchRawById(requestsResource, ctx, id);
+        if (!raw)
+            throw new ExplorerNotFoundError('Request event');
+        const center = raw.occurred_at instanceof Date
+            ? raw.occurred_at
+            : new Date(String(raw.occurred_at ?? Date.now()));
+        if (Number.isNaN(center.getTime())) {
+            throw new ExplorerNotFoundError('Request event');
+        }
+        const from = new Date(center.getTime() - REQUEST_RELATED_WINDOW_MS);
+        const to = new Date(center.getTime() + REQUEST_RELATED_WINDOW_MS);
+        const traceId = typeof raw.trace_id === 'string' && raw.trace_id.length > 0 ? raw.trace_id : null;
+        const requestId = typeof raw.request_id === 'string' && raw.request_id.length > 0 ? raw.request_id : null;
+        const rawTracePublicId = (typeof raw.tracePublicId === 'string' && raw.tracePublicId.length > 0 ? raw.tracePublicId : null)
+            ?? (typeof raw.trace_public_id === 'string' && raw.trace_public_id.length > 0 ? raw.trace_public_id : null);
+        const [relatedErrors, logsCount, spanCount, tracePublicId] = await Promise.all([
+            this.repository.fetchRelatedErrors(ctx, traceId, requestId, from, to, 20),
+            this.repository.countRelatedLogs(ctx, traceId, requestId, from, to),
+            this.repository.countRelatedSpans(ctx, traceId, requestId, from, to),
+            rawTracePublicId ? Promise.resolve(rawTracePublicId) : this.repository.fetchTracePublicId(ctx, traceId),
+        ]);
+        return assembleRequestDetail(raw, {
+            relatedErrors: relatedErrors,
+            logsCount,
+            spanCount,
+            tracePublicId,
+        });
+    }
+    /**
+     * Lazy raw dumps for the Developer Tools accordion on request detail.
+     * Not included in the canonical detail response — fetch only when expanded.
+     */
+    async requestDeveloperTools(ctx, id) {
+        assertRequestPublicId(id);
+        const raw = await this.repository.fetchRawById(requestsResource, ctx, id);
+        if (!raw)
+            throw new ExplorerNotFoundError('Request event');
+        return assembleRequestDeveloperTools(raw);
+    }
+    /**
+     * Dedicated error-event detail.
+     *
+     * Returns the structured payload the error detail page expects. All data is
+     * fetched with bounded, indexed lookups:
+     *   - the error itself by public_id (unique index)
+     *   - related logs: COUNT only, via trace_id / request_id + time window
+     *   - trace public id: single-row lookup by trace_id
+     *   - request public id: single-row lookup by request_id / event_id
+     *   - error group public id: single-row lookup by error_group_id / fingerprint
+     */
+    async detailError(ctx, id) {
+        let raw = null;
+        if (isErrorPublicId(id)) {
+            raw = await this.repository.fetchRawById(errorsResource, ctx, id);
+        }
+        else if (id.toUpperCase().startsWith('ISS-')) {
+            raw = await this.repository.fetchLatestErrorForGroup(ctx, id);
+        }
+        else {
+            raw = await this.repository.fetchRawById(errorsResource, ctx, id);
+            if (!raw) {
+                raw = await this.repository.fetchLatestErrorForGroup(ctx, id);
+            }
+        }
+        if (!raw)
+            throw new ExplorerNotFoundError('Error event');
+        const center = raw.occurred_at instanceof Date
+            ? raw.occurred_at
+            : new Date(String(raw.occurred_at ?? Date.now()));
+        if (Number.isNaN(center.getTime())) {
+            throw new ExplorerNotFoundError('Error event');
+        }
+        const from = new Date(center.getTime() - ERROR_RELATED_WINDOW_MS);
+        const to = new Date(center.getTime() + ERROR_RELATED_WINDOW_MS);
+        const traceId = typeof raw.trace_id === 'string' && raw.trace_id.length > 0 ? raw.trace_id : null;
+        const requestId = typeof raw.request_id === 'string' && raw.request_id.length > 0 ? raw.request_id : null;
+        const rawTracePublicId = (typeof raw.tracePublicId === 'string' && raw.tracePublicId.length > 0 ? raw.tracePublicId : null)
+            ?? (typeof raw.trace_public_id === 'string' && raw.trace_public_id.length > 0 ? raw.trace_public_id : null);
+        const rawErrorGroupPublicId = (typeof raw.errorGroupPublicId === 'string' && raw.errorGroupPublicId.length > 0 ? raw.errorGroupPublicId : null)
+            ?? (typeof raw.error_group_public_id === 'string' && raw.error_group_public_id.length > 0 ? raw.error_group_public_id : null);
+        const [logsCount, tracePublicId, requestPublicId, errorGroupPublicId] = await Promise.all([
+            this.repository.countRelatedLogs(ctx, traceId, requestId, from, to),
+            rawTracePublicId ? Promise.resolve(rawTracePublicId) : this.repository.fetchTracePublicId(ctx, traceId),
+            this.repository.fetchRequestPublicId(ctx, requestId, from, to),
+            rawErrorGroupPublicId
+                ? Promise.resolve(rawErrorGroupPublicId)
+                : this.repository.fetchErrorGroupPublicId(ctx, typeof raw.error_group_id === 'string' && raw.error_group_id.length > 0 ? raw.error_group_id : null, typeof raw.fingerprint === 'string' && raw.fingerprint.length > 0 ? raw.fingerprint : null),
+        ]);
+        return assembleErrorDetail(raw, {
+            logsCount,
+            tracePublicId,
+            requestPublicId,
+            errorGroupPublicId,
+        });
     }
     /** Related events of one type for a detail page's lazy relationship tabs. */
     async related(name, ctx, id, relation) {
@@ -330,15 +533,22 @@ export class ObservabilityService {
             throw new ExplorerNotFoundError('Error Group');
         const mapped = projectPublicRow(resource, resource.mapRow(raw));
         const fingerprint = String(raw.fingerprint ?? '');
-        const [sample, trends] = await Promise.all([
+        const traceId = String(raw.last_trace_id ?? raw.lastTraceId ?? '');
+        const gId = String(raw.id ?? '');
+        const pId = String(raw.public_id ?? raw.publicId ?? '');
+        const [sample, trends, tracePublicIdMap, eventPublicIdMap] = await Promise.all([
             this.repository.getErrorGroupStackFrames(ctx, groupId, fingerprint),
             this.repository.getErrorGroupTrends(ctx, groupId, fingerprint),
+            traceId ? this.repository.fetchTracePublicIdMap(ctx, [traceId]) : Promise.resolve(new Map()),
+            this.repository.fetchLatestEventPublicIdMap(ctx, [gId, pId].filter(Boolean)),
         ]);
+        const canonical = assembleErrorGroupItem(raw, tracePublicIdMap, eventPublicIdMap);
         const firstSeen = raw.first_seen_at ?? raw.firstSeen ?? raw.created_at;
         const lastSeen = raw.last_seen_at ?? raw.lastSeen ?? raw.updated_at;
         const occurrenceCount = Number(raw.occurrence_count ?? raw.occurrenceCount ?? 1);
         const regressionCount = Number(raw.regression_count ?? raw.regressionCount ?? 0);
         return {
+            ...canonical,
             ...mapped,
             id: raw.id,
             publicId: raw.public_id ?? raw.publicId ?? null,

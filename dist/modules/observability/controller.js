@@ -32,7 +32,7 @@ const UpdateErrorGroupStatusBody = z.object({
     release: z.string().max(100).optional(),
 });
 const MergeErrorGroupBody = z.object({
-    targetGroupId: z.string().uuid(),
+    targetGroupId: z.string().min(1).max(128),
     reason: z.string().max(1000).optional(),
     expectedVersion: z.number().int().positive().optional(),
 });
@@ -101,7 +101,24 @@ export class ObservabilityController {
     detail = async (request, reply) => {
         const { resource, id } = IdParams.parse(request.params);
         const ctx = await this.context(request);
+        if (resource === 'requests') {
+            return reply.send({ success: true, data: await this.service.detailRequest(ctx, id) });
+        }
+        if (resource === 'errors') {
+            return reply.send({ success: true, data: await this.service.detailError(ctx, id) });
+        }
         return reply.send({ success: true, data: await this.service.detail(resource, ctx, id) });
+    };
+    developerTools = async (request, reply) => {
+        const { resource, id } = IdParams.parse(request.params);
+        const ctx = await this.context(request);
+        if (resource !== 'requests') {
+            return reply.code(404).send({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'Developer tools are only available for requests' },
+            });
+        }
+        return reply.send({ success: true, data: await this.service.requestDeveloperTools(ctx, id) });
     };
     related = async (request, reply) => {
         const { resource, id, relation } = RelatedParams.parse(request.params);

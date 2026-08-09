@@ -137,6 +137,8 @@ export interface AlertRuleRow {
   is_default: boolean;
   /** Evaluator watermark — last time the scheduled evaluator ran this rule. */
   last_evaluated_at: Date | null;
+  /** Monotonic configuration revision used in effective-policy snapshots. */
+  current_revision: number;
 }
 
 export interface AlertRuleConditionRow {

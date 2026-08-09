@@ -15,8 +15,8 @@ import { pool } from '../../config/database.js';
 import { FEATURE_FLAGS, } from './types.js';
 export { FEATURE_FLAGS };
 const FLAG_CACHE_TTL_MS = 30_000;
-function flagCacheKey(key, ctx) {
-    return `${key}:${ctx.organizationId ?? 'org'}:${ctx.projectId ?? 'none'}`;
+function flagCacheKey(key, ctx, defaultEnabled = false) {
+    return `${key}:${ctx.organizationId ?? 'org'}:${ctx.projectId ?? 'none'}:${defaultEnabled ? 'on' : 'off'}`;
 }
 /** In-process flag cache with explicit invalidation (mirrors lrucashe.ts). */
 export const flagCache = new LRUCache({
@@ -46,8 +46,8 @@ flagCache.invalidate = (key, ctx) => {
  * Whether a flag is enabled for the given context. Most specific existing row
  * wins (project > organization > platform); no row anywhere → false.
  */
-export async function isEnabled(key, ctx = {}) {
-    const cacheKey = flagCacheKey(key, ctx);
+export async function isEnabled(key, ctx = {}, defaultEnabled = false) {
+    const cacheKey = flagCacheKey(key, ctx, defaultEnabled);
     const cached = flagCache.get(cacheKey);
     if (cached !== undefined)
         return cached.enabled;
@@ -60,7 +60,7 @@ export async function isEnabled(key, ctx = {}) {
          OR (scope = 'project' AND scope_id = $3::uuid)
        )`, [key, ctx.organizationId ?? null, ctx.projectId ?? null]);
     const byScope = new Map(r.rows.map((row) => [row.scope, row.enabled]));
-    const enabled = byScope.get('project') ?? byScope.get('organization') ?? byScope.get('platform') ?? false;
+    const enabled = byScope.get('project') ?? byScope.get('organization') ?? byScope.get('platform') ?? defaultEnabled;
     flagCache.set(cacheKey, { enabled });
     return enabled;
 }

@@ -271,6 +271,47 @@ export class AlertChannelRepository {
             throw new ProjectError("ALERT_CHANNEL_PREFERENCE_NOT_FOUND", "Alert channel preference not found", 404);
         }
     }
+    async resolveNoChannelEmailTargets(request, client) {
+        const db = client ?? this.db;
+        const result = await db.query(`SELECT DISTINCT ON (LOWER(BTRIM(users.email)))
+         member.user_id, LOWER(BTRIM(users.email)) AS email
+       FROM project_members member
+       JOIN users ON users.id = member.user_id
+       JOIN project_notification_preferences project_pref
+         ON project_pref.organization_id = member.organization_id
+        AND project_pref.project_id = member.project_id
+        AND project_pref.category IN ('all', $3)
+        AND project_pref.enabled = TRUE
+        AND project_pref.deleted_at IS NULL
+       WHERE member.organization_id = $1
+         AND member.project_id = $2
+         AND member.status = 'active'
+         AND users.status = 'active'
+         AND users.email_verified = TRUE
+         AND NULLIF(BTRIM(users.email), '') IS NOT NULL
+         AND project_pref.digest_mode = 'immediate'
+         AND CASE $4 WHEN 'info' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3
+                     WHEN 'critical' THEN 4 ELSE 0 END
+             >= CASE project_pref.severity_threshold
+                  WHEN 'info' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3
+                  WHEN 'critical' THEN 4 ELSE 5 END
+         AND ((cardinality(project_pref.default_member_ids) = 0
+               AND cardinality(project_pref.role_targets) = 0)
+              OR member.user_id = ANY(project_pref.default_member_ids)
+              OR member.role = ANY(project_pref.role_targets))
+         AND NOT EXISTS (
+           SELECT 1
+             FROM project_member_alert_channel_preferences disabled_pref
+            WHERE disabled_pref.organization_id = member.organization_id
+              AND disabled_pref.project_id = member.project_id
+              AND disabled_pref.user_id = member.user_id
+              AND disabled_pref.category IN ('all', $3)
+              AND disabled_pref.enabled = FALSE
+              AND disabled_pref.deleted_at IS NULL
+         )
+       ORDER BY LOWER(BTRIM(users.email)), member.user_id`, [request.organizationId, request.projectId, request.category, request.severity]);
+        return result.rows.map((row) => ({ userId: row.user_id, email: row.email }));
+    }
     async resolveImmediateDeliveryTargets(request, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT DISTINCT ON (member.user_id, channel.id, subscription.id)

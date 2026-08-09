@@ -4,6 +4,8 @@ import { EventsService } from '../events/events.service.js';
 import { evaluateRule } from '../evaluator.js';
 import { seedDefaultPresetsForOrg } from './presets.js';
 import { ProjectThresholdWorker } from '../../projects/alerts/thresholds/threshold.worker.js';
+import { isEnabled } from '../../feature-flags/service.js';
+import { FEATURE_FLAGS } from '../../feature-flags/types.js';
 const EVAL_SOURCE = 'rule-evaluator';
 const RULE_BATCH_LIMIT = 500;
 const RULE_CONCURRENCY = 10;
@@ -94,7 +96,14 @@ export class AlertRuleEvaluator {
               OR last_evaluated_at + evaluation_interval_seconds * interval '1 second' <= now())
        ORDER BY last_evaluated_at ASC NULLS FIRST
        LIMIT $1`, [limit]);
-        return r.rows;
+        const rows = await Promise.all(r.rows.map(async (rule) => ({
+            rule,
+            v2: await isEnabled(FEATURE_FLAGS.ALERTING_V2_EVALUATION, {
+                organizationId: rule.organization_id,
+                projectId: rule.project_id,
+            }, false),
+        })));
+        return rows.filter((entry) => !entry.v2).map((entry) => entry.rule);
     }
     /**
      * Evaluate one rule end-to-end. Returns the outcome for tick metrics.

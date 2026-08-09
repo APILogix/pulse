@@ -51,5 +51,6 @@ export declare const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[];
  * Exported for the org-creation/provisioning flow AND invoked from the
  * evaluator tick for orgs that already have traffic but no presets yet.
  */
+export declare function seedDefaultPresetsForOrgInTransaction(client: import('pg').PoolClient, orgId: string, createdBy: string): Promise<number>;
 export declare function seedDefaultPresetsForOrg(pool: Pool, orgId: string): Promise<number>;
 //# sourceMappingURL=presets.d.ts.map

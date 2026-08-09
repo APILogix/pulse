@@ -5,12 +5,17 @@ import { requireOrgAccess } from '../../shared/middleware/requireorg.js';
 import { encrypt } from '../../shared/utils/encryption.js';
 import { env } from '../../config/env.js';
 import { aiConfig } from '../../config/ai.js';
-import { aiRequestInputSchema } from './types.js';
+import { pool } from '../../config/database.js';
+import { aiRequestInputSchema, aiInvestigationRequestSchema, } from './types.js';
 import { monitoringChatInputSchema } from './chat.js';
 import { AIRepositoryError } from './repository.js';
 import { enqueueAIJob } from './queue.js';
 import { sanitizeUntrusted, sha256 } from './security.js';
 import { AI_MODE_ROUTES } from './feature-routes.js';
+import { resolveInvestigationContext } from './investigation-context.js';
+import { ObservabilityRepository } from '../observability/repository.js';
+import { ObservabilityContextResolver } from '../observability/context.js';
+import { CorrelationEngine } from '../observability/correlation/engine.js';
 const orgParamsSchema = z.object({ orgId: z.string().uuid() });
 const jobParamsSchema = orgParamsSchema.extend({ jobId: z.string().uuid() });
 const feedbackParamsSchema = orgParamsSchema.extend({ responseId: z.string().uuid() });
@@ -153,6 +158,35 @@ export async function aiRoutes(fastify) {
     // Backward-compatible auto-routing endpoint. New clients should use the
     // dedicated feature endpoints above.
     fastify.post('/analyze', analyzeOptions, analyze());
+    const obsRepo = new ObservabilityRepository();
+    const obsResolver = new ObservabilityContextResolver(pool);
+    const obsCorrelation = new CorrelationEngine(obsRepo);
+    // Canonical minimal investigation endpoint: resolves context from publicId and runs AI analysis
+    fastify.post('/investigate', analyzeOptions, async (request, reply) => {
+        try {
+            const { orgId } = orgParamsSchema.parse(request.params);
+            const userId = request.user.id;
+            const { resource, publicId } = aiInvestigationRequestSchema.parse(request.body);
+            const { aiInput } = await resolveInvestigationContext(orgId, userId, resource, publicId, {
+                resolver: obsResolver,
+                repository: obsRepo,
+                correlation: obsCorrelation,
+            });
+            const execution = await fastify.ai.analyzer.analyze(aiInput, {
+                tenantId: orgId,
+                userId,
+                requestId: randomUUID(),
+                idempotencyKey: idempotencyKey(request),
+            });
+            if (execution.reservation || (execution.usage && execution.usageContext && execution.answer.status === 'SUCCESS')) {
+                pending.set(request.id, execution);
+            }
+            return reply.status(statusCode(execution.answer.status)).send(execution.answer);
+        }
+        catch (error) {
+            return sendError(error, reply);
+        }
+    });
     fastify.post('/chat', {
         preHandler: [authenticate, requireOrgAccess],
     }, async (request, reply) => {

@@ -1,4 +1,5 @@
 import { pool } from '../../../config/database.js';
+import { seedDefaultPresetsForOrgInTransaction } from '../evaluator/presets.js';
 import { DASHBOARD_WIDGET_DEFAULTS, ESCALATION_DEFAULTS, FEATURE_FLAG_DEFAULTS, POLICY_CATEGORIES, POLICY_DEFAULTS, PROVIDER_DEFAULTS, ROUTING_DEFAULTS, SAVED_VIEW_DEFAULTS, } from './alerting-workspace.defaults.js';
 import { ALERTING_WORKSPACE_INITIALIZATION_VERSION, } from './alerting-workspace.types.js';
 export class AlertingWorkspaceRepository {
@@ -16,6 +17,7 @@ export class AlertingWorkspaceRepository {
         if (!created && workspace.provisioning_status === 'ready') {
             return this.readySummary(workspace.id);
         }
+        const catalogRules = await seedDefaultPresetsForOrgInTransaction(client, context.organizationId, context.initializedBy);
         const categoryIds = new Map();
         for (const category of POLICY_CATEGORIES) {
             const result = await client.query(`INSERT INTO alerting_policy_categories
@@ -242,6 +244,7 @@ export class AlertingWorkspaceRepository {
             initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
             categories: POLICY_CATEGORIES.length,
             policies: POLICY_DEFAULTS.length,
+            catalogRules,
             policyVersions,
             routingDefaults: ROUTING_DEFAULTS.length,
             escalationPolicies: ESCALATION_DEFAULTS.length,
@@ -258,6 +261,7 @@ export class AlertingWorkspaceRepository {
             initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
             categories: POLICY_CATEGORIES.length,
             policies: POLICY_DEFAULTS.length,
+            catalogRules: 0,
             policyVersions: POLICY_DEFAULTS.length,
             routingDefaults: ROUTING_DEFAULTS.length,
             escalationPolicies: ESCALATION_DEFAULTS.length,

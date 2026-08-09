@@ -11,6 +11,8 @@ import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
 import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 import { pool } from '../../config/database.js';
+import { logDB } from '../../config/log-database.js';
+import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
 import { ConnectorGlobalGuards } from './runtime-global-guards.js';
 import { isConnectorTransportJob } from './delivery/transport.types.js';
 function allJobs(arg) {
@@ -65,7 +67,7 @@ function hasEmailDestination(payload) {
     return typeof projectChannel?.destination === 'string'
         && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(projectChannel.destination.trim());
 }
-export async function registerConnectorWorkers(logger) {
+export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool())) {
     const log = logger.child({ component: 'connector-workers' });
     const repository = new ConnectorRepository();
     const entitlements = new EntitlementsRepository();
@@ -93,11 +95,32 @@ export async function registerConnectorWorkers(logger) {
                 }
                 const row = await repository.findById(job.data.organizationId, job.data.connectorId);
                 if (!row || row.status !== 'active') {
+                    await runtimeRepository.recordNotificationDelivery({
+                        organizationId: job.data.organizationId,
+                        jobId: job.data.notificationJobId,
+                        jobStatus: 'failed',
+                        attemptStatus: 'failed',
+                        errorCategory: 'connector_unavailable',
+                        errorMessage: 'Connector is missing or inactive',
+                    });
                     log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive connector');
                     return;
                 }
                 const outcome = await dispatcher.dispatch(row, job.data.payload, { routeId: null });
-                if (outcome.status === 'sent')
+                const succeeded = outcome.status === 'sent';
+                const retryable = outcome.result.retryable === true;
+                await runtimeRepository.recordNotificationDelivery({
+                    organizationId: job.data.organizationId,
+                    jobId: job.data.notificationJobId,
+                    jobStatus: succeeded ? 'sent' : retryable ? 'queued' : 'failed',
+                    attemptStatus: succeeded ? 'sent' : 'failed',
+                    errorCategory: succeeded ? null : outcome.result.failureCategory ?? 'transport',
+                    errorMessage: succeeded ? null : outcome.result.errorMessage ?? 'Connector delivery deferred or failed',
+                    latencyMs: outcome.result.latencyMs,
+                    externalMessageId: outcome.result.externalMessageId ?? null,
+                    responseStatusCode: outcome.result.statusCode ?? null,
+                });
+                if (succeeded)
                     await globalGuards.recordSuccess(job.data.connectorId);
                 else
                     await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);

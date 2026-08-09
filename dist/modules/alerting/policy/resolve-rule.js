@@ -61,13 +61,14 @@ function applyThresholdOverrides(conditions, overrides) {
  *                    filtered here so callers may pass the raw query result
  * @param scope      the evaluation context
  */
-export function resolveEffectiveRule(rule, conditions, bindings, scope) {
+export function resolveEffectiveRule(rule, conditions, bindings, scope, options = {}) {
     const matching = bindings
         .filter((binding) => binding.deleted_at === null && bindingMatchesScope(binding, scope))
         .sort(compareBindings);
     const requiresProjectSubscription = Boolean(scope.projectId)
-        && matching.some((binding) => binding.scope_type === 'organization')
-        && !matching.some((binding) => binding.scope_level > SCOPE_LEVEL.organization);
+        && !matching.some((binding) => binding.scope_level > SCOPE_LEVEL.organization)
+        && (options.requireProjectSubscription === true
+            || matching.some((binding) => binding.scope_type === 'organization'));
     // Start from the rule's own values. A rule with no bindings resolves to exactly the
     // behaviour it has today — this is what makes the P12 backfill behaviour-identical.
     const effective = {
@@ -185,7 +186,9 @@ export function resolveEffectiveRule(rule, conditions, bindings, scope) {
             scopeLevel: SCOPE_LEVEL.project,
             mode: 'disable',
             applied: ['enabled=false (project not subscribed)'],
-            note: 'organization rule requires a matching project subscription binding',
+            note: options.requireProjectSubscription === true
+                ? 'runtime evaluation requires a matching project subscription binding'
+                : 'organization rule requires a matching project subscription binding',
         });
     }
     effective.conditions = applyThresholdOverrides(conditions, thresholdOverrides);

@@ -12,7 +12,7 @@ export class FastEvaluationEngine {
         const result = evaluateMetric(input.metric, input.context, input.candidate.observedAt);
         if (result.value === null)
             return false;
-        const policy = await this.policies.resolve(input.candidate);
+        const policy = await this.policies.resolve(input.candidate, 1, { requireProjectSubscription: true });
         const candidate = {
             ...input.candidate,
             values: { ...input.candidate.values, metric: result.value, sampleCount: result.sampleCount },

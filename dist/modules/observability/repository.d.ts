@@ -40,6 +40,40 @@ export declare class ObservabilityRepository implements QueryExecutor {
      * Fetch multiple raw rows by array of IDs or public_ids for bulk AI analysis.
      */
     fetchRawByIds(resource: ExplorerResource, ctx: QueryContext, ids: string[]): Promise<Array<Record<string, unknown>>>;
+    /**
+     * Fast, bounded count of spans for a request's trace.
+     * Prefer trace_id (indexed); fall back to request_id when no trace is attached.
+     */
+    countRelatedSpans(ctx: QueryContext, traceId: string | null, requestId: string | null, from: Date, to: Date): Promise<number>;
+    /**
+     * Fast, bounded count of logs correlated to a request by trace_id or request_id.
+     * The time window is pinned to the request timestamp so partition pruning stays tight.
+     */
+    countRelatedLogs(ctx: QueryContext, traceId: string | null, requestId: string | null, from: Date, to: Date): Promise<number>;
+    /**
+     * Lightweight related errors for a request detail page.
+     * Returns only public_id + message; capped at a small limit to keep the response fast.
+     */
+    fetchRelatedErrors(ctx: QueryContext, traceId: string | null, requestId: string | null, from: Date, to: Date, limit?: number): Promise<Array<{
+        publicId: string;
+        message: string;
+    }>>;
+    /**
+     * Resolve a trace public_id from a trace_id. Used by request detail to build the
+     * clickable trace link without loading the full trace payload.
+     */
+    fetchTracePublicId(ctx: QueryContext, traceId: string | null): Promise<string | null>;
+    /**
+     * Resolve a request public_id from a request_id or event_id. Used by error
+     * detail to build the clickable request link without loading the full request
+     * payload. Matches `request_id` first, then falls back to `event_id` so SDK
+     * variants stay compatible.
+     */
+    fetchRequestPublicId(ctx: QueryContext, requestId: string | null, from: Date, to: Date): Promise<string | null>;
+    /**
+     * Resolve an error group public_id from an error_group_id UUID or fingerprint.
+     */
+    fetchErrorGroupPublicId(ctx: QueryContext, errorGroupId: string | null, fingerprint?: string | null): Promise<string | null>;
     /** Build a server-owned project predicate for a scoped repository query. */
     private projectPredicate;
     /**
@@ -69,6 +103,10 @@ export declare class ObservabilityRepository implements QueryExecutor {
         trend30d: number[];
     }>;
     /**
+     * Fetch the latest raw error detail row for an Error Group public ID, ID, or fingerprint.
+     */
+    fetchLatestErrorForGroup(ctx: QueryContext, groupIdentifier: string): Promise<Record<string, unknown> | null>;
+    /**
      * Update error group status and log audit history.
      */
     updateErrorGroupStatus(ctx: QueryContext, groupId: string, status: string, actorId: string, comment?: string): Promise<Record<string, unknown> | null>;
@@ -76,5 +114,17 @@ export declare class ObservabilityRepository implements QueryExecutor {
      * Merge source error group into target error group.
      */
     mergeErrorGroups(ctx: QueryContext, sourceGroupId: string, targetGroupId: string, actorId: string): Promise<Record<string, unknown> | null>;
+    /**
+     * Batch resolve trace public_ids for an array of trace_ids.
+     */
+    fetchTracePublicIdMap(ctx: QueryContext, traceIds: string[]): Promise<Map<string, string>>;
+    /**
+     * Batch resolve latest event public_ids for an array of error group IDs or public IDs.
+     */
+    fetchLatestEventPublicIdMap(ctx: QueryContext, groupIds: string[]): Promise<Map<string, string>>;
+    /**
+     * Resolve a project ID (UUID) from a project slug.
+     */
+    resolveProjectIdFromSlug(ctx: QueryContext, slug: string): Promise<string | null>;
 }
 //# sourceMappingURL=repository.d.ts.map

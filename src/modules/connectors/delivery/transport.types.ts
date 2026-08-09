@@ -8,6 +8,8 @@ export interface ConnectorTransportJob {
   severity: NotificationSeverity;
   idempotencyKey: string;
   correlationId: string;
+  notificationType?: string;
+  routingDecisionHash?: string | null;
   payload: Record<string, unknown>;
 }
 

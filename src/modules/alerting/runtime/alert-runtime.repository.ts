@@ -152,12 +152,16 @@ export interface NotificationJobInsert {
   projectId?: string | null;
   alertEventId: string;
   alertKey: string;
+  ruleId?: string | null;
+  bindingId?: string | null;
+  channelId?: string | null;
   channelKind: NotificationChannelKind;
   connectorId?: string | null;
   routeId?: string | null;
   recipientUserId?: string | null;
   recipientRef?: string | null;
   templateId?: string | null;
+  notificationType?: string;
   severity: LogDbSeverity;
   priority?: number;
   escalationStep?: number;
@@ -166,6 +170,7 @@ export interface NotificationJobInsert {
   idempotencyKey: string;
   billable?: boolean;
   notifyAfter?: Date | null;
+  routingDecisionHash?: string | null;
 }
 
 export interface NotificationJobRow {
@@ -174,6 +179,7 @@ export interface NotificationJobRow {
   idempotency_key: string;
   channel_kind: NotificationChannelKind;
   status: NotificationJobStatus;
+  recipient_user_id: string | null;
 }
 
 export interface NotificationJobDetailRow extends NotificationJobRow {
@@ -181,11 +187,15 @@ export interface NotificationJobDetailRow extends NotificationJobRow {
   project_id: string | null;
   alert_event_id: string;
   alert_key: string;
+  rule_id: string | null;
+  binding_id: string | null;
+  channel_id: string | null;
   connector_id: string | null;
   route_id: string | null;
-  recipient_user_id: string | null;
   recipient_ref: string | null;
   template_id: string | null;
+  notification_type: string;
+  routing_decision_hash: string | null;
   severity: LogDbSeverity;
   priority: number;
   escalation_step: number;
@@ -501,6 +511,106 @@ export class AlertRuntimeRepository {
     );
   }
 
+  async listProjectAlertEvents(
+    organizationId: string,
+    projectId: string,
+    query: { status?: string; severity?: string; limit: number; offset: number },
+  ): Promise<{ data: Array<Record<string, unknown>>; total: number }> {
+    const params: unknown[] = [organizationId, projectId];
+    const where = ['e.organization_id = $1', 'e.project_id = $2'];
+    if (query.status) {
+      params.push(query.status);
+      where.push(`s.state = $${params.length}`);
+    }
+    if (query.severity) {
+      params.push(query.severity);
+      where.push(`e.severity = $${params.length}::logdb_severity`);
+    }
+    const clause = where.join(' AND ');
+    const count = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM alert_events_v2 e
+         LEFT JOIN alert_event_state s ON s.latest_event_id = e.id
+        WHERE ${clause}`,
+      params,
+    );
+    const dataParams = [...params, Math.max(1, Math.min(query.limit, 100)), Math.max(0, query.offset)];
+    const result = await this.db.query(
+      `SELECT e.id, e.organization_id, e.project_id, e.environment, e.service, e.endpoint,
+              e.rule_id, e.binding_id, e.rule_revision, e.kind, e.severity, e.priority,
+              e.fingerprint, e.source, e.observed_value, e.threshold_value,
+              e.evidence, e.policy_snapshot, e.labels, e.annotations, e.occurred_at,
+              e.created_at, s.state, s.duplicate_count, s.first_seen_at, s.last_seen_at,
+              s.last_notified_at, s.resolved_at, s.resolution_reason,
+              COALESCE(notifications.items, '[]'::jsonb) AS notifications,
+              COALESCE(deliveries.items, '[]'::jsonb) AS deliveries
+         FROM alert_events_v2 e
+         LEFT JOIN alert_event_state s ON s.latest_event_id = e.id
+         LEFT JOIN LATERAL (
+           SELECT jsonb_agg(jsonb_build_object(
+             'id', j.id, 'channelKind', j.channel_kind, 'status', j.status,
+             'recipientUserId', j.recipient_user_id, 'recipientRef', j.recipient_ref,
+             'createdAt', j.created_at
+           ) ORDER BY j.created_at ASC) AS items
+             FROM alert_notification_jobs j
+            WHERE j.alert_event_id = e.id
+         ) notifications ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT jsonb_agg(jsonb_build_object(
+             'id', d.id, 'notificationJobId', d.notification_job_id,
+             'status', d.status, 'attemptNumber', d.attempt_number,
+             'errorCategory', d.error_category, 'latencyMs', d.latency_ms,
+             'createdAt', d.created_at
+           ) ORDER BY d.created_at ASC) AS items
+             FROM alert_delivery_attempts_v2 d
+            WHERE d.alert_event_id = e.id
+         ) deliveries ON TRUE
+        WHERE ${clause}
+        ORDER BY e.occurred_at DESC, e.created_at DESC
+        LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`,
+      dataParams,
+    );
+    return {
+      data: result.rows as Array<Record<string, unknown>>,
+      total: Number(count.rows[0]?.count ?? 0),
+    };
+  }
+
+  async findProjectAlertEventById(
+    organizationId: string,
+    projectId: string,
+    alertEventId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const result = await this.db.query(
+      `SELECT e.id, e.organization_id, e.project_id, e.environment, e.service, e.endpoint,
+              e.rule_id, e.binding_id, e.rule_revision, e.kind, e.severity, e.priority,
+              e.fingerprint, e.source, e.observed_value, e.threshold_value,
+              e.evidence, e.policy_snapshot, e.labels, e.annotations, e.occurred_at,
+              e.created_at, s.state, s.duplicate_count, s.first_seen_at, s.last_seen_at,
+              s.last_notified_at, s.resolved_at, s.resolution_reason,
+              COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id', j.id, 'channelKind', j.channel_kind, 'status', j.status,
+                'recipientUserId', j.recipient_user_id, 'recipientRef', j.recipient_ref,
+                'createdAt', j.created_at
+              ) ORDER BY j.created_at ASC) FROM alert_notification_jobs j
+                WHERE j.alert_event_id = e.id), '[]'::jsonb) AS notifications,
+              COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                'id', d.id, 'notificationJobId', d.notification_job_id,
+                'status', d.status, 'attemptNumber', d.attempt_number,
+                'errorCategory', d.error_category, 'latencyMs', d.latency_ms,
+                'createdAt', d.created_at
+              ) ORDER BY d.created_at ASC) FROM alert_delivery_attempts_v2 d
+                WHERE d.alert_event_id = e.id), '[]'::jsonb) AS deliveries
+         FROM alert_events_v2 e
+         LEFT JOIN alert_event_state s ON s.latest_event_id = e.id
+        WHERE e.id = $1 AND e.organization_id = $2 AND e.project_id = $3
+        LIMIT 1`,
+      [alertEventId, organizationId, projectId],
+    );
+    return (result.rows[0] as Record<string, unknown> | undefined) ?? null;
+  }
+
+
   async listHistory(alertKey: string, limit = 200): Promise<Array<Record<string, unknown>>> {
     const result = await this.db.query(
       `SELECT id, action, actor_type, actor_user_id, previous_state, new_state,
@@ -539,11 +649,13 @@ export class AlertRuntimeRepository {
              $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[],
              $6::uuid[], $7::uuid[], $8::uuid[], $9::text[], $10::uuid[],
              $11::text[], $12::smallint[], $13::smallint[], $14::smallint[], $15::jsonb[],
-             $16::text[], $17::boolean[], $18::timestamptz[]
+             $16::text[], $17::boolean[], $18::timestamptz[], $19::uuid[], $20::uuid[],
+             $21::uuid[], $22::text[], $23::text[]
            ) AS t(organization_id, project_id, alert_event_id, alert_key, channel_kind,
                   connector_id, route_id, recipient_user_id, recipient_ref, template_id,
                   severity, priority, escalation_step, attempt_epoch, payload,
-                  idempotency_key, billable, notify_after)
+                  idempotency_key, billable, notify_after, rule_id, binding_id, channel_id,
+                  notification_type, routing_decision_hash)
        ), reserved AS (
          INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
          SELECT 'notification_job', organization_id, idempotency_key
@@ -555,19 +667,21 @@ export class AlertRuntimeRepository {
          organization_id, project_id, alert_event_id, alert_key, channel_kind,
          connector_id, route_id, recipient_user_id, recipient_ref, template_id,
          severity, priority, escalation_step, attempt_epoch, payload,
-         idempotency_key, billable, notify_after
+         idempotency_key, billable, notify_after, rule_id, binding_id, channel_id,
+         notification_type, routing_decision_hash
        )
        SELECT t.organization_id, t.project_id, t.alert_event_id, t.alert_key,
               t.channel_kind::notification_channel_kind,
               t.connector_id, t.route_id, t.recipient_user_id, t.recipient_ref, t.template_id,
               t.severity::logdb_severity, t.priority, t.escalation_step, t.attempt_epoch,
-              t.payload, t.idempotency_key, t.billable, t.notify_after
+              t.payload, t.idempotency_key, t.billable, t.notify_after,
+              t.rule_id, t.binding_id, t.channel_id, t.notification_type, t.routing_decision_hash
          FROM input t
          JOIN reserved r
            ON r.organization_id = t.organization_id
           AND r.idempotency_key = t.idempotency_key
        ON CONFLICT DO NOTHING
-       RETURNING id, created_at, idempotency_key, channel_kind, status`,
+        RETURNING id, created_at, idempotency_key, channel_kind, status, recipient_user_id`,
       [
         rows.map((r) => r.organizationId),
         rows.map((r) => r.projectId ?? null),
@@ -587,6 +701,11 @@ export class AlertRuntimeRepository {
         rows.map((r) => r.idempotencyKey),
         rows.map((r) => r.billable ?? true),
         rows.map((r) => r.notifyAfter ?? null),
+        rows.map((r) => r.ruleId ?? null),
+        rows.map((r) => r.bindingId ?? null),
+        rows.map((r) => r.channelId ?? null),
+        rows.map((r) => r.notificationType ?? 'alert'),
+        rows.map((r) => r.routingDecisionHash ?? null),
       ],
     );
     return result.rows;
@@ -614,17 +733,74 @@ export class AlertRuntimeRepository {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async recordNotificationDelivery(input: {
+    organizationId: string;
+    jobId: string;
+    jobStatus: NotificationJobStatus;
+    attemptStatus: NotificationJobStatus;
+    responseStatusCode?: number | null;
+    externalMessageId?: string | null;
+    errorCategory?: string | null;
+    errorMessage?: string | null;
+    latencyMs?: number | null;
+  }): Promise<boolean> {
+    return this.withTransaction(async (client) => {
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`alert-notification-delivery:${input.jobId}`],
+      );
+      const jobResult = await client.query<NotificationJobDetailRow>(
+        `SELECT id, status, organization_id, project_id, alert_event_id, channel_kind,
+                connector_id, route_id, recipient_user_id
+           FROM alert_notification_jobs
+          WHERE id = $1 AND organization_id = $2
+          FOR UPDATE`,
+        [input.jobId, input.organizationId],
+      );
+      const job = jobResult.rows[0];
+      if (!job || ['sent', 'failed', 'cancelled', 'expired'].includes(job.status)) return false;
+
+      const attemptResult = await client.query<{ next_attempt: number }>(
+        `SELECT COALESCE(MAX(attempt_number), 0) + 1 AS next_attempt
+           FROM alert_delivery_attempts_v2
+          WHERE notification_job_id = $1`,
+        [input.jobId],
+      );
+      const attemptNumber = Number(attemptResult.rows[0]?.next_attempt ?? 1);
+      await this.setNotificationJobStatus(input.jobId, input.jobStatus, client);
+      await this.appendDeliveryAttempts([{
+        organizationId: job.organization_id,
+        projectId: job.project_id,
+        alertEventId: job.alert_event_id,
+        notificationJobId: job.id,
+        channelKind: job.channel_kind,
+        connectorId: job.connector_id,
+        routeId: job.route_id,
+        recipientUserId: job.recipient_user_id,
+        attemptNumber,
+        status: input.attemptStatus,
+        responseStatusCode: input.responseStatusCode ?? null,
+        externalMessageId: input.externalMessageId ?? null,
+        errorCategory: input.errorCategory ?? null,
+        errorMessage: input.errorMessage ?? null,
+        latencyMs: input.latencyMs ?? null,
+      }], client);
+      return true;
+    });
+  }
+
   async findNotificationJobById(
     jobId: string,
     client?: PoolClient,
   ): Promise<NotificationJobDetailRow | null> {
     const result = await this.exec(client).query<NotificationJobDetailRow>(
-      `SELECT id, created_at, idempotency_key, channel_kind, status,
-              organization_id, project_id, alert_event_id, alert_key,
-              connector_id, route_id, recipient_user_id, recipient_ref, template_id,
-              severity, priority, escalation_step, attempt_epoch, payload,
-              billable, notify_after
-         FROM alert_notification_jobs
+      `SELECT id, created_at, idempotency_key, channel_kind, status, recipient_user_id,
+               organization_id, project_id, alert_event_id, alert_key,
+               rule_id, binding_id, channel_id, connector_id, route_id,
+               recipient_ref, template_id, notification_type, routing_decision_hash,
+               severity, priority, escalation_step, attempt_epoch,
+               payload, billable, notify_after
+          FROM alert_notification_jobs
         WHERE id = $1
         ORDER BY created_at DESC
         LIMIT 1`,
@@ -648,11 +824,12 @@ export class AlertRuntimeRepository {
           SET status = 'queued'
          FROM claimed
         WHERE j.id = claimed.id AND j.created_at = claimed.created_at
-        RETURNING j.id, j.created_at, j.idempotency_key, j.channel_kind, j.status,
+        RETURNING j.id, j.created_at, j.idempotency_key, j.channel_kind, j.status, j.recipient_user_id,
                   j.organization_id, j.project_id, j.alert_event_id, j.alert_key,
-                  j.connector_id, j.route_id, j.recipient_user_id, j.recipient_ref, j.template_id,
-                  j.severity, j.priority, j.escalation_step, j.attempt_epoch, j.payload,
-                  j.billable, j.notify_after`,
+                  j.rule_id, j.binding_id, j.channel_id, j.connector_id, j.route_id,
+                  j.recipient_ref, j.template_id, j.notification_type, j.routing_decision_hash,
+                  j.severity, j.priority, j.escalation_step, j.attempt_epoch,
+                  j.payload, j.billable, j.notify_after`,
       [Math.max(1, Math.min(limit, 1000))],
     );
     return result.rows;

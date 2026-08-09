@@ -15,9 +15,9 @@ export declare const ApiKeyStatusSchema: z.ZodEnum<{
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatusSchema>;
 /** Rotation workflow state is owned by `project_api_key_rotations`. */
 export declare const ApiKeyRotationStateSchema: z.ZodEnum<{
+    completed: "completed";
     rotating: "rotating";
     grace_period: "grace_period";
-    completed: "completed";
 }>;
 export type ApiKeyRotationState = z.infer<typeof ApiKeyRotationStateSchema>;
 export declare const ApiKeyUsageGranularitySchema: z.ZodEnum<{

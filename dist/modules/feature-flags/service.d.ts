@@ -25,7 +25,7 @@ export declare const flagCache: LRUCache<string, CachedFlagValue> & {
  * Whether a flag is enabled for the given context. Most specific existing row
  * wins (project > organization > platform); no row anywhere → false.
  */
-export declare function isEnabled(key: string, ctx?: FeatureFlagContext): Promise<boolean>;
+export declare function isEnabled(key: string, ctx?: FeatureFlagContext, defaultEnabled?: boolean): Promise<boolean>;
 /**
  * Upsert a flag value. The unique index is
  * `uq_feature_flags_key_scope ON (key, scope, scope_id) NULLS NOT DISTINCT`,

@@ -40,6 +40,9 @@ import { AlertEscalationSweep } from './escalation.js';
 import { ConnectorRepository } from '../connectors/repository.js';
 import type { ProjectSubscriptionResolver } from './batch-processor.js';
 import { AlertRuntimeEngines, type FastEvaluationInput } from './runtime/engines.js';
+import { NotificationRoutingService } from './runtime/notification-routing.service.js';
+import { AlertChannelRepository } from '../projects/alerts/channels/channel.repository.js';
+import { AlertConfigRepository } from './config/alert-config.repository.js';
 import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
 import { AlertDecisionEngine, type AlertDecisionCandidate } from './decision/decision.engine.js';
@@ -180,10 +183,15 @@ export async function registerAlertingWorkers(
   });
 
   const runtimePool = telemetryPool ?? pool;
-  const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool);
+  const routing = new NotificationRoutingService({
+    logger,
+    channelRepository: new AlertChannelRepository(pool),
+    configRepository: new AlertConfigRepository(pool),
+  });
+  const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
   const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
   const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
-  const decisionEngine = new AlertDecisionEngine(runtimePool, logger);
+  const decisionEngine = new AlertDecisionEngine(runtimePool, logger, { routing });
   const snapshotEscalation = new SnapshotEscalationWorker(logger);
 
   // ── process-batch: the high-throughput worker ──────────────────────────

@@ -28,8 +28,8 @@ interface CachedFlagValue {
   enabled: boolean;
 }
 
-function flagCacheKey(key: string, ctx: FeatureFlagContext): string {
-  return `${key}:${ctx.organizationId ?? 'org'}:${ctx.projectId ?? 'none'}`;
+function flagCacheKey(key: string, ctx: FeatureFlagContext, defaultEnabled = false): string {
+  return `${key}:${ctx.organizationId ?? 'org'}:${ctx.projectId ?? 'none'}:${defaultEnabled ? 'on' : 'off'}`;
 }
 
 /** In-process flag cache with explicit invalidation (mirrors lrucashe.ts). */
@@ -63,8 +63,12 @@ flagCache.invalidate = (key: string, ctx?: FeatureFlagContext): void => {
  * Whether a flag is enabled for the given context. Most specific existing row
  * wins (project > organization > platform); no row anywhere → false.
  */
-export async function isEnabled(key: string, ctx: FeatureFlagContext = {}): Promise<boolean> {
-  const cacheKey = flagCacheKey(key, ctx);
+export async function isEnabled(
+  key: string,
+  ctx: FeatureFlagContext = {},
+  defaultEnabled = false,
+): Promise<boolean> {
+  const cacheKey = flagCacheKey(key, ctx, defaultEnabled);
   const cached = flagCache.get(cacheKey);
   if (cached !== undefined) return cached.enabled;
 
@@ -81,7 +85,7 @@ export async function isEnabled(key: string, ctx: FeatureFlagContext = {}): Prom
   );
 
   const byScope = new Map<string, boolean>(r.rows.map((row) => [row.scope, row.enabled]));
-  const enabled = byScope.get('project') ?? byScope.get('organization') ?? byScope.get('platform') ?? false;
+  const enabled = byScope.get('project') ?? byScope.get('organization') ?? byScope.get('platform') ?? defaultEnabled;
 
   flagCache.set(cacheKey, { enabled });
   return enabled;

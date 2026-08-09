@@ -4,9 +4,9 @@ export declare const AlertEventStatusSchema: z.ZodEnum<{
     error: "error";
     pending: "pending";
     processing: "processing";
-    acknowledged: "acknowledged";
-    resolved: "resolved";
     firing: "firing";
+    resolved: "resolved";
+    acknowledged: "acknowledged";
     suppressed: "suppressed";
     silenced: "silenced";
 }>;
@@ -30,12 +30,12 @@ export declare const BatchStatusSchema: z.ZodEnum<{
 }>;
 export type BatchStatus = z.infer<typeof BatchStatusSchema>;
 export declare const HistoryActionSchema: z.ZodEnum<{
-    acknowledged: "acknowledged";
     resolved: "resolved";
-    triggered: "triggered";
-    escalated: "escalated";
+    acknowledged: "acknowledged";
     suppressed: "suppressed";
     silenced: "silenced";
+    triggered: "triggered";
+    escalated: "escalated";
     notified: "notified";
     grouped: "grouped";
     auto_resolved: "auto_resolved";
@@ -82,9 +82,9 @@ export declare const ListEventsQuerySchema: z.ZodObject<{
         error: "error";
         pending: "pending";
         processing: "processing";
-        acknowledged: "acknowledged";
-        resolved: "resolved";
         firing: "firing";
+        resolved: "resolved";
+        acknowledged: "acknowledged";
         suppressed: "suppressed";
         silenced: "silenced";
     }>>;

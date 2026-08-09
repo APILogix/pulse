@@ -72,6 +72,7 @@ export function buildObservabilityRoutes(controller) {
         fastify.post('/:resource/analyze', guard, wrap(controller.analyzeBulk));
         // ── Detail + relationships + per-event AI ───────────────────────
         fastify.get('/:resource/:id', guard, wrap(controller.detail));
+        fastify.get('/:resource/:id/developer-tools', guard, wrap(controller.developerTools));
         fastify.get('/:resource/:id/related/:relation', guard, wrap(controller.related));
         fastify.post('/:resource/:id/ask', guard, wrap(controller.askEvent));
     };

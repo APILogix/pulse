@@ -465,6 +465,70 @@ async function resolvePresetActor(pool: Pool, orgId: string): Promise<string | n
  * Exported for the org-creation/provisioning flow AND invoked from the
  * evaluator tick for orgs that already have traffic but no presets yet.
  */
+export async function seedDefaultPresetsForOrgInTransaction(
+  client: import('pg').PoolClient,
+  orgId: string,
+  createdBy: string,
+): Promise<number> {
+  let seeded = 0;
+  for (const preset of DEFAULT_ALERT_PRESETS) {
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO alert_rules
+         (organization_id, name, description, severity, enabled,
+          evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
+          deduplication_window_seconds,
+          labels, annotations, metadata, created_by, enabled_at,
+          project_id, preset_key, is_default)
+       VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10, $11, $12, NOW(),
+               NULL, $13, TRUE)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [
+        orgId,
+        preset.name,
+        preset.description,
+        preset.severity,
+        preset.evaluationIntervalSeconds,
+        preset.cooldownSeconds,
+        preset.autoResolveAfterMinutes,
+        preset.deduplicationWindowSeconds,
+        JSON.stringify({ preset: true }),
+        JSON.stringify({ preset_key: preset.presetKey }),
+        JSON.stringify(preset.metadata ?? {}),
+        createdBy,
+        preset.presetKey,
+      ],
+    );
+    const rule = inserted.rows[0];
+    if (!rule) continue;
+
+    await client.query(
+      `INSERT INTO alert_rule_conditions
+         (rule_id, condition_type, field_path, operator, threshold_value,
+          lookback_minutes, aggregate_function, is_required, order_index)
+       VALUES ($1, 'threshold'::alert_condition_type, $2, $3::alert_condition_operator,
+               $4, $5, $6, TRUE, 0)`,
+      [
+        rule.id,
+        preset.condition.fieldPath,
+        preset.condition.operator,
+        JSON.stringify(preset.condition.thresholdValue ?? null),
+        preset.condition.lookbackMinutes,
+        preset.condition.aggregateFunction ?? null,
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO alert_rule_actions
+         (rule_id, action_type, priority, order_index, action_conditions, is_active)
+       VALUES ($1, 'notify'::alert_action_type, 100, 0, $2, TRUE)`,
+      [rule.id, JSON.stringify({ channel: 'in_app', audience: 'project_members' })],
+    );
+    seeded += 1;
+  }
+  return seeded;
+}
+
 export async function seedDefaultPresetsForOrg(pool: Pool, orgId: string): Promise<number> {
   const createdBy = await resolvePresetActor(pool, orgId);
   if (!createdBy) return 0;
@@ -472,64 +536,7 @@ export async function seedDefaultPresetsForOrg(pool: Pool, orgId: string): Promi
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    let seeded = 0;
-    for (const preset of DEFAULT_ALERT_PRESETS) {
-      const inserted = await client.query<{ id: string }>(
-        `INSERT INTO alert_rules
-           (organization_id, name, description, severity, enabled,
-            evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
-            deduplication_window_seconds,
-            labels, annotations, metadata, created_by, enabled_at,
-            project_id, preset_key, is_default)
-         VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10, $11, $12, NOW(),
-                 NULL, $13, TRUE)
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [
-          orgId,
-          preset.name,
-          preset.description,
-          preset.severity,
-          preset.evaluationIntervalSeconds,
-          preset.cooldownSeconds,
-          preset.autoResolveAfterMinutes,
-          preset.deduplicationWindowSeconds,
-          JSON.stringify({ preset: true }),
-          JSON.stringify({ preset_key: preset.presetKey }),
-          JSON.stringify(preset.metadata ?? {}),
-          createdBy,
-          preset.presetKey,
-        ],
-      );
-      const rule = inserted.rows[0];
-      if (!rule) continue; // preset already exists for this org
-
-      await client.query(
-        `INSERT INTO alert_rule_conditions
-           (rule_id, condition_type, field_path, operator, threshold_value,
-            lookback_minutes, aggregate_function, is_required, order_index)
-         VALUES ($1, 'threshold'::alert_condition_type, $2, $3::alert_condition_operator,
-                 $4, $5, $6, TRUE, 0)`,
-        [
-          rule.id,
-          preset.condition.fieldPath,
-          preset.condition.operator,
-          JSON.stringify(preset.condition.thresholdValue ?? null),
-          preset.condition.lookbackMinutes,
-          preset.condition.aggregateFunction ?? null,
-        ],
-      );
-
-      // Default delivery: in-app only (see module docstring). The org attaches
-      // connectors via routing rules or by editing this action.
-      await client.query(
-        `INSERT INTO alert_rule_actions
-           (rule_id, action_type, priority, order_index, action_conditions, is_active)
-         VALUES ($1, 'notify'::alert_action_type, 100, 0, $2, TRUE)`,
-        [rule.id, JSON.stringify({ channel: 'in_app', audience: 'org_members' })],
-      );
-      seeded += 1;
-    }
+    const seeded = await seedDefaultPresetsForOrgInTransaction(client, orgId, createdBy);
     await client.query('COMMIT');
     return seeded;
   } catch (e) {

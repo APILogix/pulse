@@ -11,6 +11,15 @@ export declare const FEATURE_FLAGS: {
     readonly AI_ALERT_ANALYSIS: "ai_alert_analysis";
     readonly EXPERIMENTAL_PIPELINES: "experimental_pipelines";
     readonly BETA_PROCESSORS: "beta_processors";
+    readonly ALERTING_CANONICAL_RESOLUTION: "alerting_canonical_resolution";
+    readonly ALERTING_V2_EVALUATION: "alerting_v2_evaluation";
+    readonly ALERTING_V2_ROUTING: "alerting_v2_routing";
+    readonly ALERTING_V2_DELIVERY_STATUS: "alerting_v2_delivery_status";
+    readonly ALERTING_V2_ESCALATION: "alerting_v2_escalation";
+    readonly ALERTING_SHADOW_COMPARE: "alerting_shadow_compare";
+    readonly ALERTING_LEGACY_THRESHOLD_WORKER: "alerting_legacy_threshold_worker";
+    readonly ALERTING_LEGACY_BATCH_PROCESSOR: "alerting_legacy_batch_processor";
+    readonly ALERTING_LEGACY_ESCALATION: "alerting_legacy_escalation";
 };
 export type FeatureFlagKey = (typeof FEATURE_FLAGS)[keyof typeof FEATURE_FLAGS] | string;
 export interface FeatureFlagContext {

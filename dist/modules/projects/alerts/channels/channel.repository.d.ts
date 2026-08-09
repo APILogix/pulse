@@ -25,6 +25,10 @@ export declare class AlertChannelRepository {
     listMemberPreferences(organizationId: string, projectId: string, userId: string, client?: DbClient): Promise<ProjectMemberAlertChannelPreference[]>;
     upsertMemberPreference(organizationId: string, projectId: string, userId: string, channelId: string, body: UpsertMemberAlertChannelPreferenceBody, client?: DbClient): Promise<ProjectMemberAlertChannelPreference>;
     softDeleteMemberPreference(organizationId: string, projectId: string, userId: string, channelId: string, category: string, client?: DbClient): Promise<void>;
+    resolveNoChannelEmailTargets(request: ImmediateDeliveryRequest, client?: DbClient): Promise<Array<{
+        userId: string;
+        email: string;
+    }>>;
     resolveImmediateDeliveryTargets(request: ImmediateDeliveryRequest, client?: DbClient): Promise<ImmediateDeliveryTarget[]>;
     private mapChannel;
     private mapPreference;

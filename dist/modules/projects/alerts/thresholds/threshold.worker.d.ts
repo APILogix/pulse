@@ -24,7 +24,7 @@ export declare class ProjectThresholdWorker {
     /**
      * @param telemetryPool pool owning `events_*`; defaults to the control-plane pool
      * @param dryRun explicit override supplied by AlertRuleEvaluator. Defaults to "dry-run if the
-     *   telemetry pool is a different pool", so single-database deployments are unaffected.
+     * telemetry pool is a different pool", so single-database deployments are unaffected.
      */
     constructor(logger: FastifyBaseLogger, telemetryPool?: Pool, dryRun?: boolean);
     runTick(limit?: number): Promise<ProjectThresholdTickSummary>;

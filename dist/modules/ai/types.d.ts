@@ -22,6 +22,26 @@ export declare const aiModeSchema: z.ZodEnum<{
     AI_INCIDENT_SUMMARY: "AI_INCIDENT_SUMMARY";
     AI_WEEKLY_REPORT: "AI_WEEKLY_REPORT";
 }>;
+export declare const INVESTIGATION_RESOURCES: readonly ["error", "trace", "request", "logs", "log"];
+export type InvestigationResource = (typeof INVESTIGATION_RESOURCES)[number];
+export declare const investigationResourceSchema: z.ZodEnum<{
+    error: "error";
+    trace: "trace";
+    request: "request";
+    log: "log";
+    logs: "logs";
+}>;
+export declare const aiInvestigationRequestSchema: z.ZodObject<{
+    resource: z.ZodEnum<{
+        error: "error";
+        trace: "trace";
+        request: "request";
+        log: "log";
+        logs: "logs";
+    }>;
+    publicId: z.ZodString;
+}, z.core.$strip>;
+export type AIInvestigationRequest = z.infer<typeof aiInvestigationRequestSchema>;
 export declare const AI_RESPONSE_STATUSES: readonly ["SUCCESS", "PARTIAL", "FAILED", "LOCKED", "RATE_LIMITED", "SAFETY_BLOCKED", "INSUFFICIENT_CREDITS", "PROVIDER_ERROR", "INVALID_REQUEST"];
 export type AIResponseStatus = (typeof AI_RESPONSE_STATUSES)[number];
 export declare const aiResponseStatusSchema: z.ZodEnum<{

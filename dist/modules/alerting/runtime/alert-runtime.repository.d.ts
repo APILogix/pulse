@@ -141,12 +141,16 @@ export interface NotificationJobInsert {
     projectId?: string | null;
     alertEventId: string;
     alertKey: string;
+    ruleId?: string | null;
+    bindingId?: string | null;
+    channelId?: string | null;
     channelKind: NotificationChannelKind;
     connectorId?: string | null;
     routeId?: string | null;
     recipientUserId?: string | null;
     recipientRef?: string | null;
     templateId?: string | null;
+    notificationType?: string;
     severity: LogDbSeverity;
     priority?: number;
     escalationStep?: number;
@@ -155,6 +159,7 @@ export interface NotificationJobInsert {
     idempotencyKey: string;
     billable?: boolean;
     notifyAfter?: Date | null;
+    routingDecisionHash?: string | null;
 }
 export interface NotificationJobRow {
     id: string;
@@ -162,17 +167,22 @@ export interface NotificationJobRow {
     idempotency_key: string;
     channel_kind: NotificationChannelKind;
     status: NotificationJobStatus;
+    recipient_user_id: string | null;
 }
 export interface NotificationJobDetailRow extends NotificationJobRow {
     organization_id: string;
     project_id: string | null;
     alert_event_id: string;
     alert_key: string;
+    rule_id: string | null;
+    binding_id: string | null;
+    channel_id: string | null;
     connector_id: string | null;
     route_id: string | null;
-    recipient_user_id: string | null;
     recipient_ref: string | null;
     template_id: string | null;
+    notification_type: string;
+    routing_decision_hash: string | null;
     severity: LogDbSeverity;
     priority: number;
     escalation_step: number;
@@ -289,6 +299,16 @@ export declare class AlertRuntimeRepository {
     /** Fold a duplicate into the existing alert. Never billed (ADR-0010). */
     incrementDuplicate(alertKey: string, seenAt: Date, client?: PoolClient): Promise<AlertEventStateRow | null>;
     appendHistory(input: AppendHistoryInput, client?: PoolClient): Promise<void>;
+    listProjectAlertEvents(organizationId: string, projectId: string, query: {
+        status?: string;
+        severity?: string;
+        limit: number;
+        offset: number;
+    }): Promise<{
+        data: Array<Record<string, unknown>>;
+        total: number;
+    }>;
+    findProjectAlertEventById(organizationId: string, projectId: string, alertEventId: string): Promise<Record<string, unknown> | null>;
     listHistory(alertKey: string, limit?: number): Promise<Array<Record<string, unknown>>>;
     /**
      * Bulk-insert notification jobs in ONE statement (no N+1).
@@ -310,6 +330,17 @@ export declare class AlertRuntimeRepository {
      * terminal job backwards.
      */
     setNotificationJobStatus(jobId: string, status: NotificationJobStatus, client?: PoolClient): Promise<boolean>;
+    recordNotificationDelivery(input: {
+        organizationId: string;
+        jobId: string;
+        jobStatus: NotificationJobStatus;
+        attemptStatus: NotificationJobStatus;
+        responseStatusCode?: number | null;
+        externalMessageId?: string | null;
+        errorCategory?: string | null;
+        errorMessage?: string | null;
+        latencyMs?: number | null;
+    }): Promise<boolean>;
     findNotificationJobById(jobId: string, client?: PoolClient): Promise<NotificationJobDetailRow | null>;
     claimDueNotificationJobs(limit?: number, client?: PoolClient): Promise<NotificationJobDetailRow[]>;
     appendLedger(rows: LedgerInsert[], client?: PoolClient): Promise<number>;

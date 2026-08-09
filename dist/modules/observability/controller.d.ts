@@ -23,6 +23,7 @@ export declare class ObservabilityController {
     statistics: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     timeline: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     detail: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
+    developerTools: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     related: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     askEvent: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;
     askList: (request: FastifyRequest, reply: FastifyReply) => Promise<FastifyReply>;

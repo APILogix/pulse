@@ -31,12 +31,12 @@ export declare const AlertActionMergeModeSchema: z.ZodEnum<{
 export declare const NotificationChannelKindSchema: z.ZodEnum<{
     sms: "sms";
     email: "email";
+    webhook: "webhook";
+    in_app: "in_app";
     slack: "slack";
     discord: "discord";
     teams: "teams";
     pagerduty: "pagerduty";
-    webhook: "webhook";
-    in_app: "in_app";
 }>;
 export declare const CreateBindingSchema: z.ZodObject<{
     mode: z.ZodDefault<z.ZodEnum<{
@@ -66,12 +66,12 @@ export declare const CreateBindingSchema: z.ZodObject<{
     requestedChannels: z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodEnum<{
         sms: "sms";
         email: "email";
+        webhook: "webhook";
+        in_app: "in_app";
         slack: "slack";
         discord: "discord";
         teams: "teams";
         pagerduty: "pagerduty";
-        webhook: "webhook";
-        in_app: "in_app";
     }>>>>;
     recipientOverrides: z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     escalationPolicyId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
@@ -121,12 +121,12 @@ export declare const UpdateBindingSchema: z.ZodObject<{
     requestedChannels: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodArray<z.ZodEnum<{
         sms: "sms";
         email: "email";
+        webhook: "webhook";
+        in_app: "in_app";
         slack: "slack";
         discord: "discord";
         teams: "teams";
         pagerduty: "pagerduty";
-        webhook: "webhook";
-        in_app: "in_app";
     }>>>>>;
     recipientOverrides: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodRecord<z.ZodString, z.ZodUnknown>>>>;
     escalationPolicyId: z.ZodOptional<z.ZodOptional<z.ZodNullable<z.ZodString>>>;

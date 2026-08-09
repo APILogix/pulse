@@ -4,6 +4,8 @@ import { pool } from "../../../../config/database.js";
 import { AlertingRepository } from "../../../alerting/repository.js";
 import { EventsService } from "../../../alerting/events/events.service.js";
 import { compareThreshold } from "./threshold.evaluator.js";
+import { isEnabled } from "../../../feature-flags/service.js";
+import { FEATURE_FLAGS } from "../../../feature-flags/types.js";
 import type { ProjectAlertThresholdRow } from "./threshold.types.js";
 
 interface EvaluatedThresholdRow extends ProjectAlertThresholdRow {
@@ -52,7 +54,7 @@ export class ProjectThresholdWorker {
   /**
    * @param telemetryPool pool owning `events_*`; defaults to the control-plane pool
    * @param dryRun explicit override supplied by AlertRuleEvaluator. Defaults to "dry-run if the
-   *   telemetry pool is a different pool", so single-database deployments are unaffected.
+   * telemetry pool is a different pool", so single-database deployments are unaffected.
    */
   constructor(logger: FastifyBaseLogger, telemetryPool: Pool = pool, dryRun?: boolean) {
     this.repository = new AlertingRepository();
@@ -72,8 +74,9 @@ export class ProjectThresholdWorker {
       this.log.error({ err }, "Unable to load due project thresholds");
       return summary;
     }
-    summary.due = due.length;
-    const settled = await mapBounded(due, 10, (threshold) => this.evaluateOne(threshold));
+    const legacyDue = await filterLegacyThresholds(due);
+    summary.due = legacyDue.length;
+    const settled = await mapBounded(legacyDue, 10, (threshold) => this.evaluateOne(threshold));
     settled.forEach((result, index) => {
       if (result.status === "rejected") {
         summary.failed += 1;
@@ -336,6 +339,19 @@ export class ProjectThresholdWorker {
       ],
     );
   }
+}
+
+async function filterLegacyThresholds(
+  thresholds: EvaluatedThresholdRow[],
+): Promise<EvaluatedThresholdRow[]> {
+  const enabled = await Promise.all(thresholds.map(async (threshold) => ({
+    threshold,
+    v2: await isEnabled(FEATURE_FLAGS.ALERTING_V2_EVALUATION, {
+      organizationId: threshold.organization_id,
+      projectId: threshold.project_id,
+    }, false),
+  })));
+  return enabled.filter((entry) => !entry.v2).map((entry) => entry.threshold);
 }
 
 async function mapBounded<T, R>(

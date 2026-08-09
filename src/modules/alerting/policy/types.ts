@@ -19,7 +19,11 @@ export interface EffectiveAlertPolicy {
   policyId: string;
   version: number;
   organizationId: string;
+  projectId: string | null;
   ruleId: string;
+  bindingId: string | null;
+  ruleRevision: number;
+  effectiveRuleHash: string;
   scope: EvaluationScope;
   enabled: boolean;
   severity: EffectiveRule['severity'];

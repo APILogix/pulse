@@ -11,5 +11,7 @@ export declare function policyCacheKey(organizationId: string, ruleId: string, v
     environment?: string | null;
     service?: string | null;
     endpoint?: string | null;
+}, options?: {
+    requireProjectSubscription?: boolean;
 }): string;
 //# sourceMappingURL=policy.cache.d.ts.map

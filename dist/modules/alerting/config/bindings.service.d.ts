@@ -21,6 +21,7 @@ import type { CreateBindingBody, EffectiveRuleQuery, UpdateBindingBody } from '.
 import type { AlertRuleBindingRow } from '../policy/resolve-rule.js';
 export interface EffectiveRuleResult {
     rule: EffectiveRule;
+    ruleRevision: number;
     thresholds: EffectiveThreshold[];
     /** True when two bindings tied at the same depth and the tie-break decided. */
     conflict: boolean;
@@ -49,6 +50,8 @@ export declare class AlertRuleBindingsService {
      * The returned trace is the debugging surface for inheritance: it names every binding that
      * contributed and which fields it set, so "why did this fire at 0.5%?" has a direct answer.
      */
-    resolveEffective(organizationId: string, ruleId: string, query: EffectiveRuleQuery): Promise<EffectiveRuleResult>;
+    resolveEffective(organizationId: string, ruleId: string, query: EffectiveRuleQuery, options?: {
+        requireProjectSubscription?: boolean;
+    }): Promise<EffectiveRuleResult>;
 }
 //# sourceMappingURL=bindings.service.d.ts.map

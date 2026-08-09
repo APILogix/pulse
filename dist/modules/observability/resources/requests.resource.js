@@ -27,6 +27,7 @@ const requestFields = {
     hasTrace: { column: 'trace_id', selectExpr: '(trace_id IS NOT NULL)', type: 'boolean', filterable: false, projectable: true, label: 'Has Trace' },
     serverName: { column: 'server_name', type: 'string', filterable: true, projectable: true, label: 'Server' },
     tenantId: { column: 'tenant_id', type: 'string', filterable: true, projectable: true, label: 'Tenant' },
+    aiResponse: { column: 'ai_response', type: 'json', filterable: false, projectable: false, label: 'AI Response' },
     project: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project' },
     projectSlug: { column: 'project_slug', selectExpr: '(SELECT slug FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Slug' },
     projectName: { column: 'project_name', selectExpr: '(SELECT name FROM project_lookup WHERE project_id = events_requests.project_id)', type: 'string', filterable: true, projectable: true, label: 'Project Name' },
@@ -34,6 +35,21 @@ const requestFields = {
 // Events_requests table does not have a message column
 delete requestFields.message;
 const NUMERIC = ['statusCode', 'bodySize', 'responseSize', 'durationMs', 'geoAsn'];
+const requestsSearchAliases = {
+    ...commonSearchAliases,
+    status: 'statusCode',
+    latency: 'durationMs',
+    duration: 'durationMs',
+    project: 'project',
+    project_slug: 'project',
+    country: 'geoCountry',
+    browser: 'browser',
+    os: 'os',
+    device: 'device',
+    ip: 'clientIp',
+};
+// `events_requests` has no message column, so the common alias is invalid here.
+delete requestsSearchAliases.message;
 export const requestsResource = {
     name: 'requests',
     table: 'events_requests',
@@ -41,19 +57,7 @@ export const requestsResource = {
     idColumn: 'id',
     fields: requestFields,
     searchFields: ['publicId', 'endpoint', 'name', 'method', 'requestId', 'userId', 'service'],
-    searchAliases: {
-        ...commonSearchAliases,
-        status: 'statusCode',
-        latency: 'durationMs',
-        duration: 'durationMs',
-        project: 'project',
-        project_slug: 'project',
-        country: 'geoCountry',
-        browser: 'browser',
-        os: 'os',
-        device: 'device',
-        ip: 'clientIp',
-    },
+    searchAliases: requestsSearchAliases,
     defaultSort: { field: 'occurredAt', direction: 'desc' },
     defaultProjection: [
         'id', 'publicId', 'occurredAt', 'method', 'endpoint', 'statusCode',

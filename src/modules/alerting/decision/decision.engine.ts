@@ -4,12 +4,12 @@ import type { Pool } from 'pg';
 import type { EffectiveAlertPolicy } from '../policy/types.js';
 import {
   AlertRuntimeRepository,
-  type AlertEventStateRow,
   type AlertEventV2Row,
   type LogDbSeverity,
-  type NotificationChannelKind,
   type NotificationJobRow,
+  type NotificationJobInsert,
 } from '../runtime/alert-runtime.repository.js';
+import { NotificationRoutingService } from '../runtime/notification-routing.service.js';
 import { transitionAlert, type AlertActorType, type AlertLifecycleState, type AlertTransition } from './state-machine.js';
 
 export interface AlertDecisionCandidate {
@@ -29,6 +29,8 @@ export interface AlertDecisionCandidate {
   evidence?: Record<string, unknown>;
   labels?: Record<string, unknown>;
   annotations?: Record<string, unknown>;
+  category?: string;
+  conditionFieldPaths?: string[];
 }
 
 export interface AlertDecisionResult {
@@ -56,15 +58,34 @@ export class AlertDecisionEngine {
   private readonly runtime: AlertRuntimeRepository;
   private readonly log: FastifyBaseLogger;
 
+  private readonly routing: NotificationRoutingService;
+
   constructor(
     logDb: Pool,
     logger: FastifyBaseLogger,
+    deps: { routing?: NotificationRoutingService } = {},
   ) {
     this.runtime = new AlertRuntimeRepository(logDb);
+    this.routing = deps.routing ?? new NotificationRoutingService({ logger });
     this.log = logger.child({ component: 'alert-decision-engine' });
   }
 
   async decide(candidate: AlertDecisionCandidate): Promise<AlertDecisionResult> {
+    if (candidate.projectId && (!candidate.policy.bindingId || !candidate.policy.effectiveRuleHash)) {
+      this.log.warn({
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId,
+        ruleId: candidate.policy.ruleId,
+      }, 'Alert decision rejected: missing effective project rule identity');
+      return {
+        alertKey: alertFingerprint(candidate),
+        duplicate: false,
+        suppressed: true,
+        state: 'suppressed',
+        event: null,
+        notificationJobs: [],
+      };
+    }
     const kind = candidate.kind ?? 'fired';
     const alertKey = alertFingerprint(candidate);
     const idempotencyKey = hash(`${alertKey}:${kind}:${candidate.observedAt.toISOString()}`);
@@ -78,7 +99,7 @@ export class AlertDecisionEngine {
         service: candidate.service ?? null,
         endpoint: candidate.endpoint ?? null,
         ruleId: candidate.policy.ruleId,
-        bindingId: candidate.policy.policyId,
+        bindingId: candidate.policy.bindingId,
         ruleRevision: candidate.ruleRevision,
         kind,
         severity: toSeverity(candidate.policy.severity),
@@ -110,6 +131,23 @@ export class AlertDecisionEngine {
         } satisfies AlertDecisionResult;
       }
 
+      const routingDecision = kind === 'fired'
+        ? await this.routing.resolve({
+          organizationId: candidate.organizationId,
+          projectId: candidate.projectId ?? null,
+          ruleId: candidate.policy.ruleId,
+          policy: {
+            effectiveRuleHash: candidate.policy.effectiveRuleHash,
+            escalationPolicyId: candidate.policy.escalationPolicyId,
+          },
+          category: candidate.category ?? 'all',
+          severity: toRoutingSeverity(candidate.policy.severity),
+          labels: candidate.labels ?? {},
+        })
+        : null;
+      const hasNotificationTargets = routingDecision !== null
+        && !routingDecision.suppressed
+        && routingDecision.targets.length > 0;
       const previousState = (previous?.state ?? 'healthy') as AlertLifecycleState;
       const transition: AlertTransition = kind === 'recovered' ? 'recover' : 'trigger';
       const nextState = transitionAlert(previousState, transition, 'worker');
@@ -121,7 +159,7 @@ export class AlertDecisionEngine {
         state: nextState,
         severity: toSeverity(candidate.policy.severity),
         seenAt: candidate.observedAt,
-        notifiedAt: kind === 'fired' ? candidate.observedAt : null,
+        notifiedAt: hasNotificationTargets ? candidate.observedAt : null,
         autoResolveAt: candidate.policy.autoResolveAfterMinutes
           ? new Date(candidate.observedAt.getTime() + candidate.policy.autoResolveAfterMinutes * 60_000)
           : null,
@@ -135,33 +173,66 @@ export class AlertDecisionEngine {
         actorType: 'worker',
         previousState,
         newState: nextState,
-        metadata: { source: candidate.source, policyId: candidate.policy.policyId },
+        metadata: {
+          source: candidate.source,
+          policyId: candidate.policy.policyId,
+          effectiveRuleHash: candidate.policy.effectiveRuleHash,
+          routingDecisionHash: routingDecision?.decisionHash ?? null,
+          notificationSuppressed: routingDecision?.suppressed ?? false,
+          suppressionReason: routingDecision?.suppressionReason ?? null,
+        },
       }, client);
 
-      if (kind === 'recovered') {
-        return { alertKey, duplicate: false, suppressed: false, state: nextState, event, notificationJobs: [] } satisfies AlertDecisionResult;
+      if (kind === 'recovered' || !routingDecision || routingDecision.suppressed) {
+        return {
+          alertKey,
+          duplicate: false,
+          suppressed: routingDecision?.suppressed ?? false,
+          state: nextState,
+          event,
+          notificationJobs: [],
+        } satisfies AlertDecisionResult;
       }
 
-      const channels = candidate.policy.requestedChannels.length > 0
-        ? candidate.policy.requestedChannels
-        : ['in_app'];
-      const jobs = await this.runtime.insertNotificationJobs(channels.map((channel) => ({
-        organizationId: candidate.organizationId,
-        projectId: candidate.projectId ?? null,
-        alertEventId: event.id,
-        alertKey,
-        channelKind: channel as NotificationChannelKind,
-        severity: toSeverity(candidate.policy.severity),
-        payload: { policy: candidate.policy, evidence: candidate.evidence ?? {}, annotations: candidate.annotations ?? {} },
-        idempotencyKey: hash(`${alertKey}:${channel}:0:0`),
-        billable: true,
-      })), client);
+      const jobs = await this.runtime.insertNotificationJobs(
+        routingDecision.targets.map((target) => {
+          const destinationIdentity = target.channelId ?? target.connectorId ?? target.recipientRef ?? 'default';
+          const payload = {
+            policy: candidate.policy,
+            evidence: candidate.evidence ?? {},
+            annotations: candidate.annotations ?? {},
+            routingDecisionHash: routingDecision.decisionHash,
+          };
+          return {
+            organizationId: candidate.organizationId,
+            projectId: candidate.projectId ?? null,
+            alertEventId: event.id,
+            alertKey,
+            ruleId: candidate.policy.ruleId,
+            bindingId: candidate.policy.bindingId,
+            channelId: target.channelId,
+            channelKind: target.channelKind,
+            connectorId: target.connectorId,
+            routeId: target.routeId,
+            recipientUserId: target.recipientUserId,
+            recipientRef: target.recipientRef,
+            notificationType: 'alert',
+            severity: toSeverity(candidate.policy.severity),
+            payload,
+            idempotencyKey: hash(`${event.id}:${destinationIdentity}:alert:0:0`),
+            routingDecisionHash: routingDecision.decisionHash,
+            billable: target.channelKind !== 'in_app',
+          } satisfies NotificationJobInsert;
+        }),
+        client,
+      );
       await this.runtime.appendLedger(jobs.map((job) => ({
         organizationId: candidate.organizationId,
         ruleId: candidate.policy.ruleId,
-        bindingId: candidate.policy.policyId,
+        bindingId: candidate.policy.bindingId,
         alertKey,
         channelKind: job.channel_kind,
+        recipientUserId: job.recipient_user_id,
         notificationJobId: job.id,
       })), client);
       return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs } satisfies AlertDecisionResult;
@@ -183,4 +254,11 @@ function toSeverity(value: string): LogDbSeverity {
 
 function severityPriority(value: string): number {
   return { debug: 0, info: 10, warning: 30, error: 70, critical: 90, fatal: 100 }[value] ?? 70;
+}
+
+function toRoutingSeverity(value: string): 'info' | 'warning' | 'error' | 'critical' {
+  if (value === 'critical' || value === 'fatal') return 'critical';
+  if (value === 'error') return 'error';
+  if (value === 'warning') return 'warning';
+  return 'info';
 }

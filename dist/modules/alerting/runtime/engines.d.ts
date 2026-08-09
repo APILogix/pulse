@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { Pool } from 'pg';
 import { type AlertRuntimeTier } from './rule-catalog.js';
+import { NotificationRoutingService } from './notification-routing.service.js';
 import type { ScopedEvent } from '../../ingestion/pipeline/telemetry-writer.js';
 export interface FastEvaluationInput {
     organizationId: string;
@@ -40,14 +41,14 @@ export declare class AlertRuntimeEngines {
     private readonly controlDb;
     private readonly catalog;
     private readonly runtime;
+    private readonly decision;
     private readonly log;
-    constructor(logger: FastifyBaseLogger, logDb: Pool, controlDb: Pool);
+    constructor(logger: FastifyBaseLogger, logDb: Pool, controlDb: Pool, routing?: NotificationRoutingService);
     evaluateFast(input: FastEvaluationInput): Promise<RuntimeEvaluationSummary>;
     evaluateTier(input: TierEvaluationInput): Promise<RuntimeEvaluationSummary>;
     private evaluateCandidate;
     private appendDecision;
     private enqueueNotificationJob;
-    private resolveConnectorTargets;
     private loadRollupScopes;
     private loadWindowScopes;
     private loadOperationalScopes;

@@ -45,7 +45,8 @@ const RULE_COLS = `
   grouping_enabled, grouping_key_template, grouping_wait_seconds,
   labels, annotations, metadata, created_by, updated_by,
   enabled_at, disabled_at, created_at, updated_at, deleted_at,
-  project_id, preset_key, is_default, last_evaluated_at
+  project_id, preset_key, is_default, last_evaluated_at,
+  COALESCE(current_revision, 1) AS current_revision
 `;
 
 export interface RuleConditionInsert {

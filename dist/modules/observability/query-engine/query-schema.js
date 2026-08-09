@@ -51,6 +51,9 @@ export const RawExplorerQuerySchema = z.object({
     level: z.string().optional(),
     handled: z.union([z.string(), z.boolean()]).optional(),
     isHandled: z.union([z.string(), z.boolean()]).optional(),
+    isRegression: z.union([z.string(), z.boolean()]).optional(),
+    regression: z.union([z.string(), z.boolean()]).optional(),
+    release: z.string().optional(),
 }).strict();
 /** Reject tenant and projection controls before endpoint-specific handling. */
 export function assertPublicExplorerQuery(input) {
@@ -63,7 +66,7 @@ export function assertPublicExplorerQuery(input) {
 }
 /** Resolve explicit from/to or a named range into a concrete window. */
 export function resolveTimeRange(raw) {
-    const rangeMs = (raw.range && RANGE_MS[raw.range]) ? RANGE_MS[raw.range] : RANGE_MS['24h'];
+    const rangeMs = (raw.range && RANGE_MS[raw.range]) ? RANGE_MS[raw.range] : RANGE_MS['30d'];
     let from = raw.from;
     let to = raw.to;
     if (from && to) {
@@ -162,6 +165,9 @@ export function buildExplorerQuery(rawInput, defaultSort) {
             if (Number.isFinite(num)) {
                 explicitFilters.push({ field: 'statusCode', op: 'eq', value: num });
             }
+            else if (['OPEN', 'RESOLVED', 'IGNORED', 'ARCHIVED'].includes(sStr.toUpperCase())) {
+                explicitFilters.push({ field: 'status', op: 'eq', value: sStr.toUpperCase() });
+            }
             else {
                 explicitFilters.push({ field: 'rootSpanStatus', op: 'eq', value: sStr.toLowerCase() });
             }
@@ -205,6 +211,17 @@ export function buildExplorerQuery(rawInput, defaultSort) {
         const hStr = String(rawHandled).trim().toLowerCase();
         const boolVal = hStr === 'true' || hStr === '1' || hStr === 'handled';
         explicitFilters.push({ field: 'handled', op: 'eq', value: boolVal });
+    }
+    // Regression
+    const rawRegression = raw.isRegression ?? raw.regression;
+    if (rawRegression !== undefined && String(rawRegression).trim().length > 0) {
+        const rStr = String(rawRegression).trim().toLowerCase();
+        const boolVal = rStr === 'true' || rStr === '1' || rStr === 'regression';
+        explicitFilters.push({ field: 'isRegression', op: 'eq', value: boolVal });
+    }
+    // Release
+    if (raw.release !== undefined && raw.release.trim().length > 0) {
+        explicitFilters.push({ field: 'latestRelease', op: 'eq', value: raw.release.trim() });
     }
     const query = {
         timeRange,

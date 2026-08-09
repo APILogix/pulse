@@ -21,6 +21,8 @@ import type { ConnectorConfigRow, NotificationPayload, NotificationSeverity } fr
 import { CONNECTOR_JOBS, CONNECTOR_PRIORITY, type ConnectorJobName } from '../connectors/job.constants.js';
 import type { AlertEscalationStepRow, AlertEventRow } from './types.js';
 import { env } from '../../config/env.js';
+import { isEnabled } from '../feature-flags/service.js';
+import { FEATURE_FLAGS } from '../feature-flags/types.js';
 
 type EnqueueConnectorJob = (
   queue: ConnectorJobName,
@@ -62,7 +64,32 @@ export class AlertEscalationSweep {
     })));
 
     // 2. Claim due escalations (SKIP LOCKED inside the repository).
-    const events = await this.alertRepo.claimEscalationDue(limit);
+    const claimedEvents = await this.alertRepo.claimEscalationDue(limit);
+    const rollout = await Promise.all(claimedEvents.map(async (event) => ({
+      event,
+      legacyEnabled: await isEnabled(FEATURE_FLAGS.ALERTING_LEGACY_ESCALATION, {
+        organizationId: event.organization_id,
+        projectId: event.project_id,
+      }, true),
+    })));
+    const events = rollout.filter((entry) => entry.legacyEnabled).map((entry) => entry.event);
+    const skippedV2 = rollout.filter((entry) => !entry.legacyEnabled).map((entry) => entry.event);
+    await Promise.all(skippedV2.flatMap((event) => [
+      this.alertRepo.advanceEscalation(
+        event.id,
+        event.escalation_step_number,
+        event.escalation_repeat_count,
+        null,
+      ),
+      this.alertRepo.insertHistory({
+        eventId: event.id,
+        organizationId: event.organization_id,
+        action: 'escalation_skipped',
+        actorId: null,
+        actorType: 'worker',
+        metadata: { reason: 'v2_cutover' },
+      }),
+    ]));
     result.claimed = events.length;
     if (events.length === 0) return result;
 

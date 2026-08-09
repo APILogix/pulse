@@ -33,6 +33,7 @@ export function policyCacheKey(
   ruleId: string,
   version: number,
   scope: { projectId?: string | null; environment?: string | null; service?: string | null; endpoint?: string | null },
+  options: { requireProjectSubscription?: boolean } = {},
 ): string {
-  return [organizationId, ruleId, version, scope.projectId ?? '', scope.environment ?? '', scope.service ?? '', scope.endpoint ?? ''].join(':');
+  return [organizationId, ruleId, version, options.requireProjectSubscription === true ? 'strict' : 'compat', scope.projectId ?? '', scope.environment ?? '', scope.service ?? '', scope.endpoint ?? ''].join(':');
 }

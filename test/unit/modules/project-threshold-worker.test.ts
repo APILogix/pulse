@@ -57,6 +57,7 @@ describe("ProjectThresholdWorker", () => {
   it("loads only project thresholds and emits a project-scoped event after a qualified breach", async () => {
     query
       .mockResolvedValueOnce({ rows: [threshold()] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ value: 10 }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 });
     const { ProjectThresholdWorker } = await import(

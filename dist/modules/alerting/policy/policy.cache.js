@@ -21,7 +21,7 @@ export class AlertPolicyCache {
 function cloneResult(value) {
     return structuredClone(value);
 }
-export function policyCacheKey(organizationId, ruleId, version, scope) {
-    return [organizationId, ruleId, version, scope.projectId ?? '', scope.environment ?? '', scope.service ?? '', scope.endpoint ?? ''].join(':');
+export function policyCacheKey(organizationId, ruleId, version, scope, options = {}) {
+    return [organizationId, ruleId, version, options.requireProjectSubscription === true ? 'strict' : 'compat', scope.projectId ?? '', scope.environment ?? '', scope.service ?? '', scope.endpoint ?? ''].join(':');
 }
 //# sourceMappingURL=policy.cache.js.map

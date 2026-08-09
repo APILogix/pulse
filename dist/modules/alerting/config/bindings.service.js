@@ -48,7 +48,7 @@ export class AlertRuleBindingsService {
      * The returned trace is the debugging surface for inheritance: it names every binding that
      * contributed and which fields it set, so "why did this fire at 0.5%?" has a direct answer.
      */
-    async resolveEffective(organizationId, ruleId, query) {
+    async resolveEffective(organizationId, ruleId, query, options = {}) {
         const rule = await this.config.findRuleById(organizationId, ruleId);
         if (!rule)
             throw new AlertNotFoundError('Alert rule');
@@ -63,7 +63,7 @@ export class AlertRuleBindingsService {
             service: query.service ?? null,
             endpoint: query.endpoint ?? null,
         };
-        const effective = resolveEffectiveRule(rule, conditions, bindings, scope);
+        const effective = resolveEffectiveRule(rule, conditions, bindings, scope, options);
         const conflict = hasEqualDepthConflict(bindings, scope);
         if (conflict) {
             recordBindingConflict(effective.resolvedScopeLevel);
@@ -71,6 +71,9 @@ export class AlertRuleBindingsService {
         }
         return {
             rule: effective,
+            ruleRevision: 'current_revision' in rule && typeof rule.current_revision === 'number'
+                ? rule.current_revision
+                : 1,
             thresholds: resolveAllEffectiveThresholds(effective),
             conflict,
             appliedBindingIds: effective.trace

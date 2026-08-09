@@ -83,6 +83,11 @@ export interface EvaluationScope {
   endpoint?: string | null;
 }
 
+export interface EffectiveRuleResolutionOptions {
+  /** Runtime evaluation requires an explicit project binding for project scopes. */
+  requireProjectSubscription?: boolean;
+}
+
 /** One step of the resolution, retained so any decision can be explained. */
 export interface RuleResolutionTraceEntry {
   bindingId: string | null;
@@ -182,13 +187,15 @@ export function resolveEffectiveRule(
   conditions: AlertRuleConditionRow[],
   bindings: AlertRuleBindingRow[],
   scope: EvaluationScope,
+  options: EffectiveRuleResolutionOptions = {},
 ): EffectiveRule {
   const matching = bindings
     .filter((binding) => binding.deleted_at === null && bindingMatchesScope(binding, scope))
     .sort(compareBindings);
   const requiresProjectSubscription = Boolean(scope.projectId)
-    && matching.some((binding) => binding.scope_type === 'organization')
-    && !matching.some((binding) => binding.scope_level > SCOPE_LEVEL.organization);
+    && !matching.some((binding) => binding.scope_level > SCOPE_LEVEL.organization)
+    && (options.requireProjectSubscription === true
+      || matching.some((binding) => binding.scope_type === 'organization'));
 
   // Start from the rule's own values. A rule with no bindings resolves to exactly the
   // behaviour it has today — this is what makes the P12 backfill behaviour-identical.
@@ -310,7 +317,9 @@ export function resolveEffectiveRule(
       scopeLevel: SCOPE_LEVEL.project,
       mode: 'disable',
       applied: ['enabled=false (project not subscribed)'],
-      note: 'organization rule requires a matching project subscription binding',
+      note: options.requireProjectSubscription === true
+        ? 'runtime evaluation requires a matching project subscription binding'
+        : 'organization rule requires a matching project subscription binding',
     });
   }
 
