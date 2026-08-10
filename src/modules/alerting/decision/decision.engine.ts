@@ -196,7 +196,9 @@ export class AlertDecisionEngine {
 
       const jobs = await this.runtime.insertNotificationJobs(
         routingDecision.targets.map((target) => {
-          const destinationIdentity = target.channelId ?? target.connectorId ?? target.recipientRef ?? 'default';
+          const destinationIdentity = target.deliveryMode === 'EMAIL_ONLY_RESTRICTED'
+            ? `${target.recipientUserId ?? 'owner'}:${target.recipientRef ?? 'missing'}`
+            : target.channelId ?? target.connectorId ?? target.recipientRef ?? 'default';
           const payload = {
             policy: candidate.policy,
             evidence: candidate.evidence ?? {},
@@ -217,6 +219,9 @@ export class AlertDecisionEngine {
             recipientUserId: target.recipientUserId,
             recipientRef: target.recipientRef,
             notificationType: 'alert',
+            deliveryMode: target.deliveryMode,
+            recipientType: target.recipientType,
+            provider: target.provider,
             severity: toSeverity(candidate.policy.severity),
             payload,
             idempotencyKey: hash(`${event.id}:${destinationIdentity}:alert:0:0`),

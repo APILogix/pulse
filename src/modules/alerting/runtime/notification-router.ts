@@ -10,6 +10,7 @@ import {
   type NotificationJobStatus,
 } from './alert-runtime.repository.js';
 import type { ConnectorTransportJob } from '../../connectors/delivery/transport.types.js';
+import { ProjectOwnerRepository } from './email-only-restricted-routing.js';
 
 export interface NotificationRouterSummary {
   claimed: number;
@@ -26,6 +27,7 @@ export class AlertNotificationRouter {
   constructor(
     logDb: Pool,
     logger: FastifyBaseLogger,
+    private readonly owners = new ProjectOwnerRepository(),
   ) {
     this.repo = new AlertRuntimeRepository(logDb);
     this.log = logger.child({ component: 'alert-notification-router' });
@@ -67,9 +69,29 @@ export class AlertNotificationRouter {
       }
 
       if (job.channel_kind === 'email' && !job.connector_id && job.recipient_ref) {
+        if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED' && (
+          job.recipient_type !== 'PROJECT_OWNER' || job.provider !== 'MANAGED_EMAIL'
+        )) {
+          await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
+          return 'suppressed';
+        }
+        if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
+          const owner = job.project_id
+            ? await this.owners.findActiveVerifiedOwner(job.organization_id, job.project_id)
+            : null;
+          if (!owner || owner.userId !== job.recipient_user_id || owner.email !== job.recipient_ref) {
+            await this.mark(job, 'suppressed', startedAt, 'owner_email_unavailable');
+            return 'suppressed';
+          }
+        }
         await this.sendDirectEmail(job);
         await this.mark(job, 'sent', startedAt);
         return 'sent';
+      }
+
+      if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
+        await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
+        return 'suppressed';
       }
 
       if (!job.connector_id) {

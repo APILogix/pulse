@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
+import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
 
 export interface MonitorOptions {
   retryBatchSize?: number;
@@ -30,6 +31,7 @@ export class ConnectorMonitor {
     private readonly service: ConnectorService,
     private readonly logger: FastifyBaseLogger,
     options: MonitorOptions = {},
+    private readonly entitlement = new NotificationEntitlementService(),
   ) {
     this.opts = { ...DEFAULTS, ...options };
   }
@@ -54,6 +56,11 @@ export class ConnectorMonitor {
           continue;
         }
         try {
+          const capability = await this.entitlement.resolve(row.organization_id);
+          if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(row.type, true)) {
+            await this.repository.markDeliveryFailed(delivery.id, 'Connector entitlement is unavailable', { category: 'DELIVERY_BLOCKED_ENTITLEMENT' });
+            continue;
+          }
           await this.dispatcher.processRetry(row, delivery);
           processed += 1;
         } catch (err) {
@@ -81,6 +88,11 @@ export class ConnectorMonitor {
       const rows = await this.repository.listMonitorable();
       for (const row of rows) {
         try {
+          const capability = await this.entitlement.resolve(row.organization_id);
+          if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(row.type, true)) {
+            this.logger.warn({ connectorId: row.id }, 'Health check blocked by entitlement');
+            continue;
+          }
           await this.service.runHealthCheck(row);
           checked += 1;
         } catch (err) {

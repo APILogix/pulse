@@ -8,6 +8,7 @@ import { TemplatesService } from './templates/templates.service.js';
 import { RoutingService } from './routing/routing.service.js';
 import { MetricsService } from './metrics/metrics.service.js';
 import type { RequestMeta } from './types.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, ListDeadLettersQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
 
 export * from './rules/rules.service.js';
@@ -21,6 +22,7 @@ export * from './metrics/metrics.service.js';
 export interface AlertingServiceDeps {
   repository: AlertingRepository;
   logger: FastifyBaseLogger;
+  notificationEntitlement?: NotificationEntitlementService;
 }
 
 export class AlertingService {

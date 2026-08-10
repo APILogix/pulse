@@ -22,6 +22,11 @@
  */
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
+import type {
+  NotificationDeliveryMode,
+  NotificationProvider,
+  NotificationRecipientType,
+} from './notification-entitlement.service.js';
 import { assertAlertingPool, type AlertingPoolTarget } from './runtime-pool.js';
 
 export type LogDbSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical' | 'fatal';
@@ -171,6 +176,9 @@ export interface NotificationJobInsert {
   billable?: boolean;
   notifyAfter?: Date | null;
   routingDecisionHash?: string | null;
+  deliveryMode?: NotificationDeliveryMode | null;
+  recipientType?: NotificationRecipientType | null;
+  provider?: NotificationProvider | null;
 }
 
 export interface NotificationJobRow {
@@ -196,6 +204,9 @@ export interface NotificationJobDetailRow extends NotificationJobRow {
   template_id: string | null;
   notification_type: string;
   routing_decision_hash: string | null;
+  delivery_mode: NotificationDeliveryMode | null;
+  recipient_type: NotificationRecipientType | null;
+  provider: NotificationProvider | null;
   severity: LogDbSeverity;
   priority: number;
   escalation_step: number;
@@ -650,12 +661,12 @@ export class AlertRuntimeRepository {
              $6::uuid[], $7::uuid[], $8::uuid[], $9::text[], $10::uuid[],
              $11::text[], $12::smallint[], $13::smallint[], $14::smallint[], $15::jsonb[],
              $16::text[], $17::boolean[], $18::timestamptz[], $19::uuid[], $20::uuid[],
-             $21::uuid[], $22::text[], $23::text[]
+             $21::uuid[], $22::text[], $23::text[], $24::text[], $25::text[], $26::text[]
            ) AS t(organization_id, project_id, alert_event_id, alert_key, channel_kind,
                   connector_id, route_id, recipient_user_id, recipient_ref, template_id,
                   severity, priority, escalation_step, attempt_epoch, payload,
                   idempotency_key, billable, notify_after, rule_id, binding_id, channel_id,
-                  notification_type, routing_decision_hash)
+                  notification_type, routing_decision_hash, delivery_mode, recipient_type, provider)
        ), reserved AS (
          INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
          SELECT 'notification_job', organization_id, idempotency_key
@@ -668,14 +679,15 @@ export class AlertRuntimeRepository {
          connector_id, route_id, recipient_user_id, recipient_ref, template_id,
          severity, priority, escalation_step, attempt_epoch, payload,
          idempotency_key, billable, notify_after, rule_id, binding_id, channel_id,
-         notification_type, routing_decision_hash
+         notification_type, routing_decision_hash, delivery_mode, recipient_type, provider
        )
        SELECT t.organization_id, t.project_id, t.alert_event_id, t.alert_key,
               t.channel_kind::notification_channel_kind,
               t.connector_id, t.route_id, t.recipient_user_id, t.recipient_ref, t.template_id,
               t.severity::logdb_severity, t.priority, t.escalation_step, t.attempt_epoch,
               t.payload, t.idempotency_key, t.billable, t.notify_after,
-              t.rule_id, t.binding_id, t.channel_id, t.notification_type, t.routing_decision_hash
+              t.rule_id, t.binding_id, t.channel_id, t.notification_type, t.routing_decision_hash,
+              t.delivery_mode, t.recipient_type, t.provider
          FROM input t
          JOIN reserved r
            ON r.organization_id = t.organization_id
@@ -706,6 +718,9 @@ export class AlertRuntimeRepository {
         rows.map((r) => r.channelId ?? null),
         rows.map((r) => r.notificationType ?? 'alert'),
         rows.map((r) => r.routingDecisionHash ?? null),
+        rows.map((r) => r.deliveryMode ?? null),
+        rows.map((r) => r.recipientType ?? null),
+        rows.map((r) => r.provider ?? null),
       ],
     );
     return result.rows;
@@ -798,6 +813,7 @@ export class AlertRuntimeRepository {
                organization_id, project_id, alert_event_id, alert_key,
                rule_id, binding_id, channel_id, connector_id, route_id,
                recipient_ref, template_id, notification_type, routing_decision_hash,
+               delivery_mode, recipient_type, provider,
                severity, priority, escalation_step, attempt_epoch,
                payload, billable, notify_after
           FROM alert_notification_jobs
@@ -828,6 +844,7 @@ export class AlertRuntimeRepository {
                   j.organization_id, j.project_id, j.alert_event_id, j.alert_key,
                   j.rule_id, j.binding_id, j.channel_id, j.connector_id, j.route_id,
                   j.recipient_ref, j.template_id, j.notification_type, j.routing_decision_hash,
+                  j.delivery_mode, j.recipient_type, j.provider,
                   j.severity, j.priority, j.escalation_step, j.attempt_epoch,
                   j.payload, j.billable, j.notify_after`,
       [Math.max(1, Math.min(limit, 1000))],

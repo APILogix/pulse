@@ -15,6 +15,8 @@ function makeService(overrides: {
   configured?: unknown[];
   fallback?: Array<{ userId: string; email: string }>;
   silences?: unknown[];
+  mode?: 'NORMAL_CONNECTOR' | 'EMAIL_ONLY_RESTRICTED';
+  owner?: { userId: string; email: string } | null;
 } = {}) {
   const channels = {
     resolveImmediateDeliveryTargets: vi.fn().mockResolvedValue(overrides.configured ?? []),
@@ -23,14 +25,49 @@ function makeService(overrides: {
   const config = {
     findActiveSilences: vi.fn().mockResolvedValue(overrides.silences ?? []),
   };
+  const restrictedRouting = {
+    resolve: vi.fn().mockResolvedValue(overrides.owner === undefined
+      ? { target: null, reason: 'OWNER_EMAIL_UNAVAILABLE' }
+      : overrides.owner
+        ? {
+            reason: 'EMAIL_ONLY_RESTRICTED',
+            target: {
+              channelKind: 'email',
+              channelId: null,
+              connectorId: null,
+              recipientUserId: overrides.owner.userId,
+              recipientRef: overrides.owner.email.trim().toLowerCase(),
+              routeId: null,
+              deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+              recipientType: 'PROJECT_OWNER',
+              provider: 'MANAGED_EMAIL',
+            },
+          }
+        : { target: null, reason: 'OWNER_EMAIL_UNAVAILABLE' }),
+  };
+  const entitlementService = {
+    resolve: vi.fn().mockResolvedValue({
+      mode: overrides.mode ?? 'NORMAL_CONNECTOR',
+      connectorAccess: (overrides.mode ?? 'NORMAL_CONNECTOR') === 'NORMAL_CONNECTOR',
+      reason: (overrides.mode ?? 'NORMAL_CONNECTOR') === 'NORMAL_CONNECTOR'
+        ? 'CONNECTOR_ACCESS_ALLOWED'
+        : 'CONNECTOR_ENTITLEMENT_REQUIRED',
+      featureKeys: [],
+      isProviderAllowed: () => true,
+    }),
+  };
   return {
     service: new NotificationRoutingService({
       channelRepository: channels as never,
       configRepository: config as never,
+      entitlementService: entitlementService as never,
+      restrictedRouting: restrictedRouting as never,
       logger,
     }),
     channels,
     config,
+    entitlementService,
+    restrictedRouting,
   };
 }
 
@@ -120,5 +157,47 @@ describe('NotificationRoutingService', () => {
       suppressionReason: 'missing_project_context',
       targets: [],
     });
+  });
+
+  it('routes restricted mode to exactly the verified project owner', async () => {
+    const { service, channels, restrictedRouting } = makeService({
+      mode: 'EMAIL_ONLY_RESTRICTED',
+      owner: { userId: 'owner-1', email: ' Owner@Example.test ' },
+    });
+
+    const decision = await service.resolve(input);
+
+    expect(decision).toMatchObject({
+      suppressed: false,
+      deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+      reason: 'EMAIL_ONLY_RESTRICTED',
+    });
+    expect(decision.targets).toEqual([expect.objectContaining({
+      channelKind: 'email',
+      connectorId: null,
+      recipientUserId: 'owner-1',
+      recipientRef: 'owner@example.test',
+      deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+      recipientType: 'PROJECT_OWNER',
+      provider: 'MANAGED_EMAIL',
+    })]);
+    expect(restrictedRouting.resolve).toHaveBeenCalledWith('org-1', 'project-1');
+    expect(channels.resolveImmediateDeliveryTargets).not.toHaveBeenCalled();
+    expect(channels.resolveNoChannelEmailTargets).not.toHaveBeenCalled();
+  });
+
+  it('suppresses restricted mode when the owner has no eligible email', async () => {
+    const { service, channels } = makeService({ mode: 'EMAIL_ONLY_RESTRICTED', owner: null });
+
+    const decision = await service.resolve(input);
+
+    expect(decision).toMatchObject({
+      suppressed: true,
+      suppressionReason: 'owner_email_unavailable',
+      deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+      targets: [],
+    });
+    expect(channels.resolveImmediateDeliveryTargets).not.toHaveBeenCalled();
+    expect(channels.resolveNoChannelEmailTargets).not.toHaveBeenCalled();
   });
 });

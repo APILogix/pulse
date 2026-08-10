@@ -24,12 +24,13 @@ import type { ConnectorConfigRow, NotificationPayload, RequestMeta } from './typ
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
 import { workerMetrics } from './metrics/worker-metrics.js';
-import { EntitlementsRepository } from '../billing/entitlements/repository.js';
 import { pool } from '../../config/database.js';
 import { logDB } from '../../config/log-database.js';
 import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
+import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
 import { ConnectorGlobalGuards } from './runtime-global-guards.js';
 import { isConnectorTransportJob, type ConnectorTransportJob } from './delivery/transport.types.js';
+import { recordNotificationDelivery } from '../alerting/runtime/notification-metrics.js';
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -118,10 +119,12 @@ function payloadWithProjectChannel(job: ConnectorSendJobData): NotificationPaylo
   };
 }
 
-function hasEmailDestination(payload: NotificationPayload): boolean {
-  const projectChannel = payload.metadata?.projectChannel as Record<string, unknown> | undefined;
-  return typeof projectChannel?.destination === 'string'
-    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(projectChannel.destination.trim());
+function toChannelKind(value: string): 'email' | 'slack' | 'discord' | 'teams' | 'pagerduty' | 'webhook' | 'sms' {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'email' || normalized === 'slack' || normalized === 'discord'
+    || normalized === 'teams' || normalized === 'pagerduty' || normalized === 'webhook'
+    || normalized === 'sms') return normalized;
+  throw new Error(`Unsupported connector provider: ${value}`);
 }
 
 export async function registerConnectorWorkers(
@@ -130,16 +133,17 @@ export async function registerConnectorWorkers(
 ): Promise<{ stop: () => Promise<void> }> {
   const log = logger.child({ component: 'connector-workers' });
   const repository = new ConnectorRepository();
-  const entitlements = new EntitlementsRepository();
+  const notificationEntitlement = new NotificationEntitlementService();
   const globalGuards = new ConnectorGlobalGuards(pool);
   const dispatcher = new NotificationDispatcher(repository, logger);
   const service = new ConnectorService({
     repository,
     dispatcher,
+    notificationEntitlement,
     logger,
     emitEvent: async () => undefined,
   });
-  const monitor = new ConnectorMonitor(repository, dispatcher, service, logger);
+  const monitor = new ConnectorMonitor(repository, dispatcher, service, logger, {}, notificationEntitlement);
 
   await Promise.all(Object.values(CONNECTOR_JOBS).map((queue) => safeCreateQueue(queue)));
 
@@ -157,6 +161,21 @@ export async function registerConnectorWorkers(
         await Promise.all(jobs.map(async (job) => {
           if (!isConnectorTransportJob(job.data)) {
             log.error({ jobId: job.id }, 'Rejected connector transport job with invalid contract');
+            return;
+          }
+          const channelKind = toChannelKind(job.data.channelKind);
+          const capability = await notificationEntitlement.resolve(job.data.organizationId);
+          if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(channelKind)) {
+            await runtimeRepository.recordNotificationDelivery({
+              organizationId: job.data.organizationId,
+              jobId: job.data.notificationJobId,
+              jobStatus: 'failed',
+              attemptStatus: 'failed',
+              errorCategory: 'DELIVERY_BLOCKED_ENTITLEMENT',
+              errorMessage: 'Connector entitlement is unavailable for delivery',
+            });
+            recordNotificationDelivery('notification.delivery.entitlement_blocked');
+            log.warn({ jobId: job.id, channelKind }, 'Connector transport blocked by entitlement');
             return;
           }
           const row = await repository.findById(job.data.organizationId, job.data.connectorId);
@@ -213,41 +232,22 @@ export async function registerConnectorWorkers(
           try {
             let row: ConnectorConfigRow | null | undefined = rowMap.get(job.data.connectorId);
             const payload = payloadWithProjectChannel(job.data);
+            const capability = await notificationEntitlement.resolve(job.data.organizationId);
+            const requestedType = row?.type ?? queue.slice(`${CONNECTOR_JOBS.send}-`.length);
+            const channelKind = toChannelKind(requestedType);
+            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(channelKind)) {
+              recordNotificationDelivery('notification.delivery.entitlement_blocked');
+              log.warn({ jobId: job.id, channelKind }, 'Connector send blocked by entitlement');
+              workerMetrics.recordJobFailed(false);
+              return;
+            }
             if (!row || row.status !== 'active') {
-              if (!hasEmailDestination(payload)) {
-                log.warn(
-                  { jobId: job.id, connectorId: job.data.connectorId, status: row?.status ?? null },
-                  'Connector send skipped: connector unavailable and no email fallback destination is present',
-                );
-                workerMetrics.recordJobFailed(false);
-                return;
-              }
-              row = await repository.findFirstActiveByType(job.data.organizationId, 'email');
-              if (!row) {
-                const canUseManagedFallback = await entitlements.hasFeature(
-                  job.data.organizationId,
-                  'alerting.managed_email_fallback',
-                );
-                if (!canUseManagedFallback) {
-                  log.warn(
-                    { jobId: job.id, connectorId: job.data.connectorId },
-                    'Connector send skipped: managed email fallback is not entitled',
-                  );
-                  workerMetrics.recordJobFailed(false);
-                  return;
-                }
-                row = await repository.getOrCreateManagedEmailConnector(job.data.organizationId);
-              }
               log.warn(
-                {
-                  jobId: job.id,
-                  requestedConnectorId: job.data.connectorId,
-                  requestedConnectorStatus: rowMap.get(job.data.connectorId)?.status ?? null,
-                  fallbackConnectorId: row.id,
-                  managedFallback: row.metadata?.managedBy === 'pulse',
-                },
-                'Connector unavailable; falling back to email transport',
+                { jobId: job.id, connectorId: job.data.connectorId, status: row?.status ?? null },
+                'Connector send blocked: connector unavailable; canonical routing must create any fallback job',
               );
+              workerMetrics.recordJobFailed(false);
+              return;
             }
             if (env.CONNECTOR_GLOBAL_LIMITS) {
               const guard = await globalGuards.acquire(job.data.connectorId, {
@@ -309,6 +309,13 @@ export async function registerConnectorWorkers(
           log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test skipped: connector not found');
           return;
         }
+        const capability = await notificationEntitlement.resolve(job.data.organizationId);
+        if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
+          || !capability.isProviderAllowed(row.type, true)) {
+          recordNotificationDelivery('notification.delivery.entitlement_blocked');
+          log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test blocked by entitlement');
+          return;
+        }
         const result = await service.runConnectionTest(row, null);
         await repository.insertAuditLog({
           organizationId: job.data.organizationId,
@@ -347,6 +354,13 @@ export async function registerConnectorWorkers(
         const row = await repository.findById(job.data.organizationId, job.data.connectorId);
         if (!row) {
           log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh skipped: connector not found');
+          return;
+        }
+        const capability = await notificationEntitlement.resolve(job.data.organizationId);
+        if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
+          || !capability.isProviderAllowed(row.type, true)) {
+          recordNotificationDelivery('notification.delivery.entitlement_blocked');
+          log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh blocked by entitlement');
           return;
         }
         const credential = await repository.getCredential(job.data.organizationId, job.data.connectorId, 'oauth');

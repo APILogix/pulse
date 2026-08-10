@@ -68,6 +68,15 @@ describe('ConnectorService update config', () => {
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'NORMAL_CONNECTOR',
+          connectorAccess: true,
+          reason: 'CONNECTOR_ACCESS_ALLOWED',
+          featureKeys: ['integrations.slack'],
+          isProviderAllowed: () => true,
+        }),
+      } as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
       emitEvent: vi.fn().mockResolvedValue(undefined),
     });
@@ -92,5 +101,35 @@ describe('ConnectorService update config', () => {
       defaultChannel: '#incidents',
     });
     expect(encryptedConfig.toString('utf8')).not.toContain('EXISTING');
+  });
+
+  it('denies connector configuration changes when entitlement is disabled', async () => {
+    const baseRow = makeBaseRow();
+    const repository = {
+      findById: vi.fn().mockResolvedValue(baseRow),
+      update: vi.fn().mockResolvedValue(baseRow),
+    };
+    const service = new ConnectorService({
+      repository: repository as never,
+      dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'EMAIL_ONLY_RESTRICTED',
+          connectorAccess: false,
+          reason: 'CONNECTOR_ENTITLEMENT_REQUIRED',
+          featureKeys: ['alerting.enabled'],
+          isProviderAllowed: () => false,
+        }),
+      } as never,
+      logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
+    });
+
+    await expect(service.updateConnector(baseRow.organization_id, meta, baseRow.id, {
+      config: { defaultChannel: '#incidents' },
+    })).rejects.toMatchObject({
+      code: 'CONNECTOR_ENTITLEMENT_DENIED',
+      statusCode: 403,
+    });
+    expect(repository.update).not.toHaveBeenCalled();
   });
 });

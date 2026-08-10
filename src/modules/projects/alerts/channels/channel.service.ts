@@ -2,6 +2,14 @@ import type { FastifyBaseLogger } from "fastify";
 import { ProjectMemberRole } from "../../types.js";
 import type { ProjectsService, RequestMeta } from "../../service.js";
 import { ProjectError } from "../../shared/utils.js";
+import {
+  CONNECTOR_FEATURE_KEYS,
+  NotificationEntitlementService,
+} from "../../../alerting/runtime/notification-entitlement.service.js";
+import {
+  ConnectorEntitlementDeniedError,
+  ConnectorEntitlementUnknownError,
+} from "../../../connectors/core/connector.types.js";
 import { AlertChannelRepository } from "./channel.repository.js";
 import type {
   CreateProjectAlertChannelBody,
@@ -32,6 +40,7 @@ export class ProjectAlertChannelService {
     private readonly repository: AlertChannelRepository,
     private readonly projectsService: ProjectsService,
     private readonly logger: FastifyBaseLogger,
+    private readonly entitlement = new NotificationEntitlementService(),
   ) {}
 
   async list(
@@ -70,6 +79,7 @@ export class ProjectAlertChannelService {
       const connector = body.connectorId
         ? await this.repository.requireActiveConnector(orgId, body.connectorId, client)
         : null;
+      await this.assertConnectorConfigurationAllowed(orgId, connector?.provider ?? null);
       this.assertSafeWebhookConfiguration(
         connector?.provider ?? null,
         body.channelType,
@@ -111,6 +121,7 @@ export class ProjectAlertChannelService {
       const connector = connectorId
         ? await this.repository.requireActiveConnector(orgId, connectorId, client)
         : null;
+      await this.assertConnectorConfigurationAllowed(orgId, connector?.provider ?? null);
       const destination = body.destination !== undefined ? body.destination : existing.destination;
       const metadata = body.destinationMetadata ?? existing.destinationMetadata;
       const nextType = body.channelType ?? existing.channelType;
@@ -280,6 +291,17 @@ export class ProjectAlertChannelService {
         "Webhook destination metadata cannot contain URL-like values",
         422,
       );
+    }
+  }
+
+  private async assertConnectorConfigurationAllowed(orgId: string, connectorProvider: string | null): Promise<void> {
+    if (!connectorProvider) return;
+    const decision = await this.entitlement.resolve(orgId);
+    const provider = connectorProvider.toLowerCase() as Parameters<typeof decision.isProviderAllowed>[0];
+    if (decision.reason === 'ENTITLEMENT_UNKNOWN') throw new ConnectorEntitlementUnknownError();
+    if (!decision.connectorAccess || !decision.isProviderAllowed(provider, true)) {
+      const featureKey = CONNECTOR_FEATURE_KEYS[provider as keyof typeof CONNECTOR_FEATURE_KEYS] ?? 'alerting.enabled';
+      throw new ConnectorEntitlementDeniedError(featureKey);
     }
   }
 

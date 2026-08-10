@@ -484,6 +484,16 @@ export class AlertChannelRepository {
               AND disabled_pref.enabled = FALSE
               AND disabled_pref.deleted_at IS NULL
          )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM user_notification_preferences user_pref
+            WHERE user_pref.organization_id = member.organization_id
+              AND user_pref.user_id = member.user_id
+              AND user_pref.channel_kind = 'email'
+              AND (user_pref.enabled = FALSE
+                OR (user_pref.temporary_mute_until IS NOT NULL AND user_pref.temporary_mute_until > NOW())
+                OR (user_pref.vacation_until IS NOT NULL AND user_pref.vacation_until > NOW()))
+         )
        ORDER BY LOWER(BTRIM(users.email)), member.user_id`,
       [request.organizationId, request.projectId, request.category, request.severity],
     );

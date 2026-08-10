@@ -517,4 +517,78 @@ describe('AlertBatchProcessor project subscription gating', () => {
       }),
     ]);
   });
+
+  it('sends one restricted owner job without evaluating project channels or connector queues', async () => {
+    const event = {
+      ...projectEvent(),
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      payload: { title: 'Critical alert', message: 'Investigate now', category: 'security' },
+      fingerprint: 'restricted-fingerprint',
+    };
+    const { alertRepo, connectorRepo } = dependencies(event);
+    const enqueue = vi.fn();
+    const resolve = vi.fn().mockResolvedValue({
+      suppressed: false,
+      targets: [{
+        channelKind: 'email',
+        channelId: null,
+        connectorId: null,
+        recipientUserId: 'owner-user',
+        recipientRef: 'owner@example.test',
+        routeId: null,
+        deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+        recipientType: 'PROJECT_OWNER',
+        provider: 'MANAGED_EMAIL',
+      }],
+      decisionHash: 'restricted-decision-hash',
+      suppressionReason: null,
+      usedNoChannelFallback: false,
+      deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+      reason: 'EMAIL_ONLY_RESTRICTED',
+    });
+    const createRestrictedNotificationJob = vi.fn().mockResolvedValue('managed-email-job');
+    const resolver = {
+      resolveByProjectId: vi.fn(),
+      resolveImmediateDeliveryTargets: vi.fn(),
+    };
+    const processor = new AlertBatchProcessor(
+      alertRepo as never,
+      connectorRepo as never,
+      enqueue,
+      logger as never,
+      resolver as never,
+      authorize as never,
+      {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'EMAIL_ONLY_RESTRICTED',
+          connectorAccess: false,
+          reason: 'CONNECTOR_ENTITLEMENT_REQUIRED',
+          featureKeys: ['alerting.enabled'],
+          isProviderAllowed: () => false,
+        }),
+      } as never,
+      { resolve } as never,
+      createRestrictedNotificationJob,
+    );
+
+    const result = await processor.processBatch({ batchId: 'batch-restricted', organizationId });
+
+    expect(result.success).toBe(1);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(resolver.resolveByProjectId).not.toHaveBeenCalled();
+    expect(resolver.resolveImmediateDeliveryTargets).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(createRestrictedNotificationJob).toHaveBeenCalledWith(
+      event,
+      expect.objectContaining({
+        recipientUserId: 'owner-user',
+        recipientRef: 'owner@example.test',
+        deliveryMode: 'EMAIL_ONLY_RESTRICTED',
+        recipientType: 'PROJECT_OWNER',
+        provider: 'MANAGED_EMAIL',
+      }),
+      event.fingerprint,
+      expect.objectContaining({ title: 'Critical alert' }),
+    );
+  });
 });

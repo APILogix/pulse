@@ -143,7 +143,7 @@ describe('connector queue workers', () => {
     );
   });
 
-  it('falls back to managed email when the requested connector is unavailable', async () => {
+  it('fails closed when the requested connector is unavailable', async () => {
     process.env.NODE_ENV = 'development';
     createQueue.mockResolvedValue(undefined);
     work.mockResolvedValue(undefined);
@@ -192,23 +192,13 @@ describe('connector queue workers', () => {
       },
     });
 
-    expect(findFirstActiveByType).toHaveBeenCalledWith('org-1', 'email');
-    expect(hasFeature).toHaveBeenCalledWith('org-1', 'alerting.managed_email_fallback');
-    expect(getOrCreateManagedEmailConnector).toHaveBeenCalledWith('org-1');
-    expect(dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'managed-email-1', type: 'email' }),
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          projectChannel: expect.objectContaining({
-            destination: 'oncall@example.com',
-          }),
-        }),
-      }),
-      { routeId: null },
-    );
+    expect(findFirstActiveByType).not.toHaveBeenCalled();
+    expect(hasFeature).not.toHaveBeenCalled();
+    expect(getOrCreateManagedEmailConnector).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it('does not use managed email fallback when the feature is not entitled', async () => {
+  it('does not reroute a blocked connector job through managed email', async () => {
     process.env.NODE_ENV = 'development';
     createQueue.mockResolvedValue(undefined);
     work.mockResolvedValue(undefined);
@@ -241,7 +231,8 @@ describe('connector queue workers', () => {
       },
     });
 
-    expect(hasFeature).toHaveBeenCalledWith('org-1', 'alerting.managed_email_fallback');
+    expect(hasFeature).not.toHaveBeenCalled();
+    expect(findFirstActiveByType).not.toHaveBeenCalled();
     expect(getOrCreateManagedEmailConnector).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });

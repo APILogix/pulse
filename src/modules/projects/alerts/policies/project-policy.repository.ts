@@ -5,6 +5,14 @@ import type { UpdatePolicyOverrideBody, UpdatePolicySubscriptionBody } from './p
 export class ProjectPolicyRepository {
   constructor(private readonly db: Pool = pool) {}
 
+  async findPolicyIdentity(organizationId: string, policyId: string): Promise<{ slug: string } | null> {
+    const result = await this.db.query<{ slug: string }>(
+      `SELECT slug FROM alerting_policy_catalog WHERE id = $1 AND organization_id = $2 LIMIT 1`,
+      [policyId, organizationId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async list(organizationId: string, projectId: string) {
     const result = await this.db.query(
       `SELECT s.id, s.organization_id, s.project_id, s.policy_id, s.state,

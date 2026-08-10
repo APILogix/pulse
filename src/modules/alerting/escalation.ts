@@ -23,6 +23,7 @@ import type { AlertEscalationStepRow, AlertEventRow } from './types.js';
 import { env } from '../../config/env.js';
 import { isEnabled } from '../feature-flags/service.js';
 import { FEATURE_FLAGS } from '../feature-flags/types.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 
 type EnqueueConnectorJob = (
   queue: ConnectorJobName,
@@ -45,6 +46,7 @@ export class AlertEscalationSweep {
     private readonly connectorRepo: ConnectorRepository,
     private readonly enqueueConnectorJob: EnqueueConnectorJob,
     private readonly logger: FastifyBaseLogger,
+    private readonly entitlement = new NotificationEntitlementService(),
   ) {}
 
   async run(limit: number): Promise<EscalationSweepResult> {
@@ -212,6 +214,11 @@ export class AlertEscalationSweep {
     step: AlertEscalationStepRow,
     connectorById: Map<string, ConnectorConfigRow>,
   ): Promise<void> {
+    const capability = await this.entitlement.resolve(event.organization_id);
+    if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess) {
+      this.logger.warn({ eventId: event.id }, 'Legacy escalation blocked by connector entitlement');
+      return;
+    }
     const payload = this.toPayload(event, step);
     await Promise.allSettled(step.connector_ids.map(async (connectorId) => {
       const connector = connectorById.get(connectorId);

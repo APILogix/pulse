@@ -59,6 +59,15 @@ describe('ConnectorService secret rotation', () => {
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'NORMAL_CONNECTOR',
+          connectorAccess: true,
+          reason: 'CONNECTOR_ACCESS_ALLOWED',
+          featureKeys: ['integrations.slack'],
+          isProviderAllowed: () => true,
+        }),
+      } as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     });
 
@@ -99,6 +108,15 @@ describe('ConnectorService secret rotation', () => {
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'NORMAL_CONNECTOR',
+          connectorAccess: true,
+          reason: 'CONNECTOR_ACCESS_ALLOWED',
+          featureKeys: ['integrations.slack'],
+          isProviderAllowed: () => true,
+        }),
+      } as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     });
 

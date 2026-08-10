@@ -26,7 +26,7 @@ function makeService(overrides: {
   enqueueConnectorJob?: ReturnType<typeof vi.fn>;
 } = {}) {
   const repository = {
-    findById: overrides.findById ?? vi.fn().mockResolvedValue({ id: 'connector-1' }),
+    findById: overrides.findById ?? vi.fn().mockResolvedValue({ id: 'connector-1', type: 'slack' }),
     consumeOAuthState: overrides.consumeOAuthState ?? vi.fn().mockResolvedValue({ id: 'state-1' }),
     upsertCredential: overrides.upsertCredential ?? vi.fn().mockResolvedValue(undefined),
     setStatus: overrides.setStatus ?? vi.fn().mockResolvedValue(undefined),
@@ -37,6 +37,15 @@ function makeService(overrides: {
   const service = new ConnectorService({
     repository: repository as never,
     dispatcher: {} as never,
+    notificationEntitlement: {
+      resolve: vi.fn().mockResolvedValue({
+        mode: 'NORMAL_CONNECTOR',
+        connectorAccess: true,
+        reason: 'CONNECTOR_ACCESS_ALLOWED',
+        featureKeys: ['integrations.slack'],
+        isProviderAllowed: () => true,
+      }),
+    } as never,
     logger: {
       info: vi.fn(),
       error: vi.fn(),
@@ -78,6 +87,15 @@ describe('ConnectorService OAuth refresh', () => {
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'NORMAL_CONNECTOR',
+          connectorAccess: true,
+          reason: 'CONNECTOR_ACCESS_ALLOWED',
+          featureKeys: ['integrations.slack'],
+          isProviderAllowed: () => true,
+        }),
+      } as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     });
 

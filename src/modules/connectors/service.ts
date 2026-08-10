@@ -14,6 +14,11 @@ import { createHash, randomBytes } from 'crypto';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { EntitlementsRepository } from '../billing/entitlements/repository.js';
+import {
+  CONNECTOR_FEATURE_KEYS,
+  NotificationEntitlementService,
+} from '../alerting/runtime/notification-entitlement.service.js';
+import { recordConnectorTestDenied } from '../alerting/runtime/notification-metrics.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
 import { CONNECTOR_JOBS, type ConnectorJobName } from './job.constants.js';
 import {
@@ -26,6 +31,8 @@ import {
 import { assertPubliclyResolvable } from './shared/url-safety.js';
 import {
   ConnectorConfigError,
+  ConnectorEntitlementDeniedError,
+  ConnectorEntitlementUnknownError,
   ConnectorError,
   ConnectorNotFoundError,
   ConnectorTypeUnsupportedError,
@@ -70,6 +77,7 @@ export interface ConnectorServiceDeps {
   repository: ConnectorRepository;
   dispatcher: NotificationDispatcher;
   entitlements?: Pick<EntitlementsRepository, 'hasFeature' | 'getEffectiveIntegerFeature'>;
+  notificationEntitlement?: NotificationEntitlementService;
   logger: FastifyBaseLogger;
   emitEvent?: (event: string, payload: Record<string, unknown>) => Promise<void>;
   enqueueConnectorJob?: (
@@ -83,6 +91,7 @@ export class ConnectorService {
   private readonly repository: ConnectorRepository;
   private readonly dispatcher: NotificationDispatcher;
   private readonly entitlements: Pick<EntitlementsRepository, 'hasFeature' | 'getEffectiveIntegerFeature'>;
+  private readonly notificationEntitlement: NotificationEntitlementService;
   private readonly logger: FastifyBaseLogger;
   private readonly emitEvent: (event: string, payload: Record<string, unknown>) => Promise<void>;
   private readonly enqueueConnectorJob?: ConnectorServiceDeps['enqueueConnectorJob'];
@@ -91,6 +100,7 @@ export class ConnectorService {
     this.repository = deps.repository;
     this.dispatcher = deps.dispatcher;
     this.entitlements = deps.entitlements ?? new EntitlementsRepository();
+    this.notificationEntitlement = deps.notificationEntitlement ?? new NotificationEntitlementService();
     this.logger = deps.logger;
     this.emitEvent = deps.emitEvent ?? (async () => undefined);
     this.enqueueConnectorJob = deps.enqueueConnectorJob;
@@ -149,6 +159,11 @@ export class ConnectorService {
 
   async updateConnector(orgId: string, meta: RequestMeta, id: string, body: UpdateConnectorBody): Promise<ConnectorDto> {
     const existing = await this.requireConnector(orgId, id);
+    const isDisableOnly = body.status === 'disabled'
+      && Object.keys(body).every((key) => key === 'status');
+    if (!isDisableOnly) {
+      await this.assertNotificationConnectorEntitled(orgId, existing.type);
+    }
 
     const requestedActive = body.status === 'active';
     const fields: Record<string, unknown> = {
@@ -197,7 +212,8 @@ export class ConnectorService {
   }
 
   async setConnectorEnabled(orgId: string, meta: RequestMeta, id: string, enabled: boolean): Promise<ConnectorDto> {
-    await this.requireConnector(orgId, id);
+    const existing = await this.requireConnector(orgId, id);
+    if (enabled) await this.assertNotificationConnectorEntitled(orgId, existing.type);
     await this.repository.setStatus(orgId, id, enabled ? 'pending_setup' : 'disabled');
     const validationJobId = enabled ? await this.enqueueConnectorTestIfAvailable(orgId, id) : null;
     await this.audit(orgId, id, enabled ? 'enabled' : 'disabled', meta, enabled ? { validationJobId } : undefined);
@@ -210,6 +226,7 @@ export class ConnectorService {
 
   async rotateSecret(orgId: string, meta: RequestMeta, id: string, body: RotateSecretBody): Promise<ConnectorDto> {
     const existing = await this.requireConnector(orgId, id);
+    await this.assertNotificationConnectorEntitled(orgId, existing.type);
     const normalized = this.validateConfigOrThrow(existing.type, body.config);
     const probe = factoryCreate(existing.type, ephemeralContext(existing.type, normalized, this.logger));
     const rotation = await probe.rotateSecret(normalized);
@@ -230,10 +247,11 @@ export class ConnectorService {
     return this.toDto(row);
   }
 
-  validateConfiguration(body: ValidateConfigurationBody): { valid: boolean; errors: string[]; normalized?: Record<string, unknown> } {
+  async validateConfiguration(orgId: string, body: ValidateConfigurationBody): Promise<{ valid: boolean; errors: string[]; normalized?: Record<string, unknown> }> {
     if (!isConnectorTypeRegistered(body.type)) {
       throw new ConnectorTypeUnsupportedError(body.type);
     }
+    await this.assertNotificationConnectorEntitled(orgId, body.type);
     const probe = factoryCreate(body.type, ephemeralContext(body.type, body.config, this.logger));
     const result = probe.validateConfig(body.config);
     return {
@@ -246,6 +264,12 @@ export class ConnectorService {
   // ── Operations ──────────────────────────────────────────────────────────
   async testConnection(orgId: string, meta: RequestMeta, id: string): Promise<ConnectionTestResult> {
     const row = await this.requireConnector(orgId, id);
+    try {
+      await this.assertNotificationConnectorEntitled(orgId, row.type);
+    } catch (error) {
+      recordConnectorTestDenied();
+      throw error;
+    }
     const result = await this.runConnectionTest(row, meta.actorUserId);
     await this.audit(orgId, id, 'tested', meta, { success: result.success });
     return result;
@@ -287,6 +311,7 @@ export class ConnectorService {
 
   async runHealthCheckForConnector(orgId: string, meta: RequestMeta, id: string): Promise<HealthStatus> {
     const row = await this.requireConnector(orgId, id);
+    await this.assertNotificationConnectorEntitled(orgId, row.type);
     const health = await this.runHealthCheck(row);
     await this.audit(orgId, id, 'health.checked', meta, { state: health.state });
     return health;
@@ -294,6 +319,12 @@ export class ConnectorService {
 
   async sendTest(orgId: string, meta: RequestMeta, id: string, body: SendTestNotificationBody): Promise<DispatchSummary> {
     const row = await this.requireConnector(orgId, id);
+    try {
+      await this.assertNotificationConnectorEntitled(orgId, row.type);
+    } catch (error) {
+      recordConnectorTestDenied();
+      throw error;
+    }
     const correlationId = NotificationDispatcher.newCorrelationId();
 
     const outcome = await this.dispatcher.dispatch(row, {
@@ -341,6 +372,10 @@ export class ConnectorService {
   }
 
   async retryDelivery(orgId: string, meta: RequestMeta, deliveryId: string): Promise<DeliveryDto> {
+    const existing = await this.repository.getDelivery(orgId, deliveryId);
+    if (!existing) throw new ConnectorNotFoundError(deliveryId);
+    const connector = await this.requireConnector(orgId, existing.connector_id);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     const row = await this.repository.retryDelivery(orgId, deliveryId);
     if (!row) throw new ConnectorNotFoundError(deliveryId);
     let retryJobId: string | null = null;
@@ -402,12 +437,16 @@ export class ConnectorService {
   }
 
   async createRoute(orgId: string, meta: RequestMeta, connectorId: string, body: CreateConnectorRouteBody): Promise<ConnectorRouteDto> {
+    const connector = await this.requireConnector(orgId, connectorId);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     const row = await this.repository.createRoute(orgId, connectorId, body);
     await this.audit(orgId, connectorId, 'route.created', meta, { routeId: row.id });
     return this.routeToDto(row);
   }
 
   async updateRoute(orgId: string, meta: RequestMeta, connectorId: string, routeId: string, body: UpdateConnectorRouteBody): Promise<ConnectorRouteDto> {
+    const connector = await this.requireConnector(orgId, connectorId);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     const row = await this.repository.updateRoute(orgId, connectorId, routeId, body);
     if (!row) throw new ConnectorNotFoundError(routeId);
     await this.audit(orgId, connectorId, 'route.updated', meta, { routeId });
@@ -426,7 +465,8 @@ export class ConnectorService {
   }
 
   async startOAuth(orgId: string, meta: RequestMeta, connectorId: string): Promise<ConnectorOAuthStartDto> {
-    await this.requireConnector(orgId, connectorId);
+    const connector = await this.requireConnector(orgId, connectorId);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     const state = randomBytes(32).toString('base64url');
     const codeVerifier = randomBytes(64).toString('base64url');
     const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
@@ -442,6 +482,8 @@ export class ConnectorService {
     connectorId: string,
     body: OAuthCallbackBody,
   ): Promise<{ connected: boolean; refreshQueued: boolean; refreshJobId: string | null }> {
+    const connector = await this.requireConnector(orgId, connectorId);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     const state = await this.repository.consumeOAuthState(orgId, connectorId, body.state);
     if (!state) throw new ConnectorError('Invalid or expired OAuth state', 'CONNECTOR_OAUTH_STATE_INVALID', 400);
     if (body.error) {
@@ -484,7 +526,8 @@ export class ConnectorService {
   }
 
   async refreshOAuth(orgId: string, meta: RequestMeta, connectorId: string): Promise<{ queued: boolean; jobId: string | null }> {
-    await this.requireConnector(orgId, connectorId);
+    const connector = await this.requireConnector(orgId, connectorId);
+    await this.assertNotificationConnectorEntitled(orgId, connector.type);
     if (!this.enqueueConnectorJob) {
       throw new ConnectorError('Connector OAuth refresh queue is not configured', 'CONNECTOR_QUEUE_UNAVAILABLE', 503);
     }
@@ -545,6 +588,15 @@ export class ConnectorService {
     const row = await this.repository.findById(orgId, id);
     if (!row) throw new ConnectorNotFoundError(id);
     return row;
+  }
+
+  private async assertNotificationConnectorEntitled(orgId: string, type: ConnectorType): Promise<void> {
+    const decision = await this.notificationEntitlement.resolve(orgId);
+    if (decision.reason === 'ENTITLEMENT_UNKNOWN') throw new ConnectorEntitlementUnknownError();
+    if (!decision.connectorAccess || !decision.isProviderAllowed(type)) {
+      const featureKey = CONNECTOR_FEATURE_KEYS[type as keyof typeof CONNECTOR_FEATURE_KEYS] ?? 'alerting.enabled';
+      throw new ConnectorEntitlementDeniedError(featureKey);
+    }
   }
 
   private async assertConnectorEntitled(orgId: string, type: ConnectorType): Promise<void> {

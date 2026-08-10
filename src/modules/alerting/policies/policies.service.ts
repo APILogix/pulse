@@ -19,6 +19,8 @@ import { computeFingerprint } from '../fingerprint.js';
 import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting, type RoutableAlert } from '../routing.js';
+import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
+import { ConnectorEntitlementDeniedError, ConnectorEntitlementUnknownError } from '../../connectors/core/connector.types.js';
 import {
   AlertNotFoundError,
   AlertValidationError,
@@ -45,15 +47,18 @@ import {
 export interface AlertingServiceDeps {
   repository: AlertingRepository;
   logger: FastifyBaseLogger;
+  notificationEntitlement?: NotificationEntitlementService;
 }
 
 export class PoliciesService {
   private readonly repo: AlertingRepository;
   private readonly logger: FastifyBaseLogger;
+  private readonly entitlement: NotificationEntitlementService;
 
   constructor(deps: AlertingServiceDeps) {
     this.repo = deps.repository;
     this.logger = deps.logger;
+    this.entitlement = deps.notificationEntitlement ?? new NotificationEntitlementService();
   }
 
   // ── Rules ──────────────────────────────────────────────────────────────
@@ -87,6 +92,7 @@ export class PoliciesService {
   }
 
   async upsertEscalationStep(orgId: string, meta: RequestMeta, policyId: string, body: UpsertEscalationStepBody): Promise<Record<string, unknown>> {
+    await this.assertConnectorConfigurationAllowed(orgId, body.connectorIds.length + body.routeIds.length > 0);
     const policy = await this.repo.findEscalationPolicy(orgId, policyId);
     if (!policy) throw new AlertNotFoundError('Escalation policy');
     const step = await this.repo.upsertEscalationStep(policyId, {
@@ -102,6 +108,13 @@ export class PoliciesService {
   // ── Routing rules ──────────────────────────────────────────────────────
   // ── Metrics + stats ──────────────────────────────────────────────────────
   // ── Internals ──────────────────────────────────────────────────────────
+
+  private async assertConnectorConfigurationAllowed(orgId: string, required: boolean): Promise<void> {
+    if (!required) return;
+    const decision = await this.entitlement.resolve(orgId);
+    if (decision.reason === 'ENTITLEMENT_UNKNOWN') throw new ConnectorEntitlementUnknownError();
+    if (!decision.connectorAccess) throw new ConnectorEntitlementDeniedError('alerting.enabled');
+  }
 
   private audit(orgId: string, meta: RequestMeta, action: string, resourceType: string, resourceId: string, metadata?: Record<string, unknown>): void {
     logAudit({

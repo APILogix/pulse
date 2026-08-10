@@ -154,6 +154,18 @@ export class AlertRuleBindingsRepository {
    * Effective rule resolution runs per rule; loading bindings per rule would reintroduce
    * the N+1 the architecture is explicit about avoiding.
    */
+  async listByOrganization(
+    organizationId: string,
+  ): Promise<AlertRuleBindingRecord[]> {
+    const result = await this.db.query<AlertRuleBindingRecord>(
+      `SELECT ${BINDING_COLUMNS} FROM alert_rule_bindings
+        WHERE organization_id = $1 AND deleted_at IS NULL
+        ORDER BY rule_id, scope_level ASC, priority DESC, created_at ASC`,
+      [organizationId],
+    );
+    return result.rows;
+  }
+
   async listByRuleIds(
     organizationId: string,
     ruleIds: string[],

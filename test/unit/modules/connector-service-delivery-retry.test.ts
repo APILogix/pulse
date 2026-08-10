@@ -53,6 +53,8 @@ const deliveryRow = {
 describe('ConnectorService delivery retry', () => {
   it('marks retryable delivery and wakes the delivery retry worker', async () => {
     const repository = {
+      getDelivery: vi.fn().mockResolvedValue(deliveryRow),
+      findById: vi.fn().mockResolvedValue({ id: deliveryRow.connector_id, type: 'slack' }),
       retryDelivery: vi.fn().mockResolvedValue(deliveryRow),
       insertAuditLog: vi.fn().mockResolvedValue(undefined),
     };
@@ -60,6 +62,15 @@ describe('ConnectorService delivery retry', () => {
     const service = new ConnectorService({
       repository: repository as never,
       dispatcher: {} as never,
+      notificationEntitlement: {
+        resolve: vi.fn().mockResolvedValue({
+          mode: 'NORMAL_CONNECTOR',
+          connectorAccess: true,
+          reason: 'CONNECTOR_ACCESS_ALLOWED',
+          featureKeys: ['integrations.slack'],
+          isProviderAllowed: () => true,
+        }),
+      } as never,
       logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
       enqueueConnectorJob,
     });

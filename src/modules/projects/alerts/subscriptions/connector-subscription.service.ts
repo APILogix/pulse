@@ -20,6 +20,8 @@ import type {
   AlertRoutingTarget,
 } from "./connector-subscription.types.js";
 import type { RequestMeta } from "../../service.js";
+import { NotificationEntitlementService } from "../../../alerting/runtime/notification-entitlement.service.js";
+import { ConnectorEntitlementDeniedError } from "../../../connectors/core/connector.types.js";
 
 export class ProjectConnectorSubscriptionService {
   constructor(
@@ -27,6 +29,7 @@ export class ProjectConnectorSubscriptionService {
     private readonly authService: BaseProjectService,
     private readonly orgRepo: OrganizationRepository,
     private readonly logger: FastifyBaseLogger,
+    private readonly entitlement = new NotificationEntitlementService(),
   ) {}
 
   async list(
@@ -63,6 +66,7 @@ export class ProjectConnectorSubscriptionService {
     meta: RequestMeta,
   ): Promise<ProjectConnectorSubscription> {
     await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+    await this.assertConnectorConfigurationAllowed(orgId);
 
     const existing = await this.repository.findByProjectAndConnector(orgId, projectId, body.connectorId);
     if (existing) {
@@ -88,6 +92,7 @@ export class ProjectConnectorSubscriptionService {
     meta: RequestMeta,
   ): Promise<ProjectConnectorSubscription> {
     await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+    await this.assertConnectorConfigurationAllowed(orgId);
 
     const existing = await this.repository.findById(orgId, projectId, subscriptionId);
     if (!existing || existing.projectId !== projectId) {
@@ -142,6 +147,13 @@ export class ProjectConnectorSubscriptionService {
    */
   async resolveRoutingTargetByProjectId(projectId: string): Promise<AlertRoutingTarget | null> {
     return this.repository.resolveAlertRoutingTargetByProjectId(projectId);
+  }
+
+  private async assertConnectorConfigurationAllowed(orgId: string): Promise<void> {
+    const decision = await this.entitlement.resolve(orgId);
+    if (decision.reason === 'ENTITLEMENT_UNKNOWN' || !decision.connectorAccess) {
+      throw new ConnectorEntitlementDeniedError('alerting.enabled');
+    }
   }
 
   private async audit(

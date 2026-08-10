@@ -48,6 +48,13 @@ import { pool } from '../../config/database.js';
 import { env } from '../../config/env.js';
 import { FEATURE_FLAGS, isEnabled } from '../feature-flags/service.js';
 import { getAlertAnalysisHook } from './ai/alert-analysis.js';
+import {
+  NotificationEntitlementService,
+  type NotificationEntitlementDecision,
+} from './runtime/notification-entitlement.service.js';
+import { NotificationRoutingService } from './runtime/notification-routing.service.js';
+import type { CanonicalNotificationTarget } from './runtime/routing-decision.types.js';
+import { hashCanonical } from './runtime/effective-rule-contract.js';
 
 const MANAGED_EMAIL_FALLBACK_CONNECTOR_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -106,6 +113,13 @@ type EnqueueConnectorJob = (
   data: Record<string, unknown>,
   options?: Record<string, unknown>,
 ) => Promise<unknown>;
+
+type CreateRestrictedNotificationJob = (
+  event: AlertEventRow,
+  target: CanonicalNotificationTarget,
+  alertKey: string,
+  payload: NotificationPayload,
+) => Promise<string | null>;
 
 export type BatchAuthorizationResult = {
   eligible: AlertEventRow[];
@@ -172,8 +186,110 @@ export class AlertBatchProcessor {
     private readonly logger: FastifyBaseLogger,
     private readonly projectSubscriptionResolver?: ProjectSubscriptionResolver,
     authorize?: BatchAuthorizationVerifier,
+    private readonly entitlement = new NotificationEntitlementService(),
+    private readonly routing?: NotificationRoutingService,
+    private readonly createRestrictedNotificationJob?: CreateRestrictedNotificationJob,
   ) {
     this.authorize = authorize ?? this.verifyBatchAuthorization.bind(this);
+  }
+
+  private async processRestrictedBatch(
+    data: BatchJobData,
+    events: AlertEventRow[],
+    authorizedEvents: AlertEventRow[],
+    authz: BatchAuthorizationResult,
+    capability: NotificationEntitlementDecision,
+    start: number,
+    log: FastifyBaseLogger,
+  ): Promise<BatchProcessSummary> {
+    const statusUpdates: Array<{ id: string; status: AlertEventStatus }> = [...authz.suppressedUpdates];
+    const deliveries: DeliveryAttemptInsert[] = [...authz.suppressedAttempts];
+    const settled = await this.mapBounded(authorizedEvents, AlertBatchProcessor.EVENT_CONCURRENCY, async (event) => {
+      const base: DeliveryAttemptInsert = {
+        organizationId: event.organization_id,
+        eventId: event.id,
+        connectorId: null,
+        routeId: null,
+        batchId: data.batchId,
+        status: 'cancelled',
+        responseStatusCode: null,
+        errorMessage: null,
+        errorCategory: capability.reason === 'ENTITLEMENT_UNKNOWN' ? 'entitlement_unknown' : 'connector_entitlement_required',
+        latencyMs: null,
+        externalMessageId: null,
+        recipientUserId: null,
+      };
+      if (!event.project_id || !this.routing || !this.createRestrictedNotificationJob) {
+        return { eventId: event.id, status: 'firing' as AlertEventStatus, delivery: base, delivered: false };
+      }
+
+      const routing = await this.routing.resolve({
+        organizationId: event.organization_id,
+        projectId: event.project_id,
+        ruleId: event.rule_id ?? '00000000-0000-0000-0000-000000000000',
+        policy: {
+          effectiveRuleHash: hashCanonical({ legacy: true, eventId: event.id, fingerprint: event.fingerprint }),
+          escalationPolicyId: null,
+        },
+        category: this.eventCategory(event),
+        severity: event.severity as 'info' | 'warning' | 'error' | 'critical',
+        labels: event.labels,
+      }, capability);
+      if (routing.suppressed || routing.targets.length === 0) {
+        return {
+          eventId: event.id,
+          status: 'firing' as AlertEventStatus,
+          delivery: { ...base, errorCategory: routing.suppressionReason ?? 'owner_email_unavailable' },
+          delivered: false,
+        };
+      }
+
+      const target = routing.targets[0]!;
+      const payload = this.toPayload(event, null);
+      const jobId = await this.createRestrictedNotificationJob(event, target, event.fingerprint, payload);
+      const delivery: DeliveryAttemptInsert = {
+        ...base,
+        status: jobId ? 'queued' : 'failed',
+        errorMessage: jobId ? null : 'Managed email notification job creation failed',
+        errorCategory: jobId ? null : 'queue',
+        externalMessageId: jobId,
+        recipientUserId: target.recipientUserId,
+      };
+      return {
+        eventId: event.id,
+        status: 'firing' as AlertEventStatus,
+        delivery,
+        delivered: jobId !== null,
+      };
+    });
+
+    let success = 0;
+    let skipped = authz.suppressedUpdates.length;
+    let failure = 0;
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        statusUpdates.push({ id: result.value.eventId, status: result.value.status });
+        deliveries.push(result.value.delivery);
+        if (result.value.delivered) success += 1;
+        else skipped += 1;
+      } else {
+        failure += 1;
+        log.error({ err: result.reason }, 'Restricted legacy notification processing failed');
+      }
+    }
+
+    await this.alertRepo.bulkUpdateEventStatus(data.organizationId, statusUpdates);
+    await this.alertRepo.bulkInsertDeliveryAttempts(deliveries);
+    const durationMs = Date.now() - start;
+    const status: BatchProcessSummary['status'] = failure === 0 ? 'completed' : success === 0 && skipped === 0 ? 'failed' : 'partial';
+    await this.alertRepo.completeBatch(
+      data.batchId,
+      { success, failure, skipped },
+      durationMs,
+      status,
+      failure > 0 ? `${failure}/${events.length} restricted notifications failed` : null,
+    );
+    return { batchId: data.batchId, total: events.length, success, failure, skipped, throttled: 0, durationMs, status };
   }
 
   private async mapBounded<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
@@ -216,6 +332,13 @@ export class AlertBatchProcessor {
     // are suppressed and audited, never delivered.
     const authz = await this.authorize(events, data.batchId, data.organizationId, log);
     const authorizedEvents = authz.eligible;
+
+    const capability = this.routing && this.createRestrictedNotificationJob
+      ? await this.entitlement.resolve(data.organizationId)
+      : null;
+    if (capability && (capability.mode === 'EMAIL_ONLY_RESTRICTED' || capability.reason === 'ENTITLEMENT_UNKNOWN')) {
+      return this.processRestrictedBatch(data, events, authorizedEvents, authz, capability, start, log);
+    }
 
     // 1b. Pre-load project connector subscriptions and authoritative channel
     // eligibility. Channel lookups are deduplicated by the full routing tuple,
@@ -296,7 +419,7 @@ export class AlertBatchProcessor {
       (event) => this.processSingleEvent(
         event, routingRules, actionsByRuleId, connectorRoutes, connectorMap,
         firstStepByPolicyId, throttleByActionId, data.batchId, projectSubscriptions,
-        projectChannelEligibility,
+        projectChannelEligibility, capability,
       ),
     );
 
@@ -365,6 +488,7 @@ export class AlertBatchProcessor {
     batchId: string,
     projectSubscriptions: Map<string, Awaited<ReturnType<ProjectSubscriptionResolver['resolveByProjectId']>>>,
     projectChannelEligibility: ProjectChannelEligibilityCache,
+    capability: NotificationEntitlementDecision | null,
   ): Promise<EventOutcome> {
     const noEscalation = { escalationPolicyId: null, nextEscalationAt: null };
     const routable: RoutableAlert = { severity: event.severity, source: event.source, labels: event.labels };
@@ -387,7 +511,11 @@ export class AlertBatchProcessor {
       targets,
       projectSubscriptions,
       projectChannelEligibility,
-    );
+    ).filter((target) => {
+      if (!capability || !target.connectorId) return true;
+      const connector = connectorMap.get(target.connectorId);
+      return connector ? capability.isProviderAllowed(connector.type, true) : false;
+    });
 
     const deliveries: DeliveryAttemptInsert[] = [];
     // Throttled targets are audited only when the same project subscription
@@ -703,10 +831,37 @@ export class AlertBatchProcessor {
       for (const row of projectsResult.rows) activeProjects.add(row.id);
     }
 
+    const rolloutByProject = new Map<string, boolean>();
+    await Promise.all(projectIds.map(async (projectId) => {
+      rolloutByProject.set(projectId, await isEnabled(
+        FEATURE_FLAGS.ALERTING_V2_EVALUATION,
+        { organizationId, projectId },
+        false,
+      ));
+    }));
+
     const eligible: AlertEventRow[] = [];
     const suppressedUpdates: Array<{ id: string; status: AlertEventStatus }> = [];
     const suppressedAttempts: DeliveryAttemptInsert[] = [];
     for (const event of events) {
+      const v2Cutover = event.project_id !== null && rolloutByProject.get(event.project_id) === true;
+      if (v2Cutover) {
+        suppressedUpdates.push({ id: event.id, status: 'suppressed' });
+        suppressedAttempts.push({
+          organizationId: event.organization_id,
+          eventId: event.id,
+          connectorId: null,
+          routeId: null,
+          batchId,
+          status: 'cancelled',
+          responseStatusCode: null,
+          errorMessage: 'legacy delivery suppressed: project is on alerting V2',
+          errorCategory: 'v2_cutover',
+          latencyMs: null,
+          externalMessageId: null,
+        });
+        continue;
+      }
       if (orgEligible && (event.project_id === null || activeProjects.has(event.project_id))) {
         eligible.push(event);
         continue;

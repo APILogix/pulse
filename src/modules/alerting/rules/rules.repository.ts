@@ -238,6 +238,18 @@ export class RulesRepository {
     return r.rows[0] ?? null;
   }
 
+  async findRuleByPresetKey(organizationId: string, presetKey: string): Promise<AlertRuleRow | null> {
+    const r = await this.db.query<AlertRuleRow>(
+      `SELECT ${RULE_COLS}
+         FROM alert_rules
+        WHERE organization_id = $1 AND preset_key = $2 AND project_id IS NULL AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1`,
+      [organizationId, presetKey],
+    );
+    return r.rows[0] ?? null;
+  }
+
   async getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]> {
     const r = await this.db.query<AlertRuleConditionRow>(
       `SELECT * FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`,

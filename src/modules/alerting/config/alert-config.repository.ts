@@ -106,6 +106,10 @@ export class AlertConfigRepository {
     return this.rules.findRuleById(organizationId, id);
   }
 
+  async findRuleByPresetKey(organizationId: string, presetKey: string): Promise<AlertRuleRow | null> {
+    return this.rules.findRuleByPresetKey(organizationId, presetKey);
+  }
+
   async listRules(
     organizationId: string,
     query: ListRulesQuery,

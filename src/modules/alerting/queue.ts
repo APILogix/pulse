@@ -47,6 +47,10 @@ import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
 import { AlertDecisionEngine, type AlertDecisionCandidate } from './decision/decision.engine.js';
 import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
+import { logDB } from '../../config/log-database.js';
+import { AlertRuntimeRepository, type NotificationJobInsert } from './runtime/alert-runtime.repository.js';
+import { hashCanonical } from './runtime/effective-rule-contract.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 
 export const ALERT_JOBS = {
   formBatches: 'alert.form-batches',
@@ -142,7 +146,65 @@ export async function registerAlertingWorkers(
   const connectorRepo = new ConnectorRepository();
   const enqueueConnectorJob = async (queue: string, data: Record<string, unknown>, options?: Record<string, unknown>) =>
     pgboss.send(queue, data, options as never);
-  const processor = new AlertBatchProcessor(alertRepo, connectorRepo, enqueueConnectorJob, logger, projectSubscriptionResolver);
+  const runtimePoolForJobs = telemetryPool ?? logDB.getPrimaryPool();
+  const runtimeRepositoryForJobs = new AlertRuntimeRepository(runtimePoolForJobs);
+  const entitlement = new NotificationEntitlementService();
+  const runtimePool = telemetryPool ?? pool;
+  const routing = new NotificationRoutingService({
+    logger,
+    channelRepository: new AlertChannelRepository(pool),
+    configRepository: new AlertConfigRepository(pool),
+    entitlementService: entitlement,
+  });
+  const processor = new AlertBatchProcessor(
+    alertRepo,
+    connectorRepo,
+    enqueueConnectorJob,
+    logger,
+    projectSubscriptionResolver,
+    undefined,
+    entitlement,
+    routing,
+    async (event, target, alertKey, payload) => {
+      const job: NotificationJobInsert = {
+        organizationId: event.organization_id,
+        projectId: event.project_id,
+        alertEventId: event.id,
+        alertKey,
+        ruleId: event.rule_id,
+        channelKind: target.channelKind,
+        connectorId: null,
+        recipientUserId: target.recipientUserId,
+        recipientRef: target.recipientRef,
+        notificationType: 'alert',
+        deliveryMode: target.deliveryMode,
+        recipientType: target.recipientType,
+        provider: target.provider,
+        severity: event.severity as NotificationJobInsert['severity'],
+        payload: payload as unknown as Record<string, unknown>,
+        idempotencyKey: hashCanonical({
+          alertEventId: event.id,
+          projectId: event.project_id,
+          ownerUserId: target.recipientUserId,
+          ownerEmail: target.recipientRef,
+          notificationType: 'alert',
+          escalationStep: 0,
+        }),
+        routingDecisionHash: hashCanonical({ alertKey, target }),
+        billable: true,
+      };
+      const inserted = await runtimeRepositoryForJobs.insertNotificationJobs([job]);
+      const insertedJob = inserted[0];
+      if (!insertedJob) return null;
+      await pgboss.send(ALERT_JOBS.notificationRouter, { notificationJobId: insertedJob.id }, {
+        retryLimit: 3,
+        retryDelay: 1,
+        retryBackoff: true,
+        expireInSeconds: 300,
+      } as never);
+      return insertedJob.id;
+    },
+  );
   const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
   // ── Queue creation with enterprise defaults ─────────────────────────────
   // process-batch: retries with backoff, then dead-letters to `alert-dead-letter`.
@@ -182,17 +244,11 @@ export async function registerAlertingWorkers(
     expireInSeconds: 300,
   });
 
-  const runtimePool = telemetryPool ?? pool;
-  const routing = new NotificationRoutingService({
-    logger,
-    channelRepository: new AlertChannelRepository(pool),
-    configRepository: new AlertConfigRepository(pool),
-  });
   const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
   const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
   const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
   const decisionEngine = new AlertDecisionEngine(runtimePool, logger, { routing });
-  const snapshotEscalation = new SnapshotEscalationWorker(logger);
+  const snapshotEscalation = new SnapshotEscalationWorker(logger, runtimePool, routing);
 
   // ── process-batch: the high-throughput worker ──────────────────────────
   // pg-boss v12 concurrency options: `localConcurrency` = number of workers

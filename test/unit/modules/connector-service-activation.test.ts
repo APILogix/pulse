@@ -52,6 +52,15 @@ function makeService(repository: Record<string, unknown>, enqueueConnectorJob = 
   const service = new ConnectorService({
     repository: repository as never,
     dispatcher: {} as never,
+    notificationEntitlement: {
+      resolve: vi.fn().mockResolvedValue({
+        mode: 'NORMAL_CONNECTOR',
+        connectorAccess: true,
+        reason: 'CONNECTOR_ACCESS_ALLOWED',
+        featureKeys: ['integrations.webhook'],
+        isProviderAllowed: () => true,
+      }),
+    } as never,
     logger: { info: vi.fn(), error: vi.fn(), child: vi.fn().mockReturnThis() } as never,
     emitEvent: vi.fn().mockResolvedValue(undefined),
     enqueueConnectorJob,

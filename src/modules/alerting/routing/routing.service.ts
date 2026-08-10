@@ -19,6 +19,8 @@ import { computeFingerprint } from '../fingerprint.js';
 import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting, type RoutableAlert } from '../routing.js';
+import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
+import { ConnectorEntitlementDeniedError, ConnectorEntitlementUnknownError } from '../../connectors/core/connector.types.js';
 import {
   AlertNotFoundError,
   AlertValidationError,
@@ -45,15 +47,18 @@ import {
 export interface AlertingServiceDeps {
   repository: AlertingRepository;
   logger: FastifyBaseLogger;
+  notificationEntitlement?: NotificationEntitlementService;
 }
 
 export class RoutingService {
   private readonly repo: AlertingRepository;
   private readonly logger: FastifyBaseLogger;
+  private readonly entitlement: NotificationEntitlementService;
 
   constructor(deps: AlertingServiceDeps) {
     this.repo = deps.repository;
     this.logger = deps.logger;
+    this.entitlement = deps.notificationEntitlement ?? new NotificationEntitlementService();
   }
 
   // ── Rules ──────────────────────────────────────────────────────────────
@@ -63,6 +68,7 @@ export class RoutingService {
   // ── Templates ─────────────────────────────────────────────────────────
   // ── Routing rules ──────────────────────────────────────────────────────
   async createRoutingRule(orgId: string, meta: RequestMeta, body: CreateRoutingRuleBody): Promise<Record<string, unknown>> {
+    await this.assertConnectorConfigurationAllowed(orgId, body.targetConnectorIds.length + body.targetRouteIds.length + body.fallbackConnectorIds.length > 0);
     const rule = await this.repo.createRoutingRule({
       organizationId: orgId, name: body.name, description: body.description ?? null, priority: body.priority,
       conditions: body.conditions, targetConnectorIds: body.targetConnectorIds, targetRouteIds: body.targetRouteIds,
@@ -82,6 +88,7 @@ export class RoutingService {
   }
 
   async testRouting(orgId: string, body: TestRoutingBody): Promise<Record<string, unknown>> {
+    await this.assertConnectorConfigurationAllowed(orgId, true);
     const rules = await this.repo.listRoutingRules(orgId);
     const alert: RoutableAlert = { severity: body.severity, source: body.source, labels: body.labels };
     return resolveRouting(alert, rules) as unknown as Record<string, unknown>;
@@ -89,6 +96,13 @@ export class RoutingService {
 
   // ── Metrics + stats ──────────────────────────────────────────────────────
   // ── Internals ──────────────────────────────────────────────────────────
+
+  private async assertConnectorConfigurationAllowed(orgId: string, required: boolean): Promise<void> {
+    if (!required) return;
+    const decision = await this.entitlement.resolve(orgId);
+    if (decision.reason === 'ENTITLEMENT_UNKNOWN') throw new ConnectorEntitlementUnknownError();
+    if (!decision.connectorAccess) throw new ConnectorEntitlementDeniedError('alerting.enabled');
+  }
 
   private audit(orgId: string, meta: RequestMeta, action: string, resourceType: string, resourceId: string, metadata?: Record<string, unknown>): void {
     logAudit({
