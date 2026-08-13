@@ -235,6 +235,16 @@ export class ConnectorNotFoundError extends ConnectorError {
         super(id ? `Connector ${id} not found` : 'Connector not found', 'CONNECTOR_NOT_FOUND', 404);
     }
 }
+export class ConnectorEntitlementDeniedError extends ConnectorError {
+    constructor(featureKey) {
+        super('Connector delivery is not included in this organization plan', 'CONNECTOR_ENTITLEMENT_DENIED', 403, { featureKey });
+    }
+}
+export class ConnectorEntitlementUnknownError extends ConnectorError {
+    constructor() {
+        super('Connector entitlement could not be verified', 'CONNECTOR_ENTITLEMENT_UNKNOWN', 503);
+    }
+}
 export class ConnectorConflictError extends ConnectorError {
     constructor(message) {
         super(message, 'CONNECTOR_CONFLICT', 409);

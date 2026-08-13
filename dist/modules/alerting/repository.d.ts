@@ -27,6 +27,7 @@ export declare class AlertingRepository {
         data: AlertRuleRow[];
         total: number;
     }>;
+    countProjectRules(organizationId: string, projectId: string): Promise<number>;
     updateRule(organizationId: string, id: string, fields: Record<string, unknown>, conditions: RuleConditionInsert[] | null, actions: RuleActionInsert[] | null, updatedBy: string): Promise<AlertRuleRow>;
     softDeleteRule(organizationId: string, id: string): Promise<void>;
     setRuleEnabled(organizationId: string, id: string, enabled: boolean): Promise<AlertRuleRow>;

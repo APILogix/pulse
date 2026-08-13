@@ -26,9 +26,9 @@ export declare const ConnectorStatusSchema: z.ZodEnum<{
     inactive: "inactive";
     expired: "expired";
     revoked: "revoked";
+    pending_setup: "pending_setup";
     disabled: "disabled";
     rate_limited: "rate_limited";
-    pending_setup: "pending_setup";
 }>;
 export type ConnectorStatus = z.infer<typeof ConnectorStatusSchema>;
 export declare const NotificationSeveritySchema: z.ZodEnum<{
@@ -289,9 +289,9 @@ export declare const UpdateConnectorSchema: z.ZodObject<{
         inactive: "inactive";
         expired: "expired";
         revoked: "revoked";
+        pending_setup: "pending_setup";
         disabled: "disabled";
         rate_limited: "rate_limited";
-        pending_setup: "pending_setup";
     }>>;
     config: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     displayConfig: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
@@ -319,9 +319,9 @@ export declare const ListConnectorsQuerySchema: z.ZodObject<{
         inactive: "inactive";
         expired: "expired";
         revoked: "revoked";
+        pending_setup: "pending_setup";
         disabled: "disabled";
         rate_limited: "rate_limited";
-        pending_setup: "pending_setup";
     }>>;
     search: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -609,6 +609,12 @@ export declare class ConnectorError extends AppError {
 }
 export declare class ConnectorNotFoundError extends ConnectorError {
     constructor(id?: string);
+}
+export declare class ConnectorEntitlementDeniedError extends ConnectorError {
+    constructor(featureKey: string);
+}
+export declare class ConnectorEntitlementUnknownError extends ConnectorError {
+    constructor();
 }
 export declare class ConnectorConflictError extends ConnectorError {
     constructor(message: string);

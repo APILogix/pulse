@@ -4,7 +4,7 @@ export declare class EntitlementsController {
     private readonly service;
     constructor(service: EntitlementsService);
     private getOrgId;
-    getAllEntitlements: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
-    checkFeatureAccess: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    getAllEntitlements: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
+    checkFeatureAccess: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
 }
 //# sourceMappingURL=controller.d.ts.map

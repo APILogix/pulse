@@ -4,7 +4,7 @@ export declare class CouponsController {
     private readonly service;
     constructor(service: CouponsService);
     private getOrgId;
-    validateCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
-    applyCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    validateCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
+    applyCoupon: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
 }
 //# sourceMappingURL=controller.d.ts.map

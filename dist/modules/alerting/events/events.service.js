@@ -5,8 +5,6 @@ import { evaluateRule } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting } from '../routing.js';
 import { AlertConflictError, AlertNotFoundError, AlertValidationError, } from '../types.js';
-import { pgboss } from '../../../lib/pgboss.js';
-import { ALERT_JOBS } from '../queue.js';
 export class EventsService {
     repo;
     logger;
@@ -104,7 +102,6 @@ export class EventsService {
         if (!loaded || loaded.batch.status !== 'processing') {
             throw new AlertConflictError('Batch is no longer processing; automatic recovery owns it now');
         }
-        await pgboss.send(ALERT_JOBS.processBatch, { batchId: deadLetter.batch_id, organizationId: orgId }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 });
         await this.repo.markDeadLetterRetried(id);
         this.audit(orgId, meta, 'alert_dead_letter.retried', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
         return { id, batchId: deadLetter.batch_id, retried: true };

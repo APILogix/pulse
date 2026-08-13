@@ -1,18 +1,19 @@
 import { randomUUID } from 'crypto';
 import { pool } from '../../config/database.js';
+import { entitlementsService } from '../billing/entitlements/service.js';
 import { DEFAULT_CREDIT_COSTS } from './types.js';
 export const MODE_FEATURE_KEYS = {
-    AI_ERROR_EXPLANATION: 'module_ai_insights_features_error_explanation',
-    AI_ROOT_CAUSE_ANALYSIS: 'module_ai_insights_features_root_cause_analysis',
-    AI_STACK_TRACE_ANALYSIS: 'module_ai_insights_features_stack_trace_analysis',
-    AI_TRACE_ANALYSIS: 'module_ai_insights_features_trace_analysis',
-    AI_SPAN_ANALYSIS: 'module_ai_insights_features_span_analysis',
-    AI_SUGGESTED_FIXES: 'module_ai_insights_features_suggested_fixes',
-    AI_SQL_OPTIMIZATION: 'module_ai_insights_features_sql_optimization',
-    AI_LOG_SUMMARY: 'module_ai_insights_features_log_summary',
-    AI_DEPLOYMENT_CORRELATION: 'module_ai_insights_features_deployment_correlation',
-    AI_INCIDENT_SUMMARY: 'module_ai_insights_features_incident_summary',
-    AI_WEEKLY_REPORT: 'module_ai_insights_features_weekly_report',
+    AI_ERROR_EXPLANATION: 'ai.enabled',
+    AI_ROOT_CAUSE_ANALYSIS: 'ai.root_cause_analysis',
+    AI_STACK_TRACE_ANALYSIS: 'ai.enabled',
+    AI_TRACE_ANALYSIS: 'ai.enabled',
+    AI_SPAN_ANALYSIS: 'ai.enabled',
+    AI_SUGGESTED_FIXES: 'ai.enabled',
+    AI_SQL_OPTIMIZATION: 'ai.enabled',
+    AI_LOG_SUMMARY: 'ai.summaries',
+    AI_DEPLOYMENT_CORRELATION: 'ai.enabled',
+    AI_INCIDENT_SUMMARY: 'ai.summaries',
+    AI_WEEKLY_REPORT: 'ai.forecasting',
 };
 export class AIRepositoryError extends Error {
     code;
@@ -43,37 +44,33 @@ export class AIRepository {
         }
     }
     async authorizeFeature(tenantId, userId, featureKey) {
-        const result = await this.db.query(`SELECT om.role, p.key AS plan,
-              COALESCE(root.boolean_value, FALSE) AS module_enabled,
-              COALESCE(feature.boolean_value, FALSE) AS feature_enabled,
-              credits.integer_value AS monthly_credits
+        const memberResult = await this.db.query(`SELECT om.role, p.key AS plan
        FROM organization_members om
        JOIN organization_subscriptions s ON s.organization_id = om.org_id
          AND s.status IN ('trialing', 'active') AND s.deleted_at IS NULL
        JOIN plans p ON p.id = s.plan_id AND p.is_active = TRUE AND p.deleted_at IS NULL
-       LEFT JOIN v_effective_entitlements root ON root.organization_id = om.org_id
-         AND root.feature_key = 'module_ai_insights_enabled'
-       LEFT JOIN v_effective_entitlements feature ON feature.organization_id = om.org_id
-         AND feature.feature_key = $3
-       LEFT JOIN v_effective_entitlements credits ON credits.organization_id = om.org_id
-         AND credits.feature_key = 'module_ai_insights_monthly_credits'
        WHERE om.org_id = $1 AND om.user_id = $2 AND om.status = 'active'
-       ORDER BY s.created_at DESC LIMIT 1`, [tenantId, userId, featureKey]);
-        const row = result.rows[0];
+       ORDER BY s.created_at DESC LIMIT 1`, [tenantId, userId]);
+        const row = memberResult.rows[0];
         if (!row)
             throw new AIRepositoryError('Organization access or active subscription is required', 'LOCKED');
+        const [moduleEnabled, featureEnabled, monthlyCredits] = await Promise.all([
+            entitlementsService.getEffectiveBooleanFeature(tenantId, 'ai.enabled'),
+            featureKey === 'ai.enabled' ? Promise.resolve(true) : entitlementsService.getEffectiveBooleanFeature(tenantId, featureKey),
+            entitlementsService.getEffectiveIntegerFeature(tenantId, 'quota.ai_credits'),
+        ]);
         return {
             role: row.role,
             plan: row.plan,
-            entitled: row.module_enabled && row.feature_enabled,
-            monthlyCredits: Number(row.monthly_credits ?? 0),
+            entitled: moduleEnabled && featureEnabled,
+            monthlyCredits,
         };
     }
     async authorize(tenantId, userId, mode) {
         return this.authorizeFeature(tenantId, userId, MODE_FEATURE_KEYS[mode]);
     }
     async authorizeMonitoringChat(tenantId, userId) {
-        return this.authorizeFeature(tenantId, userId, 'module_ai_insights_features_chat_assistant');
+        return this.authorizeFeature(tenantId, userId, 'ai.incident_copilot');
     }
     async getAccessibleProjects(tenantId, userId, requestedProjectId) {
         const result = await this.db.query(`SELECT p.id, p.name, p.slug, environment.slug AS environment

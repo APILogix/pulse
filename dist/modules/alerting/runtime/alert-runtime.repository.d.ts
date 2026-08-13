@@ -22,6 +22,7 @@
  */
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
+import type { NotificationDeliveryMode, NotificationProvider, NotificationRecipientType } from './notification-entitlement.service.js';
 import { type AlertingPoolTarget } from './runtime-pool.js';
 export type LogDbSeverity = 'debug' | 'info' | 'warning' | 'error' | 'critical' | 'fatal';
 export type AlertEventKind = 'fired' | 'recovered' | 'duplicate' | 'suppressed' | 'silenced';
@@ -160,6 +161,9 @@ export interface NotificationJobInsert {
     billable?: boolean;
     notifyAfter?: Date | null;
     routingDecisionHash?: string | null;
+    deliveryMode?: NotificationDeliveryMode | null;
+    recipientType?: NotificationRecipientType | null;
+    provider?: NotificationProvider | null;
 }
 export interface NotificationJobRow {
     id: string;
@@ -183,6 +187,9 @@ export interface NotificationJobDetailRow extends NotificationJobRow {
     template_id: string | null;
     notification_type: string;
     routing_decision_hash: string | null;
+    delivery_mode: NotificationDeliveryMode | null;
+    recipient_type: NotificationRecipientType | null;
+    provider: NotificationProvider | null;
     severity: LogDbSeverity;
     priority: number;
     escalation_step: number;

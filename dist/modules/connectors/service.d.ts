@@ -13,12 +13,14 @@ import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { EntitlementsRepository } from '../billing/entitlements/repository.js';
+import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
 import { type ConnectorJobName } from './job.constants.js';
 import { type ConnectorAuditLogDto, type ConnectionTestResult, type ConnectorConfigRow, type ConnectorDto, type ConnectorOAuthStartDto, type ConnectorRouteDto, type ConnectorTypeInfoDto, type CreateConnectorRouteBody, type CreateConnectorBody, type DeliveryAttemptRow, type DeliveryDto, type DispatchSummary, type HealthStatus, type ListConnectorsQuery, type OAuthCallbackBody, type PaginationQuery, type PreviewNotificationBody, type RequestMeta, type RotateSecretBody, type SendTestNotificationBody, type UpdateConnectorRouteBody, type UpdateConnectorBody, type ValidateConfigurationBody } from './types.js';
 export interface ConnectorServiceDeps {
     repository: ConnectorRepository;
     dispatcher: NotificationDispatcher;
     entitlements?: Pick<EntitlementsRepository, 'hasFeature' | 'getEffectiveIntegerFeature'>;
+    notificationEntitlement?: NotificationEntitlementService;
     logger: FastifyBaseLogger;
     emitEvent?: (event: string, payload: Record<string, unknown>) => Promise<void>;
     enqueueConnectorJob?: (queue: ConnectorJobName, data: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>;
@@ -27,6 +29,7 @@ export declare class ConnectorService {
     private readonly repository;
     private readonly dispatcher;
     private readonly entitlements;
+    private readonly notificationEntitlement;
     private readonly logger;
     private readonly emitEvent;
     private readonly enqueueConnectorJob?;
@@ -44,11 +47,11 @@ export declare class ConnectorService {
     deleteConnector(orgId: string, meta: RequestMeta, id: string): Promise<void>;
     setConnectorEnabled(orgId: string, meta: RequestMeta, id: string, enabled: boolean): Promise<ConnectorDto>;
     rotateSecret(orgId: string, meta: RequestMeta, id: string, body: RotateSecretBody): Promise<ConnectorDto>;
-    validateConfiguration(body: ValidateConfigurationBody): {
+    validateConfiguration(orgId: string, body: ValidateConfigurationBody): Promise<{
         valid: boolean;
         errors: string[];
         normalized?: Record<string, unknown>;
-    };
+    }>;
     testConnection(orgId: string, meta: RequestMeta, id: string): Promise<ConnectionTestResult>;
     runConnectionTest(row: ConnectorConfigRow, triggeredBy: string | null): Promise<ConnectionTestResult>;
     runHealthCheckForConnector(orgId: string, meta: RequestMeta, id: string): Promise<HealthStatus>;
@@ -105,6 +108,7 @@ export declare class ConnectorService {
     /** Run a health check for a connector row (used by the background monitor). */
     runHealthCheck(row: ConnectorConfigRow): Promise<HealthStatus>;
     private requireConnector;
+    private assertNotificationConnectorEntitled;
     private assertConnectorEntitled;
     private validateConfigOrThrow;
     private assertSafeUrls;

@@ -70,7 +70,17 @@ END $$;
 
 CREATE OR REPLACE FUNCTION provision_project_schema_defaults() RETURNS trigger AS $$
 BEGIN
- INSERT INTO project_settings(project_id,organization_id) VALUES(NEW.id,NEW.org_id) ON CONFLICT(project_id) DO NOTHING;
+ INSERT INTO project_settings(
+   project_id, organization_id, data_retention_days, sampling_rate, allowed_domains, blocked_domains,
+   pii_scrubbing_enabled, ip_collection_enabled, release_tracking_enabled, session_replay_enabled,
+   performance_monitoring_enabled, error_monitoring_enabled, log_ingestion_enabled, metric_ingestion_enabled,
+   trace_ingestion_enabled, profile_ingestion_enabled, version
+ ) VALUES (
+   NEW.id, NEW.org_id, 10, 1.00000, '{}'::text[], '{}'::text[],
+   true, true, true, false,
+   true, true, true, true,
+   true, true, 1
+ ) ON CONFLICT(project_id) DO NOTHING;
  INSERT INTO project_environments(project_id,organization_id,name,slug,type,description,is_default,color)
  VALUES
   (NEW.id,NEW.org_id,'Production','production','production','Production telemetry',true,'#16A34A'),

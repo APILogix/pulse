@@ -134,6 +134,14 @@ export class RulesRepository {
         const r = await this.db.query(`SELECT ${RULE_COLS} FROM alert_rules WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
+    async findRuleByPresetKey(organizationId, presetKey) {
+        const r = await this.db.query(`SELECT ${RULE_COLS}
+         FROM alert_rules
+        WHERE organization_id = $1 AND preset_key = $2 AND project_id IS NULL AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT 1`, [organizationId, presetKey]);
+        return r.rows[0] ?? null;
+    }
     async getRuleConditions(ruleId) {
         const r = await this.db.query(`SELECT * FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`, [ruleId]);
         return r.rows;
@@ -172,6 +180,10 @@ export class RulesRepository {
         const r = await this.db.query(`SELECT ${RULE_COLS} FROM alert_rules WHERE ${where}
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
+    }
+    async countProjectRules(organizationId, projectId) {
+        const res = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_rules WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL`, [organizationId, projectId]);
+        return Number(res.rows[0]?.count ?? 0);
     }
     /** Replace a rule's scalar fields and (optionally) its conditions/actions. */
     async updateRule(organizationId, id, fields, conditions, actions, updatedBy) {

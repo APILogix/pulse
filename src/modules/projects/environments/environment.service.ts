@@ -18,6 +18,7 @@ import { ProjectError } from "../shared/utils.js";
 import { BaseProjectService, type RequestMeta } from "../shared/base.service.js";
 import { SdkConfigProvisioner } from "../sdk-config/sdk-config.provisioner.js";
 import { syncEnvironmentLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 
 export class EnvironmentService extends BaseProjectService {
   constructor(

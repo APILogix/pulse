@@ -268,9 +268,9 @@ export async function connectorRoutes(fastify) {
         return reply.send({ success: true, data: result });
     }));
     fastify.post('/validate-configuration', createGuard, withErrorHandling(async (request, reply) => {
-        OrgIdParamsSchema.parse(request.params);
+        const { orgId } = OrgIdParamsSchema.parse(request.params);
         const body = ValidateConfigurationSchema.parse(request.body);
-        const result = svc.validateConfiguration(body);
+        const result = await svc.validateConfiguration(orgId, body);
         return reply.send({ success: true, data: result });
     }));
 }

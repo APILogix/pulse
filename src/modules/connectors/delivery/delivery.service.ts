@@ -257,7 +257,8 @@ export class NotificationDispatcher {
   ): Promise<DispatchOutcome> {
     const attemptsSoFar = priorAttempts + 1;
     const maxAttempts = row.max_retries + 1;
-    const canRetry = retryable && attemptsSoFar < maxAttempts;
+    const isPermanent = category === 'auth_error' || category === 'invalid_config' || category === 'invalid_payload';
+    const canRetry = retryable && !isPermanent && attemptsSoFar < maxAttempts;
 
     if (canRetry) {
       const delayMs = explicitDelayMs ?? computeBackoffMs(

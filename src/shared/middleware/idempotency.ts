@@ -117,7 +117,14 @@ export async function cacheIdempotencyResponse(
   const completedTtl = (request as unknown as Record<symbol, unknown>)[IDEMPOTENCY_TTL_SYMBOL] as number | undefined;
   if (!redisKey || completedTtl === undefined) return;
 
-  if (reply.statusCode < 200 || reply.statusCode >= 300) return;
+  if (reply.statusCode < 200 || reply.statusCode >= 300) {
+    try {
+      await redis.del(redisKey);
+    } catch {
+      // ignore
+    }
+    return;
+  }
 
   try {
     const payloadString = typeof payload === "string" ? payload : JSON.stringify(payload);

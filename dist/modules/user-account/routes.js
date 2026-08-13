@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { authenticate } from '../../shared/middleware/auth.js';
+import { errorResponse } from '../../shared/http/response.js';
 import * as service from './service.js';
 const profileSchema = z.object({
     display_name: z.string().min(1).max(100),
@@ -19,28 +20,14 @@ const deleteAccountSchema = protectedActionSchema.extend({
 });
 function handleError(error, reply, request) {
     if (error instanceof service.UserAccountError) {
-        return reply.status(error.statusCode).send({
-            error: {
-                code: error.code,
-                message: error.message,
-                details: error.details,
-            },
-        });
+        return errorResponse(reply, error.code, error.message, error.statusCode, error.details);
     }
     const zod = error;
     if (zod?.name === 'ZodError') {
-        return reply.status(400).send({
-            error: {
-                code: 'VALIDATION_ERROR',
-                message: 'Invalid request payload',
-                details: { issues: zod.issues },
-            },
-        });
+        return errorResponse(reply, 'VALIDATION_ERROR', 'Invalid request payload', 400, { issues: zod.issues });
     }
     request.log.error({ err: error }, 'Unexpected user account error');
-    return reply.status(500).send({
-        error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' },
-    });
+    return errorResponse(reply, 'INTERNAL_ERROR', 'An unexpected error occurred', 500);
 }
 export async function userAccountRoutes(fastify) {
     fastify.get('/account/overview', { preHandler: [authenticate] }, async (request, reply) => {

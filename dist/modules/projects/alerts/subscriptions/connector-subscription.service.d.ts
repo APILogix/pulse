@@ -13,12 +13,14 @@ import { BaseProjectService } from "../../shared/base.service.js";
 import { ConnectorSubscriptionRepository } from "./connector-subscription.repository.js";
 import type { CreateProjectConnectorSubscriptionBody, ListProjectConnectorSubscriptionsQuery, ProjectConnectorSubscription, UpdateProjectConnectorSubscriptionBody, AlertRoutingTarget } from "./connector-subscription.types.js";
 import type { RequestMeta } from "../../service.js";
+import { NotificationEntitlementService } from "../../../alerting/runtime/notification-entitlement.service.js";
 export declare class ProjectConnectorSubscriptionService {
     private readonly repository;
     private readonly authService;
     private readonly orgRepo;
     private readonly logger;
-    constructor(repository: ConnectorSubscriptionRepository, authService: BaseProjectService, orgRepo: OrganizationRepository, logger: FastifyBaseLogger);
+    private readonly entitlement;
+    constructor(repository: ConnectorSubscriptionRepository, authService: BaseProjectService, orgRepo: OrganizationRepository, logger: FastifyBaseLogger, entitlement?: NotificationEntitlementService);
     list(orgId: string, projectId: string, userId: string, query: ListProjectConnectorSubscriptionsQuery): Promise<{
         subscriptions: ProjectConnectorSubscription[];
         total: number;
@@ -43,6 +45,7 @@ export declare class ProjectConnectorSubscriptionService {
      * carry an explicit API key.
      */
     resolveRoutingTargetByProjectId(projectId: string): Promise<AlertRoutingTarget | null>;
+    private assertConnectorConfigurationAllowed;
     private audit;
 }
 //# sourceMappingURL=connector-subscription.service.d.ts.map

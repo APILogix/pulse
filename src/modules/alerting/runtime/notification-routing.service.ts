@@ -156,8 +156,17 @@ export class NotificationRoutingService {
       ruleId: input.ruleId,
     };
     const result = { ...decision, decisionHash: hashCanonical(decision) };
+    if (suppressed && suppressionReason === 'owner_email_unavailable') {
+      this.log.warn({
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        ruleId: input.ruleId,
+      }, 'Critical alert delivery suppressed: neither project owner nor organization fallback email is available');
+    }
     recordNotificationRouting(metadata.mode === 'EMAIL_ONLY_RESTRICTED'
-      ? 'notification.routing.email_only_restricted'
+      ? (suppressed && suppressionReason === 'owner_email_unavailable'
+          ? 'notification.routing.owner_unavailable'
+          : 'notification.routing.email_only_restricted')
       : suppressed && suppressionReason === 'entitlement_unknown'
         ? 'notification.routing.entitlement_blocked'
         : usedNoChannelFallback

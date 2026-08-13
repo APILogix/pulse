@@ -29,8 +29,15 @@ import { logDB } from '../../config/log-database.js';
 import { AlertRuntimeRepository } from '../alerting/runtime/alert-runtime.repository.js';
 import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
 import { ConnectorGlobalGuards } from './runtime-global-guards.js';
-import { isConnectorTransportJob, type ConnectorTransportJob } from './delivery/transport.types.js';
+import {
+  isConnectorTransportJob,
+  isManagedEmailJob,
+  type ConnectorTransportJob,
+  type ManagedEmailJobData,
+} from './delivery/transport.types.js';
 import { recordNotificationDelivery } from '../alerting/runtime/notification-metrics.js';
+import { sendEmail } from '../../shared/email/mailer.js';
+import { ProjectOwnerRepository } from '../alerting/runtime/email-only-restricted-routing.js';
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -127,6 +134,120 @@ function toChannelKind(value: string): 'email' | 'slack' | 'discord' | 'teams' |
   throw new Error(`Unsupported connector provider: ${value}`);
 }
 
+function getProviderConcurrency(type: string): number {
+  const norm = type.trim().toLowerCase();
+  if (norm === 'slack') return env.CONNECTOR_CONCURRENCY_SLACK;
+  if (norm === 'email') return env.CONNECTOR_CONCURRENCY_EMAIL;
+  if (norm === 'webhook') return env.CONNECTOR_CONCURRENCY_WEBHOOK;
+  if (norm === 'discord') return env.CONNECTOR_CONCURRENCY_DISCORD;
+  if (norm === 'teams') return env.CONNECTOR_CONCURRENCY_TEAMS;
+  if (norm === 'pagerduty') return env.CONNECTOR_CONCURRENCY_PAGERDUTY;
+  if (norm === 'sms') return env.CONNECTOR_CONCURRENCY_SMS;
+  return env.CONNECTOR_SEND_CONCURRENCY;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+async function processManagedEmailJob(
+  jobData: ManagedEmailJobData,
+  jobId: string,
+  runtimeRepository: AlertRuntimeRepository,
+  notificationEntitlement: NotificationEntitlementService,
+  owners: ProjectOwnerRepository,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  const startedAt = Date.now();
+  const capability = await notificationEntitlement.resolve(jobData.organizationId);
+  if (!capability.alertingEnabled && !capability.managedEmailEnabled) {
+    await runtimeRepository.recordNotificationDelivery({
+      organizationId: jobData.organizationId,
+      jobId: jobData.notificationJobId,
+      jobStatus: 'failed',
+      attemptStatus: 'failed',
+      errorCategory: 'DELIVERY_BLOCKED_ENTITLEMENT',
+      errorMessage: 'Alerting is not enabled on this organization',
+      latencyMs: Date.now() - startedAt,
+    });
+    recordNotificationDelivery('notification.delivery.entitlement_blocked');
+    log.warn({ jobId, orgId: jobData.organizationId }, 'Managed email blocked by entitlement');
+    return;
+  }
+
+  let targetEmail = jobData.recipientEmail;
+  if (jobData.deliveryMode === 'EMAIL_ONLY_RESTRICTED' && jobData.projectId) {
+    const owner = await owners.findActiveVerifiedOwner(jobData.organizationId, jobData.projectId);
+    if (owner) {
+      targetEmail = owner.email;
+    } else {
+      const fallback = owners.findActiveVerifiedFallbackRecipient
+        ? await owners.findActiveVerifiedFallbackRecipient(jobData.organizationId, jobData.projectId)
+        : null;
+      if (fallback) {
+        targetEmail = fallback.email;
+      } else {
+        await runtimeRepository.recordNotificationDelivery({
+          organizationId: jobData.organizationId,
+          jobId: jobData.notificationJobId,
+          jobStatus: 'failed',
+          attemptStatus: 'failed',
+          errorCategory: 'owner_email_unavailable',
+          errorMessage: 'Neither project owner nor organization fallback email is available',
+          latencyMs: Date.now() - startedAt,
+        });
+        recordNotificationDelivery('notification.delivery.owner_unavailable');
+        log.warn({ jobId, projectId: jobData.projectId }, 'Managed email delivery failed: owner email unavailable');
+        return;
+      }
+    }
+  }
+
+  const payload = jobData.payload as { title?: unknown; body?: unknown; severity?: unknown };
+  const title = typeof payload.title === 'string' ? payload.title : 'Alert notification';
+  const body = typeof payload.body === 'string' ? payload.body : title;
+  const subject = `[${String(payload.severity ?? jobData.severity).toUpperCase()}] ${title}`;
+
+  try {
+    await sendEmail({
+      to: targetEmail,
+      subject,
+      text: `${title}\n\n${body}`,
+      html: `<!doctype html><html><body><h2>${escapeHtml(title)}</h2><p>${escapeHtml(body).replace(/\n/g, '<br>')}</p></body></html>`,
+    });
+
+    await runtimeRepository.recordNotificationDelivery({
+      organizationId: jobData.organizationId,
+      jobId: jobData.notificationJobId,
+      jobStatus: 'sent',
+      attemptStatus: 'sent',
+      latencyMs: Date.now() - startedAt,
+    });
+    recordNotificationDelivery('notification.delivery.sent');
+    log.info({ jobId, targetEmail, notificationJobId: jobData.notificationJobId }, 'Managed email alert delivered successfully');
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isPermanent = errMsg.includes('invalid') || errMsg.includes('recipient') || errMsg.includes('550') || errMsg.includes('syntax');
+
+    await runtimeRepository.recordNotificationDelivery({
+      organizationId: jobData.organizationId,
+      jobId: jobData.notificationJobId,
+      jobStatus: isPermanent ? 'failed' : 'queued',
+      attemptStatus: 'failed',
+      errorCategory: isPermanent ? 'invalid_recipient' : 'transport',
+      errorMessage: errMsg,
+      latencyMs: Date.now() - startedAt,
+    });
+    recordNotificationDelivery('notification.delivery.failed');
+    log.error({ err, jobId, targetEmail }, 'Managed email delivery attempt failed');
+
+    if (!isPermanent) {
+      throw err;
+    }
+  }
+}
+
 export async function registerConnectorWorkers(
   logger: FastifyBaseLogger,
   runtimeRepository: AlertRuntimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()),
@@ -134,6 +255,7 @@ export async function registerConnectorWorkers(
   const log = logger.child({ component: 'connector-workers' });
   const repository = new ConnectorRepository();
   const notificationEntitlement = new NotificationEntitlementService();
+  const owners = new ProjectOwnerRepository(pool);
   const globalGuards = new ConnectorGlobalGuards(pool);
   const dispatcher = new NotificationDispatcher(repository, logger);
   const service = new ConnectorService({
@@ -152,13 +274,31 @@ export async function registerConnectorWorkers(
   const transportQueues = connectorTypes.map((t) => `connector.v2.${t.type}`);
   await Promise.all([...providerQueues, ...transportQueues].map((queue) => safeCreateQueue(queue)));
 
+  const circuitProbeTimer = setInterval(async () => {
+    try {
+      const recovered = await globalGuards.probeOpenCircuits(env.CONNECTOR_CIRCUIT_RESET_SECONDS);
+      if (recovered > 0) {
+        log.info({ recovered }, 'Circuit breaker probe transitioned open circuits to half_open');
+      }
+    } catch (err) {
+      log.warn({ err }, 'Circuit breaker probe sweep failed');
+    }
+  }, 60_000);
+  circuitProbeTimer.unref();
+
   for (const queue of transportQueues) {
+    const providerType = queue.slice('connector.v2.'.length);
+    const concurrency = getProviderConcurrency(providerType);
     await pgboss.work(
       queue,
-      { localConcurrency: env.CONNECTOR_SEND_CONCURRENCY, batchSize: env.CONNECTOR_SEND_BATCH_SIZE } as never,
+      { localConcurrency: concurrency, batchSize: env.CONNECTOR_SEND_BATCH_SIZE } as never,
       (async (arg: unknown) => {
-        const jobs = allJobs<ConnectorTransportJob>(arg);
+        const jobs = allJobs<ConnectorTransportJob | ManagedEmailJobData>(arg);
         await Promise.all(jobs.map(async (job) => {
+          if (isManagedEmailJob(job.data)) {
+            await processManagedEmailJob(job.data, job.id, runtimeRepository, notificationEntitlement, owners, log);
+            return;
+          }
           if (!isConnectorTransportJob(job.data)) {
             log.error({ jobId: job.id }, 'Rejected connector transport job with invalid contract');
             return;
@@ -179,16 +319,16 @@ export async function registerConnectorWorkers(
             return;
           }
           const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-          if (!row || row.status !== 'active') {
+          if (!row || row.status !== 'active' || row.organization_id !== job.data.organizationId) {
             await runtimeRepository.recordNotificationDelivery({
               organizationId: job.data.organizationId,
               jobId: job.data.notificationJobId,
               jobStatus: 'failed',
               attemptStatus: 'failed',
               errorCategory: 'connector_unavailable',
-              errorMessage: 'Connector is missing or inactive',
+              errorMessage: 'Connector is missing, inactive, or tenant mismatched',
             });
-            log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive connector');
+            log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive or tenant mismatched connector');
             return;
           }
           const outcome = await dispatcher.dispatch(row, job.data.payload as unknown as NotificationPayload, { routeId: null });
@@ -213,21 +353,27 @@ export async function registerConnectorWorkers(
   }
 
   for (const queue of providerQueues) {
+    const providerType = queue.slice(`${CONNECTOR_JOBS.send}-`.length);
+    const concurrency = getProviderConcurrency(providerType);
     await pgboss.work(
       queue,
       { 
-        localConcurrency: env.CONNECTOR_SEND_CONCURRENCY, 
+        localConcurrency: concurrency, 
         batchSize: env.CONNECTOR_SEND_BATCH_SIZE 
       } as never,
       (async (arg: unknown) => {
-        const jobs = allJobs<ConnectorSendJobData>(arg);
+        const jobs = allJobs<ConnectorSendJobData | ManagedEmailJobData>(arg);
         if (jobs.length === 0) return;
 
-        const connectorIds = Array.from(new Set(jobs.map(j => j.data.connectorId)));
-        const rows = await repository.getByIds(connectorIds);
+        const connectorIds = Array.from(new Set(jobs.map(j => 'connectorId' in j.data ? j.data.connectorId : null).filter((id): id is string => Boolean(id))));
+        const rows = connectorIds.length > 0 ? await repository.getByIds(connectorIds) : [];
         const rowMap = new Map(rows.map(r => [r.id, r]));
 
         await Promise.allSettled(jobs.map(async (job) => {
+          if (isManagedEmailJob(job.data)) {
+            await processManagedEmailJob(job.data, job.id, runtimeRepository, notificationEntitlement, owners, log);
+            return;
+          }
           workerMetrics.recordJobStarted();
           try {
             let row: ConnectorConfigRow | null | undefined = rowMap.get(job.data.connectorId);
@@ -466,6 +612,7 @@ export async function registerConnectorWorkers(
 
   return {
     stop: async () => {
+      clearInterval(circuitProbeTimer);
       await pgboss.unschedule(CONNECTOR_JOBS.deliveryRetry).catch(() => undefined);
       await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
       await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);

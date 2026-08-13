@@ -3,6 +3,7 @@ import { PlansRepository } from '../plans/repository.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
 import { SubscriptionStatus, BillingProvider, SubscriptionEventType, SubscriptionEventActor, BillingInterval } from '../shared/types.js';
 import { syncOrganizationLookupToLogDbBestEffort } from '../../../shared/logdb/lookup-sync.js';
+import { entitlementsService } from '../entitlements/service.js';
 export class SubscriptionsService {
     repository;
     plansRepository;
@@ -92,6 +93,7 @@ export class SubscriptionsService {
             return { success: true, data: sub };
         });
         syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.created');
+        entitlementsService.invalidateOrgCache(orgId);
         return result;
     }
     async changePlan(orgId, newPlanId, userId) {
@@ -135,6 +137,7 @@ export class SubscriptionsService {
             return { success: true, data: sub };
         });
         syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.plan_changed');
+        entitlementsService.invalidateOrgCache(orgId);
         return result;
     }
     async previewChange(orgId, newPlanId) {
@@ -250,6 +253,7 @@ export class SubscriptionsService {
             return { success: true, data: sub };
         });
         syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.cancelled');
+        entitlementsService.invalidateOrgCache(orgId);
         return result;
     }
 }

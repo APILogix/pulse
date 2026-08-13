@@ -15,6 +15,7 @@ import { OrganizationService } from './organizationservice.js';
 import { SdkConfigRepository } from './sdk-config/sdk-config.repository.js';
 import { SdkConfigService } from './sdk-config/sdk-config.service.js';
 import { organizationRoutes } from './routes.js';
+import { bootstrapRoutes } from './bootstrap/bootstrap.routes.js';
 import { createOrganizationLogger } from './shared/utils/index.js';
 import { ScimTokenService } from '../scim/scim-token.service.js';
 
@@ -67,6 +68,8 @@ async function organizationModule(
   });
 
   await fastify.register(organizationRoutes, { prefix: '/organizations' });
+  await fastify.register(bootstrapRoutes, { prefix: '/api/v1' });
+  await fastify.register(bootstrapRoutes, { prefix: '' });
 
   fastify.addHook('onClose', async () => {
     orgLogger.info('Organization module shutting down');

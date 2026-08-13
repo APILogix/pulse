@@ -29,8 +29,6 @@ import { registerAutomationWorkers } from '../../modules/automation/workers.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { AlertRuntimeRepository } from '../../modules/alerting/runtime/alert-runtime.repository.js';
 import { AlertConfigRepository } from '../../modules/alerting/config/alert-config.repository.js';
-import { ConnectorSubscriptionRepository } from '../../modules/projects/alerts/subscriptions/connector-subscription.repository.js';
-import { AlertChannelRepository } from '../../modules/projects/alerts/channels/channel.repository.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
@@ -122,15 +120,9 @@ async function bootstrapWorkers() {
     authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
     billingJobWorkers = await registerBillingJobWorkers(workerLogger);
     connectorMonitor = await startConnectorMonitor(workerLogger);
-    const connectorSubRepo = new ConnectorSubscriptionRepository();
-    const alertChannelRepo = new AlertChannelRepository(pgPool);
-    const projectSubscriptionResolver = {
-        resolveByProjectId: (projectId) => connectorSubRepo.resolveAlertRoutingTargetByProjectId(projectId),
-        resolveImmediateDeliveryTargets: (request) => alertChannelRepo.resolveImmediateDeliveryTargets(request),
-    };
     // ADR-0006 / DEV-002: the evaluators must read `events_*` through the pool that ingestion
     // writes them with. Injected here so the alerting module never imports the Log DB singleton.
-    alertingWorkers = await registerAlertingWorkers(workerLogger, {}, projectSubscriptionResolver, logDB.getPrimaryPool());
+    alertingWorkers = await registerAlertingWorkers(workerLogger, {}, undefined, logDB.getPrimaryPool());
     analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
     userDataExportWorker = await registerUserDataExportWorker(workerLogger);
     aiWorkers = await registerAIWorkers(workerLogger);

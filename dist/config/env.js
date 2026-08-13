@@ -3,7 +3,7 @@ import { config } from 'dotenv';
 config();
 const envSchema = z.object({
     // Server
-    NODE_ENV: z.enum(['development', 'staging', 'production']).default('development'),
+    NODE_ENV: z.enum(['development', 'staging', 'production', 'test']).default('development'),
     // Threadpool size for crypto/DNS libuv offload. Default is 4, tune up to 8+ for heavy async scrypt loads.
     UV_THREADPOOL_SIZE: z.coerce.number().int().min(1).max(64).default(8),
     PORT: z.string().transform(Number).default(3000),
@@ -186,6 +186,13 @@ const envSchema = z.object({
     INGESTION_ENDPOINT: z.string().url().optional(),
     // ── Connector Pipeline Tunables ────────────────────────────────────────
     CONNECTOR_SEND_CONCURRENCY: z.coerce.number().int().min(1).max(500).default(3),
+    CONNECTOR_CONCURRENCY_SLACK: z.coerce.number().int().min(1).max(100).default(5),
+    CONNECTOR_CONCURRENCY_EMAIL: z.coerce.number().int().min(1).max(100).default(10),
+    CONNECTOR_CONCURRENCY_WEBHOOK: z.coerce.number().int().min(1).max(100).default(8),
+    CONNECTOR_CONCURRENCY_DISCORD: z.coerce.number().int().min(1).max(100).default(5),
+    CONNECTOR_CONCURRENCY_TEAMS: z.coerce.number().int().min(1).max(100).default(5),
+    CONNECTOR_CONCURRENCY_PAGERDUTY: z.coerce.number().int().min(1).max(100).default(8),
+    CONNECTOR_CONCURRENCY_SMS: z.coerce.number().int().min(1).max(100).default(3),
     CONNECTOR_SEND_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(10),
     CONNECTOR_SEND_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(45),
     CONNECTOR_RETRY_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(120),
@@ -193,6 +200,7 @@ const envSchema = z.object({
     CONNECTOR_CLEANUP_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(600),
     CONNECTOR_SECRET_EXPIRE_SECONDS: z.coerce.number().int().min(1).max(3600).default(900),
     CONNECTOR_HTTP_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10000),
+    CONNECTOR_HTTP_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(500).default(3000),
     // ── Ingestion worker tier (v2) ─────────────────────────────────────────
     // General workers drain fast signals (error/message/request/span/metric/log/
     // cron_checkin); specialized workers isolate heavy signals (profile/replay/

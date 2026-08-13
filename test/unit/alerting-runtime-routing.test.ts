@@ -3,7 +3,7 @@ import { NotificationRoutingService } from '../../src/modules/alerting/runtime/n
 import type { EffectiveAlertPolicy } from '../../src/modules/alerting/policy/types.js';
 
 const logger = {
-  child: () => ({ debug: vi.fn() }),
+  child: () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() }),
 } as never;
 
 const policy: Pick<EffectiveAlertPolicy, 'effectiveRuleHash' | 'escalationPolicyId'> = {

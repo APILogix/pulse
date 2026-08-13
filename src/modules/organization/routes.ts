@@ -56,6 +56,7 @@ type AuthenticatedRequest = FastifyRequest & {
 };
 
 function handleOrganizationError(error: unknown, reply: FastifyReply) {
+  if (reply.sent) return reply;
   console.log('[organization.handleError]', error);
   if (error instanceof OrganizationError) {
     return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
@@ -65,12 +66,21 @@ function handleOrganizationError(error: unknown, reply: FastifyReply) {
 
 function withErrorHandling(handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    try { return await handler(request, reply); }
+    try {
+      if (reply.sent) return reply;
+      return await handler(request, reply);
+    }
     catch (error) { return handleOrganizationError(error, reply); }
   };
 }
 
-function asAuth(request: FastifyRequest): AuthenticatedRequest { return request as AuthenticatedRequest; }
+function asAuth(request: FastifyRequest): AuthenticatedRequest {
+  const user = (request as FastifyRequest & { user?: AuthenticatedRequest['user'] | null }).user;
+  if (!user?.id) {
+    throw new OrganizationError('Authentication required', 'UNAUTHORIZED', 401);
+  }
+  return request as AuthenticatedRequest;
+}
 
 function buildMeta(request: FastifyRequest): RequestMeta {
   const user = asAuth(request).user;

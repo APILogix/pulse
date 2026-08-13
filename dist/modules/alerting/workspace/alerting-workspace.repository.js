@@ -175,6 +175,8 @@ export class AlertingWorkspaceRepository {
         }
         const planResult = await client.query('SELECT key FROM plans WHERE id = $1', [context.planId]);
         const planKey = planResult.rows[0]?.key ?? 'unknown';
+        // HISTORICAL SNAPSHOT ONLY: alerting_entitlements is persisted for workspace creation
+        // audit history/diagnostics only. RUNTIME AUTHORIZATION MUST ALWAYS RESOLVE THROUGH EntitlementsService.
         await client.query(`INSERT INTO alerting_entitlements (workspace_id, organization_id, subscription_id, plan_key, limits, features)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
        ON CONFLICT (workspace_id) DO UPDATE SET

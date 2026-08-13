@@ -4,13 +4,17 @@ import { computeFingerprint } from '../fingerprint.js';
 import { evaluateRule } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting } from '../routing.js';
+import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
+import { ConnectorEntitlementDeniedError, ConnectorEntitlementUnknownError } from '../../connectors/core/connector.types.js';
 import { AlertNotFoundError, AlertValidationError, } from '../types.js';
 export class PoliciesService {
     repo;
     logger;
+    entitlement;
     constructor(deps) {
         this.repo = deps.repository;
         this.logger = deps.logger;
+        this.entitlement = deps.notificationEntitlement ?? new NotificationEntitlementService();
     }
     // ── Rules ──────────────────────────────────────────────────────────────
     // ── Event ingestion + lifecycle ──────────────────────────────────────────
@@ -40,6 +44,7 @@ export class PoliciesService {
         this.audit(orgId, meta, 'escalation_policy.deleted', 'escalation_policy', id);
     }
     async upsertEscalationStep(orgId, meta, policyId, body) {
+        await this.assertConnectorConfigurationAllowed(orgId, body.connectorIds.length + body.routeIds.length > 0);
         const policy = await this.repo.findEscalationPolicy(orgId, policyId);
         if (!policy)
             throw new AlertNotFoundError('Escalation policy');
@@ -55,6 +60,15 @@ export class PoliciesService {
     // ── Routing rules ──────────────────────────────────────────────────────
     // ── Metrics + stats ──────────────────────────────────────────────────────
     // ── Internals ──────────────────────────────────────────────────────────
+    async assertConnectorConfigurationAllowed(orgId, required) {
+        if (!required)
+            return;
+        const decision = await this.entitlement.resolve(orgId);
+        if (decision.reason === 'ENTITLEMENT_UNKNOWN')
+            throw new ConnectorEntitlementUnknownError();
+        if (!decision.connectorAccess)
+            throw new ConnectorEntitlementDeniedError('alerting.enabled');
+    }
     audit(orgId, meta, action, resourceType, resourceId, metadata) {
         logAudit({
             user_id: meta.actorUserId,

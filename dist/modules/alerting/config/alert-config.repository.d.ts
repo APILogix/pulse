@@ -53,6 +53,7 @@ export declare class AlertConfigRepository {
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
     createRule(input: CreateRuleInput): Promise<AlertRuleRow>;
     findRuleById(organizationId: string, id: string): Promise<AlertRuleRow | null>;
+    findRuleByPresetKey(organizationId: string, presetKey: string): Promise<AlertRuleRow | null>;
     listRules(organizationId: string, query: ListRulesQuery): Promise<{
         data: AlertRuleRow[];
         total: number;

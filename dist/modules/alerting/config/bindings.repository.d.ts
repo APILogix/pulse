@@ -70,6 +70,7 @@ export declare class AlertRuleBindingsRepository {
      * Effective rule resolution runs per rule; loading bindings per rule would reintroduce
      * the N+1 the architecture is explicit about avoiding.
      */
+    listByOrganization(organizationId: string): Promise<AlertRuleBindingRecord[]>;
     listByRuleIds(organizationId: string, ruleIds: string[]): Promise<Map<string, AlertRuleBindingRecord[]>>;
     findById(organizationId: string, ruleId: string, bindingId: string): Promise<AlertRuleBindingRecord | null>;
     listRevisions(organizationId: string, ruleId: string, limit?: number): Promise<AlertRuleRevisionRow[]>;

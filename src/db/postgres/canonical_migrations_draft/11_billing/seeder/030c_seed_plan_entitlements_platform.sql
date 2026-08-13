@@ -12,8 +12,10 @@ VALUES
 -- ================= FREE =================
 ('free','dashboards.enabled',TRUE,NULL),
 ('free','alerting.enabled',FALSE,NULL),
+('free','alerting.routing.enabled',FALSE,NULL),
 ('free','ai.enabled',FALSE,NULL),
 ('free','integrations.rest_api',TRUE,NULL),
+('free','quota.connectors',NULL,2),
 
 -- ================= STARTER =================
 ('starter','dashboards.enabled',TRUE,NULL),
@@ -21,7 +23,10 @@ VALUES
 ('starter','analytics.explorer',TRUE,NULL),
 ('starter','alerting.enabled',TRUE,NULL),
 ('starter','alerting.rules',TRUE,NULL),
+('starter','alerting.routing.enabled',TRUE,NULL),
 ('starter','alerting.managed_email_fallback',TRUE,NULL),
+('starter','ai.enabled',TRUE,NULL),
+('starter','ai.summaries',TRUE,NULL),
 ('starter','integrations.email',TRUE,NULL),
 ('starter','integrations.webhook',TRUE,NULL),
 ('starter','integrations.slack',TRUE,NULL),
@@ -30,6 +35,8 @@ VALUES
 ('starter','quota.daily_alerts',NULL,100),
 ('starter','quota.monthly_alerts',NULL,1000),
 ('starter','quota.connector_sends',NULL,1000),
+('starter','quota.connectors',NULL,10),
+('starter','quota.ai_credits',NULL,500),
 
 -- ================= GROWTH =================
 ('growth','dashboards.enabled',TRUE,NULL),
@@ -38,6 +45,7 @@ VALUES
 ('growth','analytics.explorer',TRUE,NULL),
 ('growth','analytics.query_builder',TRUE,NULL),
 ('growth','alerting.enabled',TRUE,NULL),
+('growth','alerting.routing.enabled',TRUE,NULL),
 ('growth','alerting.composite',TRUE,NULL),
 ('growth','alerting.escalation_policies',TRUE,NULL),
 ('growth','alerting.managed_email_fallback',TRUE,NULL),
@@ -54,6 +62,7 @@ VALUES
 ('growth','quota.daily_alerts',NULL,1000),
 ('growth','quota.monthly_alerts',NULL,25000),
 ('growth','quota.connector_sends',NULL,25000),
+('growth','quota.connectors',NULL,50),
 ('growth','quota.ai_credits',NULL,5000),
 
 -- ================= BUSINESS =================
@@ -61,6 +70,7 @@ VALUES
 ('business','dashboards.embeds',TRUE,NULL),
 ('business','dashboards.scheduled_reports',TRUE,NULL),
 ('business','alerting.enabled',TRUE,NULL),
+('business','alerting.routing.enabled',TRUE,NULL),
 ('business','alerting.composite',TRUE,NULL),
 ('business','alerting.escalation_policies',TRUE,NULL),
 ('business','alerting.on_call',TRUE,NULL),
@@ -87,6 +97,7 @@ VALUES
 ('business','quota.daily_alerts',NULL,10000),
 ('business','quota.monthly_alerts',NULL,250000),
 ('business','quota.connector_sends',NULL,250000),
+('business','quota.connectors',NULL,250),
 ('business','quota.ai_credits',NULL,50000),
 
 -- ================= ENTERPRISE =================
@@ -95,12 +106,14 @@ VALUES
 ('enterprise','dashboards.public_links',TRUE,NULL),
 ('enterprise','dashboards.scheduled_reports',TRUE,NULL),
 ('enterprise','alerting.enabled',TRUE,NULL),
+('enterprise','alerting.routing.enabled',TRUE,NULL),
 ('enterprise','alerting.composite',TRUE,NULL),
 ('enterprise','alerting.escalation_policies',TRUE,NULL),
 ('enterprise','alerting.on_call',TRUE,NULL),
 ('enterprise','alerting.incident_timeline',TRUE,NULL),
 ('enterprise','alerting.managed_email_fallback',TRUE,NULL),
 ('enterprise','ai.enabled',TRUE,NULL),
+('enterprise','ai.summaries',TRUE,NULL),
 ('enterprise','ai.root_cause_analysis',TRUE,NULL),
 ('enterprise','ai.anomaly_detection',TRUE,NULL),
 ('enterprise','ai.forecasting',TRUE,NULL),
@@ -110,12 +123,11 @@ VALUES
 ('enterprise','security.scim',TRUE,NULL),
 ('enterprise','security.audit_logs',TRUE,NULL),
 ('enterprise','security.custom_roles',TRUE,NULL),
-('enterprise','security.byok',TRUE,NULL),
 ('enterprise','integrations.github',TRUE,NULL),
 ('enterprise','integrations.gitlab',TRUE,NULL),
 ('enterprise','integrations.bitbucket',TRUE,NULL),
+('enterprise','integrations.jira',TRUE,NULL),
 ('enterprise','integrations.terraform',TRUE,NULL),
-('enterprise','integrations.custom_llm',TRUE,NULL),
 ('enterprise','integrations.email',TRUE,NULL),
 ('enterprise','integrations.slack',TRUE,NULL),
 ('enterprise','integrations.discord',TRUE,NULL),
@@ -128,6 +140,7 @@ VALUES
 ('enterprise','quota.daily_alerts',NULL,100000),
 ('enterprise','quota.monthly_alerts',NULL,1000000),
 ('enterprise','quota.connector_sends',NULL,1000000),
+('enterprise','quota.connectors',NULL,1000),
 ('enterprise','quota.ai_credits',NULL,500000)
 )
 

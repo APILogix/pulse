@@ -18,7 +18,7 @@ export class ConnectorRepository {
         return this.core.withTransaction(fn);
     }
     // Core
-    async create(input) { return this.core.create(input); }
+    async create(input, client) { return this.core.create(input, client); }
     async findById(organizationId, id) { return this.core.findById(organizationId, id); }
     async findByIdInternal(id) { return this.core.findByIdInternal(id); }
     async getByIds(ids) { return this.core.getByIds(ids); }

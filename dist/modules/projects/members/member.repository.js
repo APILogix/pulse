@@ -142,6 +142,8 @@ export class MemberRepository {
     }
     async transferOwnership(projectId, fromUserId, toUserId, actorUserId, client) {
         const run = async (db) => {
+            // Lock project membership rows to prevent race conditions during ownership transfer
+            await db.query(`SELECT id FROM project_members WHERE project_id = $1 FOR UPDATE`, [projectId]);
             const from = await this.findProjectMemberByUserId(projectId, fromUserId, db);
             if (!from || from.role !== ProjectMemberRole.OWNER || from.status !== "active") {
                 throw new ProjectError("MEMBER_NOT_FOUND", "Current owner membership not found", 404);
@@ -149,14 +151,22 @@ export class MemberRepository {
             await db.query(`UPDATE project_members SET role='admin',updated_at=NOW() WHERE id=$1`, [from.id]);
             const target = await this.findProjectMemberByUserId(projectId, toUserId, db);
             let toMember;
-            if (target?.status === "active") {
-                toMember = await this.updateProjectMemberRole(target.id, ProjectMemberRole.OWNER, db);
+            try {
+                if (target?.status === "active") {
+                    toMember = await this.updateProjectMemberRole(target.id, ProjectMemberRole.OWNER, db);
+                }
+                else if (target?.status === "removed") {
+                    toMember = await this.restoreProjectMember(target.id, ProjectMemberRole.OWNER, actorUserId, db);
+                }
+                else {
+                    toMember = await this.addProjectMember(projectId, from.organizationId, toUserId, ProjectMemberRole.OWNER, actorUserId, db);
+                }
             }
-            else if (target?.status === "removed") {
-                toMember = await this.restoreProjectMember(target.id, ProjectMemberRole.OWNER, actorUserId, db);
-            }
-            else {
-                toMember = await this.addProjectMember(projectId, from.organizationId, toUserId, ProjectMemberRole.OWNER, actorUserId, db);
+            catch (err) {
+                if (err.code === "23505") {
+                    throw new ProjectError("CONCURRENT_OWNER_CONFLICT", "A concurrent owner change occurred for this project", 409);
+                }
+                throw err;
             }
             const fromMember = await this.findProjectMemberById(from.id, db);
             if (!fromMember)

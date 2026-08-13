@@ -3,6 +3,9 @@ import type { UpdatePolicyOverrideBody, UpdatePolicySubscriptionBody } from './p
 export declare class ProjectPolicyRepository {
     private readonly db;
     constructor(db?: Pool);
+    findPolicyIdentity(organizationId: string, policyId: string): Promise<{
+        slug: string;
+    } | null>;
     list(organizationId: string, projectId: string): Promise<any[]>;
     create(organizationId: string, projectId: string, policyId: string, userId: string): Promise<any>;
     updateState(organizationId: string, projectId: string, subscriptionId: string, userId: string, body: UpdatePolicySubscriptionBody): Promise<any>;

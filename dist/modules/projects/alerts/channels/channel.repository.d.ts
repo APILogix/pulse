@@ -9,6 +9,7 @@ export declare class AlertChannelRepository {
     private readonly db;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
+    countByOrganization(organizationId: string, client?: DbClient): Promise<number>;
     list(organizationId: string, projectId: string, query: ListProjectAlertChannelsQuery, client?: DbClient): Promise<{
         channels: ProjectAlertChannel[];
         total: number;

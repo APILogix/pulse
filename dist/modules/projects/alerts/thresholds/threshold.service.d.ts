@@ -12,10 +12,10 @@ export declare class ThresholdService {
         offset: number;
     }>;
     get(orgId: string, projectId: string, thresholdId: string, userId: string): Promise<ProjectAlertThreshold>;
-    create(orgId: string, projectId: string, userId: string, body: CreateThresholdBody, meta: RequestMeta): Promise<ProjectAlertThreshold>;
-    update(orgId: string, projectId: string, thresholdId: string, userId: string, body: UpdateThresholdBody, meta: RequestMeta): Promise<ProjectAlertThreshold>;
-    delete(orgId: string, projectId: string, thresholdId: string, userId: string, meta: RequestMeta): Promise<void>;
-    toggle(orgId: string, projectId: string, thresholdId: string, userId: string, body: ToggleThresholdBody, meta: RequestMeta): Promise<ProjectAlertThreshold>;
+    create(orgId: string, projectId: string, userId: string, _body: CreateThresholdBody, _meta: RequestMeta): Promise<ProjectAlertThreshold>;
+    update(orgId: string, projectId: string, thresholdId: string, userId: string, _body: UpdateThresholdBody, _meta: RequestMeta): Promise<ProjectAlertThreshold>;
+    delete(orgId: string, projectId: string, thresholdId: string, userId: string, _meta: RequestMeta): Promise<void>;
+    toggle(orgId: string, projectId: string, thresholdId: string, userId: string, _body: ToggleThresholdBody, _meta: RequestMeta): Promise<ProjectAlertThreshold>;
     private requireThreshold;
     private audit;
     private auditValues;

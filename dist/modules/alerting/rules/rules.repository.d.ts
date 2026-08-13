@@ -77,6 +77,7 @@ export declare class RulesRepository {
     private insertConditions;
     private insertActions;
     findRuleById(organizationId: string, id: string): Promise<AlertRuleRow | null>;
+    findRuleByPresetKey(organizationId: string, presetKey: string): Promise<AlertRuleRow | null>;
     getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]>;
     getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]>;
     /** Bulk-load active actions for many rules in ONE query (batch worker — no N+1). */
@@ -85,6 +86,7 @@ export declare class RulesRepository {
         data: AlertRuleRow[];
         total: number;
     }>;
+    countProjectRules(organizationId: string, projectId: string): Promise<number>;
     /** Replace a rule's scalar fields and (optionally) its conditions/actions. */
     updateRule(organizationId: string, id: string, fields: Record<string, unknown>, conditions: RuleConditionInsert[] | null, actions: RuleActionInsert[] | null, updatedBy: string): Promise<AlertRuleRow>;
     softDeleteRule(organizationId: string, id: string): Promise<void>;

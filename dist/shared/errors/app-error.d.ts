@@ -9,7 +9,7 @@ export declare abstract class AppError extends Error {
     readonly code: string;
     readonly isOperational: boolean;
     readonly details?: Record<string, unknown> | undefined;
-    constructor(message: string, code: string, statusCode: number, details?: Record<string, unknown>, isOperational?: boolean);
+    constructor(message: string, code?: string, statusCode?: number, details?: Record<string, unknown>, isOperational?: boolean);
 }
 export declare class NotFoundError extends AppError {
     constructor(resource: string);
@@ -27,7 +27,10 @@ export declare class ValidationError extends AppError {
     constructor(message: string, details?: Record<string, unknown>);
 }
 export declare class RateLimitError extends AppError {
-    constructor(message?: string, retryAfter?: number);
+    constructor(message?: string, retryAfterSeconds?: number);
+}
+export declare class QuotaExceededError extends AppError {
+    constructor(message: string, details?: Record<string, unknown>);
 }
 export declare class ServiceUnavailableError extends AppError {
     constructor(message?: string);

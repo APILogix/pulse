@@ -23,6 +23,9 @@ export class ProjectMemberService extends BaseProjectService {
         if (userId === body.userId) {
             throw new ProjectError("MEMBER_INVALID", "You cannot add yourself as a member", 400);
         }
+        if (body.role === ProjectMemberRole.OWNER) {
+            throw new ProjectError("MEMBER_OWNER_ROLE", "Use the transfer ownership endpoint to change the owner", 403);
+        }
         if (!(await this.membersRepository.isOrganizationMember(orgId, body.userId))) {
             throw new ProjectError("MEMBER_NOT_ORG", "User must be an active organization member before joining this project", 403);
         }

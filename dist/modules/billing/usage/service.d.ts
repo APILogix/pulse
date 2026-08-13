@@ -1,4 +1,5 @@
-import type { UsageRepository } from './repository.js';
+import { UsageRepository } from './repository.js';
+import { type EntitlementsService } from '../entitlements/service.js';
 interface BillingUserContext {
     id: string;
     currentOrgId?: string | null;
@@ -6,7 +7,8 @@ interface BillingUserContext {
 }
 export declare class UsageService {
     private readonly repository;
-    constructor(repository: UsageRepository);
+    private readonly entitlements;
+    constructor(repository?: UsageRepository, entitlements?: EntitlementsService);
     resolveAuthorizedOrgId(user: BillingUserContext | undefined, requestedOrgId?: string): Promise<string>;
     getCurrentUsage(orgId: string): Promise<{
         success: true;
@@ -24,6 +26,20 @@ export declare class UsageService {
     incrementEventUsage(orgId: string, count?: number): Promise<{
         success: boolean;
     }>;
+    incrementUsage(orgId: string, metric: 'events' | 'ai_credits' | string, count?: number): Promise<{
+        success: boolean;
+    }>;
+    reserveUsage(_orgId: string, _metric: string, _count: number): Promise<{
+        reservationId: string;
+    }>;
+    consumeUsage(orgId: string, metric: string, count?: number): Promise<{
+        success: boolean;
+    }>;
+    releaseUsage(_orgId: string, _metric: string, _count: number): Promise<{
+        success: boolean;
+    }>;
+    getRemaining(orgId: string, metric: 'monthly_events' | 'ai_credits' | string): Promise<number>;
+    getPercentage(orgId: string, metric: 'monthly_events' | 'ai_credits' | string): Promise<number>;
     getQuotaSummary(orgId: string): Promise<{
         success: true;
         data: {
@@ -66,5 +82,6 @@ export declare class UsageService {
         data: any[];
     }>;
 }
+export declare const usageService: UsageService;
 export {};
 //# sourceMappingURL=service.d.ts.map

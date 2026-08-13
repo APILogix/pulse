@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
+import { NotificationEntitlementService } from '../alerting/runtime/notification-entitlement.service.js';
 export interface MonitorOptions {
     retryBatchSize?: number;
     enableHealthChecks?: boolean;
@@ -17,10 +18,11 @@ export declare class ConnectorMonitor {
     private readonly dispatcher;
     private readonly service;
     private readonly logger;
+    private readonly entitlement;
     private retrying;
     private healthChecking;
     private readonly opts;
-    constructor(repository: ConnectorRepository, dispatcher: NotificationDispatcher, service: ConnectorService, logger: FastifyBaseLogger, options?: MonitorOptions);
+    constructor(repository: ConnectorRepository, dispatcher: NotificationDispatcher, service: ConnectorService, logger: FastifyBaseLogger, options?: MonitorOptions, entitlement?: NotificationEntitlementService);
     stop(): void;
     /** Claim and process due retries. Returns the number processed. */
     processRetries(): Promise<number>;

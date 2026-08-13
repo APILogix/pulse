@@ -11,6 +11,7 @@ export interface HttpRequestOptions {
     headers?: Record<string, string>;
     body?: string;
     timeoutMs?: number;
+    connectTimeoutMs?: number;
 }
 export interface HttpResponse {
     ok: boolean;
@@ -19,7 +20,7 @@ export interface HttpResponse {
     headers: Record<string, string>;
 }
 /**
- * Perform an HTTP request with a hard timeout. Network-level failures throw a
+ * Perform an HTTP request with explicit timeout handling. Network-level failures throw a
  * {@link ConnectorDeliveryError} so callers don't have to re-classify them.
  * HTTP responses (including 4xx/5xx) are returned as-is for the caller to
  * interpret per provider semantics.

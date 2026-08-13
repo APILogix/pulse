@@ -1,16 +1,20 @@
 import { ProjectMemberRole } from "../../core/project.types.js";
 import { BaseProjectService } from "../../shared/base.service.js";
 import { ConnectorSubscriptionRepository } from "./connector-subscription.repository.js";
+import { NotificationEntitlementService } from "../../../alerting/runtime/notification-entitlement.service.js";
+import { ConnectorEntitlementDeniedError } from "../../../connectors/core/connector.types.js";
 export class ProjectConnectorSubscriptionService {
     repository;
     authService;
     orgRepo;
     logger;
-    constructor(repository, authService, orgRepo, logger) {
+    entitlement;
+    constructor(repository, authService, orgRepo, logger, entitlement = new NotificationEntitlementService()) {
         this.repository = repository;
         this.authService = authService;
         this.orgRepo = orgRepo;
         this.logger = logger;
+        this.entitlement = entitlement;
     }
     async list(orgId, projectId, userId, query) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
@@ -28,6 +32,7 @@ export class ProjectConnectorSubscriptionService {
     }
     async create(orgId, projectId, userId, body, meta) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        await this.assertConnectorConfigurationAllowed(orgId);
         const existing = await this.repository.findByProjectAndConnector(orgId, projectId, body.connectorId);
         if (existing) {
             throw new Error("A subscription for this connector already exists in this project");
@@ -43,6 +48,7 @@ export class ProjectConnectorSubscriptionService {
     }
     async update(orgId, projectId, subscriptionId, userId, body, meta) {
         await this.authService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        await this.assertConnectorConfigurationAllowed(orgId);
         const existing = await this.repository.findById(orgId, projectId, subscriptionId);
         if (!existing || existing.projectId !== projectId) {
             throw new Error("Subscription not found");
@@ -84,6 +90,12 @@ export class ProjectConnectorSubscriptionService {
      */
     async resolveRoutingTargetByProjectId(projectId) {
         return this.repository.resolveAlertRoutingTargetByProjectId(projectId);
+    }
+    async assertConnectorConfigurationAllowed(orgId) {
+        const decision = await this.entitlement.resolve(orgId);
+        if (decision.reason === 'ENTITLEMENT_UNKNOWN' || !decision.connectorAccess) {
+            throw new ConnectorEntitlementDeniedError('alerting.enabled');
+        }
     }
     async audit(meta, orgId, projectId, action, entityId, newValues) {
         await this.authService.audit(meta, {

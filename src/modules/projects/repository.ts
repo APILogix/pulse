@@ -24,7 +24,6 @@ import type {
   ProjectStatus,
   ProjectUpdateInput,
   ProjectUsageCounter,
-  ProjectVisibility,
 } from "./types.js";
 import { ProjectError } from "./shared/utils.js";
 import { ProjectRepository } from "./core/project.repository.js";
@@ -132,12 +131,10 @@ export class ProjectsRepository {
       name: string;
       slug: string;
       description: string | null;
-      visibility?: ProjectVisibility | undefined;
       status?: ProjectStatus | undefined;
       timezone?: string | undefined;
       tags?: string[] | undefined;
       icon?: string | null | undefined;
-      color?: string | null | undefined;
       metadata?: Record<string, unknown> | undefined;
       createdBy?: string | null | undefined;
     },

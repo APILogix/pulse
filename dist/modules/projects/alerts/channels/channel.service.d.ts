@@ -1,5 +1,6 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { ProjectsService, RequestMeta } from "../../service.js";
+import { NotificationEntitlementService } from "../../../alerting/runtime/notification-entitlement.service.js";
 import { AlertChannelRepository } from "./channel.repository.js";
 import type { CreateProjectAlertChannelBody, DeleteMemberAlertChannelPreferenceQuery, ImmediateDeliveryRequest, ImmediateDeliveryTarget, ListProjectAlertChannelsQuery, ProjectAlertChannel, ProjectMemberAlertChannelPreference, ToggleProjectAlertChannelBody, UpsertMemberAlertChannelPreferenceBody, UpdateProjectAlertChannelBody } from "./channel.types.js";
 export declare function containsUrlLikeValue(value: unknown): boolean;
@@ -7,7 +8,8 @@ export declare class ProjectAlertChannelService {
     private readonly repository;
     private readonly projectsService;
     private readonly logger;
-    constructor(repository: AlertChannelRepository, projectsService: ProjectsService, logger: FastifyBaseLogger);
+    private readonly entitlement;
+    constructor(repository: AlertChannelRepository, projectsService: ProjectsService, logger: FastifyBaseLogger, entitlement?: NotificationEntitlementService);
     list(orgId: string, projectId: string, userId: string, query: ListProjectAlertChannelsQuery): Promise<{
         channels: ProjectAlertChannel[];
         total: number;
@@ -25,6 +27,7 @@ export declare class ProjectAlertChannelService {
     /** Internal authoritative lookup; callers must provide tenant-scoped event data. */
     resolveImmediateDeliveryTargets(request: ImmediateDeliveryRequest): Promise<ImmediateDeliveryTarget[]>;
     private assertSafeWebhookConfiguration;
+    private assertConnectorConfigurationAllowed;
     private audit;
 }
 //# sourceMappingURL=channel.service.d.ts.map

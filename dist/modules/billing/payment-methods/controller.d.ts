@@ -3,9 +3,9 @@ import { PaymentMethodsService } from './service.js';
 export declare class PaymentMethodsController {
     private readonly service;
     constructor(service: PaymentMethodsService);
-    listPaymentMethods: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
-    createPaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
-    setDefaultPaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
-    deactivatePaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<any>;
+    listPaymentMethods: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
+    createPaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
+    setDefaultPaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
+    deactivatePaymentMethod: (request: FastifyRequest, reply: FastifyReply) => Promise<never>;
 }
 //# sourceMappingURL=controller.d.ts.map

@@ -1,6 +1,7 @@
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
 import { AddonsRepository } from './repository.js';
 import type { ListAddonsQuery, SubscribeAddonBody } from './schemas.js';
+import { entitlementsService } from '../entitlements/service.js';
 
 export class AddonsService {
   constructor(private readonly repository: AddonsRepository) {}
@@ -16,7 +17,7 @@ export class AddonsService {
   }
 
   async subscribeAddon(orgId: string, body: SubscribeAddonBody) {
-    return this.repository.withTransaction(async (client) => {
+    const result = await this.repository.withTransaction(async (client) => {
       const subscription = await this.repository.getActiveSubscription(orgId, client);
       if (!subscription) {
         throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
@@ -36,6 +37,8 @@ export class AddonsService {
       }
       return { success: true, data: row };
     });
+    entitlementsService.invalidateOrgCache(orgId);
+    return result;
   }
 
   async cancelSubscriptionAddon(orgId: string, subscriptionAddonId: string) {
@@ -43,6 +46,7 @@ export class AddonsService {
     if (!row) {
       throw new BillingError('Subscription add-on not found', BillingErrorCodes.ADDON_NOT_FOUND, 404);
     }
+    entitlementsService.invalidateOrgCache(orgId);
     return { success: true, data: row };
   }
 }

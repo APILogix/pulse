@@ -15,6 +15,17 @@ export declare class EntitlementsRepository {
     getEffectiveEntitlements(orgId: string, db?: Db): Promise<EffectiveEntitlementRow[]>;
     hasFeature(orgId: string, featureKey: string, db?: Db): Promise<boolean>;
     getEffectiveIntegerFeature(orgId: string, featureKey: string, db?: Db): Promise<number>;
+    getEffectiveFeatureRow(orgId: string, featureKey: string, db?: Db): Promise<EffectiveEntitlementRow | null>;
+    getSubscriptionState(orgId: string, db?: Db): Promise<{
+        subscriptionId: string;
+        planId: string;
+        planKey: string;
+        planTier: string;
+        status: string;
+        currentPeriodStart: Date;
+        currentPeriodEnd: Date;
+        cancelAtPeriodEnd: boolean;
+    } | null>;
 }
 export {};
 //# sourceMappingURL=repository.d.ts.map

@@ -78,21 +78,50 @@ export class EntitlementsRepository {
     async getEffectiveEntitlements(orgId, db = this.db) {
         const result = await db.query(`${EFFECTIVE_ENTITLEMENTS_SQL}
        ORDER BY feature_key`, [orgId]);
-        return result.rows;
+        return result?.rows ?? [];
     }
     async hasFeature(orgId, featureKey, db = this.db) {
         const result = await db.query(`SELECT COALESCE(boolean_value, integer_value > 0, decimal_value > 0, string_value IS NOT NULL, FALSE) AS has_access
        FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
        WHERE feature_key = $2
        LIMIT 1`, [orgId, featureKey]);
-        return result.rows[0]?.has_access === true;
+        return result?.rows?.[0]?.has_access === true;
     }
     async getEffectiveIntegerFeature(orgId, featureKey, db = this.db) {
         const result = await db.query(`SELECT COALESCE(integer_value, 0) AS limit_val
        FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
        WHERE feature_key = $2
        LIMIT 1`, [orgId, featureKey]);
-        return parseInt(result.rows[0]?.limit_val ?? '0', 10);
+        return parseInt(result?.rows?.[0]?.limit_val ?? '0', 10);
+    }
+    async getEffectiveFeatureRow(orgId, featureKey, db = this.db) {
+        const result = await db.query(`SELECT organization_id, feature_key, boolean_value, integer_value, decimal_value, string_value
+       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) entitlements
+       WHERE feature_key = $2
+       LIMIT 1`, [orgId, featureKey]);
+        return result?.rows?.[0] ?? null;
+    }
+    async getSubscriptionState(orgId, db = this.db) {
+        const result = await db.query(`SELECT
+         os.id AS "subscriptionId",
+         os.plan_id AS "planId",
+         p.key AS "planKey",
+         p.tier AS "planTier",
+         os.status,
+         os.current_period_start AS "currentPeriodStart",
+         os.current_period_end AS "currentPeriodEnd",
+         os.cancel_at_period_end AS "cancelAtPeriodEnd"
+       FROM organization_subscriptions os
+       JOIN plans p ON p.id = os.plan_id
+       WHERE os.organization_id = $1
+         AND os.deleted_at IS NULL
+         AND os.status IN ('trialing', 'active', 'past_due')
+         AND os.current_period_end > NOW()
+       ORDER BY
+         CASE os.status WHEN 'active' THEN 0 WHEN 'trialing' THEN 1 WHEN 'past_due' THEN 2 ELSE 3 END,
+         os.created_at DESC
+       LIMIT 1`, [orgId]);
+        return result?.rows?.[0] ?? null;
     }
 }
 //# sourceMappingURL=repository.js.map

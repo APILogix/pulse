@@ -1,4 +1,5 @@
 import { apiKeyCache } from "../../../config/lrucashe.js";
+import { entitlementsService } from "../../billing/entitlements/service.js";
 import { ProjectMemberRole } from "../types.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
@@ -116,31 +117,69 @@ export class BaseProjectService {
         return fallback;
     }
     assertWithinLimit(name, used, limit, increment = 1) {
+        if (limit === -1) {
+            // Explicit unlimited
+            return;
+        }
         if (limit >= 0 && Number.isFinite(limit) && used + increment > limit) {
-            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `${name} limit exceeded for current billing plan`, 403, { used, limit, requested: increment });
+            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `${name} limit exceeded for current billing plan (limit: ${limit}, used: ${used})`, 403, { used, limit, requested: increment });
         }
     }
     async requireMutableBilling(orgId) {
-        const entitlements = await this.orgRepo.getBillingEntitlements(orgId);
-        if (!entitlements) {
+        const fromOrgRepo = await this.orgRepo?.getBillingEntitlements?.(orgId);
+        if (fromOrgRepo) {
+            if (!BILLING_MUTABLE_STATUSES.has(fromOrgRepo.subscription_status)) {
+                throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `Billing subscription is ${fromOrgRepo.subscription_status}. This action is not permitted.`, 403);
+            }
+            return fromOrgRepo;
+        }
+        const sub = await entitlementsService.getSubscriptionState(orgId);
+        if (!sub) {
             throw new ProjectError("PROJECT_LIMIT_EXCEEDED", "Organization has no active billing subscription", 403);
         }
-        if (!BILLING_MUTABLE_STATUSES.has(entitlements.subscription_status)) {
-            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `Billing subscription is ${entitlements.subscription_status}. This action is not permitted.`, 403);
+        if (!BILLING_MUTABLE_STATUSES.has(sub.status)) {
+            throw new ProjectError("PROJECT_LIMIT_EXCEEDED", `Billing subscription is ${sub.status}. This action is not permitted.`, 403);
         }
-        return entitlements;
+        const allEntitlements = await entitlementsService.getEffectiveEntitlements(orgId);
+        const featureConfig = {};
+        for (const [k, v] of Object.entries(allEntitlements)) {
+            featureConfig[k] = v.booleanValue ?? v.integerValue ?? v.decimalValue ?? v.stringValue ?? null;
+        }
+        const eventLimit = await entitlementsService.getEffectiveIntegerFeature(orgId, "quota.monthly_events");
+        return {
+            subscription_id: sub.subscriptionId,
+            subscription_status: sub.status,
+            plan_id: sub.planId,
+            plan_key: sub.planKey,
+            plan_tier: sub.planTier,
+            feature_config: featureConfig,
+            event_limit_monthly: eventLimit,
+            hard_cap: false,
+        };
     }
     async enforceProjectModuleLimit(orgId, capability, increment = 1) {
         const entitlements = await this.requireMutableBilling(orgId);
         const counts = await this.repository.getProjectModuleUsageCounts(orgId);
         if (capability === "project") {
-            this.assertWithinLimit("Project", counts.projects, this.limitFrom(entitlements, ["quota.projects", "projects", "limit_projects_max", "max_projects", "projects_max"]), increment);
+            const configuredLimit = entitlements.feature_config["quota.projects"] ?? entitlements.feature_config["limit_projects"];
+            const limit = configuredLimit !== undefined
+                ? Number(configuredLimit)
+                : ((await entitlementsService.getEffectiveIntegerFeature(orgId, "quota.projects")) || -1);
+            this.assertWithinLimit("Project", counts.projects, limit, increment);
         }
         if (capability === "environment") {
-            this.assertWithinLimit("Project environment", counts.environments, this.limitFrom(entitlements, ["quota.environments", "limit_environments_max", "max_project_environments", "max_environments", "environments_max"]), increment);
+            const configuredLimit = entitlements.feature_config["quota.environments"] ?? entitlements.feature_config["limit_environments"];
+            const limit = configuredLimit !== undefined
+                ? Number(configuredLimit)
+                : ((await entitlementsService.getEffectiveIntegerFeature(orgId, "quota.environments")) || -1);
+            this.assertWithinLimit("Project environment", counts.environments, limit, increment);
         }
         if (capability === "apiKey") {
-            this.assertWithinLimit("Project API key", counts.apiKeys, this.limitFrom(entitlements, ["quota.api_keys", "api_keys", "limit_api_keys_max", "max_project_api_keys", "max_api_keys", "api_keys_max"]), increment);
+            const configuredLimit = entitlements.feature_config["quota.api_keys"] ?? entitlements.feature_config["limit_api_keys"];
+            const limit = configuredLimit !== undefined
+                ? Number(configuredLimit)
+                : ((await entitlementsService.getEffectiveIntegerFeature(orgId, "quota.api_keys")) || -1);
+            this.assertWithinLimit("Project API key", counts.apiKeys, limit, increment);
         }
         return entitlements;
     }

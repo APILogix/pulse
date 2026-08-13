@@ -108,38 +108,40 @@ export class ConnectorRepository {
   }
 
   // ── Connector CRUD ─────────────────────────────────────────────────────
-  async create(input: CreateConnectorInput): Promise<ConnectorConfigRow> {
+  async create(input: CreateConnectorInput, client?: PoolClient): Promise<ConnectorConfigRow> {
+    const run = async (c: PoolClient) => {
+      const created = await c.query<{ id: string }>(
+        `INSERT INTO connector_configs
+           (organization_id, name, provider, status, description, public_config,
+            supports_rich_formatting, supports_threading, supports_attachments,
+            rate_limit_requests, rate_limit_window_seconds, max_retries, failure_threshold,
+            provider_metadata, created_by)
+         VALUES ($1,$2,$3,'pending_setup',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         RETURNING id`,
+        [
+          input.organizationId, input.name, input.type, input.description,
+          JSON.stringify(input.displayConfig),
+          input.capabilities.richFormatting, input.capabilities.threading, input.capabilities.attachments,
+          input.rateLimitRequests, input.rateLimitWindowSeconds, input.maxRetries, input.failureThreshold,
+          JSON.stringify(input.metadata), input.createdBy,
+        ],
+      );
+      const connectorId = created.rows[0]!.id;
+      await c.query(
+        `INSERT INTO connector_credentials
+           (connector_id, credential_type, key_name, encrypted_value, algorithm, version, created_by)
+         VALUES ($1, 'config', 'config', $2, 'aes-256-gcm', 1, $3)`,
+        [connectorId, input.encryptedConfig, input.createdBy],
+      );
+      const r = await c.query<ConnectorConfigRow>(
+        `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs WHERE id=$1`,
+        [connectorId],
+      );
+      return r.rows[0]!;
+    };
+
     try {
-      return await this.withTransaction(async (client) => {
-        const created = await client.query<{ id: string }>(
-          `INSERT INTO connector_configs
-             (organization_id, name, provider, status, description, public_config,
-              supports_rich_formatting, supports_threading, supports_attachments,
-              rate_limit_requests, rate_limit_window_seconds, max_retries, failure_threshold,
-              provider_metadata, created_by)
-           VALUES ($1,$2,$3,'pending_setup',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-           RETURNING id`,
-          [
-            input.organizationId, input.name, input.type, input.description,
-            JSON.stringify(input.displayConfig),
-            input.capabilities.richFormatting, input.capabilities.threading, input.capabilities.attachments,
-            input.rateLimitRequests, input.rateLimitWindowSeconds, input.maxRetries, input.failureThreshold,
-            JSON.stringify(input.metadata), input.createdBy,
-          ],
-        );
-        const connectorId = created.rows[0]!.id;
-        await client.query(
-          `INSERT INTO connector_credentials
-             (connector_id, credential_type, key_name, encrypted_value, algorithm, version, created_by)
-           VALUES ($1, 'config', 'config', $2, 'aes-256-gcm', 1, $3)`,
-          [connectorId, input.encryptedConfig, input.createdBy],
-        );
-        const r = await client.query<ConnectorConfigRow>(
-          `SELECT ${CONNECTOR_COLUMNS} FROM connector_configs WHERE id=$1`,
-          [connectorId],
-        );
-        return r.rows[0]!;
-      });
+      return client ? await run(client) : await this.withTransaction(run);
     } catch (e) {
       if ((e as { code?: string }).code === '23505') {
         throw new ConnectorConflictError('A connector with this name already exists');

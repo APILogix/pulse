@@ -1,0 +1,1358 @@
+/**
+ * Canonical Feature Registry & Definitions
+ *
+ * Defines all billable, gated, and metered capabilities across the Pulse platform.
+ * Auto-generated from catalog version 2.0.
+ */
+export var FeatureCategory;
+(function (FeatureCategory) {
+    FeatureCategory["FEATURE"] = "feature";
+    FeatureCategory["QUOTA"] = "quota";
+    FeatureCategory["INTEGRATION"] = "integration";
+})(FeatureCategory || (FeatureCategory = {}));
+export var FeatureScope;
+(function (FeatureScope) {
+    FeatureScope["ORGANIZATION"] = "organization";
+    FeatureScope["PROJECT"] = "project";
+    FeatureScope["USER"] = "user";
+})(FeatureScope || (FeatureScope = {}));
+export var EnforcementType;
+(function (EnforcementType) {
+    EnforcementType["NONE"] = "none";
+    EnforcementType["HARD_LIMIT"] = "hard_limit";
+    EnforcementType["THROTTLE"] = "throttle";
+    EnforcementType["OVERAGE"] = "overage";
+})(EnforcementType || (EnforcementType = {}));
+export class FeatureNotFoundError extends Error {
+    key;
+    constructor(key) {
+        super(`Feature key '${key}' is not defined in the feature registry.`);
+        this.key = key;
+        this.name = 'FeatureNotFoundError';
+    }
+}
+export const CANONICAL_PLANS = ['free', 'starter', 'growth', 'business', 'enterprise'];
+export const SUPPORTED_CONNECTOR_PROVIDERS = [
+    'slack',
+    'discord',
+    'microsoft_teams',
+    'pagerduty',
+    'webhook',
+    'email',
+    'sms',
+];
+/**
+ * Authoritative canonical feature registry containing all 102 platform features.
+ */
+export const FEATURE_REGISTRY = {
+    /** Create and manage your organization workspace */
+    'organization.enabled': {
+        key: 'organization.enabled',
+        name: "Organization Management",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create and manage your organization workspace",
+    },
+    /** Maximum number of organizations a single user can create or join */
+    'organization.max_orgs_per_user': {
+        key: 'organization.max_orgs_per_user',
+        name: "Max Organizations Per User",
+        type: "integer",
+        category: 'quota',
+        scope: 'user',
+        unit: "organizations",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: false,
+        description: "Maximum number of organizations a single user can create or join",
+    },
+    /** Create projects to isolate different services or environments */
+    'projects.enabled': {
+        key: 'projects.enabled',
+        name: "Projects Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create projects to isolate different services or environments",
+    },
+    /** Maximum number of projects per organization */
+    'quota.projects': {
+        key: 'quota.projects',
+        name: "Projects Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "projects",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of projects per organization",
+    },
+    /** Maximum number of team members per organization */
+    'quota.members': {
+        key: 'quota.members',
+        name: "Team Members Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "members",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of team members per organization",
+    },
+    /** Maximum number of environments per project (e.g., dev, staging, prod) */
+    'quota.environments': {
+        key: 'quota.environments',
+        name: "Environments Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "environments",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of environments per project (e.g., dev, staging, prod)",
+    },
+    /** Maximum number of API keys per project for ingestion authentication */
+    'quota.api_keys': {
+        key: 'quota.api_keys',
+        name: "API Keys Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "api_keys",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of API keys per project for ingestion authentication",
+    },
+    /** Total number of events that can be ingested per month */
+    'quota.monthly_events': {
+        key: 'quota.monthly_events',
+        name: "Monthly Ingested Events",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "events",
+        enforcementType: 'overage',
+        supportsUnlimited: true,
+        description: "Total number of events that can be ingested per month",
+        overageRate: 50,
+        overageUnit: 1000,
+        gracePercent: 10,
+    },
+    /** Maximum sustained ingestion rate per second */
+    'quota.requests_per_second': {
+        key: 'quota.requests_per_second',
+        name: "Rate Limit (RPS)",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "requests/sec",
+        enforcementType: 'throttle',
+        supportsUnlimited: true,
+        description: "Maximum sustained ingestion rate per second",
+    },
+    /** Use official SDKs to send data to the platform */
+    'sdk.enabled': {
+        key: 'sdk.enabled',
+        name: "SDK Ingestion",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Use official SDKs to send data to the platform",
+    },
+    /** Update SDK behavior remotely without redeploying */
+    'sdk.remote_config': {
+        key: 'sdk.remote_config',
+        name: "SDK Remote Config",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Update SDK behavior remotely without redeploying",
+        dependencies: ['sdk.enabled'],
+    },
+    /** Automatic retry with exponential backoff on failed ingestion */
+    'sdk.retry': {
+        key: 'sdk.retry',
+        name: "SDK Exponential Retry",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automatic retry with exponential backoff on failed ingestion",
+        dependencies: ['sdk.enabled'],
+    },
+    /** Batch multiple events into a single network request for efficiency */
+    'sdk.batching': {
+        key: 'sdk.batching',
+        name: "SDK Batching",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Batch multiple events into a single network request for efficiency",
+        dependencies: ['sdk.enabled'],
+    },
+    /** Queue events locally when network is unavailable and send when back online */
+    'sdk.offline_queue': {
+        key: 'sdk.offline_queue',
+        name: "SDK Offline Queue",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Queue events locally when network is unavailable and send when back online",
+        dependencies: ['sdk.enabled'],
+    },
+    /** Dynamically adjust sampling rates based on server-side configuration */
+    'sdk.dynamic_sampling': {
+        key: 'sdk.dynamic_sampling',
+        name: "SDK Dynamic Sampling",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Dynamically adjust sampling rates based on server-side configuration",
+        dependencies: ['sdk.enabled', 'sdk.remote_config'],
+    },
+    /** Maximum number of events the SDK will hold in memory before flushing */
+    'quota.sdk_batch_queue_size': {
+        key: 'quota.sdk_batch_queue_size',
+        name: "SDK Batch Max Queue Size",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "events",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of events the SDK will hold in memory before flushing",
+        dependencies: ['sdk.batching'],
+    },
+    /** Maximum number of events the SDK will queue when offline */
+    'quota.sdk_offline_queue_limit': {
+        key: 'quota.sdk_offline_queue_limit',
+        name: "SDK Offline Queue Limit",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "events",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of events the SDK will queue when offline",
+        dependencies: ['sdk.offline_queue'],
+    },
+    /** Automatically scrub personally identifiable information from events */
+    'privacy.data_scrubbing': {
+        key: 'privacy.data_scrubbing',
+        name: "PII Data Scrubbing",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automatically scrub personally identifiable information from events",
+    },
+    /** Capture and store HTTP headers with each event */
+    'privacy.capture_headers': {
+        key: 'privacy.capture_headers',
+        name: "Capture HTTP Headers",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Capture and store HTTP headers with each event",
+    },
+    /** Capture and store HTTP request/response bodies */
+    'privacy.capture_body': {
+        key: 'privacy.capture_body',
+        name: "Capture HTTP Body",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Capture and store HTTP request/response bodies",
+    },
+    /** Capture and store client IP addresses */
+    'privacy.capture_ip': {
+        key: 'privacy.capture_ip',
+        name: "Capture Client IP",
+        type: "boolean",
+        category: 'feature',
+        scope: 'project',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Capture and store client IP addresses",
+    },
+    /** Track and aggregate application errors and exceptions */
+    'error_tracking.enabled': {
+        key: 'error_tracking.enabled',
+        name: "Error Tracking",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Track and aggregate application errors and exceptions",
+    },
+    /** Trace requests across services to identify latency bottlenecks */
+    'tracing.enabled': {
+        key: 'tracing.enabled',
+        name: "Distributed Tracing",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Trace requests across services to identify latency bottlenecks",
+    },
+    /** Ingest and search structured log data */
+    'logging.enabled': {
+        key: 'logging.enabled',
+        name: "Structured Logging",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Ingest and search structured log data",
+    },
+    /** Ingest custom time-series metrics and build dashboards */
+    'metrics.enabled': {
+        key: 'metrics.enabled',
+        name: "Custom Metrics",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Ingest custom time-series metrics and build dashboards",
+    },
+    /** Profile CPU and memory usage in production with minimal overhead */
+    'profiling.enabled': {
+        key: 'profiling.enabled',
+        name: "Continuous Profiling",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Profile CPU and memory usage in production with minimal overhead",
+    },
+    /** Record and replay user sessions to reproduce issues */
+    'replay.enabled': {
+        key: 'replay.enabled',
+        name: "Session Replay",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Record and replay user sessions to reproduce issues",
+    },
+    /** Monitor endpoint uptime and cron job execution */
+    'uptime.enabled': {
+        key: 'uptime.enabled',
+        name: "Uptime & Cron Monitoring",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Monitor endpoint uptime and cron job execution",
+    },
+    /** Dedicated cron job heartbeat monitoring with alerting on missed runs */
+    'cron_monitoring.enabled': {
+        key: 'cron_monitoring.enabled',
+        name: "Cron Job Monitoring",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Dedicated cron job heartbeat monitoring with alerting on missed runs",
+        dependencies: ['uptime.enabled'],
+    },
+    /** Default data retention period for all event types */
+    'quota.retention_days': {
+        key: 'quota.retention_days',
+        name: "Default Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Default data retention period for all event types",
+    },
+    /** Retention period for structured log data */
+    'quota.log_retention_days': {
+        key: 'quota.log_retention_days',
+        name: "Log Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for structured log data",
+    },
+    /** Retention period for custom metrics */
+    'quota.metric_retention_days': {
+        key: 'quota.metric_retention_days',
+        name: "Metric Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for custom metrics",
+    },
+    /** Retention period for continuous profiling data */
+    'quota.profile_retention_days': {
+        key: 'quota.profile_retention_days',
+        name: "Profile Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for continuous profiling data",
+        dependencies: ['profiling.enabled'],
+    },
+    /** Retention period for session replay recordings */
+    'quota.replay_retention_days': {
+        key: 'quota.replay_retention_days',
+        name: "Session Replay Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for session replay recordings",
+        dependencies: ['replay.enabled'],
+    },
+    /** Retention period for distributed trace data */
+    'quota.trace_retention_days': {
+        key: 'quota.trace_retention_days',
+        name: "Trace Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for distributed trace data",
+        dependencies: ['tracing.enabled'],
+    },
+    /** Retention period for security audit logs */
+    'quota.audit_log_retention_days': {
+        key: 'quota.audit_log_retention_days',
+        name: "Audit Log Retention Days",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "days",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Retention period for security audit logs",
+        dependencies: ['security.audit_logs'],
+    },
+    /** Create and manage alerts based on metric thresholds and event patterns */
+    'alerting.enabled': {
+        key: 'alerting.enabled',
+        name: "Alerting Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create and manage alerts based on metric thresholds and event patterns",
+    },
+    /** Define alert rules with custom conditions and thresholds */
+    'alerting.rules': {
+        key: 'alerting.rules',
+        name: "Alert Rules Feature",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Define alert rules with custom conditions and thresholds",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Route alerts to different teams or channels based on severity or source */
+    'alerting.routing.enabled': {
+        key: 'alerting.routing.enabled',
+        name: "Advanced Alert Routing",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Route alerts to different teams or channels based on severity or source",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Combine multiple conditions into a single composite alert */
+    'alerting.composite': {
+        key: 'alerting.composite',
+        name: "Composite Alerts",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Combine multiple conditions into a single composite alert",
+        dependencies: ['alerting.enabled', 'alerting.rules'],
+    },
+    /** Automatically escalate unacknowledged alerts through predefined chains */
+    'alerting.escalation_policies': {
+        key: 'alerting.escalation_policies',
+        name: "Escalation Policies",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automatically escalate unacknowledged alerts through predefined chains",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Manage on-call rotations and schedules for incident response */
+    'alerting.on_call': {
+        key: 'alerting.on_call',
+        name: "On-Call Schedules",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Manage on-call rotations and schedules for incident response",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Track incident lifecycle from detection to resolution with timeline view */
+    'alerting.incident_timeline': {
+        key: 'alerting.incident_timeline',
+        name: "Incident Timeline",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Track incident lifecycle from detection to resolution with timeline view",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Send alert notifications via managed email delivery when primary channels fail */
+    'alerting.managed_email_fallback': {
+        key: 'alerting.managed_email_fallback',
+        name: "Managed Email Fallback",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send alert notifications via managed email delivery when primary channels fail",
+        dependencies: ['alerting.enabled'],
+    },
+    /** AI-powered alert correlation, noise reduction, and intelligent grouping */
+    'alerting.ai_alert': {
+        key: 'alerting.ai_alert',
+        name: "AI Alert Insights",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "AI-powered alert correlation, noise reduction, and intelligent grouping",
+        dependencies: ['alerting.enabled', 'ai.enabled'],
+    },
+    /** Maximum number of alert rules at organization level */
+    'quota.alert_rules': {
+        key: 'quota.alert_rules',
+        name: "Organization Alert Rules Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "rules",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of alert rules at organization level",
+        dependencies: ['alerting.rules'],
+    },
+    /** Maximum number of alert rules per project */
+    'quota.project_alert_rules': {
+        key: 'quota.project_alert_rules',
+        name: "Project Alert Rules Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "rules",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of alert rules per project",
+        dependencies: ['alerting.rules'],
+    },
+    /** Maximum number of alert notification channels */
+    'quota.alert_channels': {
+        key: 'quota.alert_channels',
+        name: "Alert Channels Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "channels",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of alert notification channels",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Maximum number of general notification channels */
+    'quota.notification_channels': {
+        key: 'quota.notification_channels',
+        name: "Notification Channels Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "channels",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of general notification channels",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Maximum number of notification channels per project */
+    'quota.project_notification_channels': {
+        key: 'quota.project_notification_channels',
+        name: "Project Notification Channels Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "channels",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of notification channels per project",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Maximum number of alert routing rules at organization level */
+    'quota.routing_rules': {
+        key: 'quota.routing_rules',
+        name: "Routing Rules Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "rules",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of alert routing rules at organization level",
+        dependencies: ['alerting.routing.enabled'],
+    },
+    /** Maximum number of routing rules per project */
+    'quota.project_routing_rules': {
+        key: 'quota.project_routing_rules',
+        name: "Project Routing Rules Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'project',
+        unit: "rules",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of routing rules per project",
+        dependencies: ['alerting.routing.enabled'],
+    },
+    /** Maximum number of alert notifications sent per day */
+    'quota.daily_alerts': {
+        key: 'quota.daily_alerts',
+        name: "Daily Alert Notifications",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "notifications",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of alert notifications sent per day",
+        dependencies: ['alerting.enabled'],
+    },
+    /** Maximum number of alert notifications sent per month */
+    'quota.monthly_alerts': {
+        key: 'quota.monthly_alerts',
+        name: "Monthly Alert Notifications",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "notifications",
+        enforcementType: 'overage',
+        supportsUnlimited: true,
+        description: "Maximum number of alert notifications sent per month",
+        dependencies: ['alerting.enabled'],
+        overageRate: 10,
+        overageUnit: 100,
+        gracePercent: 5,
+    },
+    /** Maximum number of messages sent through integration connectors per month */
+    'quota.connector_sends': {
+        key: 'quota.connector_sends',
+        name: "Monthly Connector Sends",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "sends",
+        enforcementType: 'overage',
+        supportsUnlimited: true,
+        description: "Maximum number of messages sent through integration connectors per month",
+        overageRate: 25,
+        overageUnit: 100,
+        gracePercent: 5,
+    },
+    /** Automate workflows triggered by events, alerts, or schedules */
+    'automation.enabled': {
+        key: 'automation.enabled',
+        name: "Automation Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automate workflows triggered by events, alerts, or schedules",
+    },
+    /** Maximum number of automation rules */
+    'quota.automation_rules': {
+        key: 'quota.automation_rules',
+        name: "Automation Rules Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "rules",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of automation rules",
+        dependencies: ['automation.enabled'],
+    },
+    /** Create and share dashboards to visualize metrics and logs */
+    'dashboards.enabled': {
+        key: 'dashboards.enabled',
+        name: "Dashboards Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create and share dashboards to visualize metrics and logs",
+    },
+    /** Build fully custom dashboards with drag-and-drop widgets */
+    'dashboards.custom_dashboards': {
+        key: 'dashboards.custom_dashboards',
+        name: "Custom Dashboards",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Build fully custom dashboards with drag-and-drop widgets",
+        dependencies: ['dashboards.enabled'],
+    },
+    /** Create custom visualization widgets for dashboards */
+    'dashboards.custom_widgets': {
+        key: 'dashboards.custom_widgets',
+        name: "Custom Widgets",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create custom visualization widgets for dashboards",
+        dependencies: ['dashboards.custom_dashboards'],
+    },
+    /** Embed dashboards in external applications via iframe */
+    'dashboards.embeds': {
+        key: 'dashboards.embeds',
+        name: "Dashboard Embeds",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Embed dashboards in external applications via iframe",
+        dependencies: ['dashboards.custom_dashboards'],
+    },
+    /** Share dashboards via public read-only URLs without authentication */
+    'dashboards.public_links': {
+        key: 'dashboards.public_links',
+        name: "Public Dashboard Links",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Share dashboards via public read-only URLs without authentication",
+        dependencies: ['dashboards.custom_dashboards'],
+    },
+    /** Schedule automated dashboard report generation and delivery */
+    'dashboards.scheduled_reports': {
+        key: 'dashboards.scheduled_reports',
+        name: "Scheduled Reports",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Schedule automated dashboard report generation and delivery",
+        dependencies: ['dashboards.custom_dashboards'],
+    },
+    /** Maximum number of custom dashboards */
+    'quota.dashboards': {
+        key: 'quota.dashboards',
+        name: "Dashboards Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "dashboards",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of custom dashboards",
+        dependencies: ['dashboards.custom_dashboards'],
+    },
+    /** Maximum number of scheduled reports generated per month */
+    'quota.monthly_reports': {
+        key: 'quota.monthly_reports',
+        name: "Monthly Report Generation Limit",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "reports",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of scheduled reports generated per month",
+        dependencies: ['dashboards.scheduled_reports'],
+    },
+    /** Ad-hoc query interface for exploring events and logs */
+    'analytics.explorer': {
+        key: 'analytics.explorer',
+        name: "Analytics Explorer",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Ad-hoc query interface for exploring events and logs",
+    },
+    /** Visual query builder for complex analytics without writing code */
+    'analytics.query_builder': {
+        key: 'analytics.query_builder',
+        name: "Analytics Query Builder",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Visual query builder for complex analytics without writing code",
+        dependencies: ['analytics.explorer'],
+    },
+    /** AI-powered analysis and insights across your observability data */
+    'ai.enabled': {
+        key: 'ai.enabled',
+        name: "AI Insights Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "AI-powered analysis and insights across your observability data",
+    },
+    /** Auto-generate human-readable summaries of incidents and log patterns */
+    'ai.summaries': {
+        key: 'ai.summaries',
+        name: "AI Incident & Log Summaries",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Auto-generate human-readable summaries of incidents and log patterns",
+        dependencies: ['ai.enabled'],
+    },
+    /** AI-assisted identification of incident root causes across traces and logs */
+    'ai.root_cause_analysis': {
+        key: 'ai.root_cause_analysis',
+        name: "AI Root Cause Analysis",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "AI-assisted identification of incident root causes across traces and logs",
+        dependencies: ['ai.enabled', 'error_tracking.enabled', 'tracing.enabled'],
+    },
+    /** Automatically detect anomalous patterns in metrics and logs */
+    'ai.anomaly_detection': {
+        key: 'ai.anomaly_detection',
+        name: "AI Anomaly Detection",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automatically detect anomalous patterns in metrics and logs",
+        dependencies: ['ai.enabled', 'metrics.enabled'],
+    },
+    /** Predict future metric trends and capacity needs using historical data */
+    'ai.forecasting': {
+        key: 'ai.forecasting',
+        name: "AI Metric Forecasting",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Predict future metric trends and capacity needs using historical data",
+        dependencies: ['ai.enabled', 'metrics.enabled'],
+    },
+    /** Real-time AI assistant during incident response with suggested actions */
+    'ai.incident_copilot': {
+        key: 'ai.incident_copilot',
+        name: "AI Incident Copilot",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Real-time AI assistant during incident response with suggested actions",
+        dependencies: ['ai.enabled', 'alerting.enabled'],
+    },
+    /** Monthly quota of AI processing credits for insights, summaries, and analysis */
+    'quota.ai_credits': {
+        key: 'quota.ai_credits',
+        name: "Monthly AI Credits",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "credits",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Monthly quota of AI processing credits for insights, summaries, and analysis",
+        dependencies: ['ai.enabled'],
+    },
+    /** Connect external tools and services to your observability data */
+    'integrations.enabled': {
+        key: 'integrations.enabled',
+        name: "Integrations Platform",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Connect external tools and services to your observability data",
+    },
+    /** Full REST API access for programmatic data ingestion and querying */
+    'integrations.rest_api': {
+        key: 'integrations.rest_api',
+        name: "REST API Access",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Full REST API access for programmatic data ingestion and querying",
+    },
+    /** Maximum number of active connector instances */
+    'quota.connectors': {
+        key: 'quota.connectors',
+        name: "Connector Instances Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "connectors",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of active connector instances",
+        dependencies: ['integrations.enabled'],
+    },
+    /** Maximum number of third-party integrations configured */
+    'quota.integrations': {
+        key: 'quota.integrations',
+        name: "Integrations Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "integrations",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of third-party integrations configured",
+        dependencies: ['integrations.enabled'],
+    },
+    /** Send notifications and reports via email */
+    'integrations.email': {
+        key: 'integrations.email',
+        name: "Email Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send notifications and reports via email",
+    },
+    /** Send event data to custom HTTP endpoints */
+    'integrations.webhook': {
+        key: 'integrations.webhook',
+        name: "Webhook Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send event data to custom HTTP endpoints",
+    },
+    /** Send alerts and summaries to Slack channels */
+    'integrations.slack': {
+        key: 'integrations.slack',
+        name: "Slack Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send alerts and summaries to Slack channels",
+    },
+    /** Send alerts and summaries to Discord channels */
+    'integrations.discord': {
+        key: 'integrations.discord',
+        name: "Discord Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send alerts and summaries to Discord channels",
+    },
+    /** Send alerts and summaries to Microsoft Teams */
+    'integrations.microsoft_teams': {
+        key: 'integrations.microsoft_teams',
+        name: "Microsoft Teams Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send alerts and summaries to Microsoft Teams",
+    },
+    /** Trigger and manage PagerDuty incidents from alerts */
+    'integrations.pagerduty': {
+        key: 'integrations.pagerduty',
+        name: "PagerDuty Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Trigger and manage PagerDuty incidents from alerts",
+    },
+    /** Send critical alert notifications via SMS */
+    'integrations.sms': {
+        key: 'integrations.sms',
+        name: "SMS Connector",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Send critical alert notifications via SMS",
+    },
+    /** Link errors to GitHub issues and track code changes */
+    'integrations.github': {
+        key: 'integrations.github',
+        name: "GitHub Integration",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Link errors to GitHub issues and track code changes",
+    },
+    /** Link errors to GitLab issues and track merge requests */
+    'integrations.gitlab': {
+        key: 'integrations.gitlab',
+        name: "GitLab Integration",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Link errors to GitLab issues and track merge requests",
+    },
+    /** Link errors to Bitbucket issues and track commits */
+    'integrations.bitbucket': {
+        key: 'integrations.bitbucket',
+        name: "Bitbucket Integration",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Link errors to Bitbucket issues and track commits",
+    },
+    /** Create and update Jira tickets from alerts and incidents */
+    'integrations.jira': {
+        key: 'integrations.jira',
+        name: "Jira Integration",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Create and update Jira tickets from alerts and incidents",
+    },
+    /** Manage resources via official Terraform provider */
+    'integrations.terraform': {
+        key: 'integrations.terraform',
+        name: "Terraform Provider",
+        type: "boolean",
+        category: 'integration',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Manage resources via official Terraform provider",
+    },
+    /** Enterprise-grade security controls and compliance features */
+    'security.enabled': {
+        key: 'security.enabled',
+        name: "Enterprise Security",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Enterprise-grade security controls and compliance features",
+    },
+    /** Immutable audit logs of all administrative actions */
+    'security.audit_logs': {
+        key: 'security.audit_logs',
+        name: "Audit Logs",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Immutable audit logs of all administrative actions",
+        dependencies: ['security.enabled'],
+    },
+    /** Single sign-on via SAML 2.0 and OpenID Connect */
+    'security.sso': {
+        key: 'security.sso',
+        name: "SAML 2.0 & OIDC SSO",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Single sign-on via SAML 2.0 and OpenID Connect",
+        dependencies: ['security.enabled'],
+    },
+    /** Automated user provisioning and deprovisioning via SCIM */
+    'security.scim': {
+        key: 'security.scim',
+        name: "SCIM 2.0 User Provisioning",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Automated user provisioning and deprovisioning via SCIM",
+        dependencies: ['security.enabled', 'security.sso'],
+    },
+    /** Define custom role-based access control policies */
+    'security.custom_roles': {
+        key: 'security.custom_roles',
+        name: "Custom RBAC Roles",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Define custom role-based access control policies",
+        dependencies: ['security.enabled'],
+    },
+    /** Maximum number of API service accounts for automated access */
+    'quota.service_accounts': {
+        key: 'quota.service_accounts',
+        name: "Service Accounts Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "accounts",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of API service accounts for automated access",
+        dependencies: ['security.enabled'],
+    },
+    /** Maximum number of custom RBAC roles */
+    'quota.custom_roles': {
+        key: 'quota.custom_roles',
+        name: "Custom Roles Quota",
+        type: "integer",
+        category: 'quota',
+        scope: 'organization',
+        unit: "roles",
+        enforcementType: 'hard_limit',
+        supportsUnlimited: true,
+        description: "Maximum number of custom RBAC roles",
+        dependencies: ['security.custom_roles'],
+    },
+    /** Access to dedicated customer success manager and priority support queue */
+    'support.dedicated': {
+        key: 'support.dedicated',
+        name: "Dedicated Support",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Access to dedicated customer success manager and priority support queue",
+    },
+    /** Guaranteed response time for support tickets (e.g., 99.9% uptime SLA) */
+    'support.sla': {
+        key: 'support.sla',
+        name: "Support SLA",
+        type: "string",
+        category: 'feature',
+        scope: 'organization',
+        unit: "string",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Guaranteed response time for support tickets (e.g., 99.9% uptime SLA)",
+    },
+    /** On-premise, VPC, or private cloud deployment options */
+    'deployment.custom': {
+        key: 'deployment.custom',
+        name: "Custom Deployment",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "On-premise, VPC, or private cloud deployment options",
+    },
+    /** HIPAA-compliant data handling and Business Associate Agreement */
+    'compliance.hipaa': {
+        key: 'compliance.hipaa',
+        name: "HIPAA Compliance",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "HIPAA-compliant data handling and Business Associate Agreement",
+    },
+    /** Signed Data Processing Agreement for GDPR compliance */
+    'compliance.gdpr_dpa': {
+        key: 'compliance.gdpr_dpa',
+        name: "GDPR Data Processing Agreement",
+        type: "boolean",
+        category: 'feature',
+        scope: 'organization',
+        unit: "boolean",
+        enforcementType: 'none',
+        supportsUnlimited: false,
+        description: "Signed Data Processing Agreement for GDPR compliance",
+    },
+};
+export const CANONICAL_FEATURE_CATALOG = Object.values(FEATURE_REGISTRY);
+/**
+ * Helper to fetch a feature definition by key.
+ * Throws FeatureNotFoundError if key does not exist.
+ */
+export function getFeatureByKey(key) {
+    const feat = FEATURE_REGISTRY[key];
+    if (!feat) {
+        throw new FeatureNotFoundError(key);
+    }
+    return feat;
+}
+/**
+ * Helper to list all feature definitions belonging to a category.
+ */
+export function getFeaturesByCategory(category) {
+    return Object.values(FEATURE_REGISTRY).filter(f => f.category === category);
+}
+/**
+ * Helper to list all feature definitions belonging to a scope.
+ */
+export function getFeaturesByScope(scope) {
+    return Object.values(FEATURE_REGISTRY).filter(f => f.scope === scope);
+}
+//# sourceMappingURL=feature-registry.js.map

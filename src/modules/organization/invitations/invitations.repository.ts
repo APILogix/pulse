@@ -2,6 +2,7 @@ import { BaseRepository, cursorPage, pgErr } from "../shared/base.repository.js"
 import { NotFoundError, ConflictError } from "../shared/errors.js";
 import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 import type { OrgInvitationRow } from "./invitations.schema.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 
 export class InvitationsRepository extends BaseRepository {
   async createInvitation(orgId: string, invitedBy: string, email: string, role: string, tokenHash: string, expiresAt: Date): Promise<OrgInvitationRow> {
@@ -128,17 +129,18 @@ export class InvitationsRepository extends BaseRepository {
       const inv = invite.rows[0];
       if (!inv) throw new NotFoundError("Invitation");
 
-      if (maxActiveMembers !== null && Number.isFinite(maxActiveMembers)) {
-        const memberCount = await client.query<{ count: string }>(
-          `SELECT COUNT(*)
-           FROM organization_members
-           WHERE org_id = $1 AND status = 'active'`,
-          [inv.org_id]
-        );
-        if (Number(memberCount.rows[0]?.count ?? 0) >= maxActiveMembers) {
-          throw new ConflictError("Member limit exceeded for current billing plan");
-        }
-      }
+      await quotaGuard.assertCanCreate({
+        client,
+        organizationId: inv.org_id,
+        quotaKey: "quota.members",
+        fetchCurrentUsage: async (c) => {
+          const r = await c.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`,
+            [inv.org_id]
+          );
+          return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+        },
+      });
 
       await client.query(
         `UPDATE organization_invitations

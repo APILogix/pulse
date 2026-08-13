@@ -91,4 +91,26 @@ export class ConnectorGlobalGuards {
       [connectorId, 1, failureThreshold],
     );
   }
+
+  /**
+   * Periodically check open circuits whose reset window has passed and transition
+   * them to 'half_open' so idle connectors can recover without waiting for new traffic.
+   */
+  async probeOpenCircuits(resetSeconds: number): Promise<number> {
+    try {
+      const result = await this.db.query(
+        `UPDATE connector_circuit_state
+            SET state = 'half_open',
+                half_open_at = NOW(),
+                updated_at = NOW()
+          WHERE state = 'open'
+            AND opened_at <= NOW() - ($1::int * INTERVAL '1 second')
+          RETURNING connector_id`,
+        [resetSeconds],
+      );
+      return result.rowCount ?? 0;
+    } catch {
+      return 0;
+    }
+  }
 }

@@ -12,8 +12,18 @@ export class SettingsRepository {
     }
     async createDefault(projectId, organizationId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`INSERT INTO project_settings (project_id, organization_id)
-       VALUES ($1, $2)
+        const result = await db.query(`INSERT INTO project_settings (
+         project_id, organization_id, data_retention_days, sampling_rate, allowed_domains, blocked_domains,
+         pii_scrubbing_enabled, ip_collection_enabled, release_tracking_enabled, session_replay_enabled,
+         performance_monitoring_enabled, error_monitoring_enabled, log_ingestion_enabled, metric_ingestion_enabled,
+         trace_ingestion_enabled, profile_ingestion_enabled, version
+       )
+       VALUES (
+         $1, $2, 10, 1.00000, '{}'::text[], '{}'::text[],
+         true, true, true, false,
+         true, true, true, true,
+         true, true, 1
+       )
        ON CONFLICT (project_id) DO NOTHING
        RETURNING *`, [projectId, organizationId]);
         if (result.rows[0])

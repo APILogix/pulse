@@ -14,14 +14,17 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from '../repository.js';
+import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
 import { type CreateEscalationPolicyBody, type RequestMeta, type UpsertEscalationStepBody } from '../types.js';
 export interface AlertingServiceDeps {
     repository: AlertingRepository;
     logger: FastifyBaseLogger;
+    notificationEntitlement?: NotificationEntitlementService;
 }
 export declare class PoliciesService {
     private readonly repo;
     private readonly logger;
+    private readonly entitlement;
     constructor(deps: AlertingServiceDeps);
     createEscalationPolicy(orgId: string, meta: RequestMeta, body: CreateEscalationPolicyBody): Promise<Record<string, unknown>>;
     listEscalationPolicies(orgId: string, limit: number, offset: number): Promise<{
@@ -31,6 +34,7 @@ export declare class PoliciesService {
     getEscalationPolicy(orgId: string, id: string): Promise<Record<string, unknown>>;
     deleteEscalationPolicy(orgId: string, meta: RequestMeta, id: string): Promise<void>;
     upsertEscalationStep(orgId: string, meta: RequestMeta, policyId: string, body: UpsertEscalationStepBody): Promise<Record<string, unknown>>;
+    private assertConnectorConfigurationAllowed;
     private audit;
 }
 //# sourceMappingURL=policies.service.d.ts.map

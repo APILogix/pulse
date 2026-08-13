@@ -75,11 +75,9 @@ type ProjectRow = {
   slug: string;
   description: string | null;
   status: ProjectStatus;
-  visibility: string;
   timezone: string;
   tags: string[];
   icon: string | null;
-  color: string | null;
   metadata: Record<string, unknown> | null;
   archived_at: Date | null;
   deleted_at: Date | null;
@@ -467,9 +465,9 @@ export class ApiKeyRepository {
       `SELECT
          ${API_KEY_COLUMNS.split(",").map((column) => `k.${column.trim()}`).join(", ")},
          p.id AS p_id, p.org_id AS p_org_id, p.name AS p_name, p.slug AS p_slug,
-         p.description AS p_description, p.status AS p_status, p.visibility AS p_visibility,
-         p.timezone AS p_timezone, p.tags AS p_tags, p.icon AS p_icon, p.color AS p_color,
-         p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
+          p.description AS p_description, p.status AS p_status,
+          p.timezone AS p_timezone, p.tags AS p_tags, p.icon AS p_icon,
+          p.metadata AS p_metadata, p.archived_at AS p_archived_at, p.deleted_at AS p_deleted_at,
          p.deleted_by AS p_deleted_by, p.created_at AS p_created_at, p.updated_at AS p_updated_at,
          p.version AS p_version,
          e.name AS env_name, e.slug AS env_slug
@@ -561,11 +559,9 @@ export class ApiKeyRepository {
       slug: row.p_slug as string,
       description: row.p_description as string | null,
       status: row.p_status as ProjectStatus,
-      visibility: row.p_visibility as "public" | "private" | "organization",
       timezone: row.p_timezone as string,
       tags: row.p_tags as string[],
       icon: row.p_icon as string | null,
-      color: row.p_color as string | null,
       metadata: row.p_metadata as Record<string, unknown> | null,
       archived_at: row.p_archived_at as Date | null,
       deleted_at: row.p_deleted_at as Date | null,
@@ -585,11 +581,9 @@ export class ApiKeyRepository {
       slug: row.slug,
       description: row.description,
       status: row.status,
-      visibility: row.visibility as Project["visibility"],
       timezone: row.timezone,
       tags: row.tags ?? [],
       icon: row.icon,
-      color: row.color,
       metadata: row.metadata ?? {},
       archivedAt: row.archived_at,
       deletedAt: row.deleted_at,

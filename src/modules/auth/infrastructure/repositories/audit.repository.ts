@@ -15,6 +15,7 @@ import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import type { MFADevice, User, UserSession, UserStatus, MFAType } from '../../domain/types.js';
 import { toUser, type UserDbRow } from './user.repository.js';
+import { quotaGuard } from '../../../billing/entitlements/quota-guard.js';
 
 const repositoryLogger = logger.child({ component: 'auth-repository' });
 
@@ -376,6 +377,20 @@ export async function addOrgMemberSsoProvision(
   client?: PoolClient,
 ): Promise<void> {
   const db = client || pool;
+  if (client) {
+    await quotaGuard.assertCanCreate({
+      client,
+      organizationId: orgId,
+      quotaKey: "quota.members",
+      fetchCurrentUsage: async (c) => {
+        const r = await c.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`,
+          [orgId]
+        );
+        return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+      },
+    });
+  }
   await db.query(
     `INSERT INTO organization_members (
        org_id, user_id, role, status, joined_at, joined_method, last_active_at

@@ -13,8 +13,8 @@ export declare const UpdatePolicySubscriptionBodySchema: z.ZodObject<{
         muted: "muted";
         archived: "archived";
         paused: "paused";
-        subscribed: "subscribed";
         disabled: "disabled";
+        subscribed: "subscribed";
     }>;
 }, z.core.$strip>;
 export declare const UpdatePolicyOverrideBodySchema: z.ZodObject<{

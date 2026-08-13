@@ -76,6 +76,7 @@ import type {
   DeliveryResult,
   RemoteSdkConfigService,
 } from '../projects/sdk-config/sdk-config.service.js';
+import { entitlementsService } from '../billing/entitlements/service.js';
 
 const svcLogger = logger.child({ component: 'ingestion-service' });
 
@@ -228,6 +229,13 @@ export class IngestionService {
     // Warm provisioning at boot (pgboss.start() precedes module registration
     // in main.ts); the request path also awaits the same promise lazily.
     void ensureIngestQueuesProvisioned();
+
+    // Register with central entitlements invalidation event bus
+    entitlementsService.onOrgInvalidate((orgId) => this.invalidateOrgQuotaCache(orgId));
+  }
+
+  public invalidateOrgQuotaCache(orgId: string): void {
+    this.quotaCache.delete(orgId);
   }
 
   // ── Project resolution (LRU only; Postgres fallback) ──────────────────────
@@ -371,37 +379,20 @@ export class IngestionService {
     let entry = this.quotaCache.get(orgId);
     if (!entry || now - entry.at > this.quotaCacheTtlMs) {
       try {
-        const r = await this.pool.query<{
-          events_used: string;
-          integer_value: string | null;
-          usage_behavior: QuotaCacheEntry['usageBehavior'] | null;
-        }>(
-          `SELECT u.events_used, ee.integer_value, bf.usage_behavior
-             FROM organization_usage_current_period u
-             LEFT JOIN LATERAL (
-               SELECT *
-                 FROM v_effective_entitlements
-                WHERE organization_id = u.organization_id
-                  AND feature_key IN ('quota.monthly_events', 'monthly_events')
-                ORDER BY CASE feature_key WHEN 'quota.monthly_events' THEN 0 ELSE 1 END
-                LIMIT 1
-             ) ee ON TRUE
-             LEFT JOIN billing_features bf ON bf.feature_key = ee.feature_key
-            WHERE u.organization_id = $1`,
-          [orgId],
-        );
-        const row = r.rows[0];
-        entry = row && row.integer_value !== null
-          ? {
-              eventsUsed: Number(row.events_used) || 0,
-              eventLimit: Number(row.integer_value) || 0,
-              usageBehavior: row.usage_behavior ?? 'hard_limit',
-              at: now,
-            }
-          // A missing entitlement is a migration/legacy-data condition, not a
-          // zero quota. The worker-side authoritative consumption path remains
-          // responsible for explicit limits once the catalog is populated.
-          : { eventsUsed: 0, eventLimit: -1, usageBehavior: 'none', at: now };
+        const [eventLimit, usageResult] = await Promise.all([
+          entitlementsService.getEffectiveIntegerFeature(orgId, 'quota.monthly_events'),
+          this.pool.query<{ events_used: string }>(
+            `SELECT events_used FROM organization_usage_current_period WHERE organization_id = $1`,
+            [orgId],
+          ),
+        ]);
+        const eventsUsed = Number(usageResult.rows[0]?.events_used) || 0;
+        entry = {
+          eventsUsed,
+          eventLimit,
+          usageBehavior: 'hard_limit',
+          at: now,
+        };
         if (this.quotaCache.size >= QUOTA_CACHE_MAX_ENTRIES) {
           // Map iterates in insertion order: drop the oldest entry first.
           const oldest = this.quotaCache.keys().next();
@@ -409,7 +400,7 @@ export class IngestionService {
         }
         this.quotaCache.set(orgId, entry);
       } catch (err) {
-        svcLogger.debug({ err, orgId }, 'quota pre-check failed; allowing (fail-open)');
+        svcLogger.warn({ err, orgId }, 'Ingestion quota pre-check failed to resolve billing state; allowing batch under fail-open policy');
         return;
       }
     }

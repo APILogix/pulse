@@ -1,3 +1,5 @@
+import { type EntitlementsService } from "../../billing/entitlements/service.js";
+import { type QuotaGuard } from "../../billing/entitlements/quota-guard.js";
 import type { QuotasRepository } from "./quotas.repository.js";
 import type { RequestMeta, OrgMemberRow, OrgRole, OrganizationRow, CursorPaginationQuery } from "../types.js";
 import type { QuotaRequestStatus, BillingEntitlementsRow, OrganizationUsageCounts } from "./quotas.schema.js";
@@ -20,9 +22,13 @@ export interface QuotasServiceDependencies {
     audit: (meta: RequestMeta, data: Omit<CreateAuditLogRecord, "orgId" | "actorUserId" | "actorEmail" | "actorIp" | "actorUserAgent" | "actorSessionId" | "requestId" | "httpMethod" | "endpoint"> & {
         orgId: string;
     }) => Promise<void>;
+    entitlements?: EntitlementsService;
+    guard?: QuotaGuard;
 }
 export declare class QuotasService {
     private readonly deps;
+    private readonly entitlements;
+    private readonly guard;
     constructor(deps: QuotasServiceDependencies);
     limitFrom(entitlements: BillingEntitlementsRow, keys: string[], fallback?: number): number;
     featureAllowed(entitlements: BillingEntitlementsRow, keys: string[], fallback?: boolean): boolean;

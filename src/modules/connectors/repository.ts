@@ -24,7 +24,7 @@ export class ConnectorRepository {
   }
 
   // Core
-  async create(input: CreateConnectorInput) { return this.core.create(input); }
+  async create(input: CreateConnectorInput, client?: PoolClient) { return this.core.create(input, client); }
   async findById(organizationId: string, id: string) { return this.core.findById(organizationId, id); }
   async findByIdInternal(id: string) { return this.core.findByIdInternal(id); }
   async getByIds(ids: string[]) { return this.core.getByIds(ids); }

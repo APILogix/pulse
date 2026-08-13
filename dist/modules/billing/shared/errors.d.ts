@@ -20,5 +20,5 @@ export declare const BillingErrorCodes: {
     readonly INTERNAL_ERROR: "INTERNAL_ERROR";
     readonly UNAUTHORIZED: "UNAUTHORIZED";
 };
-export declare function handleBillingError(error: unknown, reply: any): any;
+export declare function handleBillingError(error: unknown, reply: any): import("fastify").FastifyReply<import("fastify").RouteGenericInterface, import("fastify").RawServerDefault, import("node:http").IncomingMessage, import("node:http").ServerResponse<import("node:http").IncomingMessage>, unknown, import("fastify").FastifySchema, import("fastify").FastifyTypeProviderDefault, unknown>;
 //# sourceMappingURL=errors.d.ts.map

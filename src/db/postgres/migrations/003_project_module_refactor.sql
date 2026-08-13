@@ -57,7 +57,6 @@ END $$;
 
 -- Remove heavy defaults/config from project creation. Keep only core identity.
 ALTER TABLE projects
-  ADD COLUMN IF NOT EXISTS visibility project_visibility NOT NULL DEFAULT 'private',
   ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS timezone VARCHAR(100) NOT NULL DEFAULT 'UTC',
@@ -225,6 +224,9 @@ CREATE INDEX IF NOT EXISTS idx_project_members_active
   WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_project_members_project_status
   ON project_members(project_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_members_single_active_owner
+  ON project_members(project_id)
+  WHERE role = 'owner' AND status = 'active';
 
 DROP TRIGGER IF EXISTS trg_project_members_updated_at ON project_members;
 CREATE TRIGGER trg_project_members_updated_at

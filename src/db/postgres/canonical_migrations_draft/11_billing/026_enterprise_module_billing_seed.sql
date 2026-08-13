@@ -91,7 +91,7 @@ CREATE TEMP TABLE tmp_enterprise_billing_feature_seed
     business_value  TEXT NOT NULL,
     enterprise_value TEXT NOT NULL,
     metadata        JSONB NOT NULL DEFAULT '{}'::jsonb
-) ON COMMIT DROP;
+) ON COMMIT PRESERVE ROWS;
 
 INSERT INTO tmp_enterprise_billing_feature_seed
     (feature_key, feature_name, description, category, value_type, module, is_module_root, sort_order,

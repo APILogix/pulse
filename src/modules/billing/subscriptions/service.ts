@@ -9,6 +9,7 @@ import {
   BillingInterval
 } from '../shared/types.js';
 import { syncOrganizationLookupToLogDbBestEffort } from '../../../shared/logdb/lookup-sync.js';
+import { entitlementsService } from '../entitlements/service.js';
 
 export class SubscriptionsService {
   constructor(
@@ -107,6 +108,7 @@ export class SubscriptionsService {
       return { success: true, data: sub };
     });
     syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.created');
+    entitlementsService.invalidateOrgCache(orgId);
     return result;
   }
 
@@ -158,6 +160,7 @@ export class SubscriptionsService {
       return { success: true, data: sub };
     });
     syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.plan_changed');
+    entitlementsService.invalidateOrgCache(orgId);
     return result;
   }
 
@@ -288,6 +291,7 @@ export class SubscriptionsService {
       return { success: true, data: sub };
     });
     syncOrganizationLookupToLogDbBestEffort(orgId, 'subscription.cancelled');
+    entitlementsService.invalidateOrgCache(orgId);
     return result;
   }
 }

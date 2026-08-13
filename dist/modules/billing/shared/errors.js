@@ -1,4 +1,4 @@
-// errors.ts - Shared Billing Errors
+import { errorResponse } from '../../../shared/http/response.js';
 export class BillingError extends Error {
     code;
     details;
@@ -30,24 +30,9 @@ export const BillingErrorCodes = {
 };
 export function handleBillingError(error, reply) {
     if (error instanceof BillingError) {
-        return reply.code(error.statusCode).send({
-            success: false,
-            error: {
-                code: error.code,
-                message: error.message,
-                details: error.details,
-            },
-        });
+        return errorResponse(reply, error.code, error.message, error.statusCode, error.details);
     }
-    // Handle Zod validation errors if needed, but usually Fastify handles them if schema is passed
-    // Or handle fastify errors
     console.error('[Billing Module Error]', error);
-    return reply.code(500).send({
-        success: false,
-        error: {
-            code: BillingErrorCodes.INTERNAL_ERROR,
-            message: 'An unexpected error occurred during the billing operation',
-        },
-    });
+    return errorResponse(reply, BillingErrorCodes.INTERNAL_ERROR, 'An unexpected error occurred during the billing operation', 500);
 }
 //# sourceMappingURL=errors.js.map

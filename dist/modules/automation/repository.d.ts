@@ -315,20 +315,17 @@ export declare class AutomationRepository {
      */
     verifyProjectOwnership(orgId: string, projectId: string, db?: Db): Promise<boolean>;
     /**
-     * Check boolean entitlement using canonical effective entitlements SQL
-     * (active/trialing/past_due + overrides + add-ons).
+     * Check boolean entitlement using canonical EntitlementsService.
      */
-    hasEntitlement(orgId: string, featureKey: string, db?: Db): Promise<boolean>;
+    hasEntitlement(orgId: string, featureKey: string, _db?: Db): Promise<boolean>;
     /**
-     * Get integer entitlement limit using canonical effective entitlements SQL.
+     * Get integer entitlement limit using canonical EntitlementsService.
      */
-    getWorkflowLimit(orgId: string, db?: Db): Promise<number>;
+    getWorkflowLimit(orgId: string, _db?: Db): Promise<number>;
     /**
-     * One-query batch entitlement lookup for a set of feature keys.
-     * Uses canonical EFFECTIVE_ENTITLEMENTS_SQL — no per-key N+1.
-     * Returns a Map of featureKey → boolean access.
+     * Batch entitlement lookup for a set of feature keys using canonical EntitlementsService.
      */
-    batchCheckEntitlements(orgId: string, featureKeys: string[], db?: Db): Promise<Map<string, boolean>>;
+    batchCheckEntitlements(orgId: string, featureKeys: string[], _db?: Db): Promise<Map<string, boolean>>;
     countOrgWorkflows(orgId: string, db?: Db): Promise<number>;
     listWorkflows(orgId: string, q: WorkflowListQuery, db?: Db): Promise<{
         data: WorkflowSummaryRow[];

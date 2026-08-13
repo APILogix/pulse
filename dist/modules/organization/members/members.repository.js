@@ -1,5 +1,6 @@
 import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { NotFoundError } from "../shared/errors.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 export class MembersRepository extends BaseRepository {
     async findActiveMember(orgId, userId) {
         const r = await this.db.query(`SELECT om.*, u.email, u.full_name, u.mfa_enabled
@@ -50,6 +51,15 @@ export class MembersRepository extends BaseRepository {
     }
     async addMember(orgId, userId, role, invitedBy, method) {
         return this.withTransaction(async (client) => {
+            await quotaGuard.assertCanCreate({
+                client,
+                organizationId: orgId,
+                quotaKey: "quota.members",
+                fetchCurrentUsage: async (c) => {
+                    const r = await c.query(`SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`, [orgId]);
+                    return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+                },
+            });
             await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,invited_by,invited_at,joined_at,joined_method)
          VALUES ($1,$2,$3,'active',$4,NOW(),NOW(),$5)
          ON CONFLICT (org_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',joined_at=NOW(),joined_method=EXCLUDED.joined_method`, [orgId, userId, role, invitedBy, method]);
@@ -67,9 +77,20 @@ export class MembersRepository extends BaseRepository {
             throw new NotFoundError("Member");
     }
     async reactivateMember(orgId, userId) {
-        const r = await this.db.query(`UPDATE organization_members SET status='active',deactivated_at=NULL,deactivated_by=NULL,deactivation_reason=NULL WHERE org_id=$1 AND user_id=$2 AND status IN ('suspended','removed')`, [orgId, userId]);
-        if (r.rowCount === 0)
-            throw new NotFoundError("Member");
+        await this.withTransaction(async (client) => {
+            await quotaGuard.assertCanCreate({
+                client,
+                organizationId: orgId,
+                quotaKey: "quota.members",
+                fetchCurrentUsage: async (c) => {
+                    const r = await c.query(`SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`, [orgId]);
+                    return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+                },
+            });
+            const r = await client.query(`UPDATE organization_members SET status='active',deactivated_at=NULL,deactivated_by=NULL,deactivation_reason=NULL WHERE org_id=$1 AND user_id=$2 AND status IN ('suspended','removed')`, [orgId, userId]);
+            if (r.rowCount === 0)
+                throw new NotFoundError("Member");
+        });
     }
     async updateMemberRole(orgId, userId, role) {
         const r = await this.db.query(`UPDATE organization_members SET role=$1 WHERE org_id=$2 AND user_id=$3 AND status='active'`, [role, orgId, userId]);

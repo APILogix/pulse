@@ -44,8 +44,6 @@ import {
   type UpdateRuleBody,
   type UpsertEscalationStepBody,
 } from '../types.js';
-import { pgboss } from '../../../lib/pgboss.js';
-import { ALERT_JOBS } from '../queue.js';
 
 export interface AlertingServiceDeps {
   repository: AlertingRepository;
@@ -171,11 +169,6 @@ export class EventsService {
       throw new AlertConflictError('Batch is no longer processing; automatic recovery owns it now');
     }
 
-    await pgboss.send(
-      ALERT_JOBS.processBatch,
-      { batchId: deadLetter.batch_id, organizationId: orgId },
-      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 7200 } as never,
-    );
     await this.repo.markDeadLetterRetried(id);
     this.audit(orgId, meta, 'alert_dead_letter.retried', 'alert_dead_letter', id, { batchId: deadLetter.batch_id });
     return { id, batchId: deadLetter.batch_id, retried: true };

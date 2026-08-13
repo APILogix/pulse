@@ -298,6 +298,14 @@ export class RulesRepository {
     return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
   }
 
+  async countProjectRules(organizationId: string, projectId: string): Promise<number> {
+    const res = await this.db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM alert_rules WHERE organization_id = $1 AND project_id = $2 AND deleted_at IS NULL`,
+      [organizationId, projectId],
+    );
+    return Number(res.rows[0]?.count ?? 0);
+  }
+
   /** Replace a rule's scalar fields and (optionally) its conditions/actions. */
   async updateRule(
     organizationId: string,

@@ -64,5 +64,24 @@ export class ConnectorGlobalGuards {
          opened_at = CASE WHEN connector_circuit_state.consecutive_failures + 1 >= $3 THEN NOW() ELSE connector_circuit_state.opened_at END,
          last_failure_at = NOW(), updated_at = NOW()`, [connectorId, 1, failureThreshold]);
     }
+    /**
+     * Periodically check open circuits whose reset window has passed and transition
+     * them to 'half_open' so idle connectors can recover without waiting for new traffic.
+     */
+    async probeOpenCircuits(resetSeconds) {
+        try {
+            const result = await this.db.query(`UPDATE connector_circuit_state
+            SET state = 'half_open',
+                half_open_at = NOW(),
+                updated_at = NOW()
+          WHERE state = 'open'
+            AND opened_at <= NOW() - ($1::int * INTERVAL '1 second')
+          RETURNING connector_id`, [resetSeconds]);
+            return result.rowCount ?? 0;
+        }
+        catch {
+            return 0;
+        }
+    }
 }
 //# sourceMappingURL=runtime-global-guards.js.map

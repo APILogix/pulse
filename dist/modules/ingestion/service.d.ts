@@ -35,6 +35,7 @@ export declare class IngestionService {
     private readonly quotaCache;
     private readonly quotaCacheTtlMs;
     constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig, sdkConfigService?: RemoteSdkConfigService | undefined);
+    invalidateOrgQuotaCache(orgId: string): void;
     private resolveProject;
     /** Cached queue-depth probe (refreshed at most every 1s). */
     private queueDepth;

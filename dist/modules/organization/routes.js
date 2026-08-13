@@ -6,6 +6,8 @@ import { AcceptInvitationSchema, AuditLogQuerySchema, BillingSummaryResponseSche
 import { registerDomainRoutes } from './domains/domains.routes.js';
 import { registerSdkConfigRoutes } from './sdk-config/sdk-config.routes.js';
 function handleOrganizationError(error, reply) {
+    if (reply.sent)
+        return reply;
     console.log('[organization.handleError]', error);
     if (error instanceof OrganizationError) {
         return reply.code(error.statusCode).send({ success: false, error: { code: error.code, message: error.message } });
@@ -15,6 +17,8 @@ function handleOrganizationError(error, reply) {
 function withErrorHandling(handler) {
     return async (request, reply) => {
         try {
+            if (reply.sent)
+                return reply;
             return await handler(request, reply);
         }
         catch (error) {
@@ -22,7 +26,13 @@ function withErrorHandling(handler) {
         }
     };
 }
-function asAuth(request) { return request; }
+function asAuth(request) {
+    const user = request.user;
+    if (!user?.id) {
+        throw new OrganizationError('Authentication required', 'UNAUTHORIZED', 401);
+    }
+    return request;
+}
 function buildMeta(request) {
     const user = asAuth(request).user;
     return {

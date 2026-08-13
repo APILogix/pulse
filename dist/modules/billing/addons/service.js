@@ -1,5 +1,6 @@
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
 import { AddonsRepository } from './repository.js';
+import { entitlementsService } from '../entitlements/service.js';
 export class AddonsService {
     repository;
     constructor(repository) {
@@ -14,7 +15,7 @@ export class AddonsService {
         return { success: true, data: await this.repository.listSubscriptionAddons(orgId) };
     }
     async subscribeAddon(orgId, body) {
-        return this.repository.withTransaction(async (client) => {
+        const result = await this.repository.withTransaction(async (client) => {
             const subscription = await this.repository.getActiveSubscription(orgId, client);
             if (!subscription) {
                 throw new BillingError('No active subscription found', BillingErrorCodes.SUBSCRIPTION_NOT_FOUND, 404);
@@ -32,12 +33,15 @@ export class AddonsService {
             }
             return { success: true, data: row };
         });
+        entitlementsService.invalidateOrgCache(orgId);
+        return result;
     }
     async cancelSubscriptionAddon(orgId, subscriptionAddonId) {
         const row = await this.repository.cancelSubscriptionAddon(orgId, subscriptionAddonId);
         if (!row) {
             throw new BillingError('Subscription add-on not found', BillingErrorCodes.ADDON_NOT_FOUND, 404);
         }
+        entitlementsService.invalidateOrgCache(orgId);
         return { success: true, data: row };
     }
 }

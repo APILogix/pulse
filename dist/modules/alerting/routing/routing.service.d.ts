@@ -14,19 +14,23 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from '../repository.js';
+import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
 import { type CreateRoutingRuleBody, type RequestMeta, type TestRoutingBody } from '../types.js';
 export interface AlertingServiceDeps {
     repository: AlertingRepository;
     logger: FastifyBaseLogger;
+    notificationEntitlement?: NotificationEntitlementService;
 }
 export declare class RoutingService {
     private readonly repo;
     private readonly logger;
+    private readonly entitlement;
     constructor(deps: AlertingServiceDeps);
     createRoutingRule(orgId: string, meta: RequestMeta, body: CreateRoutingRuleBody): Promise<Record<string, unknown>>;
     listRoutingRules(orgId: string): Promise<Record<string, unknown>[]>;
     deleteRoutingRule(orgId: string, meta: RequestMeta, id: string): Promise<void>;
     testRouting(orgId: string, body: TestRoutingBody): Promise<Record<string, unknown>>;
+    private assertConnectorConfigurationAllowed;
     private audit;
 }
 //# sourceMappingURL=routing.service.d.ts.map

@@ -1,5 +1,9 @@
 import { ProjectMemberRole } from "../../types.js";
 import { ProjectError } from "../../shared/utils.js";
+import { CONNECTOR_FEATURE_KEYS, NotificationEntitlementService, } from "../../../alerting/runtime/notification-entitlement.service.js";
+import { ConnectorEntitlementDeniedError, ConnectorEntitlementUnknownError, } from "../../../connectors/core/connector.types.js";
+import { entitlementsService } from "../../../billing/entitlements/service.js";
+import { quotaGuard } from "../../../billing/entitlements/quota-guard.js";
 import { AlertChannelRepository } from "./channel.repository.js";
 const URL_LIKE_VALUE = /(?:[a-z][a-z0-9+.-]*:\/\/|www\.|(?:^|[\s"'(])(?:localhost|(?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#:]|$))/i;
 export function containsUrlLikeValue(value) {
@@ -16,10 +20,12 @@ export class ProjectAlertChannelService {
     repository;
     projectsService;
     logger;
-    constructor(repository, projectsService, logger) {
+    entitlement;
+    constructor(repository, projectsService, logger, entitlement = new NotificationEntitlementService()) {
         this.repository = repository;
         this.projectsService = projectsService;
         this.logger = logger;
+        this.entitlement = entitlement;
     }
     async list(orgId, projectId, userId, query) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
@@ -35,10 +41,28 @@ export class ProjectAlertChannelService {
     }
     async create(orgId, projectId, userId, body, meta) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+        await entitlementsService.assertFeatureEnabled(orgId, 'alerting.enabled');
+        const [activeChannelsCount, limit] = await Promise.all([
+            this.repository.countByOrganization(orgId),
+            entitlementsService.getEffectiveIntegerFeature(orgId, 'quota.alert_channels'),
+        ]);
+        if (limit !== -1 && limit > 0 && activeChannelsCount >= limit) {
+            throw new ProjectError("ALERT_CHANNEL_LIMIT_EXCEEDED", `Alert channel limit exceeded for this organization (limit: ${limit}, current: ${activeChannelsCount})`, 403);
+        }
         const channel = await this.repository.withTransaction(async (client) => {
+            await quotaGuard.assertCanCreate({
+                client,
+                organizationId: orgId,
+                quotaKey: 'quota.alert_channels',
+                fetchCurrentUsage: async (c) => {
+                    const r = await c.query(`SELECT COUNT(*)::text AS count FROM project_alert_channels WHERE organization_id = $1 AND is_enabled = TRUE`, [orgId]);
+                    return parseInt(r.rows[0]?.count ?? '0', 10);
+                },
+            });
             const connector = body.connectorId
                 ? await this.repository.requireActiveConnector(orgId, body.connectorId, client)
                 : null;
+            await this.assertConnectorConfigurationAllowed(orgId, connector?.provider ?? null);
             this.assertSafeWebhookConfiguration(connector?.provider ?? null, body.channelType, body.destination ?? null, body.destinationMetadata);
             await this.repository.lockDefaultGroups(projectId, [body.channelType], client);
             const hasDefault = await this.repository.hasEnabledDefault(projectId, body.channelType, client);
@@ -68,6 +92,7 @@ export class ProjectAlertChannelService {
             const connector = connectorId
                 ? await this.repository.requireActiveConnector(orgId, connectorId, client)
                 : null;
+            await this.assertConnectorConfigurationAllowed(orgId, connector?.provider ?? null);
             const destination = body.destination !== undefined ? body.destination : existing.destination;
             const metadata = body.destinationMetadata ?? existing.destinationMetadata;
             const nextType = body.channelType ?? existing.channelType;
@@ -169,6 +194,18 @@ export class ProjectAlertChannelService {
         }
         if (containsUrlLikeValue(metadata)) {
             throw new ProjectError("ALERT_CHANNEL_WEBHOOK_SECRET_FORBIDDEN", "Webhook destination metadata cannot contain URL-like values", 422);
+        }
+    }
+    async assertConnectorConfigurationAllowed(orgId, connectorProvider) {
+        if (!connectorProvider)
+            return;
+        const decision = await this.entitlement.resolve(orgId);
+        const provider = connectorProvider.toLowerCase();
+        if (decision.reason === 'ENTITLEMENT_UNKNOWN')
+            throw new ConnectorEntitlementUnknownError();
+        if (!decision.connectorAccess || !decision.isProviderAllowed(provider, true)) {
+            const featureKey = CONNECTOR_FEATURE_KEYS[provider] ?? 'alerting.enabled';
+            throw new ConnectorEntitlementDeniedError(featureKey);
         }
     }
     async audit(meta, orgId, projectId, action, channel, newValues) {

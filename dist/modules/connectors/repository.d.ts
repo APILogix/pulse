@@ -14,7 +14,7 @@ export declare class ConnectorRepository {
     private readonly audit;
     private readonly routes;
     withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T>;
-    create(input: CreateConnectorInput): Promise<ConnectorConfigRow>;
+    create(input: CreateConnectorInput, client?: PoolClient): Promise<ConnectorConfigRow>;
     findById(organizationId: string, id: string): Promise<ConnectorConfigRow | null>;
     findByIdInternal(id: string): Promise<ConnectorConfigRow | null>;
     getByIds(ids: string[]): Promise<ConnectorConfigRow[]>;

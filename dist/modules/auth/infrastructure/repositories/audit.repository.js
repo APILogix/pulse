@@ -1,6 +1,7 @@
 import { pool } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import { toUser } from './user.repository.js';
+import { quotaGuard } from '../../../billing/entitlements/quota-guard.js';
 const repositoryLogger = logger.child({ component: 'auth-repository' });
 const MFA_DEVICE_SELECT = `
   id,
@@ -206,6 +207,17 @@ export async function createSsoJitUser(data, client) {
 }
 export async function addOrgMemberSsoProvision(orgId, userId, role, client) {
     const db = client || pool;
+    if (client) {
+        await quotaGuard.assertCanCreate({
+            client,
+            organizationId: orgId,
+            quotaKey: "quota.members",
+            fetchCurrentUsage: async (c) => {
+                const r = await c.query(`SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`, [orgId]);
+                return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+            },
+        });
+    }
     await db.query(`INSERT INTO organization_members (
        org_id, user_id, role, status, joined_at, joined_method, last_active_at
      ) VALUES ($1, $2, $3, 'active', NOW(), 'sso_auto_provision', NOW())

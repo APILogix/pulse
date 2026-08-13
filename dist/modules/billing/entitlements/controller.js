@@ -6,13 +6,15 @@ export class EntitlementsController {
     constructor(service) {
         this.service = service;
     }
-    getOrgId(req) {
-        return req.user?.currentOrgId || req.user?.orgId;
+    getOrgId(req, request) {
+        const header = request.headers['x-org-id'] || request.headers['X-Org-Id'];
+        const headerOrgId = Array.isArray(header) ? header[0] : header;
+        return headerOrgId || req.user?.currentOrgId || req.user?.orgId;
     }
     getAllEntitlements = async (request, reply) => {
         const req = request;
         try {
-            const orgId = this.getOrgId(req);
+            const orgId = this.getOrgId(req, request);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const result = await this.service.getAllEntitlements(orgId);
@@ -25,7 +27,7 @@ export class EntitlementsController {
     checkFeatureAccess = async (request, reply) => {
         const req = request;
         try {
-            const orgId = this.getOrgId(req);
+            const orgId = this.getOrgId(req, request);
             if (!orgId)
                 throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
             const body = CheckFeatureAccessSchema.parse(req.body);

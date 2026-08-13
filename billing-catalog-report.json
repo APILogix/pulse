@@ -1,0 +1,24 @@
+{
+  "timestamp": "2026-08-12T15:14:58.414Z",
+  "totalPlans": 5,
+  "totalFeatures": 87,
+  "totalEntitlementsChecked": 435,
+  "supportedConnectorsCount": 7,
+  "supportedConnectors": [
+    "slack",
+    "discord",
+    "microsoft_teams",
+    "pagerduty",
+    "webhook",
+    "email",
+    "sms"
+  ],
+  "issues": [],
+  "isValid": true,
+  "summary": {
+    "errorsCount": 0,
+    "warningsCount": 0,
+    "monotonicityPassed": true,
+    "matrixCompletenessPercent": 100
+  }
+}

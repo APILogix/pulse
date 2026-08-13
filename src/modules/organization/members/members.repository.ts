@@ -2,6 +2,7 @@ import { BaseRepository, cursorPage } from "../shared/base.repository.js";
 import { NotFoundError } from "../shared/errors.js";
 import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/types.js";
 import type { OrgMemberRow } from "./members.schema.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 
 export class MembersRepository extends BaseRepository {
   async findActiveMember(orgId: string, userId: string): Promise<OrgMemberRow | null> {
@@ -62,6 +63,19 @@ export class MembersRepository extends BaseRepository {
 
   async addMember(orgId: string, userId: string, role: string, invitedBy: string, method: string): Promise<OrgMemberRow> {
     return this.withTransaction(async (client) => {
+      await quotaGuard.assertCanCreate({
+        client,
+        organizationId: orgId,
+        quotaKey: "quota.members",
+        fetchCurrentUsage: async (c) => {
+          const r = await c.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`,
+            [orgId]
+          );
+          return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+        },
+      });
+
       await client.query(
         `INSERT INTO organization_members (org_id,user_id,role,status,invited_by,invited_at,joined_at,joined_method)
          VALUES ($1,$2,$3,'active',$4,NOW(),NOW(),$5)
@@ -89,11 +103,26 @@ export class MembersRepository extends BaseRepository {
   }
 
   async reactivateMember(orgId: string, userId: string): Promise<void> {
-    const r = await this.db.query(
-      `UPDATE organization_members SET status='active',deactivated_at=NULL,deactivated_by=NULL,deactivation_reason=NULL WHERE org_id=$1 AND user_id=$2 AND status IN ('suspended','removed')`,
-      [orgId, userId]
-    );
-    if (r.rowCount === 0) throw new NotFoundError("Member");
+    await this.withTransaction(async (client) => {
+      await quotaGuard.assertCanCreate({
+        client,
+        organizationId: orgId,
+        quotaKey: "quota.members",
+        fetchCurrentUsage: async (c) => {
+          const r = await c.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM organization_members WHERE org_id = $1 AND status = 'active'`,
+            [orgId]
+          );
+          return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+        },
+      });
+
+      const r = await client.query(
+        `UPDATE organization_members SET status='active',deactivated_at=NULL,deactivated_by=NULL,deactivation_reason=NULL WHERE org_id=$1 AND user_id=$2 AND status IN ('suspended','removed')`,
+        [orgId, userId]
+      );
+      if (r.rowCount === 0) throw new NotFoundError("Member");
+    });
   }
 
   async updateMemberRole(orgId: string, userId: string, role: string): Promise<void> {

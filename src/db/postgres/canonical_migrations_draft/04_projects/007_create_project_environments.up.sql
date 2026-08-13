@@ -72,7 +72,7 @@ UPDATE project_settings SET
   version = COALESCE(project_settings.version, 1)
 FROM projects p WHERE p.id = project_settings.project_id;
 ALTER TABLE project_settings
-  ALTER COLUMN data_retention_days SET DEFAULT 30, ALTER COLUMN data_retention_days SET NOT NULL,
+  ALTER COLUMN data_retention_days SET DEFAULT 10, ALTER COLUMN data_retention_days SET NOT NULL,
   ALTER COLUMN sampling_rate SET DEFAULT 1, ALTER COLUMN sampling_rate SET NOT NULL,
   ALTER COLUMN allowed_domains SET DEFAULT '{}'::text[], ALTER COLUMN allowed_domains SET NOT NULL,
   ALTER COLUMN blocked_domains SET DEFAULT '{}'::text[], ALTER COLUMN blocked_domains SET NOT NULL,

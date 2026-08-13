@@ -1,12 +1,6 @@
 import { z } from "zod";
 import type { ProjectSettings } from "../settings/settings.types.js";
 import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../usage/usage.types.js";
-export declare const ProjectVisibilitySchema: z.ZodEnum<{
-    public: "public";
-    private: "private";
-    organization: "organization";
-}>;
-export type ProjectVisibility = z.infer<typeof ProjectVisibilitySchema>;
 export declare const ProjectStatusSchema: z.ZodEnum<{
     active: "active";
     archived: "archived";
@@ -47,11 +41,6 @@ export type ListProjectsQuery = z.infer<typeof ListProjectsQuerySchema>;
 export declare const CreateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     name: z.ZodString;
     description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    visibility: z.ZodDefault<z.ZodEnum<{
-        public: "public";
-        private: "private";
-        organization: "organization";
-    }>>;
     status: z.ZodDefault<z.ZodEnum<{
         active: "active";
         archived: "archived";
@@ -60,7 +49,6 @@ export declare const CreateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
     timezone: z.ZodDefault<z.ZodString>;
     tags: z.ZodOptional<z.ZodArray<z.ZodString>>;
     icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
 }, z.core.$strip>>;
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
@@ -72,15 +60,9 @@ export declare const UpdateProjectBodySchema: z.ZodPipe<z.ZodTransform<unknown, 
         archived: "archived";
         paused: "paused";
     }>>;
-    visibility: z.ZodOptional<z.ZodEnum<{
-        public: "public";
-        private: "private";
-        organization: "organization";
-    }>>;
     timezone: z.ZodOptional<z.ZodString>;
     tags: z.ZodOptional<z.ZodArray<z.ZodString>>;
     icon: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    color: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     version: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>>;
@@ -94,11 +76,9 @@ export interface Project {
     slug: string;
     description: string | null;
     status: ProjectStatus;
-    visibility: ProjectVisibility;
     timezone: string;
     tags: string[];
     icon: string | null;
-    color: string | null;
     metadata: Record<string, unknown>;
     archivedAt: Date | null;
     deletedAt: Date | null;
@@ -161,11 +141,9 @@ export interface ProjectUpdateInput {
     name?: string;
     description?: string | null;
     status?: ProjectStatus;
-    visibility?: ProjectVisibility;
     timezone?: string;
     tags?: string[];
     icon?: string | null;
-    color?: string | null;
     metadata?: Record<string, unknown>;
     archivedAt?: Date | null;
     version?: number;

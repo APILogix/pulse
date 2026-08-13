@@ -6,6 +6,7 @@ import { PoliciesService } from './policies/policies.service.js';
 import { TemplatesService } from './templates/templates.service.js';
 import { RoutingService } from './routing/routing.service.js';
 import { MetricsService } from './metrics/metrics.service.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 export * from './rules/rules.service.js';
 export * from './events/events.service.js';
 export * from './silences/silences.service.js';

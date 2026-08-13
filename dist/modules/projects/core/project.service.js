@@ -1,6 +1,8 @@
 import { apiKeyCache } from "../../../config/lrucashe.js";
 import { ProjectMemberRole } from "../types.js";
 import { AlertCategorySchema } from "../alerts/subscriptions/connector-subscription.types.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
+import { entitlementsService } from "../../billing/entitlements/service.js";
 import { ProjectsRepository } from "../repository.js";
 import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "../api-keys/api-key.repository.js";
@@ -56,17 +58,27 @@ export class ProjectService extends BaseProjectService {
         const slug = await this.generateUniqueSlug(orgId, body.name);
         const keyMaterial = createApiKey(DEFAULT_PRODUCTION_ENVIRONMENT.slug);
         const result = await this.repository.withTransaction(async (client) => {
+            const sub = await entitlementsService.getSubscriptionState(orgId);
+            if (sub) {
+                await quotaGuard.assertCanCreate({
+                    client,
+                    organizationId: orgId,
+                    quotaKey: "quota.projects",
+                    fetchCurrentUsage: async (c) => {
+                        const r = await c.query(`SELECT COUNT(*)::text AS count FROM projects WHERE org_id = $1 AND deleted_at IS NULL`, [orgId]);
+                        return parseInt(r?.rows?.[0]?.count ?? "0", 10);
+                    },
+                });
+            }
             const project = await this.repository.createProject({
                 orgId,
                 name: body.name,
                 slug,
                 description: body.description ?? null,
-                visibility: body.visibility ?? "private",
                 status: body.status ?? "active",
                 timezone: body.timezone ?? "UTC",
                 tags: body.tags ?? [],
                 icon: body.icon ?? null,
-                color: body.color ?? null,
                 metadata: body.metadata ?? {},
                 createdBy: userId,
             }, client);
@@ -117,7 +129,6 @@ export class ProjectService extends BaseProjectService {
             newValues: {
                 name: result.project.name,
                 slug: result.project.slug,
-                visibility: result.project.visibility,
                 environmentId: result.environment.id,
                 apiKeyId: result.apiKey.id,
             },
@@ -205,16 +216,12 @@ export class ProjectService extends BaseProjectService {
             updates.status = body.status;
             updates.archivedAt = body.status === "archived" ? new Date() : null;
         }
-        if (body.visibility !== undefined)
-            updates.visibility = body.visibility;
         if (body.timezone !== undefined)
             updates.timezone = body.timezone;
         if (body.tags !== undefined)
             updates.tags = body.tags;
         if (body.icon !== undefined)
             updates.icon = body.icon;
-        if (body.color !== undefined)
-            updates.color = body.color;
         if (body.metadata !== undefined)
             updates.metadata = body.metadata;
         if (body.version !== undefined)

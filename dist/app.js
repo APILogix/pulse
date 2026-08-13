@@ -34,27 +34,15 @@ import { registerErrorsModule } from './modules/errors/errors.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
 function buildCorsOrigin() {
-    // Prod and non-prod use the same explicit allowlist. Reflecting any origin
-    // with credentials=true (the previous dev behavior) lets a malicious local
-    // page exfiltrate the refresh cookie. We default to localhost dev origins
-    // when ALLOWED_ORIGINS is unset so engineers do not need to duplicate the
-    // list in their .env.
     const allowed = env.ALLOWED_ORIGINS
-        ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+        ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean)
         : [];
     if (env.FRONTEND_URL)
-        allowed.push(env.FRONTEND_URL);
+        allowed.push(env.FRONTEND_URL.replace(/\/+$/, ''));
     if (env.APP_URL)
-        allowed.push(env.APP_URL);
-    if (env.NODE_ENV !== 'production' && allowed.length === 0) {
-        return [
-            'http://localhost:3000',
-            'http://localhost:4000',
-            'http://localhost:5173',
-            'http://localhost:5173',
-            'http://127.0.0.1:3000',
-            'http://127.0.0.1:5173',
-        ];
+        allowed.push(env.APP_URL.replace(/\/+$/, ''));
+    if (env.NODE_ENV !== 'production') {
+        return true;
     }
     return allowed.length > 0 ? allowed : false;
 }
@@ -123,7 +111,28 @@ export async function buildApp() {
         origin: buildCorsOrigin(),
         credentials: true,
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Request-ID', 'X-Org-Id', 'x-org-id', 'X-CSRF-Request', 'Idempotency-Key', 'X-Idempotency-Key'],
+        allowedHeaders: [
+            'Content-Type',
+            'Authorization',
+            'X-API-Key',
+            'x-api-key',
+            'X-Request-ID',
+            'x-request-id',
+            'X-Org-Id',
+            'x-org-id',
+            'X-Organization-Id',
+            'x-organization-id',
+            'X-Project-Id',
+            'x-project-id',
+            'X-Environment-Id',
+            'x-environment-id',
+            'X-CSRF-Request',
+            'x-csrf-request',
+            'X-CSRF-Token',
+            'x-csrf-token',
+            'Idempotency-Key',
+            'X-Idempotency-Key',
+        ],
         exposedHeaders: ['X-Request-ID', 'ETag', 'X-Config-Revision'],
     });
     await app.register(compress, {
@@ -190,10 +199,52 @@ export async function buildApp() {
     });
     app.addHook('onResponse', async (request, reply) => {
         const duration = Date.now() - request.startTime;
-        // const logLevel = reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'debug';
         appLogger["debug"]({
             durationMs: duration,
         });
+    });
+    // ── Global API Response Contract Enforcement Hook ──────────────────
+    app.addHook('onSend', async (request, reply, payload) => {
+        if (!payload || typeof payload !== 'string')
+            return payload;
+        const contentType = reply.getHeader('content-type')?.toString() || '';
+        if (contentType && !contentType.includes('application/json'))
+            return payload;
+        try {
+            const parsed = JSON.parse(payload);
+            if (typeof parsed !== 'object' || parsed === null)
+                return payload;
+            const requestId = request.id || reply.getHeader('x-request-id') || 'req_unknown';
+            // If already has canonical envelope fields, skip
+            if ('success' in parsed && 'requestId' in parsed) {
+                return payload;
+            }
+            if (reply.statusCode >= 400 || 'error' in parsed) {
+                const canonicalError = {
+                    success: false,
+                    data: null,
+                    error: parsed.error ?? {
+                        code: reply.statusCode === 404 ? 'NOT_FOUND' : 'API_ERROR',
+                        message: parsed.message || 'Request failed',
+                        details: parsed.details ?? null,
+                    },
+                    meta: parsed.meta ?? null,
+                    requestId,
+                };
+                return JSON.stringify(canonicalError);
+            }
+            const canonicalSuccess = {
+                success: true,
+                data: parsed.data !== undefined ? parsed.data : parsed,
+                message: parsed.message ?? null,
+                meta: parsed.meta ?? null,
+                requestId,
+            };
+            return JSON.stringify(canonicalSuccess);
+        }
+        catch {
+            return payload;
+        }
     });
     // ── Global Error Handler ───────────────────────────────────────────
     app.setErrorHandler(errorHandler);

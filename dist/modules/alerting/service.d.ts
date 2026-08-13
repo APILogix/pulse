@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { AlertingRepository } from './repository.js';
 import { type CreateRuleTemplateOverrides } from './rules/rules.service.js';
 import type { RequestMeta } from './types.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 import type { CreateRuleBody, ListRulesQuery, UpdateRuleBody, TestRuleBody, IngestEventBody, ListEventsQuery, ListDeadLettersQuery, AcknowledgeEventBody, ResolveEventBody, CreateSilenceBody, CreateEscalationPolicyBody, UpsertEscalationStepBody, CreateTemplateBody, CreateRoutingRuleBody, TestRoutingBody, MetricsQuery } from "./types.js";
 export * from './rules/rules.service.js';
 export * from './events/events.service.js';
@@ -13,6 +14,7 @@ export * from './metrics/metrics.service.js';
 export interface AlertingServiceDeps {
     repository: AlertingRepository;
     logger: FastifyBaseLogger;
+    notificationEntitlement?: NotificationEntitlementService;
 }
 export declare class AlertingService {
     private readonly rules;

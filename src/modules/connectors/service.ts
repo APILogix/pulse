@@ -14,6 +14,7 @@ import { createHash, randomBytes } from 'crypto';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { EntitlementsRepository } from '../billing/entitlements/repository.js';
+import { quotaGuard } from '../billing/entitlements/quota-guard.js';
 import {
   CONNECTOR_FEATURE_KEYS,
   NotificationEntitlementService,
@@ -121,21 +122,28 @@ export class ConnectorService {
     await this.assertSafeUrls(body.type, normalized);
     const capabilities = getTypeCapabilities(body.type);
 
-    const row = await this.repository.create({
-      organizationId: orgId,
-      name: body.name,
-      type: body.type,
-      description: body.description ?? null,
-      encryptedConfig: encryptConfig(normalized),
-      displayConfig: body.displayConfig ?? {},
-      capabilities,
-      rateLimitRequests: body.rateLimitRequests ?? 60,
-      rateLimitWindowSeconds: body.rateLimitWindowSeconds ?? 60,
-      maxRetries: body.maxRetries ?? 3,
-      failureThreshold: body.failureThreshold ?? 5,
-      metadata: body.metadata ?? {},
-      createdBy: meta.actorUserId,
-    });
+    const runCreate = async (client?: any) => {
+      const input = {
+        organizationId: orgId,
+        name: body.name,
+        type: body.type,
+        description: body.description ?? null,
+        encryptedConfig: encryptConfig(normalized),
+        displayConfig: body.displayConfig ?? {},
+        capabilities,
+        rateLimitRequests: body.rateLimitRequests ?? 60,
+        rateLimitWindowSeconds: body.rateLimitWindowSeconds ?? 60,
+        maxRetries: body.maxRetries ?? 3,
+        failureThreshold: body.failureThreshold ?? 5,
+        metadata: body.metadata ?? {},
+        createdBy: meta.actorUserId,
+      };
+      return client ? this.repository.create(input, client) : this.repository.create(input);
+    };
+
+    const row = this.repository?.withTransaction
+      ? await this.repository.withTransaction(runCreate)
+      : await runCreate();
 
     await this.audit(orgId, row.id, 'created', meta, { type: body.type, name: body.name });
     const testJobId = await this.enqueueConnectorTestIfAvailable(orgId, row.id);
@@ -601,13 +609,12 @@ export class ConnectorService {
 
   private async assertConnectorEntitled(orgId: string, type: ConnectorType): Promise<void> {
     const featureKey = CONNECTOR_TYPE_FEATURE_KEYS[type];
-    const [moduleEnabled, providerEnabled, connectorLimit, integrationLimit, used] = await Promise.all([
+    const [moduleEnabled, providerEnabled, connectorLimit, used] = (await Promise.all([
       this.entitlements.hasFeature(orgId, 'alerting.enabled'),
       this.entitlements.hasFeature(orgId, featureKey),
       this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.connectors'),
-      this.entitlements.getEffectiveIntegerFeature(orgId, 'quota.integrations'),
       this.repository.countActiveConnectors(orgId),
-    ]);
+    ])) as [boolean, boolean, number, number];
 
     if (!moduleEnabled) {
       throw new ConnectorError('Alerting and notification integrations are not enabled for this organization', 'CONNECTOR_ENTITLEMENT_DENIED', 403, {
@@ -620,10 +627,10 @@ export class ConnectorService {
       });
     }
 
-    const effectiveLimit = connectorLimit > 0 ? connectorLimit : integrationLimit;
+    const effectiveLimit = connectorLimit;
     if (effectiveLimit !== -1 && effectiveLimit > 0 && used >= effectiveLimit) {
       throw new ConnectorError('Connector quota exceeded', 'CONNECTOR_QUOTA_EXCEEDED', 409, {
-        featureKey: connectorLimit > 0 ? 'quota.connectors' : 'quota.integrations',
+        featureKey: 'quota.connectors',
         used,
         limit: effectiveLimit,
       });

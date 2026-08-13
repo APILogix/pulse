@@ -1,5 +1,5 @@
-export declare const EVENT_LIMIT_FEATURE_KEY = "monthly_events";
-export declare const AI_CREDIT_LIMIT_FEATURE_KEY = "module_ai_insights_monthly_credits";
+export declare const EVENT_LIMIT_FEATURE_KEY = "quota.monthly_events";
+export declare const AI_CREDIT_LIMIT_FEATURE_KEY = "quota.ai_credits";
 export declare const POSTGRES_BIGINT_MAX = "9223372036854775807";
 export interface BillingEntitlementSnapshotRow {
     feature_key: string;

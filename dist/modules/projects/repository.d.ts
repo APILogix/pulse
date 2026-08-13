@@ -12,7 +12,7 @@
  * Soft delete: projects set deleted_at; all reads filter deleted_at IS NULL.
  */
 import type { Pool, PoolClient } from "pg";
-import type { ListProjectsQuery, OrganizationMembership, Project, ProjectListItem, ProjectMember, ProjectMemberRole, ProjectStatus, ProjectUpdateInput, ProjectUsageCounter, ProjectVisibility } from "./types.js";
+import type { ListProjectsQuery, OrganizationMembership, Project, ProjectListItem, ProjectMember, ProjectMemberRole, ProjectStatus, ProjectUpdateInput, ProjectUsageCounter } from "./types.js";
 export interface ProjectModuleUsageCounts {
     projects: number;
     environments: number;
@@ -38,12 +38,10 @@ export declare class ProjectsRepository {
         name: string;
         slug: string;
         description: string | null;
-        visibility?: ProjectVisibility | undefined;
         status?: ProjectStatus | undefined;
         timezone?: string | undefined;
         tags?: string[] | undefined;
         icon?: string | null | undefined;
-        color?: string | null | undefined;
         metadata?: Record<string, unknown> | undefined;
         createdBy?: string | null | undefined;
     }, client?: PoolClient): Promise<Project>;

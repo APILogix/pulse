@@ -4,6 +4,7 @@ declare const envSchema: z.ZodObject<{
         development: "development";
         staging: "staging";
         production: "production";
+        test: "test";
     }>>;
     UV_THREADPOOL_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     PORT: z.ZodDefault<z.ZodPipe<z.ZodString, z.ZodTransform<number, string>>>;
@@ -114,6 +115,13 @@ declare const envSchema: z.ZodObject<{
     INGESTION_RATE_BUCKET_SWEEP_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_ENDPOINT: z.ZodOptional<z.ZodString>;
     CONNECTOR_SEND_CONCURRENCY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_SLACK: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_EMAIL: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_WEBHOOK: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_DISCORD: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_TEAMS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_PAGERDUTY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_CONCURRENCY_SMS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     CONNECTOR_SEND_BATCH_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     CONNECTOR_SEND_EXPIRE_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     CONNECTOR_RETRY_EXPIRE_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -121,6 +129,7 @@ declare const envSchema: z.ZodObject<{
     CONNECTOR_CLEANUP_EXPIRE_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     CONNECTOR_SECRET_EXPIRE_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     CONNECTOR_HTTP_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    CONNECTOR_HTTP_CONNECT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_GENERAL_WORKERS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_GENERAL_CONCURRENCY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_GENERAL_BATCH_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -192,7 +201,7 @@ declare const envSchema: z.ZodObject<{
     ANALYTICS_SESSION_IDLE_MINUTES: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;
 export declare const env: {
-    NODE_ENV: "development" | "staging" | "production";
+    NODE_ENV: "development" | "staging" | "production" | "test";
     UV_THREADPOOL_SIZE: number;
     PORT: number;
     HOST: string;
@@ -275,6 +284,13 @@ export declare const env: {
     INGESTION_RATE_BUCKET_TTL_MS: number;
     INGESTION_RATE_BUCKET_SWEEP_MS: number;
     CONNECTOR_SEND_CONCURRENCY: number;
+    CONNECTOR_CONCURRENCY_SLACK: number;
+    CONNECTOR_CONCURRENCY_EMAIL: number;
+    CONNECTOR_CONCURRENCY_WEBHOOK: number;
+    CONNECTOR_CONCURRENCY_DISCORD: number;
+    CONNECTOR_CONCURRENCY_TEAMS: number;
+    CONNECTOR_CONCURRENCY_PAGERDUTY: number;
+    CONNECTOR_CONCURRENCY_SMS: number;
     CONNECTOR_SEND_BATCH_SIZE: number;
     CONNECTOR_SEND_EXPIRE_SECONDS: number;
     CONNECTOR_RETRY_EXPIRE_SECONDS: number;
@@ -282,6 +298,7 @@ export declare const env: {
     CONNECTOR_CLEANUP_EXPIRE_SECONDS: number;
     CONNECTOR_SECRET_EXPIRE_SECONDS: number;
     CONNECTOR_HTTP_TIMEOUT_MS: number;
+    CONNECTOR_HTTP_CONNECT_TIMEOUT_MS: number;
     INGESTION_GENERAL_WORKERS: number;
     INGESTION_GENERAL_CONCURRENCY: number;
     INGESTION_GENERAL_BATCH_SIZE: number;

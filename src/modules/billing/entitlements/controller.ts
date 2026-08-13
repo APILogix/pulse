@@ -7,14 +7,16 @@ import type { RequestWithUser } from '../shared/types.js';
 export class EntitlementsController {
   constructor(private readonly service: EntitlementsService) {}
 
-  private getOrgId(req: RequestWithUser): string | undefined {
-    return req.user?.currentOrgId || req.user?.orgId;
+  private getOrgId(req: RequestWithUser, request: FastifyRequest): string | undefined {
+    const header = request.headers['x-org-id'] || request.headers['X-Org-Id'];
+    const headerOrgId = Array.isArray(header) ? header[0] : header;
+    return headerOrgId || req.user?.currentOrgId || req.user?.orgId;
   }
 
   getAllEntitlements = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = this.getOrgId(req);
+      const orgId = this.getOrgId(req, request);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const result = await this.service.getAllEntitlements(orgId);
@@ -27,7 +29,7 @@ export class EntitlementsController {
   checkFeatureAccess = async (request: FastifyRequest, reply: FastifyReply) => {
     const req = request as RequestWithUser;
     try {
-      const orgId = this.getOrgId(req);
+      const orgId = this.getOrgId(req, request);
       if (!orgId) throw new BillingError('No organization context', BillingErrorCodes.UNAUTHORIZED, 403);
       
       const body = CheckFeatureAccessSchema.parse(req.body) as CheckFeatureAccessBody;

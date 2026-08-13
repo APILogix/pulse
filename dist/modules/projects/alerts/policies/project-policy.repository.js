@@ -4,6 +4,10 @@ export class ProjectPolicyRepository {
     constructor(db = pool) {
         this.db = db;
     }
+    async findPolicyIdentity(organizationId, policyId) {
+        const result = await this.db.query(`SELECT slug FROM alerting_policy_catalog WHERE id = $1 AND organization_id = $2 LIMIT 1`, [policyId, organizationId]);
+        return result.rows[0] ?? null;
+    }
     async list(organizationId, projectId) {
         const result = await this.db.query(`SELECT s.id, s.organization_id, s.project_id, s.policy_id, s.state,
               s.created_at, s.updated_at,

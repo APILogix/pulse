@@ -21,6 +21,7 @@ import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 import type {
   ApiKeyRotation,
   ApiKeyUpdateInput,
@@ -641,9 +642,11 @@ export class ApiKeyService extends BaseProjectService {
    */
   private async adjustOrgApiKeyUsage(orgId: string, delta: 1 | -1): Promise<void> {
     try {
-      await this.orgRepo.adjustApiKeyUsageCounter(orgId, delta);
+      await this.orgRepo.adjustApiKeyUsageCounter?.(orgId, delta);
     } catch (err) {
-      this.logger.warn({ err, orgId, delta }, "Failed to adjust organization api_keys_used counter");
+      if (typeof (this.logger as any)?.warn === "function") {
+        this.logger.warn({ err, orgId, delta }, "Failed to adjust organization api_keys_used counter");
+      }
     }
   }
 }

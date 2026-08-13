@@ -21,31 +21,21 @@ export class ThresholdService {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.VIEWER);
         return this.requireThreshold(orgId, projectId, thresholdId);
     }
-    async create(orgId, projectId, userId, body, meta) {
+    async create(orgId, projectId, userId, _body, _meta) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const created = await this.repository.create(orgId, projectId, userId, body);
-        await this.audit(meta, orgId, projectId, "alert_threshold.created", created.id, null, created);
-        return created;
+        throw new ProjectError("ALERT_THRESHOLD_DEPRECATED", "Project threshold writes are deprecated; use canonical alert rule bindings", 410);
     }
-    async update(orgId, projectId, thresholdId, userId, body, meta) {
+    async update(orgId, projectId, thresholdId, userId, _body, _meta) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
-        const updated = await this.repository.update(orgId, projectId, thresholdId, userId, body);
-        await this.audit(meta, orgId, projectId, "alert_threshold.updated", thresholdId, existing, updated);
-        return updated;
+        throw new ProjectError("ALERT_THRESHOLD_DEPRECATED", "Project threshold writes are deprecated; use canonical alert rule bindings", 410);
     }
-    async delete(orgId, projectId, thresholdId, userId, meta) {
+    async delete(orgId, projectId, thresholdId, userId, _meta) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
-        const deleted = await this.repository.delete(orgId, projectId, thresholdId, userId);
-        await this.audit(meta, orgId, projectId, "alert_threshold.deleted", thresholdId, existing, deleted);
+        throw new ProjectError("ALERT_THRESHOLD_DEPRECATED", "Project threshold writes are deprecated; use canonical alert rule bindings", 410);
     }
-    async toggle(orgId, projectId, thresholdId, userId, body, meta) {
+    async toggle(orgId, projectId, thresholdId, userId, _body, _meta) {
         await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
-        const existing = await this.requireThreshold(orgId, projectId, thresholdId);
-        const updated = await this.repository.toggle(orgId, projectId, thresholdId, userId, body.enabled);
-        await this.audit(meta, orgId, projectId, "alert_threshold.toggled", thresholdId, existing, updated);
-        return updated;
+        throw new ProjectError("ALERT_THRESHOLD_DEPRECATED", "Project threshold writes are deprecated; use canonical alert rule bindings", 410);
     }
     async requireThreshold(orgId, projectId, thresholdId) {
         const threshold = await this.repository.findById(orgId, projectId, thresholdId);

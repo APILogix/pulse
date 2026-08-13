@@ -6,14 +6,33 @@ import type {
   ProjectListItem,
   ProjectStatus,
   ProjectUpdateInput,
-  ProjectVisibility,
 } from "../types.js";
 import { ProjectError } from "../shared/utils.js";
 
 const PROJECT_COLUMNS = `
-  id, public_id, org_id, name, slug, description, status, visibility, timezone, tags, icon, color, metadata,
+  id, public_id, org_id, name, slug, description, status, timezone, tags, icon, metadata,
   archived_at, deleted_at, deleted_by, created_at, updated_at, version
 `;
+
+const PROJECT_SETTINGS_DEFAULTS_SQL = `
+ALTER TABLE project_settings
+  ALTER COLUMN data_retention_days SET DEFAULT 10,
+  ALTER COLUMN sampling_rate SET DEFAULT 1.00000,
+  ALTER COLUMN allowed_domains SET DEFAULT '{}'::text[],
+  ALTER COLUMN blocked_domains SET DEFAULT '{}'::text[],
+  ALTER COLUMN pii_scrubbing_enabled SET DEFAULT true,
+  ALTER COLUMN ip_collection_enabled SET DEFAULT true,
+  ALTER COLUMN release_tracking_enabled SET DEFAULT true,
+  ALTER COLUMN session_replay_enabled SET DEFAULT false,
+  ALTER COLUMN performance_monitoring_enabled SET DEFAULT true,
+  ALTER COLUMN error_monitoring_enabled SET DEFAULT true,
+  ALTER COLUMN log_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN metric_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN trace_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN profile_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN version SET DEFAULT 1;
+`;
+
 
 type ProjectRow = {
   id: string;
@@ -23,11 +42,9 @@ type ProjectRow = {
   slug: string;
   description: string | null;
   status: ProjectStatus;
-  visibility: ProjectVisibility;
   timezone: string;
   tags: string[];
   icon: string | null;
-  color: string | null;
   metadata: Record<string, unknown> | null;
   archived_at: Date | null;
   deleted_at: Date | null;
@@ -40,6 +57,8 @@ type ProjectRow = {
 };
 
 export class ProjectRepository {
+  private static projectSettingsDefaultsRepaired = false;
+
   constructor(private readonly db: Pool = pool) {}
 
   async withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -123,11 +142,9 @@ export class ProjectRepository {
       name: string;
       slug: string;
       description: string | null;
-      visibility?: ProjectVisibility;
       timezone?: string;
       tags?: string[];
       icon?: string | null;
-      color?: string | null;
       metadata?: Record<string, unknown>;
       createdBy?: string | null;
     },
@@ -135,12 +152,13 @@ export class ProjectRepository {
   ): Promise<Project> {
     const db = client ?? this.db;
     try {
+      await this.ensureProjectSettingsDefaults(db);
       const result = await db.query<ProjectRow>(
         `INSERT INTO projects (
-           org_id, name, slug, description, visibility, timezone, tags, icon, color, metadata, created_by,
+           org_id, name, slug, description, timezone, tags, icon, metadata, created_by,
            public_id
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,
            'prj_' || upper(substring(replace(gen_random_uuid()::text, '-', ''), 1, 8))
          )
          RETURNING ${PROJECT_COLUMNS}`,
@@ -149,11 +167,9 @@ export class ProjectRepository {
           input.name,
           input.slug,
           input.description,
-          input.visibility ?? "private",
           input.timezone ?? "UTC",
           input.tags ?? [],
           input.icon ?? null,
-          input.color ?? null,
           input.metadata ?? {},
           input.createdBy ?? null,
         ],
@@ -169,6 +185,12 @@ export class ProjectRepository {
       }
       throw error;
     }
+  }
+
+  private async ensureProjectSettingsDefaults(db: Pool | PoolClient): Promise<void> {
+    if (ProjectRepository.projectSettingsDefaultsRepaired) return;
+    await db.query(PROJECT_SETTINGS_DEFAULTS_SQL);
+    ProjectRepository.projectSettingsDefaultsRepaired = true;
   }
 
   /**
@@ -480,11 +502,9 @@ export class ProjectRepository {
     if (input.name !== undefined) set("name", input.name);
     if (input.description !== undefined) set("description", input.description);
     if (input.status !== undefined) set("status", input.status);
-    if (input.visibility !== undefined) set("visibility", input.visibility);
     if (input.timezone !== undefined) set("timezone", input.timezone);
     if (input.tags !== undefined) set("tags", input.tags);
     if (input.icon !== undefined) set("icon", input.icon);
-    if (input.color !== undefined) set("color", input.color);
     if (input.metadata !== undefined) set("metadata", input.metadata);
     if (input.archivedAt !== undefined) set("archived_at", input.archivedAt);
 
@@ -500,11 +520,9 @@ export class ProjectRepository {
       slug: row.slug,
       description: row.description,
       status: row.status,
-      visibility: row.visibility,
       timezone: row.timezone,
       tags: row.tags ?? [],
       icon: row.icon,
-      color: row.color,
       metadata: row.metadata ?? {},
       archivedAt: row.archived_at,
       deletedAt: row.deleted_at,

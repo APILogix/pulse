@@ -1,4 +1,5 @@
 import { WebhooksRepository } from './repository.js';
+import { entitlementsService } from '../entitlements/service.js';
 import { BillingProvider } from '../shared/types.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
 import { createHmac, createHash, timingSafeEqual } from 'crypto';
@@ -72,17 +73,21 @@ export class WebhooksService {
         if (!eventId || !eventType) {
             throw new BillingError('Webhook payload is missing a stable event id or type', BillingErrorCodes.PROVIDER_ERROR, 400);
         }
+        const orgId = extractOrganizationId(payload);
         await this.repository.insertWebhookEvent({
             provider,
             provider_event_id: eventId,
             event_type: eventType,
-            organization_id: extractOrganizationId(payload),
+            organization_id: orgId,
             payload,
             payload_sha256: createHash('sha256').update(rawBody).digest('hex'),
             signature_verified: true,
             api_version: payload.api_version,
             request_id: maybeUuid(requestId),
         });
+        if (orgId) {
+            entitlementsService.invalidateOrgCache(orgId);
+        }
         return { success: true };
     }
     async listWebhookEvents(options) {

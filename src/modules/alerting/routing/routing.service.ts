@@ -21,6 +21,8 @@ import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting, type RoutableAlert } from '../routing.js';
 import { NotificationEntitlementService } from '../runtime/notification-entitlement.service.js';
 import { ConnectorEntitlementDeniedError, ConnectorEntitlementUnknownError } from '../../connectors/core/connector.types.js';
+import { entitlementsService } from '../../billing/entitlements/service.js';
+import { quotaGuard } from '../../billing/entitlements/quota-guard.js';
 import {
   AlertNotFoundError,
   AlertValidationError,
@@ -68,6 +70,15 @@ export class RoutingService {
   // ── Templates ─────────────────────────────────────────────────────────
   // ── Routing rules ──────────────────────────────────────────────────────
   async createRoutingRule(orgId: string, meta: RequestMeta, body: CreateRoutingRuleBody): Promise<Record<string, unknown>> {
+    await entitlementsService.assertFeatureEnabled(orgId, 'alerting.enabled');
+    await entitlementsService.assertFeatureEnabled(orgId, 'alerting.routing.enabled');
+    const existingRules = await this.repo.listRoutingRules(orgId);
+    await quotaGuard.assertCanCreate({
+      organizationId: orgId,
+      quotaKey: 'quota.routing_rules',
+      currentUsage: existingRules.length,
+    });
+
     await this.assertConnectorConfigurationAllowed(orgId, body.targetConnectorIds.length + body.targetRouteIds.length + body.fallbackConnectorIds.length > 0);
     const rule = await this.repo.createRoutingRule({
       organizationId: orgId, name: body.name, description: body.description ?? null, priority: body.priority,

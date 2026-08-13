@@ -1,5 +1,7 @@
+import { UsageRepository } from './repository.js';
 import { CurrentUsageResponseSchema, QuotaSummaryResponseSchema } from './schemas.js';
 import { BillingError, BillingErrorCodes } from '../shared/errors.js';
+import { entitlementsService } from '../entitlements/service.js';
 const POSTGRES_BIGINT_MAX = '9223372036854775807';
 function toUsageNumber(value) {
     if (value === null || value === undefined)
@@ -11,8 +13,10 @@ function toUsageNumber(value) {
 }
 export class UsageService {
     repository;
-    constructor(repository) {
+    entitlements;
+    constructor(repository = new UsageRepository(), entitlements = entitlementsService) {
         this.repository = repository;
+        this.entitlements = entitlements;
     }
     async resolveAuthorizedOrgId(user, requestedOrgId) {
         if (!user?.id) {
@@ -64,10 +68,61 @@ export class UsageService {
         });
     }
     async incrementEventUsage(orgId, count = 1) {
-        // In a real high-throughput system, this would be buffered via Redis or Kafka.
-        // For this redesign, we directly hit the PG fast-path function.
         await this.repository.incrementEventUsage(orgId, count);
         return { success: true };
+    }
+    async incrementUsage(orgId, metric, count = 1) {
+        if (metric === 'events') {
+            await this.repository.incrementEventUsage(orgId, count);
+        }
+        return { success: true };
+    }
+    async reserveUsage(_orgId, _metric, _count) {
+        return { reservationId: `res_${Date.now()}` };
+    }
+    async consumeUsage(orgId, metric, count = 1) {
+        return this.incrementUsage(orgId, metric, count);
+    }
+    async releaseUsage(_orgId, _metric, _count) {
+        return { success: true };
+    }
+    async getRemaining(orgId, metric) {
+        const usage = await this.repository.getCurrentUsage(orgId);
+        if (!usage)
+            return 0;
+        if (metric === 'monthly_events' || metric === 'quota.monthly_events') {
+            const limit = toUsageNumber(usage.event_limit);
+            if (limit < 0)
+                return -1;
+            return Math.max(0, toUsageNumber(usage.remaining_events));
+        }
+        if (metric === 'ai_credits' || metric === 'quota.ai_credits') {
+            const limit = toUsageNumber(usage.ai_credit_limit);
+            if (limit < 0)
+                return -1;
+            return Math.max(0, toUsageNumber(usage.remaining_ai_credits));
+        }
+        return 0;
+    }
+    async getPercentage(orgId, metric) {
+        const usage = await this.repository.getCurrentUsage(orgId);
+        if (!usage)
+            return 0;
+        if (metric === 'monthly_events' || metric === 'quota.monthly_events') {
+            const limit = toUsageNumber(usage.event_limit);
+            if (limit <= 0)
+                return 0;
+            const used = toUsageNumber(usage.events_used);
+            return Math.min(100, Math.round((used / limit) * 100));
+        }
+        if (metric === 'ai_credits' || metric === 'quota.ai_credits') {
+            const limit = toUsageNumber(usage.ai_credit_limit);
+            if (limit <= 0)
+                return 0;
+            const used = toUsageNumber(usage.ai_credits_used);
+            return Math.min(100, Math.round((used / limit) * 100));
+        }
+        return 0;
     }
     async getQuotaSummary(orgId) {
         const usage = await this.repository.getCurrentUsage(orgId);
@@ -120,4 +175,5 @@ export class UsageService {
         return { success: true, data: records };
     }
 }
+export const usageService = new UsageService();
 //# sourceMappingURL=service.js.map

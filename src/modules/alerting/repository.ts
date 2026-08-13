@@ -57,6 +57,10 @@ export class AlertingRepository {
         return this.rules.listRules(organizationId, query);
     }
 
+    async countProjectRules(organizationId: string, projectId: string): Promise<number> {
+        return this.rules.countProjectRules(organizationId, projectId);
+    }
+
     async updateRule(organizationId: string, id: string, fields: Record<string, unknown>, conditions: RuleConditionInsert[] | null, actions: RuleActionInsert[] | null, updatedBy: string): Promise<AlertRuleRow> {
         return this.rules.updateRule(organizationId, id, fields, conditions, actions, updatedBy);
     }

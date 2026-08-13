@@ -6,12 +6,18 @@ import type { PoolClient } from 'pg';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export const CANONICAL_SCHEMA_DIR = path.resolve(
+  __dirname,
+  '../../src/db/postgres/canonical_schema',
+);
+
 export const DRAFT_MIGRATIONS_DIR = path.resolve(
   __dirname,
   '../../src/db/postgres/canonical_migrations_draft',
 );
 
 export const CANDIDATE_MIGRATION_DIRS = [
+  CANONICAL_SCHEMA_DIR,
   DRAFT_MIGRATIONS_DIR,
   path.resolve(__dirname, '../../src/db/postgres/canonical_migrations'),
   path.resolve(__dirname, '../../src/db/postgres/migrations2'),
@@ -26,6 +32,9 @@ export function resolveMigrationDirOverride(
   }
 
   const profile = env.MIGRATIONS_PROFILE?.trim().toLowerCase();
+  if (profile === 'canonical') {
+    return CANONICAL_SCHEMA_DIR;
+  }
   if (profile === 'draft') {
     return DRAFT_MIGRATIONS_DIR;
   }
@@ -40,6 +49,9 @@ export function resolveMigrationDirOverrideFromArgs(
     const arg = args[i];
     if (arg === '--migrations-profile') {
       const value = args[i + 1]?.trim().toLowerCase();
+      if (value === 'canonical') {
+        return CANONICAL_SCHEMA_DIR;
+      }
       if (value === 'draft') {
         return DRAFT_MIGRATIONS_DIR;
       }
@@ -92,16 +104,17 @@ const BILLING_APPLICATION_CONSTANT_SEEDS = new Set([
   '039_seed_billing_webhook_events.sql',
   '040_seed_email_templates.sql',
   '041_seed_notification_templates.sql',
+  // Legacy duplicate seeders superseded by canonical 026/027/028*/030* suite:
+  '025_billing_seed.sql',
+  '026_enterprise_module_billing_seed.sql',
+  '004_plans_seed.up.sql',
 ]);
 
 export function isMigrationFile(filename: string): boolean {
   const normalized = filename.split(path.sep).join('/');
   if (!normalized.endsWith('.sql')) return false;
   if (normalized.endsWith('.down.sql')) return false;
-  if (
-    (normalized.startsWith('11_billing/seeder/') || normalized.includes('/11_billing/seeder/'))
-    && BILLING_APPLICATION_CONSTANT_SEEDS.has(path.posix.basename(normalized))
-  ) {
+  if (BILLING_APPLICATION_CONSTANT_SEEDS.has(path.posix.basename(normalized))) {
     return false;
   }
   // Include both .up.sql and plain .sql (used by billing, automation, etc.)

@@ -3,9 +3,6 @@ import { normalizeObjectKeys } from "../shared/schema-utils.js";
 import type { ProjectSettings } from "../settings/settings.types.js";
 import type { HourlyUsageDto, DailyTrendDto, HeatmapCellDto } from "../usage/usage.types.js";
 
-export const ProjectVisibilitySchema = z.enum(["private", "organization", "public"]);
-export type ProjectVisibility = z.infer<typeof ProjectVisibilitySchema>;
-
 export const ProjectStatusSchema = z.enum(["active", "paused", "archived"]);
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 
@@ -38,12 +35,10 @@ export const CreateProjectBodySchema = z.preprocess(
   z.object({
     name: z.string().min(1).max(255),
     description: z.string().max(5000).nullable().optional(),
-    visibility: ProjectVisibilitySchema.default("private"),
     status: ProjectStatusSchema.default("active"),
     timezone: z.string().max(100).default("UTC"),
     tags: z.array(z.string().min(1).max(50)).max(20).optional(),
     icon: z.string().max(255).nullable().optional(),
-    color: z.string().max(20).nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
   }),
 );
@@ -56,11 +51,9 @@ export const UpdateProjectBodySchema = z.preprocess(
       name: z.string().min(1).max(255).optional(),
       description: z.string().max(5000).nullable().optional(),
       status: ProjectStatusSchema.optional(),
-      visibility: ProjectVisibilitySchema.optional(),
       timezone: z.string().max(100).optional(),
       tags: z.array(z.string().min(1).max(50)).max(20).optional(),
       icon: z.string().max(255).nullable().optional(),
-      color: z.string().max(20).nullable().optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
       version: z.number().int().min(1).optional(),
     })
@@ -79,11 +72,9 @@ export interface Project {
   slug: string;
   description: string | null;
   status: ProjectStatus;
-  visibility: ProjectVisibility;
   timezone: string;
   tags: string[];
   icon: string | null;
-  color: string | null;
   metadata: Record<string, unknown>;
   archivedAt: Date | null;
   deletedAt: Date | null;
@@ -154,11 +145,9 @@ export interface ProjectUpdateInput {
   name?: string;
   description?: string | null;
   status?: ProjectStatus;
-  visibility?: ProjectVisibility;
   timezone?: string;
   tags?: string[];
   icon?: string | null;
-  color?: string | null;
   metadata?: Record<string, unknown>;
   archivedAt?: Date | null;
   version?: number;

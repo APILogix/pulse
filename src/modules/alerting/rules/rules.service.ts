@@ -52,6 +52,9 @@ export type CreateRuleTemplateOverrides = {
   [K in keyof CreateRuleBody]?: CreateRuleBody[K] | undefined;
 };
 
+import { entitlementsService } from '../../billing/entitlements/service.js';
+import { quotaGuard } from '../../billing/entitlements/quota-guard.js';
+
 export class RulesService {
   private readonly repo: AlertingRepository;
   private readonly logger: FastifyBaseLogger;
@@ -63,6 +66,23 @@ export class RulesService {
 
   // ── Rules ──────────────────────────────────────────────────────────────
   async createRule(orgId: string, meta: RequestMeta, body: CreateRuleBody): Promise<Record<string, unknown>> {
+    await entitlementsService.assertFeatureEnabled(orgId, 'alerting.enabled');
+    const { total } = await this.repo.listRules(orgId, { limit: 1, offset: 0, sortOrder: 'desc' });
+    await quotaGuard.assertCanCreate({
+      organizationId: orgId,
+      quotaKey: 'quota.alert_rules',
+      currentUsage: total,
+    });
+
+    if (body.projectId) {
+      const projectRulesCount = await this.repo.countProjectRules(orgId, body.projectId);
+      await quotaGuard.assertCanCreate({
+        organizationId: orgId,
+        quotaKey: 'quota.project_alert_rules',
+        currentUsage: projectRulesCount,
+      });
+    }
+
     const rule = await this.repo.createRule({
       organizationId: orgId,
       name: body.name,

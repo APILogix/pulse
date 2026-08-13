@@ -2,14 +2,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Pool } from 'pg';
 import { pgboss } from '../../../lib/pgboss.js';
 import { env } from '../../../config/env.js';
-import { sendEmail } from '../../../shared/email/mailer.js';
 import { CONNECTOR_JOBS, CONNECTOR_PRIORITY, type ConnectorJobName } from '../../connectors/job.constants.js';
 import {
   AlertRuntimeRepository,
   type NotificationJobDetailRow,
   type NotificationJobStatus,
 } from './alert-runtime.repository.js';
-import type { ConnectorTransportJob } from '../../connectors/delivery/transport.types.js';
+import type { ConnectorTransportJob, ManagedEmailJobData } from '../../connectors/delivery/transport.types.js';
 import { ProjectOwnerRepository } from './email-only-restricted-routing.js';
 
 export interface NotificationRouterSummary {
@@ -70,23 +69,62 @@ export class AlertNotificationRouter {
 
       if (job.channel_kind === 'email' && !job.connector_id && job.recipient_ref) {
         if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED' && (
-          job.recipient_type !== 'PROJECT_OWNER' || job.provider !== 'MANAGED_EMAIL'
+          (job.recipient_type !== 'PROJECT_OWNER' && job.recipient_type !== 'ORGANIZATION_FALLBACK')
+          || job.provider !== 'MANAGED_EMAIL'
         )) {
           await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
           return 'suppressed';
         }
-        if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
+        if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED' && job.recipient_type === 'PROJECT_OWNER') {
           const owner = job.project_id
             ? await this.owners.findActiveVerifiedOwner(job.organization_id, job.project_id)
             : null;
           if (!owner || owner.userId !== job.recipient_user_id || owner.email !== job.recipient_ref) {
-            await this.mark(job, 'suppressed', startedAt, 'owner_email_unavailable');
-            return 'suppressed';
+            const fallback = job.project_id && this.owners.findActiveVerifiedFallbackRecipient
+              ? await this.owners.findActiveVerifiedFallbackRecipient(job.organization_id, job.project_id)
+              : null;
+            if (!fallback) {
+              await this.mark(job, 'suppressed', startedAt, 'owner_email_unavailable');
+              return 'suppressed';
+            }
           }
         }
-        await this.sendDirectEmail(job);
-        await this.mark(job, 'sent', startedAt);
-        return 'sent';
+
+        const queueName = env.ALERTING_V2_READ
+          ? 'connector.v2.email'
+          : `${CONNECTOR_JOBS.send}-email` as ConnectorJobName;
+
+        const emailTransport: ManagedEmailJobData = {
+          organizationId: job.organization_id,
+          notificationJobId: job.id,
+          projectId: job.project_id,
+          alertEventId: job.alert_event_id,
+          alertKey: job.alert_key,
+          ruleId: job.rule_id,
+          deliveryMode: job.delivery_mode ?? 'EMAIL_ONLY_RESTRICTED',
+          recipientType: job.recipient_type ?? 'PROJECT_OWNER',
+          recipientUserId: job.recipient_user_id ?? '',
+          recipientEmail: job.recipient_ref,
+          provider: job.provider ?? 'MANAGED_EMAIL',
+          severity: toConnectorSeverity(job.severity),
+          payload: job.payload,
+          idempotencyKey: job.idempotency_key,
+          routingDecisionHash: job.routing_decision_hash,
+        };
+
+        await pgboss.send(
+          queueName,
+          emailTransport,
+          {
+            priority: CONNECTOR_PRIORITY[toConnectorSeverity(job.severity)] ?? job.priority,
+            retryLimit: 3,
+            retryDelay: 5,
+            retryBackoff: true,
+            expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
+          } as never,
+        );
+        await this.mark(job, 'queued', startedAt);
+        return 'queued';
       }
 
       if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
@@ -141,22 +179,6 @@ export class AlertNotificationRouter {
     }
   }
 
-  private async sendDirectEmail(job: NotificationJobDetailRow): Promise<void> {
-    const payload = job.payload as {
-      title?: unknown;
-      body?: unknown;
-      severity?: unknown;
-    };
-    const title = typeof payload.title === 'string' ? payload.title : 'Alert notification';
-    const body = typeof payload.body === 'string' ? payload.body : title;
-    await sendEmail({
-      to: job.recipient_ref!,
-      subject: `[${String(payload.severity ?? job.severity).toUpperCase()}] ${title}`,
-      text: `${title}\n\n${body}`,
-      html: `<!doctype html><html><body><h2>${escapeHtml(title)}</h2><p>${escapeHtml(body).replace(/\n/g, '<br>')}</p></body></html>`,
-    });
-  }
-
   private async mark(
     job: NotificationJobDetailRow,
     status: NotificationJobStatus,
@@ -180,9 +202,4 @@ function toConnectorSeverity(severity: string): 'info' | 'warning' | 'error' | '
   if (severity === 'error') return 'error';
   if (severity === 'warning') return 'warning';
   return 'info';
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }

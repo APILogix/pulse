@@ -19,6 +19,8 @@ import type { FeatureKey } from "./schema-v1.js";
 import { registerSdkDeliveryRoutes } from "./sdk-config.delivery.routes.js";
 import { acceptEmptyJsonBodyAsObject } from "../../../shared/http/empty-json-body.js";
 
+import { entitlementsService } from "../../billing/entitlements/service.js";
+
 const moduleLogger = logger.child({ component: "sdk-config-delivery-module" });
 
 /** Trusted ingest origin used to derive protected route URLs. */
@@ -34,19 +36,15 @@ const SDK_FEATURE_GATES: Readonly<Record<string, FeatureKey>> = {
 };
 
 async function resolveSdkEntitlementOverride(organizationId: string): Promise<OperatorOverride | undefined> {
-  const result = await pool.query<{ feature_key: string; boolean_value: boolean | null }>(
-    `SELECT feature_key, boolean_value FROM v_effective_entitlements
-      WHERE organization_id = $1 AND feature_key = ANY($2::text[])`,
-    [organizationId, ["sdk.remote_config", ...Object.keys(SDK_FEATURE_GATES)]],
-  );
-  const values = new Map(result.rows.map((row) => [row.feature_key, row.boolean_value === true]));
-  if (values.get("sdk.remote_config") === false) {
+  const map = await entitlementsService.getEffectiveEntitlements(organizationId);
+  const remoteConfigEntitled = map["sdk.remote_config"]?.booleanValue;
+  if (remoteConfigEntitled === false) {
     throw new SdkConfigError("policy_violation", "Remote SDK configuration is not included in this organization’s plan", 403);
   }
-  if (!values.has("sdk.remote_config")) return undefined;
+  if (remoteConfigEntitled === undefined) return undefined;
   const features: Partial<Record<FeatureKey, false>> = {};
   for (const [billingFeature, sdkFeature] of Object.entries(SDK_FEATURE_GATES)) {
-    if (values.get(billingFeature) !== true) features[sdkFeature] = false;
+    if (map[billingFeature]?.booleanValue !== true) features[sdkFeature] = false;
   }
   return { features };
 }

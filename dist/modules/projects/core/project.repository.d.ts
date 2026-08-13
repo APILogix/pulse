@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg";
-import type { ListProjectsQuery, Project, ProjectListItem, ProjectStatus, ProjectUpdateInput, ProjectVisibility } from "../types.js";
+import type { ListProjectsQuery, Project, ProjectListItem, ProjectStatus, ProjectUpdateInput } from "../types.js";
 type ProjectRow = {
     id: string;
     public_id: string;
@@ -8,11 +8,9 @@ type ProjectRow = {
     slug: string;
     description: string | null;
     status: ProjectStatus;
-    visibility: ProjectVisibility;
     timezone: string;
     tags: string[];
     icon: string | null;
-    color: string | null;
     metadata: Record<string, unknown> | null;
     archived_at: Date | null;
     deleted_at: Date | null;
@@ -25,6 +23,7 @@ type ProjectRow = {
 };
 export declare class ProjectRepository {
     private readonly db;
+    private static projectSettingsDefaultsRepaired;
     constructor(db?: Pool);
     withTransaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T>;
     listProjects(orgId: string, query: ListProjectsQuery, client?: PoolClient): Promise<{
@@ -36,14 +35,13 @@ export declare class ProjectRepository {
         name: string;
         slug: string;
         description: string | null;
-        visibility?: ProjectVisibility;
         timezone?: string;
         tags?: string[];
         icon?: string | null;
-        color?: string | null;
         metadata?: Record<string, unknown>;
         createdBy?: string | null;
     }, client?: PoolClient): Promise<Project>;
+    private ensureProjectSettingsDefaults;
     /**
      * Seed the per-project usage counter row. Environment + SDK-configuration
      * provisioning is orchestrated explicitly by the service layer (a single

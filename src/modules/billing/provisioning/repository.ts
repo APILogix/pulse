@@ -36,7 +36,7 @@ interface ProvisioningPriceRow {
   provider_price_id: string | null;
 }
 
-const DEFAULT_PLAN_KEY = 'enterprise';
+const DEFAULT_PLAN_KEY = 'business';
 const REQUIRED_DEFAULT_PLAN_FEATURES = [EVENT_LIMIT_FEATURE_KEY, AI_CREDIT_LIMIT_FEATURE_KEY] as const;
 
 /** SQL boundary for the Billing-owned part of organization provisioning. */
@@ -55,7 +55,7 @@ export class BillingProvisioningRepository {
       [DEFAULT_PLAN_KEY],
     );
     const plan = planResult.rows[0];
-    if (!plan) throw new NotFoundError('Enterprise billing plan');
+    if (!plan) throw new NotFoundError('Business billing plan');
 
     const entitlementsResult = await client.query<BillingEntitlementSnapshotRow>(
       `SELECT
@@ -79,14 +79,14 @@ export class BillingProvisioningRepository {
     );
     const entitlements = entitlementsResult.rows;
     if (entitlements.length === 0) {
-      throw new NotFoundError('Enterprise billing plan entitlements');
+      throw new NotFoundError('Business billing plan entitlements');
     }
 
     const missingRequiredFeature = REQUIRED_DEFAULT_PLAN_FEATURES.find(
       (featureKey) => !entitlements.some((entitlement) => entitlement.feature_key === featureKey),
     );
     if (missingRequiredFeature) {
-      throw new NotFoundError(`Enterprise billing plan entitlement ${missingRequiredFeature}`);
+      throw new NotFoundError(`Business billing plan entitlement ${missingRequiredFeature}`);
     }
 
     const priceResult = await client.query<ProvisioningPriceRow>(

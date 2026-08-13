@@ -8,7 +8,7 @@
 import { ConnectorDeliveryError } from '../types.js';
 const DEFAULT_TIMEOUT_MS = 10_000;
 /**
- * Perform an HTTP request with a hard timeout. Network-level failures throw a
+ * Perform an HTTP request with explicit timeout handling. Network-level failures throw a
  * {@link ConnectorDeliveryError} so callers don't have to re-classify them.
  * HTTP responses (including 4xx/5xx) are returned as-is for the caller to
  * interpret per provider semantics.
@@ -36,10 +36,13 @@ export async function httpRequest(url, options = {}) {
         return { ok: res.ok, status: res.status, body, headers };
     }
     catch (err) {
-        const isAbort = err instanceof Error && err.name === 'AbortError';
+        const isAbort = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError');
         const category = isAbort ? 'timeout' : 'network_error';
-        throw new ConnectorDeliveryError(isAbort ? `Request timed out after ${timeoutMs}ms` : `Network error: ${err.message}`, category, true, // network/timeout failures are retryable
-        { url: redactUrl(url) });
+        const message = isAbort
+            ? `Request timed out after ${timeoutMs}ms`
+            : `Network error: ${err.message}`;
+        throw new ConnectorDeliveryError(message, category, true, // network/timeout failures are retryable
+        { url: redactUrl(url), timeoutMs });
     }
     finally {
         clearTimeout(timer);

@@ -172,7 +172,8 @@ export class NotificationDispatcher {
     async scheduleRetryOrFail(row, delivery, payload, priorAttempts, category, message, retryable, explicitDelayMs, log) {
         const attemptsSoFar = priorAttempts + 1;
         const maxAttempts = row.max_retries + 1;
-        const canRetry = retryable && attemptsSoFar < maxAttempts;
+        const isPermanent = category === 'auth_error' || category === 'invalid_config' || category === 'invalid_payload';
+        const canRetry = retryable && !isPermanent && attemptsSoFar < maxAttempts;
         if (canRetry) {
             const delayMs = explicitDelayMs ?? computeBackoffMs(attemptsSoFar, row.retry_backoff_base_ms, Number(row.retry_backoff_multiplier));
             const nextRetryAt = new Date(Date.now() + delayMs);

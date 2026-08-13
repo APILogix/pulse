@@ -41,6 +41,9 @@ export class AlertingRepository {
     async listRules(organizationId, query) {
         return this.rules.listRules(organizationId, query);
     }
+    async countProjectRules(organizationId, projectId) {
+        return this.rules.countProjectRules(organizationId, projectId);
+    }
     async updateRule(organizationId, id, fields, conditions, actions, updatedBy) {
         return this.rules.updateRule(organizationId, id, fields, conditions, actions, updatedBy);
     }

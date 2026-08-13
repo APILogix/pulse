@@ -59,6 +59,9 @@ export class AlertConfigRepository {
     async findRuleById(organizationId, id) {
         return this.rules.findRuleById(organizationId, id);
     }
+    async findRuleByPresetKey(organizationId, presetKey) {
+        return this.rules.findRuleByPresetKey(organizationId, presetKey);
+    }
     async listRules(organizationId, query) {
         return this.rules.listRules(organizationId, query);
     }

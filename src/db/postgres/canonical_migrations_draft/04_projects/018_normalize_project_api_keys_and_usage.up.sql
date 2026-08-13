@@ -1,4 +1,4 @@
-﻿BEGIN;
+BEGIN;
 
 -- Forward-only convergence: ledgered migrations remain immutable. Rotation
 -- lifecycle data is externalized before obsolete credential columns are removed.
@@ -77,6 +77,16 @@ CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_old_key
   ON project_api_key_rotations(old_key_id,initiated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_new_key
   ON project_api_key_rotations(new_key_id) WHERE new_key_id IS NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_project_api_keys_composite'
+  ) THEN
+    ALTER TABLE project_api_keys
+      ADD CONSTRAINT uq_project_api_keys_composite UNIQUE (id, project_id, organization_id, environment_id);
+  END IF;
+END $$;
 
 ALTER TABLE project_api_key_rotations
   DROP CONSTRAINT IF EXISTS fk_project_api_key_rotations_old_key_tenant,

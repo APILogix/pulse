@@ -10,6 +10,8 @@ import {
   ConnectorEntitlementDeniedError,
   ConnectorEntitlementUnknownError,
 } from "../../../connectors/core/connector.types.js";
+import { entitlementsService } from "../../../billing/entitlements/service.js";
+import { quotaGuard } from "../../../billing/entitlements/quota-guard.js";
 import { AlertChannelRepository } from "./channel.repository.js";
 import type {
   CreateProjectAlertChannelBody,
@@ -75,7 +77,33 @@ export class ProjectAlertChannelService {
     meta: RequestMeta,
   ): Promise<ProjectAlertChannel> {
     await this.projectsService.requireProjectAccess(orgId, projectId, userId, ProjectMemberRole.ADMIN);
+    await entitlementsService.assertFeatureEnabled(orgId, 'alerting.enabled');
+    const [activeChannelsCount, limit] = await Promise.all([
+      this.repository.countByOrganization(orgId),
+      entitlementsService.getEffectiveIntegerFeature(orgId, 'quota.alert_channels'),
+    ]);
+    if (limit !== -1 && limit > 0 && activeChannelsCount >= limit) {
+      throw new ProjectError(
+        "ALERT_CHANNEL_LIMIT_EXCEEDED",
+        `Alert channel limit exceeded for this organization (limit: ${limit}, current: ${activeChannelsCount})`,
+        403,
+      );
+    }
+
     const channel = await this.repository.withTransaction(async (client) => {
+      await quotaGuard.assertCanCreate({
+        client,
+        organizationId: orgId,
+        quotaKey: 'quota.alert_channels',
+        fetchCurrentUsage: async (c) => {
+          const r = await c.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM project_alert_channels WHERE organization_id = $1 AND is_enabled = TRUE`,
+            [orgId],
+          );
+          return parseInt(r.rows[0]?.count ?? '0', 10);
+        },
+      });
+
       const connector = body.connectorId
         ? await this.repository.requireActiveConnector(orgId, body.connectorId, client)
         : null;

@@ -1,6 +1,6 @@
 import { NotFoundError } from '../../organization/shared/errors.js';
 import { AI_CREDIT_LIMIT_FEATURE_KEY, EVENT_LIMIT_FEATURE_KEY, buildEntitlementsSnapshot, buildModulesSnapshot, integerEntitlement, usageLimitParameter, } from '../shared/entitlement-snapshot.js';
-const DEFAULT_PLAN_KEY = 'enterprise';
+const DEFAULT_PLAN_KEY = 'business';
 const REQUIRED_DEFAULT_PLAN_FEATURES = [EVENT_LIMIT_FEATURE_KEY, AI_CREDIT_LIMIT_FEATURE_KEY];
 /** SQL boundary for the Billing-owned part of organization provisioning. */
 export class BillingProvisioningRepository {
@@ -13,7 +13,7 @@ export class BillingProvisioningRepository {
        FOR SHARE`, [DEFAULT_PLAN_KEY]);
         const plan = planResult.rows[0];
         if (!plan)
-            throw new NotFoundError('Enterprise billing plan');
+            throw new NotFoundError('Business billing plan');
         const entitlementsResult = await client.query(`SELECT
          bf.feature_key,
          bf.module,
@@ -33,11 +33,11 @@ export class BillingProvisioningRepository {
        FOR SHARE`, [plan.id]);
         const entitlements = entitlementsResult.rows;
         if (entitlements.length === 0) {
-            throw new NotFoundError('Enterprise billing plan entitlements');
+            throw new NotFoundError('Business billing plan entitlements');
         }
         const missingRequiredFeature = REQUIRED_DEFAULT_PLAN_FEATURES.find((featureKey) => !entitlements.some((entitlement) => entitlement.feature_key === featureKey));
         if (missingRequiredFeature) {
-            throw new NotFoundError(`Enterprise billing plan entitlement ${missingRequiredFeature}`);
+            throw new NotFoundError(`Business billing plan entitlement ${missingRequiredFeature}`);
         }
         const priceResult = await client.query(`SELECT id, provider, billing_interval, currency, amount_minor, provider_price_id
        FROM plan_prices

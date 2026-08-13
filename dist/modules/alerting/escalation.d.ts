@@ -18,6 +18,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { AlertingRepository } from './repository.js';
 import type { ConnectorRepository } from '../connectors/repository.js';
 import { type ConnectorJobName } from '../connectors/job.constants.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 type EnqueueConnectorJob = (queue: ConnectorJobName, data: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>;
 export interface EscalationSweepResult {
     resumedAcknowledgments: number;
@@ -32,7 +33,8 @@ export declare class AlertEscalationSweep {
     private readonly connectorRepo;
     private readonly enqueueConnectorJob;
     private readonly logger;
-    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger);
+    private readonly entitlement;
+    constructor(alertRepo: AlertingRepository, connectorRepo: ConnectorRepository, enqueueConnectorJob: EnqueueConnectorJob, logger: FastifyBaseLogger, entitlement?: NotificationEntitlementService);
     run(limit: number): Promise<EscalationSweepResult>;
     private advanceEvent;
     private canRepeat;

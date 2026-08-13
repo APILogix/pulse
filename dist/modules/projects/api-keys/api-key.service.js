@@ -5,6 +5,7 @@ import { SettingsRepository } from "../settings/settings.repository.js";
 import { ApiKeyRepository } from "./api-key.repository.js";
 import { EnvironmentRepository } from "../environments/environment.repository.js";
 import { UsageRepository } from "../usage/usage.repository.js";
+import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
 import { constantTimeEqualHex, createApiKey, extractApiKeyPrefix, hashApiKey, ProjectError, } from "../shared/utils.js";
 import { BaseProjectService } from "../shared/base.service.js";
 import { syncApiKeyLookupToLogDbBestEffort } from "../../../shared/logdb/lookup-sync.js";
@@ -409,10 +410,12 @@ export class ApiKeyService extends BaseProjectService {
      */
     async adjustOrgApiKeyUsage(orgId, delta) {
         try {
-            await this.orgRepo.adjustApiKeyUsageCounter(orgId, delta);
+            await this.orgRepo.adjustApiKeyUsageCounter?.(orgId, delta);
         }
         catch (err) {
-            this.logger.warn({ err, orgId, delta }, "Failed to adjust organization api_keys_used counter");
+            if (typeof this.logger?.warn === "function") {
+                this.logger.warn({ err, orgId, delta }, "Failed to adjust organization api_keys_used counter");
+            }
         }
     }
 }

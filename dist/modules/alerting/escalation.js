@@ -2,16 +2,19 @@ import { CONNECTOR_JOBS, CONNECTOR_PRIORITY } from '../connectors/job.constants.
 import { env } from '../../config/env.js';
 import { isEnabled } from '../feature-flags/service.js';
 import { FEATURE_FLAGS } from '../feature-flags/types.js';
+import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 export class AlertEscalationSweep {
     alertRepo;
     connectorRepo;
     enqueueConnectorJob;
     logger;
-    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger) {
+    entitlement;
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, entitlement = new NotificationEntitlementService()) {
         this.alertRepo = alertRepo;
         this.connectorRepo = connectorRepo;
         this.enqueueConnectorJob = enqueueConnectorJob;
         this.logger = logger;
+        this.entitlement = entitlement;
     }
     async run(limit) {
         const log = this.logger.child({ component: 'escalation-sweep' });
@@ -141,6 +144,11 @@ export class AlertEscalationSweep {
     }
     /** Enqueue connector-send jobs for every connector in the step. */
     async executeStep(event, step, connectorById) {
+        const capability = await this.entitlement.resolve(event.organization_id);
+        if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess) {
+            this.logger.warn({ eventId: event.id }, 'Legacy escalation blocked by connector entitlement');
+            return;
+        }
         const payload = this.toPayload(event, step);
         await Promise.allSettled(step.connector_ids.map(async (connectorId) => {
             const connector = connectorById.get(connectorId);

@@ -64,6 +64,14 @@ export class AlertChannelRepository {
     }
   }
 
+  async countByOrganization(organizationId: string, client?: DbClient): Promise<number> {
+    const db = client ?? this.db;
+    const res = await db.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM project_alert_channels WHERE organization_id = $1`,
+      [organizationId],
+    );
+    return Number.parseInt(res.rows[0]?.count ?? "0", 10);
+  }
 
   async list(
     organizationId: string,

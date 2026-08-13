@@ -28,7 +28,7 @@ import {
   AutomationLimitExceededError,
   AutomationApprovalExpiredError,
 } from './errors.js';
-import { EFFECTIVE_ENTITLEMENTS_SQL } from '../billing/entitlements/repository.js';
+import { entitlementsService } from '../billing/entitlements/service.js';
 import type { InsertAuditParams } from './audit.js';
 
 // ---------------------------------------------------------------------------
@@ -719,52 +719,29 @@ export class AutomationRepository {
   }
 
   /**
-   * Check boolean entitlement using canonical effective entitlements SQL
-   * (active/trialing/past_due + overrides + add-ons).
+   * Check boolean entitlement using canonical EntitlementsService.
    */
-  async hasEntitlement(orgId: string, featureKey: string, db: Db = this.db): Promise<boolean> {
-    const r = await db.query(
-      `SELECT COALESCE(boolean_value, integer_value > 0, FALSE) AS has_access
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ent
-       WHERE feature_key = $2
-       LIMIT 1`,
-      [orgId, featureKey],
-    );
-    return r.rows[0]?.has_access === true;
+  async hasEntitlement(orgId: string, featureKey: string, _db: Db = this.db): Promise<boolean> {
+    return entitlementsService.getEffectiveBooleanFeature(orgId, featureKey);
   }
 
   /**
-   * Get integer entitlement limit using canonical effective entitlements SQL.
+   * Get integer entitlement limit using canonical EntitlementsService.
    */
-  async getWorkflowLimit(orgId: string, db: Db = this.db): Promise<number> {
-    const r = await db.query(
-      `SELECT COALESCE(integer_value, 0)::int AS limit_val
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ent
-       WHERE feature_key = 'limit_workflows_max'
-       LIMIT 1`,
-      [orgId],
-    );
-    return r.rows[0]?.limit_val ?? 0;
+  async getWorkflowLimit(orgId: string, _db: Db = this.db): Promise<number> {
+    return entitlementsService.getEffectiveIntegerFeature(orgId, 'quota.alert_rules');
   }
 
   /**
-   * One-query batch entitlement lookup for a set of feature keys.
-   * Uses canonical EFFECTIVE_ENTITLEMENTS_SQL — no per-key N+1.
-   * Returns a Map of featureKey → boolean access.
+   * Batch entitlement lookup for a set of feature keys using canonical EntitlementsService.
    */
-  async batchCheckEntitlements(orgId: string, featureKeys: string[], db: Db = this.db): Promise<Map<string, boolean>> {
+  async batchCheckEntitlements(orgId: string, featureKeys: string[], _db: Db = this.db): Promise<Map<string, boolean>> {
     if (featureKeys.length === 0) return new Map();
-    const r = await db.query(
-      `SELECT feature_key,
-              COALESCE(boolean_value, integer_value > 0, FALSE) AS has_access
-       FROM (${EFFECTIVE_ENTITLEMENTS_SQL}) ent
-       WHERE feature_key = ANY($2::text[])`,
-      [orgId, featureKeys],
-    );
+    const map = await entitlementsService.getEffectiveEntitlements(orgId);
     const result = new Map<string, boolean>();
-    for (const key of featureKeys) result.set(key, false);
-    for (const row of r.rows) {
-      result.set(row.feature_key, row.has_access === true);
+    for (const key of featureKeys) {
+      const entry = map[key];
+      result.set(key, entry?.booleanValue === true || (typeof entry?.integerValue === 'number' && entry.integerValue > 0));
     }
     return result;
   }

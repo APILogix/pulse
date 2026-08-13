@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { normalizeObjectKeys } from "../shared/schema-utils.js";
-export const ProjectVisibilitySchema = z.enum(["private", "organization", "public"]);
 export const ProjectStatusSchema = z.enum(["active", "paused", "archived"]);
 export const ProjectParamsSchema = z.object({
     orgId: z.string().uuid(),
@@ -22,12 +21,10 @@ export const ListProjectsQuerySchema = z.preprocess(normalizeObjectKeys, z.objec
 export const CreateProjectBodySchema = z.preprocess(normalizeObjectKeys, z.object({
     name: z.string().min(1).max(255),
     description: z.string().max(5000).nullable().optional(),
-    visibility: ProjectVisibilitySchema.default("private"),
     status: ProjectStatusSchema.default("active"),
     timezone: z.string().max(100).default("UTC"),
     tags: z.array(z.string().min(1).max(50)).max(20).optional(),
     icon: z.string().max(255).nullable().optional(),
-    color: z.string().max(20).nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
 }));
 export const UpdateProjectBodySchema = z.preprocess(normalizeObjectKeys, z
@@ -35,11 +32,9 @@ export const UpdateProjectBodySchema = z.preprocess(normalizeObjectKeys, z
     name: z.string().min(1).max(255).optional(),
     description: z.string().max(5000).nullable().optional(),
     status: ProjectStatusSchema.optional(),
-    visibility: ProjectVisibilitySchema.optional(),
     timezone: z.string().max(100).optional(),
     tags: z.array(z.string().min(1).max(50)).max(20).optional(),
     icon: z.string().max(255).nullable().optional(),
-    color: z.string().max(20).nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     version: z.number().int().min(1).optional(),
 })

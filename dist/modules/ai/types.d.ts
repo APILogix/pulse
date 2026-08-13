@@ -46,10 +46,10 @@ export declare const AI_RESPONSE_STATUSES: readonly ["SUCCESS", "PARTIAL", "FAIL
 export type AIResponseStatus = (typeof AI_RESPONSE_STATUSES)[number];
 export declare const aiResponseStatusSchema: z.ZodEnum<{
     RATE_LIMITED: "RATE_LIMITED";
+    INVALID_REQUEST: "INVALID_REQUEST";
     INSUFFICIENT_CREDITS: "INSUFFICIENT_CREDITS";
     PROVIDER_ERROR: "PROVIDER_ERROR";
     FAILED: "FAILED";
-    INVALID_REQUEST: "INVALID_REQUEST";
     SUCCESS: "SUCCESS";
     PARTIAL: "PARTIAL";
     LOCKED: "LOCKED";
@@ -186,10 +186,10 @@ export declare const creditActionSchema: z.ZodObject<{
     }>;
     status: z.ZodEnum<{
         RATE_LIMITED: "RATE_LIMITED";
+        INVALID_REQUEST: "INVALID_REQUEST";
         INSUFFICIENT_CREDITS: "INSUFFICIENT_CREDITS";
         PROVIDER_ERROR: "PROVIDER_ERROR";
         FAILED: "FAILED";
-        INVALID_REQUEST: "INVALID_REQUEST";
         SUCCESS: "SUCCESS";
         PARTIAL: "PARTIAL";
         LOCKED: "LOCKED";
@@ -204,10 +204,10 @@ export type CreditAction = z.infer<typeof creditActionSchema>;
 export declare const aiAnswerSchema: z.ZodObject<{
     status: z.ZodEnum<{
         RATE_LIMITED: "RATE_LIMITED";
+        INVALID_REQUEST: "INVALID_REQUEST";
         INSUFFICIENT_CREDITS: "INSUFFICIENT_CREDITS";
         PROVIDER_ERROR: "PROVIDER_ERROR";
         FAILED: "FAILED";
-        INVALID_REQUEST: "INVALID_REQUEST";
         SUCCESS: "SUCCESS";
         PARTIAL: "PARTIAL";
         LOCKED: "LOCKED";
@@ -287,10 +287,10 @@ export declare const aiAnswerSchema: z.ZodObject<{
         }>;
         status: z.ZodEnum<{
             RATE_LIMITED: "RATE_LIMITED";
+            INVALID_REQUEST: "INVALID_REQUEST";
             INSUFFICIENT_CREDITS: "INSUFFICIENT_CREDITS";
             PROVIDER_ERROR: "PROVIDER_ERROR";
             FAILED: "FAILED";
-            INVALID_REQUEST: "INVALID_REQUEST";
             SUCCESS: "SUCCESS";
             PARTIAL: "PARTIAL";
             LOCKED: "LOCKED";

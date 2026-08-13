@@ -1636,7 +1636,6 @@ CREATE TABLE IF NOT EXISTS projects (
   status project_status NOT NULL DEFAULT 'active',
   default_environment project_environment NOT NULL DEFAULT 'production',
   icon VARCHAR(255),
-  color VARCHAR(20),
   created_by UUID REFERENCES users(id),
   updated_by UUID REFERENCES users(id),
   archived_at TIMESTAMPTZ,

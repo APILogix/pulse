@@ -369,7 +369,7 @@ export class OrganizationService {
       usage: {
         activeMembers: {
           used: counts.activeMembers + counts.pendingInvitations,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_members_max", "max_team_members", "max_members"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.members"])),
         },
         eventsMonthly: {
           used: counts.eventsUsed,
@@ -383,13 +383,13 @@ export class OrganizationService {
         },
         ssoProviders: {
           used: counts.ssoProviders,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["max_sso_providers", "sso_providers_max"], 1)),
-          enabled: this.quotas.featureAllowed(entitlements, ["module_enterprise_features_sso", "sso_saml", "sso_enabled", "saml_sso"], false),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.sso_providers"], 1)),
+          enabled: this.quotas.featureAllowed(entitlements, ["security.sso"], false),
         },
         scimTokens: {
           used: counts.scimTokens,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["max_scim_tokens", "scim_tokens_max"], 1)),
-          enabled: this.quotas.featureAllowed(entitlements, ["module_enterprise_features_scim", "scim", "scim_enabled"], false),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.scim_tokens"], 1)),
+          enabled: this.quotas.featureAllowed(entitlements, ["security.scim"], false),
         },
       },
     };
@@ -406,37 +406,37 @@ export class OrganizationService {
         members: {
           used: counts.activeMembers,
           pending: counts.pendingInvitations,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_members_max", "max_team_members", "max_members"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.members"])),
         },
         projects: {
           used: counts.projectsUsed,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_projects_max", "max_projects", "projects_max"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.projects"])),
         },
         apiKeys: {
           used: counts.apiKeysUsed,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_api_keys_max", "max_api_keys", "api_keys_max"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.api_keys"])),
         },
         connectors: {
           used: counts.connectorsUsed,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_connectors_max", "max_connectors", "connectors_max"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.connectors"])),
         },
         alertRules: {
           used: counts.alertRulesUsed,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_alert_rules_max", "max_alert_rules", "alert_rules_max"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.alert_rules"])),
         },
         dashboards: {
           used: counts.dashboardsUsed,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["limit_dashboards_max", "max_dashboards", "dashboards_max"])),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.dashboards"])),
         },
         ssoProviders: {
           used: counts.ssoProviders,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["max_sso_providers", "sso_providers_max"], 1)),
-          enabled: this.quotas.featureAllowed(entitlements, ["module_enterprise_features_sso", "sso_saml", "sso_enabled", "saml_sso"], false),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.sso_providers"], 1)),
+          enabled: this.quotas.featureAllowed(entitlements, ["security.sso"], false),
         },
         scimTokens: {
           used: counts.scimTokens,
-          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["max_scim_tokens", "scim_tokens_max"], 1)),
-          enabled: this.quotas.featureAllowed(entitlements, ["module_enterprise_features_scim", "scim", "scim_enabled"], false),
+          limit: normalizeLimit(this.quotas.limitFrom(entitlements, ["quota.scim_tokens"], 1)),
+          enabled: this.quotas.featureAllowed(entitlements, ["security.scim"], false),
         },
         eventsMonthly: {
           used: counts.eventsUsed,

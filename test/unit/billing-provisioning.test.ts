@@ -49,7 +49,7 @@ function createClient(featureRows: Array<Record<string, unknown>>) {
 
 const validFeatureRows = [
   {
-    feature_key: 'monthly_events',
+    feature_key: 'quota.monthly_events',
     module: 'observability',
     is_module_root: false,
     value_type: 'integer',
@@ -59,7 +59,7 @@ const validFeatureRows = [
     string_value: null,
   },
   {
-    feature_key: 'module_ai_insights_monthly_credits',
+    feature_key: 'quota.ai_credits',
     module: 'ai',
     is_module_root: false,
     value_type: 'integer',
@@ -69,7 +69,7 @@ const validFeatureRows = [
     string_value: null,
   },
   {
-    feature_key: 'alerting',
+    feature_key: 'alerting.enabled',
     module: 'observability',
     is_module_root: true,
     value_type: 'boolean',
@@ -104,15 +104,15 @@ describe('BillingProvisioningRepository', () => {
       observability: {
         enabled: true,
         features: {
-          monthly_events: 10000,
-          alerting: true,
+          'quota.monthly_events': 10000,
+          'alerting.enabled': true,
         },
       },
-          ai: {
-            features: {
-            module_ai_insights_monthly_credits: 100,
-            },
-          },
+      ai: {
+        features: {
+          'quota.ai_credits': 100,
+        },
+      },
     });
 
     const usageCall = client.query.mock.calls.find(([sql]: [unknown]) =>
@@ -126,11 +126,11 @@ describe('BillingProvisioningRepository', () => {
   });
 
   it('fails fast when the enterprise plan seed is missing required usage features', async () => {
-    const client = createClient(validFeatureRows.filter((row) => row.feature_key !== 'module_ai_insights_monthly_credits'));
+    const client = createClient(validFeatureRows.filter((row) => row.feature_key !== 'quota.ai_credits'));
     const repository = new BillingProvisioningRepository();
 
     await expect(repository.provisionDefaultSubscription(client, 'org-1')).rejects.toThrow(
-      'Enterprise billing plan entitlement module_ai_insights_monthly_credits',
+      'Enterprise billing plan entitlement quota.ai_credits',
     );
   });
 });

@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS usage_daily_counters
 
     PRIMARY KEY (id, usage_date),
 
-    CONSTRAINT uq_usage_scope UNIQUE
+    CONSTRAINT uq_usage_scope UNIQUE NULLS NOT DISTINCT
     (
         organization_id,
         project_id,
