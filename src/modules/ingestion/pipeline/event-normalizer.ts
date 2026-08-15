@@ -58,7 +58,7 @@ export function normalizeSdkEnvironment(value: unknown): string | null {
 
 // Bounded primitives reused across schemas.
 const boundedStr = (max: number = LIMITS.maxStringLen) => z.string().max(max);
-const epochMs = z.number().int().nonnegative();
+const epochMs = z.number().nonnegative();
 const idStr = z.string().max(64);
 
 // A bounded JSON object: caps key count to prevent cardinality bombs.
@@ -311,11 +311,11 @@ export function normalizeEvent(raw: unknown): NormalizeResult {
 
 /** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */
 export function resolveTimestamp(ev: NormalizedEvent): number {
-  const ts = (ev as { timestamp?: number }).timestamp;
+  const ts = (ev as { timestamp?: number }).timestamp ?? (ev as { startTime?: number }).startTime;
   if (typeof ts === 'number' && ts > 0) {
     // Clamp future timestamps to now + 1m (defends partition-key abuse).
     const max = Date.now() + 60_000;
-    return ts > max ? Date.now() : ts;
+    return Math.round(ts > max ? Date.now() : ts);
   }
   return Date.now();
 }

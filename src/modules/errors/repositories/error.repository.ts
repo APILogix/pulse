@@ -24,9 +24,9 @@ export class ErrorRepository {
          $6, $7, $8, $9, $10, $11, $12,
          $13, $14, $15, $16, $17, $18,
          $19, $20, $21, $22, $23,
-         $24::jsonb, $25::jsonb, $26::jsonb, $27, $28, $29, $30,
-         $31, $32, $33, $34,
-         $35::jsonb, $36::jsonb, $37::jsonb, $38::jsonb, $39, $40::jsonb, $41, $42
+         $24::jsonb, $25::jsonb, $26::jsonb, $27, $28, $29,
+         $30, $31, $32, $33,
+         $34::jsonb, $35::jsonb, $36::jsonb, $37::jsonb, $38, $39::jsonb, $40, $41
        )
        ON CONFLICT (organization_id, event_id, occurred_at) DO NOTHING
        RETURNING id`,

@@ -3,9 +3,9 @@ import { z } from "zod";
 export declare function normalizeThresholdObjectKeys(value: unknown): unknown;
 export declare const ThresholdComparisonOperatorSchema: z.ZodEnum<{
     "=": "=";
+    "<": "<";
     ">": ">";
     ">=": ">=";
-    "<": "<";
     "<=": "<=";
     "!=": "!=";
 }>;
@@ -54,9 +54,9 @@ export declare const CreateThresholdBodySchema: z.ZodPipe<z.ZodTransform<unknown
     severity: z.ZodString;
     comparisonOperator: z.ZodEnum<{
         "=": "=";
+        "<": "<";
         ">": ">";
         ">=": ">=";
-        "<": "<";
         "<=": "<=";
         "!=": "!=";
     }>;
@@ -73,9 +73,9 @@ export declare const UpdateThresholdBodySchema: z.ZodPipe<z.ZodTransform<unknown
     severity: z.ZodOptional<z.ZodString>;
     comparisonOperator: z.ZodOptional<z.ZodEnum<{
         "=": "=";
+        "<": "<";
         ">": ">";
         ">=": ">=";
-        "<": "<";
         "<=": "<=";
         "!=": "!=";
     }>>;

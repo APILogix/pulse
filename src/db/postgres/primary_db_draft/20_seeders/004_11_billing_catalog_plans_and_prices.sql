@@ -33,8 +33,8 @@ SET name = EXCLUDED.name,
 
 WITH price_seed(plan_key, provider, billing_interval, currency, amount_minor, is_default, metadata) AS (
 VALUES
-  ('free', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 0, TRUE, '{"display":"$0/mo","recommended":false}'::jsonb),
-  ('free', 'stripe'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 0, FALSE, '{"display":"$0/year","discount":"2 months free"}'::jsonb),
+  ('free', 'system'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 0, TRUE, '{"display":"$0/mo","recommended":false}'::jsonb),
+  ('free', 'system'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 0, FALSE, '{"display":"$0/year","discount":"2 months free"}'::jsonb),
   ('starter', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 1500, TRUE, '{"display":"$15/mo","recommended":false}'::jsonb),
   ('starter', 'stripe'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 15000, FALSE, '{"display":"$150/year","discount":"2 months free"}'::jsonb),
   ('growth', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 4900, TRUE, '{"display":"$49/mo","recommended":true}'::jsonb),

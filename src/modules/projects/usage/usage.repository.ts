@@ -28,11 +28,11 @@ export class UsageRepository {
     const db = client ?? this.db;
     await db.query(
       `INSERT INTO project_usage_hourly
-        (project_id, organization_id, bucket, total_events, total_bytes)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (organization_id, project_id, environment_id, api_key_id, bucket) DO UPDATE SET
+        (project_id, organization_id, bucket, bucket_hour, total_events, event_bytes)
+       VALUES ($1, $2, $3, $3, $4, $5)
+       ON CONFLICT (project_id, bucket) DO UPDATE SET
          total_events = project_usage_hourly.total_events + EXCLUDED.total_events,
-         total_bytes = project_usage_hourly.total_bytes + EXCLUDED.total_bytes`,
+         event_bytes = project_usage_hourly.event_bytes + EXCLUDED.event_bytes`,
       [projectId, orgId, hour, eventCount, eventBytes],
     );
   }
@@ -67,7 +67,7 @@ export class UsageRepository {
   ): Promise<HourlyUsage[]> {
     const db = client ?? this.db;
     const result = await db.query<CanonicalUsageRow>(
-      `SELECT id, project_id, organization_id, bucket, total_events, total_bytes, created_at
+      `SELECT id, project_id, organization_id, bucket, total_events, event_bytes::text AS total_bytes, created_at
        FROM project_usage_hourly
        WHERE project_id = $1 AND bucket >= $2 AND bucket <= $3
        ORDER BY bucket ASC`,
@@ -100,7 +100,7 @@ export class UsageRepository {
   ): Promise<HourlyUsage | null> {
     const db = client ?? this.db;
     const result = await db.query<CanonicalUsageRow>(
-      `SELECT id, project_id, organization_id, bucket, total_events, total_bytes, created_at
+      `SELECT id, project_id, organization_id, bucket, total_events, event_bytes::text AS total_bytes, created_at
        FROM project_usage_hourly
        WHERE project_id = $1 AND bucket = $2
        LIMIT 1`,
@@ -133,14 +133,14 @@ export class UsageRepository {
            (SELECT COUNT(*) FROM project_members WHERE organization_id=$1 AND project_id=$2 AND status='active')::text member_count,
            (SELECT COUNT(*) FROM project_api_keys WHERE organization_id=$1 AND project_id=$2 AND deleted_at IS NULL)::text api_key_count,
            COALESCE(SUM(total_events),0)::text total_events,
-           COALESCE(SUM(total_bytes),0)::text total_bytes,
+           '0'::text total_bytes,
            COALESCE(SUM(total_events) FILTER(WHERE bucket>=date_trunc('hour',NOW())),0)::text current_hour_events
          FROM project_usage_minute
         WHERE organization_id=$1 AND project_id=$2 AND bucket>=date_trunc('day',NOW())`,
         [organizationId, projectId],
       ),
       db.query<{ bucket: Date; total_events: string; total_bytes: string }>(
-        `SELECT date_trunc('hour',bucket) bucket,SUM(total_events)::text total_events,SUM(total_bytes)::text total_bytes
+        `SELECT date_trunc('hour',bucket) bucket,SUM(total_events)::text total_events,SUM(event_bytes)::text total_bytes
            FROM project_usage_hourly
           WHERE organization_id=$1 AND project_id=$2 AND bucket>=date_trunc('hour',NOW())-INTERVAL '23 hours'
           GROUP BY date_trunc('hour',bucket) ORDER BY bucket`,
@@ -161,11 +161,10 @@ export class UsageRepository {
         [organizationId, projectId],
       ),
       db.query<{ event_type: string; total_events: string }>(
-        `SELECT t.name AS event_type,SUM(m.accepted_event_count)::text total_events
+        `SELECT m.event_type,SUM(m.events)::text total_events
            FROM api_key_usage_minute m
-           JOIN telemetry_event_types t ON t.id = m.event_type_id
-          WHERE m.organization_id=$1 AND m.project_id=$2 AND m.bucket>=date_trunc('day',NOW())
-          GROUP BY t.name ORDER BY SUM(m.accepted_event_count) DESC`,
+          WHERE m.organization_id=$1 AND m.project_id=$2 AND m.bucket>=date_trunc('day',NOW()) AND m.event_type <> '__all__'
+          GROUP BY m.event_type ORDER BY SUM(m.events) DESC`,
         [organizationId, projectId],
       ),
     ]);

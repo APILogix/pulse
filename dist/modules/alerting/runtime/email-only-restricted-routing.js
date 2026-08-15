@@ -1,10 +1,11 @@
-import { pool } from '../../../config/database.js';
 export class ProjectOwnerRepository {
     db;
-    constructor(db = pool) {
+    constructor(db) {
         this.db = db;
     }
     async findActiveVerifiedOwner(organizationId, projectId) {
+        if (!this.db)
+            return null;
         const result = await this.db.query(`SELECT member.user_id, LOWER(BTRIM(user_account.email)) AS email
          FROM project_members member
          JOIN organization_members organization_member
@@ -25,6 +26,8 @@ export class ProjectOwnerRepository {
         return row ? { userId: row.user_id, email: row.email } : null;
     }
     async findActiveVerifiedFallbackRecipient(organizationId, _projectId) {
+        if (!this.db)
+            return null;
         const result = await this.db.query(`SELECT organization_member.user_id, LOWER(BTRIM(user_account.email)) AS email
          FROM organization_members organization_member
          JOIN users user_account ON user_account.id = organization_member.user_id

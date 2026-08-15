@@ -83,12 +83,16 @@ export class NotificationDispatcher {
     async attemptDelivery(row, delivery, payload, priorAttempts) {
         const log = this.logger.child({ connectorId: row.id, deliveryId: delivery.id, correlationId: payload.correlationId });
         // 1. Rate limit
-        const rate = await this.repository.consumeRateLimitToken(row.id, row.rate_limit_requests, row.rate_limit_window_seconds);
+        const rate = typeof this.repository.consumeRateLimitToken === 'function'
+            ? await this.repository.consumeRateLimitToken(row.id, row.rate_limit_requests ?? 100, row.rate_limit_window_seconds ?? 60)
+            : { allowed: true, retryAfterMs: 0 };
         if (!rate.allowed) {
             return this.scheduleRetryOrFail(row, delivery, payload, priorAttempts, 'rate_limit', 'Global rate limit exceeded', true, rate.retryAfterMs, log);
         }
         const CIRCUIT_RESET_MS = 30_000;
-        const circuitAllowed = await this.repository.circuitAllows(row.id, CIRCUIT_RESET_MS);
+        const circuitAllowed = typeof this.repository.circuitAllows === 'function'
+            ? await this.repository.circuitAllows(row.id, CIRCUIT_RESET_MS)
+            : true;
         if (!circuitAllowed) {
             log.warn('Circuit open — short-circuiting delivery');
             return this.scheduleRetryOrFail(row, delivery, payload, priorAttempts, 'circuit_open', 'Circuit breaker open', true, undefined, log);
@@ -115,7 +119,8 @@ export class NotificationDispatcher {
                 responseBody: result.responseBody ?? null,
                 latencyMs: result.latencyMs,
             });
-            await this.repository.recordSuccess(row.id);
+            if (typeof this.repository.recordSuccess === 'function')
+                await this.repository.recordSuccess(row.id);
             await this.recordUsage(row, payload, log);
             await this.repository.insertAuditLog({
                 organizationId: row.organization_id,
@@ -129,13 +134,17 @@ export class NotificationDispatcher {
                     externalMessageId: result.externalMessageId ?? null,
                 },
             });
-            await this.repository.recordCircuitSuccess(row.id);
+            if (typeof this.repository.recordCircuitSuccess === 'function')
+                await this.repository.recordCircuitSuccess(row.id);
             log.info({ latencyMs: result.latencyMs }, 'Notification delivered');
             return { deliveryId: delivery.id, status: 'sent', result };
         }
         // Failure path
-        const circuitState = await this.repository.recordCircuitFailure(row.id, row.failure_threshold);
-        await this.repository.recordFailure(row.id);
+        const circuitState = typeof this.repository.recordCircuitFailure === 'function'
+            ? await this.repository.recordCircuitFailure(row.id, row.failure_threshold ?? 5)
+            : 'closed';
+        if (typeof this.repository.recordFailure === 'function')
+            await this.repository.recordFailure(row.id);
         if (circuitState === 'open') {
             await this.enqueueConnectorFailureAlert(row, delivery.id, result.errorMessage ?? 'Delivery failed', log);
         }

@@ -12,12 +12,18 @@ vi.mock('../../../src/config/log-database.js', () => ({
   logDB: { queryWithRetry: vi.fn() },
 }));
 
+vi.mock('../../../src/modules/alerting/evaluator/presets.js', () => ({
+  seedDefaultPresetsForOrg: vi.fn(),
+}));
+
 import { ProjectRepository } from '../../../src/modules/projects/core/project.repository.js';
 import { ProjectService } from '../../../src/modules/projects/core/project.service.js';
 import { ApiKeyRepository } from '../../../src/modules/projects/api-keys/api-key.repository.js';
 import { ApiKeyService } from '../../../src/modules/projects/api-keys/api-key.service.js';
 import { UsageRepository } from '../../../src/modules/projects/usage/usage.repository.js';
 import { AIRepository } from '../../../src/modules/ai/repository.js';
+import { ProjectPolicyService } from '../../../src/modules/projects/alerts/policies/project-policy.service.js';
+import { seedDefaultPresetsForOrg } from '../../../src/modules/alerting/evaluator/presets.js';
 
 const project = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -42,7 +48,7 @@ describe('project core runtime provisioning', () => {
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
     // Environments are provisioned explicitly by the service layer now — the
     // repository default provisioning only seeds the usage counter.
-    expect(sql).toContain('project_usage_current');
+    expect(sql).toContain('project_usage');
     expect(sql).not.toContain('project_environments');
     expect(sql).not.toContain("'staging'");
     expect(sql).not.toContain("'testing'");
@@ -259,14 +265,47 @@ describe('canonical project API key runtime', () => {
 });
 
 describe('canonical project usage and AI access', () => {
-  it('writes canonical usage bucket and total columns', async () => {
+  it('writes usage rows using the primary draft usage schema', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     const repo = new UsageRepository({ query } as unknown as Pool);
     await repo.incrementHourly(project.id, project.orgId, new Date(), 2, 100, {}, {});
     await repo.incrementDaily(project.id, project.orgId, new Date(), 2, 100, {}, {});
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
+    expect(sql).toContain('bucket, bucket_hour, total_events, event_bytes');
     expect(sql).toContain('bucket, total_events, total_bytes');
-    expect(sql).not.toMatch(/bucket_hour|bucket_date|event_count|event_bytes/);
+    expect(sql).not.toMatch(/bucket_date|event_count/);
+  });
+
+  it('builds project overview from current usage tables without telemetry_event_types', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes('FROM project_usage_minute')) {
+        return { rows: [{ member_count: '1', api_key_count: '1', total_events: '7', total_bytes: '0', current_hour_events: '3' }] };
+      }
+      if (sql.includes('FROM project_usage_hourly') && sql.includes("INTERVAL '23 hours'")) {
+        return { rows: [{ bucket: new Date('2026-01-01T01:00:00Z'), total_events: '3', total_bytes: '12' }] };
+      }
+      if (sql.includes('FROM project_usage_daily')) {
+        return { rows: [{ bucket: new Date('2026-01-01T00:00:00Z'), total_events: '7', total_bytes: '12' }] };
+      }
+      if (sql.includes('EXTRACT(HOUR FROM bucket)')) {
+        return { rows: [{ bucket_hour: 1, total_events: '3' }] };
+      }
+      if (sql.includes('FROM api_key_usage_minute')) {
+        return { rows: [{ event_type: 'span', total_events: '7' }] };
+      }
+      return { rows: [] };
+    });
+    const repo = new UsageRepository({ query } as unknown as Pool);
+
+    const overview = await repo.getProjectOverview(project.orgId, project.id);
+    const sql = query.mock.calls.map(([statement]) => statement).join('\n');
+
+    expect(sql).toContain('FROM api_key_usage_minute');
+    expect(sql).toContain('m.event_type');
+    expect(sql).toContain('SUM(m.events)');
+    expect(sql).not.toContain('telemetry_event_types');
+    expect(sql).not.toContain('event_type_id');
+    expect(overview.eventTypeBreakdown).toEqual({ span: 7 });
   });
 
   it('requires active project membership and resolves an active default environment', async () => {
@@ -281,5 +320,67 @@ describe('canonical project usage and AI access', () => {
     expect(sql).toContain('e.is_active = TRUE');
     expect(sql).not.toContain('default_environment');
     expect(result[0]?.environment).toBe('production');
+  });
+});
+
+describe('project alert policy subscriptions', () => {
+  it('materializes a canonical organization rule for catalog policies before creating the binding', async () => {
+    vi.mocked(seedDefaultPresetsForOrg).mockResolvedValue(0);
+    const rule = { id: 'rule-id' };
+    const repository = {
+      findPolicyIdentity: vi.fn().mockResolvedValue({ slug: 'high_latency' }),
+      materializeCanonicalRuleFromPolicy: vi.fn().mockResolvedValue({ id: rule.id, slug: 'high_latency' }),
+    };
+    const projectAccess = {
+      requireProjectAccess: vi.fn().mockResolvedValue(project),
+      audit: vi.fn().mockResolvedValue(undefined),
+    };
+    const config = {
+      connectionPool: {} as Pool,
+      findRuleById: vi.fn()
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(rule),
+      findRuleByPresetKey: vi.fn().mockResolvedValue(null),
+    };
+    const binding = {
+      id: 'binding-id',
+      organization_id: project.orgId,
+      project_id: project.id,
+      rule_id: rule.id,
+      mode: 'inherit',
+      threshold_overrides: {},
+      cooldown_seconds: null,
+      evaluation_interval_seconds: null,
+      severity: null,
+      requested_channels: null,
+      escalation_policy_id: null,
+      updated_at: new Date('2026-01-01T00:00:00Z'),
+    };
+    const bindings = { create: vi.fn().mockResolvedValue(binding) };
+    const service = new ProjectPolicyService(
+      repository as any,
+      projectAccess as any,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
+      config as any,
+      bindings as any,
+    );
+
+    const result = await service.subscribe(project.orgId, project.id, meta as any, {
+      policyId: 'catalog-policy-id',
+    } as any);
+
+    expect(repository.findPolicyIdentity).toHaveBeenCalledWith(project.orgId, 'catalog-policy-id');
+    expect(repository.materializeCanonicalRuleFromPolicy).toHaveBeenCalledWith(
+      project.orgId,
+      'catalog-policy-id',
+      meta.actorUserId,
+    );
+    expect(bindings.create).toHaveBeenCalledWith(
+      project.orgId,
+      rule.id,
+      expect.objectContaining({ scopeType: 'project', projectId: project.id, mode: 'inherit' }),
+      meta.actorUserId,
+    );
+    expect(result).toMatchObject({ id: binding.id, policy_id: rule.id, state: 'subscribed' });
   });
 });

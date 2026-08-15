@@ -1,5 +1,4 @@
 import type { Pool } from 'pg';
-import { pool } from '../../../config/database.js';
 import type { NotificationProvider, NotificationRecipientType } from './notification-entitlement.service.js';
 
 export type RestrictedRoutingReason = 'EMAIL_ONLY_RESTRICTED' | 'OWNER_EMAIL_UNAVAILABLE';
@@ -32,12 +31,13 @@ export interface RestrictedRoutingResult {
 }
 
 export class ProjectOwnerRepository implements ProjectOwnerReader {
-  constructor(private readonly db: Pool = pool) {}
+  constructor(private readonly db?: Pool) {}
 
   async findActiveVerifiedOwner(
     organizationId: string,
     projectId: string,
   ): Promise<ProjectOwnerIdentity | null> {
+    if (!this.db) return null;
     const result = await this.db.query<{ user_id: string; email: string }>(
       `SELECT member.user_id, LOWER(BTRIM(user_account.email)) AS email
          FROM project_members member
@@ -65,6 +65,7 @@ export class ProjectOwnerRepository implements ProjectOwnerReader {
     organizationId: string,
     _projectId?: string | null,
   ): Promise<ProjectOwnerIdentity | null> {
+    if (!this.db) return null;
     const result = await this.db.query<{ user_id: string; email: string }>(
       `SELECT organization_member.user_id, LOWER(BTRIM(user_account.email)) AS email
          FROM organization_members organization_member

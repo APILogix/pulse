@@ -6,6 +6,15 @@ export declare class ProjectPolicyRepository {
     findPolicyIdentity(organizationId: string, policyId: string): Promise<{
         slug: string;
     } | null>;
+    getCatalogPolicies(organizationId: string): Promise<Array<{
+        id: string;
+        slug: string;
+        name: string;
+    }>>;
+    materializeCanonicalRuleFromPolicy(organizationId: string, policyId: string, createdBy: string): Promise<{
+        id: string;
+        slug: string;
+    } | null>;
     list(organizationId: string, projectId: string): Promise<any[]>;
     create(organizationId: string, projectId: string, policyId: string, userId: string): Promise<any>;
     updateState(organizationId: string, projectId: string, subscriptionId: string, userId: string, body: UpdatePolicySubscriptionBody): Promise<any>;

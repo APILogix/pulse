@@ -195,7 +195,21 @@ export class CoreRepository extends BaseRepository {
   }
 
   async isSlugAvailable(slug: string): Promise<boolean> {
-    const r = await this.db.query<{ x: boolean }>(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=$1 AND deleted_at IS NULL) AS x`, [slug]);
+    const normalized = (slug || '').trim().toLowerCase();
+    if (!normalized || normalized.length < 2 || normalized.length > 80) return false;
+
+    const RESERVED_SLUGS = new Set([
+      'admin', 'api', 'app', 'auth', 'billing', 'dashboard', 'docs', 'help',
+      'login', 'logout', 'new', 'null', 'organizations', 'projects', 'pulse',
+      'register', 'settings', 'status', 'support', 'system', 'team', 'undefined',
+      'user', 'users', 'workspace', 'workspaces', 'internal', 'root', 'superadmin',
+    ]);
+    if (RESERVED_SLUGS.has(normalized)) return false;
+
+    const r = await this.db.query<{ x: boolean }>(
+      `SELECT EXISTS(SELECT 1 FROM organizations WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL) AS x`,
+      [normalized],
+    );
     return !r.rows[0]?.x;
   }
 

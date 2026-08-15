@@ -16,7 +16,7 @@ describe('canonical migrations bootstrap', () => {
 
   beforeAll(async () => {
     try {
-      container = await new PostgreSqlContainer('postgres:16-alpine').start();
+      container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
       client = new Client({
         connectionString: container.getConnectionUri(),
       });

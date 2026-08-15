@@ -12,6 +12,7 @@ export interface HttpRequestOptions {
     body?: string;
     timeoutMs?: number;
     connectTimeoutMs?: number;
+    skipSsrfCheck?: boolean;
 }
 export interface HttpResponse {
     ok: boolean;

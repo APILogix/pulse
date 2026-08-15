@@ -1,23 +1,4 @@
-/**
- * Automation module – SSRF protection & webhook URL allowlist verifier.
- *
- * Blocks: private/loopback/link-local IPs, credentials in URLs,
- * non-HTTPS protocols, and DNS rebind-susceptible hosts.
- * Provides a server-side allowlist verification interface.
- */
-/**
- * Check if a hostname/IP is a blocked private/loopback/link-local address.
- * Returns a reason string if blocked, null if safe.
- */
-export declare function checkSsrf(hostname: string): string | null;
-/**
- * Validate a URL for safe outbound webhook delivery.
- * Returns { safe: true } or { safe: false, reason: string }.
- */
-export declare function validateWebhookUrl(url: string): {
-    safe: boolean;
-    reason?: string;
-};
+export { checkSsrf, validateWebhookUrl, type ValidateUrlOptions } from '../../shared/utils/ssrf.js';
 /**
  * Server-side allowlist verifier interface.
  * Only URLs verified by this interface skip approval requirements.

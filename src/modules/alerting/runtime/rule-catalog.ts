@@ -110,8 +110,54 @@ export function tierForFieldPath(fieldPath: string): AlertRuntimeTier | null {
   return null;
 }
 
+export class AlertCatalogSnapshot {
+  constructor(
+    public readonly organizationId: string,
+    public readonly tier: AlertRuntimeTier,
+    public readonly rules: RuntimeRuleRow[],
+    public readonly conditionsByRule: Map<string, AlertRuleConditionRow[]>,
+    public readonly bindingsByRule: Map<string, AlertRuleBindingRow[]>,
+  ) {}
+
+  resolveRulesForScope(scope: EvaluationScope): ResolvedRuntimeRule[] {
+    if (!scope.projectId) return [];
+    return this.rules
+      .map((rule) => ({
+        rule,
+        effective: resolveEffectiveRule(
+          rule,
+          this.conditionsByRule.get(rule.id) ?? [],
+          this.bindingsByRule.get(rule.id) ?? [],
+          scope,
+          { requireProjectSubscription: true },
+        ),
+      }))
+      .filter(({ effective }) => effective.enabled);
+  }
+}
+
 export class AlertRuntimeRuleCatalog {
   constructor(private readonly db: Pool) {}
+
+  async loadCatalogSnapshot(
+    organizationId: string,
+    tier: AlertRuntimeTier,
+  ): Promise<AlertCatalogSnapshot> {
+    const rules = (await this.listRulesForTier(organizationId, tier))
+      .filter((rule) => rule.project_id === null);
+    const ruleIds = rules.map((rule) => rule.id);
+    const [conditionsByRule, bindingsByRule] = await Promise.all([
+      this.listConditions(ruleIds),
+      this.listBindings(organizationId, ruleIds),
+    ]);
+    return new AlertCatalogSnapshot(
+      organizationId,
+      tier,
+      rules,
+      conditionsByRule,
+      bindingsByRule,
+    );
+  }
 
   async listRulesForTier(organizationId: string, tier: AlertRuntimeTier): Promise<RuntimeRuleRow[]> {
     const prefixes = TIER_FIELD_PREFIXES[tier];
@@ -182,26 +228,7 @@ export class AlertRuntimeRuleCatalog {
     scope: EvaluationScope,
   ): Promise<ResolvedRuntimeRule[]> {
     if (!scope.projectId) return [];
-
-    const rules = (await this.listRulesForTier(organizationId, tier))
-      .filter((rule) => rule.project_id === null);
-    const ruleIds = rules.map((rule) => rule.id);
-    const [conditionsByRule, bindingsByRule] = await Promise.all([
-      this.listConditions(ruleIds),
-      this.listBindings(organizationId, ruleIds),
-    ]);
-
-    return rules
-      .map((rule) => ({
-        rule,
-        effective: resolveEffectiveRule(
-          rule,
-          conditionsByRule.get(rule.id) ?? [],
-          bindingsByRule.get(rule.id) ?? [],
-          scope,
-          { requireProjectSubscription: true },
-        ),
-      }))
-      .filter(({ effective }) => effective.enabled);
+    const snapshot = await this.loadCatalogSnapshot(organizationId, tier);
+    return snapshot.resolveRulesForScope(scope);
   }
 }

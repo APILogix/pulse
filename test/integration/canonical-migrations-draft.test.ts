@@ -130,7 +130,7 @@ describe('canonical migrations draft bootstrap', () => {
 
   beforeAll(async () => {
     try {
-      container = await new PostgreSqlContainer('postgres:16-alpine').start();
+      container = await new PostgreSqlContainer('pgvector/pgvector:pg16').start();
       client = new Client({
         connectionString: container.getConnectionUri(),
       });
@@ -183,7 +183,7 @@ describe('canonical migrations draft bootstrap', () => {
       'project_environment_sdk_configs', 'project_environment_sdk_config_revisions',
       'api_key_usage_minute', 'api_key_usage_daily',
       'project_usage_minute', 'project_usage_hourly', 'project_usage_daily',
-      'project_usage_monthly', 'project_usage_current', 'project_alert_thresholds', 'project_alert_channels',
+      'project_usage_monthly', 'project_usage', 'project_alert_thresholds', 'project_alert_channels',
       'project_member_alert_channel_preferences', 'project_notification_preferences',
       'project_connector_subscriptions', 'organization_audit_logs',
     ];
@@ -390,7 +390,7 @@ describe('canonical migrations draft bootstrap', () => {
         (SELECT count(*)::int FROM project_environment_sdk_configs WHERE project_id=$1) config_heads,
         (SELECT count(*)::int FROM project_environment_sdk_config_revisions WHERE project_id=$1) config_revisions,
         (SELECT count(*)::int FROM project_members WHERE project_id=$1) owners,
-        (SELECT count(*)::int FROM project_usage_current WHERE project_id=$1) current_usage`,
+        (SELECT count(*)::int FROM project_usage WHERE project_id=$1) current_usage`,
       [projectId],
     );
     expect(databaseProvisioned.rows[0]).toEqual({

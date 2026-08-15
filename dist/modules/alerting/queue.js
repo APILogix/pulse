@@ -12,6 +12,7 @@ import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
 import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
 import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
+import { EmailOnlyRestrictedRouting, ProjectOwnerRepository } from './runtime/email-only-restricted-routing.js';
 export const ALERT_JOBS = {
     cleanup: 'alert.cleanup',
     escalate: 'alert.escalate',
@@ -47,11 +48,13 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     const enqueueConnectorJob = async (queue, data, options) => pgboss.send(queue, data, options);
     const entitlement = new NotificationEntitlementService();
     const runtimePool = telemetryPool ?? pool;
+    const projectOwners = new ProjectOwnerRepository(pool);
     const routing = new NotificationRoutingService({
         logger,
         channelRepository: new AlertChannelRepository(pool),
         configRepository: new AlertConfigRepository(pool),
         entitlementService: entitlement,
+        restrictedRouting: new EmailOnlyRestrictedRouting(projectOwners),
     });
     const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
     // ── Queue creation with enterprise defaults ─────────────────────────────
@@ -71,7 +74,7 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
         expireInSeconds: 300,
     });
     const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
-    const notificationRouter = new AlertNotificationRouter(runtimePool, logger);
+    const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
     const snapshotEscalation = new SnapshotEscalationWorker(logger, runtimePool, routing);
     // ── escalation-sweep: advance due escalations + resume expired acks ─────
@@ -200,20 +203,31 @@ function startRuntimeDispatchTimers(telemetryPool, log) {
     return timers;
 }
 async function activeRuntimeOrganizations(telemetryPool) {
-    const result = await telemetryPool.query(`SELECT DISTINCT organization_id
-       FROM (
-         SELECT organization_id FROM events_requests WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
-         UNION
-         SELECT organization_id FROM events_errors WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
-         UNION
-         SELECT organization_id FROM events_logs WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
-         UNION
-         SELECT organization_id FROM events_cron_checkins WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
-         UNION
-         SELECT organization_id FROM ai_requests WHERE updated_at >= NOW() - INTERVAL '15 minutes'
-       ) recent
-      LIMIT 1000`);
-    return result.rows.map((row) => row.organization_id);
+    try {
+        const result = await telemetryPool.query(`SELECT DISTINCT organization_id
+         FROM (
+           SELECT organization_id FROM analytics_watermarks WHERE updated_at >= NOW() - INTERVAL '1 hour'
+           UNION
+           SELECT organization_id FROM request_metrics_1m WHERE bucket >= NOW() - INTERVAL '15 minutes'
+           UNION
+           SELECT organization_id FROM cron_metrics_1m WHERE bucket >= NOW() - INTERVAL '15 minutes'
+           UNION
+           SELECT organization_id FROM ai_metrics_1m WHERE bucket >= NOW() - INTERVAL '15 minutes'
+         ) recent
+        LIMIT 1000`);
+        if (result.rows.length > 0) {
+            return result.rows.map((row) => row.organization_id);
+        }
+    }
+    catch {
+        // If watermarks/metrics tables are not populated yet, fall back gracefully
+    }
+    // Fallback to recent telemetry events if aggregates are not present
+    const fallbackResult = await telemetryPool.query(`SELECT DISTINCT organization_id
+       FROM events_requests
+      WHERE ingested_at >= NOW() - INTERVAL '15 minutes'
+      LIMIT 1000`).catch(() => ({ rows: [] }));
+    return fallbackResult.rows.map((row) => row.organization_id);
 }
 async function safeCreateQueue(name, options) {
     const boss = pgboss;

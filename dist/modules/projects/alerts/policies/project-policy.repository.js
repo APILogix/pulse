@@ -8,6 +8,107 @@ export class ProjectPolicyRepository {
         const result = await this.db.query(`SELECT slug FROM alerting_policy_catalog WHERE id = $1 AND organization_id = $2 LIMIT 1`, [policyId, organizationId]);
         return result.rows[0] ?? null;
     }
+    async getCatalogPolicies(organizationId) {
+        const result = await this.db.query(`SELECT id, slug, name FROM alerting_policy_catalog WHERE organization_id = $1`, [organizationId]);
+        return result.rows;
+    }
+    async materializeCanonicalRuleFromPolicy(organizationId, policyId, createdBy) {
+        const client = await this.db.connect();
+        try {
+            await client.query('BEGIN');
+            const policy = await client.query(`SELECT p.id, p.slug, p.name, p.description, p.severity, p.default_threshold,
+                p.cooldown_seconds, p.evaluation_window_seconds, p.enabled,
+                v.definition
+           FROM alerting_policy_catalog p
+           LEFT JOIN alerting_policy_versions v
+             ON v.policy_id = p.id
+            AND v.organization_id = p.organization_id
+            AND v.version = p.current_version
+          WHERE p.id = $1 AND p.organization_id = $2
+          LIMIT 1`, [policyId, organizationId]);
+            const row = policy.rows[0];
+            if (!row) {
+                await client.query('ROLLBACK');
+                return null;
+            }
+            const existing = await client.query(`SELECT id, preset_key AS slug
+           FROM alert_rules
+          WHERE organization_id = $1 AND preset_key = $2 AND project_id IS NULL AND deleted_at IS NULL
+          LIMIT 1`, [organizationId, row.slug]);
+            if (existing.rows[0]) {
+                await client.query('COMMIT');
+                return existing.rows[0];
+            }
+            const definition = row.definition ?? {};
+            const fieldPath = typeof definition.metricSource === 'string' && definition.metricSource.length > 0
+                ? definition.metricSource
+                : row.slug;
+            const expression = typeof definition.expression === 'string' ? definition.expression : '';
+            const operator = expression.includes('==') || expression.includes('=')
+                ? 'eq'
+                : expression.includes('<')
+                    ? 'lt'
+                    : 'gte';
+            const thresholdValue = (row.default_threshold && typeof row.default_threshold === 'object' && 'value' in row.default_threshold)
+                ? row.default_threshold.value
+                : row.default_threshold;
+            const inserted = await client.query(`INSERT INTO alert_rules
+           (organization_id, name, description, severity, enabled,
+            evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
+            deduplication_window_seconds, labels, annotations, metadata, created_by, enabled_at,
+            project_id, preset_key, is_default)
+         VALUES ($1, $2, $3, $4::alert_severity, $5, $6, $7, 60, 3600,
+                 $8::jsonb, $9::jsonb, $10::jsonb, $11, CASE WHEN $5 THEN NOW() ELSE NULL END,
+                 NULL, $12, TRUE)
+         ON CONFLICT DO NOTHING
+         RETURNING id`, [
+                organizationId,
+                row.name,
+                row.description,
+                row.severity,
+                row.enabled,
+                row.evaluation_window_seconds,
+                row.cooldown_seconds,
+                JSON.stringify({ catalogPolicy: true }),
+                JSON.stringify({ policy_slug: row.slug }),
+                JSON.stringify({ source: 'alerting_policy_catalog', policyId: row.id }),
+                createdBy,
+                row.slug,
+            ]);
+            const ruleId = inserted.rows[0]?.id;
+            if (ruleId) {
+                await client.query(`INSERT INTO alert_rule_conditions
+             (rule_id, condition_type, field_path, operator, threshold_value,
+              lookback_minutes, aggregate_function, is_required, order_index)
+           VALUES ($1, 'threshold'::alert_condition_type, $2, $3::alert_condition_operator,
+                   $4::jsonb, GREATEST(1, CEIL($5::numeric / 60))::int, NULL, TRUE, 0)`, [
+                    ruleId,
+                    fieldPath,
+                    operator,
+                    JSON.stringify(thresholdValue ?? null),
+                    row.evaluation_window_seconds,
+                ]);
+                await client.query(`INSERT INTO alert_rule_actions
+             (rule_id, action_type, priority, order_index, action_conditions, is_active)
+           VALUES ($1, 'notify'::alert_action_type, 100, 0, $2::jsonb, TRUE)`, [ruleId, JSON.stringify({ channel: 'in_app', audience: 'project_members' })]);
+            }
+            const resolved = ruleId
+                ? { id: ruleId, slug: row.slug }
+                : (await client.query(`SELECT id, preset_key AS slug
+               FROM alert_rules
+              WHERE organization_id = $1 AND preset_key = $2 AND project_id IS NULL AND deleted_at IS NULL
+              LIMIT 1`, [organizationId, row.slug])).rows[0] ?? null;
+            await client.query('COMMIT');
+            return resolved;
+        }
+        catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+        }
+        finally {
+            client.release();
+        }
+    }
     async list(organizationId, projectId) {
         const result = await this.db.query(`SELECT s.id, s.organization_id, s.project_id, s.policy_id, s.state,
               s.created_at, s.updated_at,

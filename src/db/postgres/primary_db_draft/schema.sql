@@ -2574,6 +2574,9 @@ CREATE TABLE IF NOT EXISTS project_members (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   role project_member_role NOT NULL DEFAULT 'viewer',
+  invited_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  invited_at TIMESTAMPTZ,
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
   status project_member_status NOT NULL DEFAULT 'active',
   created_by UUID REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -9430,81 +9433,12 @@ SET events_used = events_used + p_count,
 WHERE organization_id = p_organization_id;
 $$;
 
--- Source: canonical_migrations_draft/04_projects/017_simplify_project_environments.up.sql
-CREATE OR REPLACE FUNCTION provision_environment_sdk_config() RETURNS trigger AS $$
-DECLARE
-  head_id UUID := gen_random_uuid();
-  revision_id UUID := gen_random_uuid();
-  empty_hash TEXT := encode(digest(('{}'::jsonb)::text, 'sha256'), 'hex');
-BEGIN
-  INSERT INTO project_environment_sdk_configs(
-    id, organization_id, project_id, environment_id, published_revision_id,
-    current_revision, current_hash
-  ) VALUES(
-    head_id, NEW.organization_id, NEW.project_id, NEW.id, revision_id,
-    1, empty_hash
-  );
+-- Source: canonical_migrations_draft/04_projects/020_remove_sdk_config_provisioning_trigger.up.sql
+-- Environment SDK config is provisioned explicitly in application-level transactions (SdkConfigProvisioner).
 
-  INSERT INTO project_environment_sdk_config_revisions(
-    id, config_id, organization_id, project_id, environment_id, revision_number,
-    config_value, config_hash, change_type, change_summary
-  ) VALUES(
-    revision_id, head_id, NEW.organization_id, NEW.project_id, NEW.id, 1,
-    '{}'::jsonb, empty_hash, 'initial', 'Initial environment SDK configuration'
-  );
-  RETURN NEW;
-END; $$ LANGUAGE plpgsql;
+-- Source: canonical_migrations_draft/04_projects/021_remove_project_defaults_provisioning_trigger.up.sql
+-- Project defaults are provisioned explicitly in application-level transactions (ProjectService.createProject).
 
--- Source: canonical_migrations_draft/04_projects/013_configure_project_integrity.up.sql
-CREATE OR REPLACE FUNCTION provision_project_schema_defaults() RETURNS trigger AS $$
-BEGIN
- INSERT INTO project_settings(
-   project_id, organization_id, data_retention_days, sampling_rate, allowed_domains, blocked_domains,
-   pii_scrubbing_enabled, ip_collection_enabled, release_tracking_enabled, session_replay_enabled,
-   performance_monitoring_enabled, error_monitoring_enabled, log_ingestion_enabled, metric_ingestion_enabled,
-   trace_ingestion_enabled, profile_ingestion_enabled, version
- ) VALUES (
-   NEW.id, NEW.org_id, 10, 1.00000, '{}'::text[], '{}'::text[],
-   true, true, true, false,
-   true, true, true, true,
-   true, true, 1
- ) ON CONFLICT(project_id) DO NOTHING;
- INSERT INTO project_environments(project_id,organization_id,name,slug,type,description,is_default,color)
- VALUES
-  (NEW.id,NEW.org_id,'Production','production','production','Production telemetry',true,'#16A34A'),
-  (NEW.id,NEW.org_id,'Staging','staging','staging','Pre-production telemetry',false,'#D97706'),
-  (NEW.id,NEW.org_id,'Development','development','development','Development telemetry',false,'#2563EB'),
-  (NEW.id,NEW.org_id,'Testing','testing','testing','Quality assurance and automated testing telemetry',false,'#7C3AED'),
-  (NEW.id,NEW.org_id,'Preview','preview','preview','Short-lived preview deployment telemetry',false,'#DB2777')
- ON CONFLICT DO NOTHING;
- IF NEW.created_by IS NOT NULL THEN
-  INSERT INTO project_members(
-    project_id,organization_id,user_id,role,invited_by,invited_at,joined_at,status,created_by
-  ) VALUES(
-    NEW.id,NEW.org_id,NEW.created_by,'owner',NEW.created_by,NOW(),NOW(),'active',NEW.created_by
-  ) ON CONFLICT(project_id,user_id) DO NOTHING;
- END IF;
- INSERT INTO project_notification_preferences(organization_id,project_id,category) VALUES(NEW.org_id,NEW.id,'all') ON CONFLICT DO NOTHING;
- INSERT INTO project_alert_thresholds(organization_id,project_id,threshold_key,metric_name,metric_source,category,severity,comparison_operator,threshold_value,threshold_unit,evaluation_window_minutes,cooldown_minutes,consecutive_breaches)
- SELECT NEW.org_id,NEW.id,t.threshold_key,t.metric_name,'project_usage',t.category,t.severity,t.comparison_operator,t.threshold_value,t.threshold_unit,t.evaluation_window_minutes,t.cooldown_minutes,t.consecutive_breaches
- FROM (VALUES
-  ('latency_p50','latency_ms_p50','performance','warning','>=',500::numeric,'ms',5,15,1),
-  ('latency_p75','latency_ms_p75','performance','warning','>=',750::numeric,'ms',5,15,1),
-  ('latency_p90','latency_ms_p90','performance','warning','>=',1000::numeric,'ms',5,15,1),
-  ('latency_p95','latency_ms_p95','performance','error','>=',1500::numeric,'ms',5,15,1),
-  ('latency_p99','latency_ms_p99','performance','critical','>=',2500::numeric,'ms',5,15,1),
-  ('error_rate','error_rate','errors','error','>=',5::numeric,'percent',5,15,1),
-  ('apdex','apdex','performance','warning','<=',0.85::numeric,'score',5,15,1),
-  ('event_volume_spike','total_events','volume','warning','>=',200::numeric,'percent',5,15,1),
-  ('event_volume_drop','total_events','volume','warning','<=',50::numeric,'percent',5,15,1),
-  ('failed_notification_rate','failed_notifications','notifications','error','>=',10::numeric,'percent',5,15,1),
-  ('ingestion_error_rate','ingestion_errors','ingestion','error','>=',5::numeric,'percent',5,15,1),
-  ('rate_limit_usage','rate_limit_usage','ingestion','warning','>=',80::numeric,'percent',5,15,1),
-  ('ai_usage_cost','ai_cost','ai','warning','>=',100::numeric,'currency',60,60,1)
- ) AS t(threshold_key,metric_name,category,severity,comparison_operator,threshold_value,threshold_unit,evaluation_window_minutes,cooldown_minutes,consecutive_breaches)
- ON CONFLICT DO NOTHING;
- RETURN NEW;
-END; $$ LANGUAGE plpgsql;
 
 -- Source: canonical_migrations_draft/04_projects/026_extend_sdk_sampling_contract.up.sql
 CREATE OR REPLACE FUNCTION pulse_build_sdk_config(
@@ -9727,6 +9661,14 @@ END;
 $$;
 
 -- Source: canonical_migrations_draft/04_projects/025_upgrade_sdk_contract_v1.up.sql
+CREATE OR REPLACE FUNCTION pulse_jsonb_exact_keys(p_value jsonb, p_keys text[])
+RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
+  SELECT jsonb_typeof(p_value)='object'
+     AND (SELECT count(*) FROM jsonb_object_keys(p_value))=cardinality(p_keys)
+     AND NOT EXISTS (SELECT 1 FROM jsonb_object_keys(p_value) k WHERE NOT (k=ANY(p_keys)));
+$$;
+
+-- Source: canonical_migrations_draft/04_projects/025_upgrade_sdk_contract_v1.up.sql
 CREATE OR REPLACE FUNCTION pulse_jsonb_all_booleans(p_value jsonb, p_keys text[])
 RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
   SELECT pulse_jsonb_exact_keys(p_value,p_keys)
@@ -9764,14 +9706,6 @@ BEGIN
   END LOOP;
   RETURN result;
 END;
-$$;
-
--- Source: canonical_migrations_draft/04_projects/025_upgrade_sdk_contract_v1.up.sql
-CREATE OR REPLACE FUNCTION pulse_jsonb_exact_keys(p_value jsonb, p_keys text[])
-RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
-  SELECT jsonb_typeof(p_value)='object'
-     AND (SELECT count(*) FROM jsonb_object_keys(p_value))=cardinality(p_keys)
-     AND NOT EXISTS (SELECT 1 FROM jsonb_object_keys(p_value) k WHERE NOT (k=ANY(p_keys)));
 $$;
 
 -- Source: canonical_migrations_draft/04_projects/025_upgrade_sdk_contract_v1.up.sql

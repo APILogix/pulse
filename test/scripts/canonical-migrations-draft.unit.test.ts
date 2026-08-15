@@ -25,6 +25,7 @@ describe('canonical_migrations_draft discovery', () => {
     expect(files).toContain('04_projects/018_normalize_project_api_keys_and_usage.up.sql');
     expect(files).toContain('04_projects/019_upgrade_environment_sdk_config_snapshot.up.sql');
     expect(files).toContain('04_projects/020_remove_sdk_config_provisioning_trigger.up.sql');
+    expect(files).toContain('04_projects/021_remove_project_defaults_provisioning_trigger.up.sql');
     expect(files).toContain('04_projects/023_update_sdk_config_transport_routes.up.sql');
     expect(files).toContain('04_projects/025_upgrade_sdk_contract_v1.up.sql');
     expect(files.some((file) => file.startsWith('05_project_credentials/'))).toBe(false);
@@ -812,3 +813,31 @@ describe('SDK schema-v1 persistence transition', () => {
     expect(sql).not.toContain('config_value');
   });
 });
+
+describe('Project creation environment provisioning contract', () => {
+  it('drops project defaults trigger and function on upgrade', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/021_remove_project_defaults_provisioning_trigger.up.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects');
+    expect(sql).toContain('DROP FUNCTION IF EXISTS provision_project_schema_defaults()');
+    expect(sql).not.toContain('CREATE TRIGGER trg_projects_provision_defaults');
+    expect(sql).not.toContain('CREATE OR REPLACE FUNCTION provision_project_schema_defaults');
+  });
+
+  it('drops project defaults trigger and function on downgrade (non-restorative)', async () => {
+    const sql = await readMigrationSql(
+      '04_projects/021_remove_project_defaults_provisioning_trigger.down.sql',
+      DRAFT_MIGRATIONS_DIR,
+    );
+
+    expect(sql).toContain('Intentionally non-restorative breaking downgrade');
+    expect(sql).toContain('DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects');
+    expect(sql).toContain('DROP FUNCTION IF EXISTS provision_project_schema_defaults()');
+    expect(sql).not.toContain('CREATE TRIGGER trg_projects_provision_defaults');
+    expect(sql).not.toContain('CREATE OR REPLACE FUNCTION');
+  });
+});
+

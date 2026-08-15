@@ -7,7 +7,7 @@ BEGIN;
 CREATE OR REPLACE FUNCTION reserve_alert_runtime_idempotency(
   p_namespace VARCHAR,
   p_organization_id UUID,
-  p_idempotency_key VARCHAR,
+  p_idempotency_key VARCHAR
 )
 RETURNS BOOLEAN
 LANGUAGE plpgsql

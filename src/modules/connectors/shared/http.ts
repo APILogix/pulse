@@ -6,6 +6,7 @@
  * used by the dispatcher and dead-letter queue.
  */
 import { ConnectorDeliveryError, type FailureCategory } from '../types.js';
+import { validateWebhookUrl } from '../../../shared/utils/ssrf.js';
 
 export interface HttpRequestOptions {
   method?: string;
@@ -13,6 +14,7 @@ export interface HttpRequestOptions {
   body?: string;
   timeoutMs?: number;
   connectTimeoutMs?: number;
+  skipSsrfCheck?: boolean;
 }
 
 export interface HttpResponse {
@@ -34,6 +36,18 @@ export async function httpRequest(
   url: string,
   options: HttpRequestOptions = {},
 ): Promise<HttpResponse> {
+  if (!options.skipSsrfCheck) {
+    const ssrf = validateWebhookUrl(url);
+    if (!ssrf.safe) {
+      throw new ConnectorDeliveryError(
+        `SSRF protection blocked request: ${ssrf.reason ?? 'unsafe URL'}`,
+        'invalid_config',
+        false,
+        { url: redactUrl(url) },
+      );
+    }
+  }
+
   const controller = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);

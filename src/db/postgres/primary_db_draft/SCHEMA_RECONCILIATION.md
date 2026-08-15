@@ -262,9 +262,7 @@ This baseline is generated from the current canonical migration draft plus histo
 | trg_project_members_version | Project | project_members | bump_project_version | migrations/003_project_module_refactor.sql | yes |
 | trg_project_notif_prefs_updated_at | Project | project_notification_preferences | set_updated_at | migrations/003_project_module_refactor.sql | yes |
 | trg_project_roles_updated_at | Project | project_roles | set_updated_at | migrations/003_project_module_refactor.sql | yes |
-| trg_project_usage_updated_at | Project | project_usage | set_updated_at | migrations/002_create_all.sql | yes |
-| trg_projects_provision_defaults | Project | projects | provision_project_schema_defaults | canonical_migrations_draft/04_projects/013_configure_project_integrity.up.sql | yes |
-| trg_projects_public_id_immutable | Project | projects | fn_prevent_project_public_id_update | canonical_migrations_draft/04_projects/022_add_project_public_id.sql | yes |
+| trg_projects_provision_defaults | Project | projects | provision_project_schema_defaults | canonical_migrations_draft/04_projects/021_remove_project_defaults_provisioning_trigger.up.sql | dropped (superseded by ProjectService application transaction) |
 | trg_projects_updated_at | Project | projects | set_updated_at | migrations/002_create_all.sql | yes |
 | trg_projects_version | Project | projects | bump_project_version | migrations/003_project_module_refactor.sql | yes |
 | trg_connector_circuit_state_updated_at | Connector | connector_circuit_state | connector_set_updated_at | canonical_migrations_draft/06_connectors/015_create_connector_runtime_guards.up.sql | yes |

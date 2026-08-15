@@ -17,12 +17,6 @@ CREATE INDEX IF NOT EXISTS idx_events_replays_org_project_session_time
   ON events_replays (organization_id, project_id, session_id, occurred_at DESC)
   WHERE session_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_analytics_sessions_org_project_time
-  ON analytics_user_sessions (organization_id, project_id, started_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_analytics_sessions_org_project_session_time
-  ON analytics_user_sessions (organization_id, project_id, session_id, started_at DESC);
-
 INSERT INTO logdb_schema_notes(subject, decision)
 VALUES (
   'observability_query_contract',

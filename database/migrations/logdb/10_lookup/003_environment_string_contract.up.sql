@@ -74,7 +74,7 @@ BEGIN
     );
     EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', t, t || '_metadata_environment_ck');
     EXECUTE format(
-      'ALTER TABLE %I ADD CONSTRAINT %I CHECK (metadata=jsonb_build_object(''environment'',environment))',
+      'ALTER TABLE %I ADD CONSTRAINT %I CHECK (metadata @> jsonb_build_object(''environment'',environment))',
       t, t || '_metadata_environment_ck'
     );
     idx := 'idx_' || t || '_tenant_env_time';

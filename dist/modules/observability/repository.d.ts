@@ -76,6 +76,7 @@ export declare class ObservabilityRepository implements QueryExecutor {
     fetchErrorGroupPublicId(ctx: QueryContext, errorGroupId: string | null, fingerprint?: string | null): Promise<string | null>;
     /** Build a server-owned project predicate for a scoped repository query. */
     private projectPredicate;
+    private errorGroupPublicIdPredicate;
     /**
      * Fetch audit log history for an error group from `error_group_history`.
      */

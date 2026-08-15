@@ -136,18 +136,16 @@ describe("TelemetryWriter environment contract", () => {
       expect(columns).toContain("metadata");
       expect(columns).toContain("payload");
       expect(columns).toContain("ai_response");
-      expect(columns).toContain("timestamp");
       expect(columns).toContain("occurred_at");
 
       const environment = query.values[columns.indexOf("environment")];
       const metadata = query.values[columns.indexOf("metadata")];
       const payload = query.values[columns.indexOf("payload")];
-      const timestamp = query.values[columns.indexOf("timestamp")];
       const occurredAt = query.values[columns.indexOf("occurred_at")];
       expect(environment).toBe(ENVIRONMENT);
-      expect(JSON.parse(String(metadata))).toEqual({ environment: ENVIRONMENT });
+      expect(JSON.parse(String(metadata))).toMatchObject({ environment: ENVIRONMENT });
       expect(JSON.parse(String(payload)).type).toBeDefined();
-      expect(occurredAt).toBe(timestamp);
+      expect(occurredAt).toBe(new Date(OCCURRED_AT).toISOString());
     }
   });
 });
@@ -177,6 +175,7 @@ describe("Log DB environment migration contract", () => {
     expect(environmentMigration).not.toMatch(/['\"]unknown['\"]/i);
     expect(environmentMigration).not.toMatch(/FROM\s+environment_lookup/i);
     expect(environmentMigration).toContain("metadata=jsonb_build_object(''environment'',environment)");
+    expect(environmentMigration).toContain("metadata @> jsonb_build_object(''environment'',environment)");
     expect(environmentMigration).toContain("DROP COLUMN IF EXISTS environment_id");
 
     expect(searchMigration).toContain("environment TEXT NOT NULL");

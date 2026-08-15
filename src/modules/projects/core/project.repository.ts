@@ -33,6 +33,18 @@ ALTER TABLE project_settings
   ALTER COLUMN version SET DEFAULT 1;
 `;
 
+const PROJECT_USAGE_COUNTER_TYPES = [
+  "total_events",
+  "errors",
+  "requests",
+  "traces",
+  "logs",
+  "metrics",
+  "profiles",
+  "alert_count",
+  "connector_deliveries",
+  "failed_notifications",
+];
 
 type ProjectRow = {
   id: string;
@@ -204,10 +216,11 @@ export class ProjectRepository {
     client: PoolClient,
   ): Promise<void> {
     await client.query(
-      `INSERT INTO project_usage_current (project_id, organization_id)
-       VALUES ($1, $2)
-       ON CONFLICT (project_id) DO NOTHING`,
-      [project.id, project.orgId],
+      `INSERT INTO project_usage (project_id, org_id, counter_type, period_start, period_end, value)
+       SELECT $1, $2, counter_type, date_trunc('month', NOW()), date_trunc('month', NOW()) + INTERVAL '1 month', 0
+       FROM unnest($3::text[]) AS counter_type
+       ON CONFLICT (project_id, counter_type, period_start) DO NOTHING`,
+      [project.id, project.orgId, PROJECT_USAGE_COUNTER_TYPES],
     );
   }
 
@@ -462,22 +475,10 @@ export class ProjectRepository {
       value: string;
       period_start: Date;
     }>(
-      `SELECT metric.counter_type, metric.value::text AS value, usage.period_start
-         FROM project_usage_current usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('traces', usage.traces::numeric),
-           ('logs', usage.logs::numeric),
-           ('metrics', usage.metrics::numeric),
-           ('profiles', usage.profiles::numeric),
-           ('alert_count', usage.alert_count::numeric),
-           ('connector_deliveries', usage.connector_deliveries::numeric),
-           ('failed_notifications', usage.failed_notifications::numeric)
-         ) metric(counter_type, value)
-        WHERE usage.project_id = $1
-        ORDER BY metric.counter_type`,
+      `SELECT counter_type, value::text AS value, period_start
+         FROM project_usage
+        WHERE project_id = $1
+        ORDER BY counter_type`,
       [projectId],
     );
     return result.rows.map((r) => ({

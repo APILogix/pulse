@@ -96,12 +96,13 @@ export class AlertRuntimeEngines {
 
   async evaluateFast(input: FastEvaluationInput): Promise<RuntimeEvaluationSummary> {
     const summary = emptySummary();
+    const snapshot = await this.catalog.loadCatalogSnapshot(input.organizationId, 'fast');
     const scope: EvaluationScope = {
       organizationId: input.organizationId,
       projectId: input.projectId ?? null,
       environment: input.environment ?? null,
     };
-    const resolved = await this.catalog.resolveRulesForScope(input.organizationId, 'fast', scope);
+    const resolved = snapshot.resolveRulesForScope(scope);
     summary.scopes = 1;
     summary.rules = resolved.length;
 
@@ -124,7 +125,7 @@ export class AlertRuntimeEngines {
         && signalScope.service === null
         && signalScope.endpoint === null
         ? resolved
-        : await this.catalog.resolveRulesForScope(input.organizationId, 'fast', signalScope);
+        : snapshot.resolveRulesForScope(signalScope);
       const payload = fastSignalPayload(input.organizationId, signal);
       for (const candidate of signalRules) {
         await this.evaluateCandidate(candidate.rule, candidate.effective, signalScope, payload, 'fast', summary);
@@ -137,9 +138,14 @@ export class AlertRuntimeEngines {
     const summary = emptySummary();
     const scopes = await this.loadRollupScopes(input.organizationId, input.tier, input.maxScopes ?? DEFAULT_MAX_SCOPES);
     summary.scopes = scopes.length;
+    if (scopes.length === 0) return summary;
+
+    // Load organization rule catalog snapshot once per tick (3 queries total instead of 3 * N)
+    const snapshot = await this.catalog.loadCatalogSnapshot(input.organizationId, input.tier);
 
     for (const scopePayload of scopes) {
-      const resolved = await this.catalog.resolveRulesForScope(input.organizationId, input.tier, scopePayload.scope);
+      // In-memory pure resolution of effective rules and bindings (Zero Control DB queries)
+      const resolved = snapshot.resolveRulesForScope(scopePayload.scope);
       summary.rules += resolved.length;
       for (const candidate of resolved) {
         await this.evaluateCandidate(
@@ -342,8 +348,9 @@ export class AlertRuntimeEngines {
   private async loadWindowScopes(organizationId: string, limit: number): Promise<ScopePayload[]> {
     const requestResult = await this.logDb.query<Record<string, unknown>>(
       `SELECT organization_id, project_id, environment, bucket,
-              total_count, success_count, error_count, auth_failure_count,
+              total_count, success_count, error_count, slow_count, auth_failure_count,
               CASE WHEN total_count > 0 THEN 100.0 * error_count / total_count ELSE NULL END AS error_rate,
+              CASE WHEN total_count > 0 THEN 100.0 * (error_count + slow_count) / total_count ELSE NULL END AS degraded_rate,
               CASE WHEN total_count > 0 THEN 100.0 * auth_failure_count / total_count ELSE NULL END AS auth_failure_rate,
               latency_p95_ms, latency_p99_ms,
               CASE WHEN total_count > 0 THEN 100.0 * (total_count - error_count) / total_count ELSE NULL END AS availability_pct
@@ -399,7 +406,7 @@ export class AlertRuntimeEngines {
           requests: {
             count: numberOrNull(row.total_count),
             error_rate: numberOrNull(row.error_rate),
-            degraded_rate: numberOrNull(row.error_rate),
+            degraded_rate: numberOrNull(row.degraded_rate),
             '5xx_rate': numberOrNull(row.error_rate),
             auth_failure: numberOrNull(row.auth_failure_count),
             auth_failure_rate: numberOrNull(row.auth_failure_rate),
@@ -552,6 +559,10 @@ export class AlertRuntimeEngines {
       payload: {
         values: {
           runtime: {
+            // Note on CPU metric provenance:
+            // Node.js V8 runtime rollups (runtime_metrics_1m) measure internal heap memory and event-loop lag.
+            // Host/process OS CPU usage metrics are ingested via custom telemetry and resolved through
+            // metric_series_1m (see metricSeriesScope below).
             cpu: { usage: null },
             memory: {
               usage: numberOrNull(row.heap_used_mb_avg),

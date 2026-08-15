@@ -130,18 +130,16 @@ export class UsageRollup {
         finally {
             client.release();
         }
-        // (e) Non-billing counters roll into canonical minute tables, then all
-        // project/API-key analytics grains are rebuilt idempotently.
+        // (e) Non-billing counters roll into canonical minute tables.
         try {
             for (let pass = 0; pass < 20; pass++) {
                 const flushed = await this.pool.query('SELECT flushed_count FROM flush_usage_counters()');
                 if ((flushed.rowCount ?? 0) === 0)
                     break;
             }
-            await this.pool.query('SELECT rollup_project_usage()');
         }
         catch (err) {
-            this.log.warn({ err }, 'Canonical project usage rollup failed after billing rollup');
+            this.log.warn({ err }, 'Usage counter flush failed in usage rollup');
         }
         this.metrics.recordRollupSuccess({
             durationMs: Date.now() - startedAt,

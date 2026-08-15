@@ -1337,7 +1337,7 @@ export class TelemetryWriter {
     });
     const { text, values } = buildInsert(
       'events_replays',
-      ['organization_id', 'project_id', 'event_id', 'session_id', 'segment_id',
+      ['organization_id', 'project_id', 'api_key_name', 'event_id', 'session_id', 'segment_id',
        'events', 'trace_id', 'span_id', 'request_id', 'user_id',
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
       rows,

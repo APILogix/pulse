@@ -25,8 +25,8 @@ export interface RestrictedRoutingResult {
     reason: RestrictedRoutingReason;
 }
 export declare class ProjectOwnerRepository implements ProjectOwnerReader {
-    private readonly db;
-    constructor(db?: Pool);
+    private readonly db?;
+    constructor(db?: Pool | undefined);
     findActiveVerifiedOwner(organizationId: string, projectId: string): Promise<ProjectOwnerIdentity | null>;
     findActiveVerifiedFallbackRecipient(organizationId: string, _projectId?: string | null): Promise<ProjectOwnerIdentity | null>;
 }

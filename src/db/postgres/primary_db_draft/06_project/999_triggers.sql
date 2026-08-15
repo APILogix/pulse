@@ -79,9 +79,10 @@ CREATE TRIGGER trg_project_usage_updated_at
   BEFORE UPDATE ON project_usage
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- Source: canonical_migrations_draft/04_projects/013_configure_project_integrity.up.sql
+-- Source: canonical_migrations_draft/04_projects/021_remove_project_defaults_provisioning_trigger.up.sql
+-- Project defaults are provisioned explicitly in application transactions.
 DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects;
-CREATE TRIGGER trg_projects_provision_defaults AFTER INSERT ON projects FOR EACH ROW EXECUTE FUNCTION provision_project_schema_defaults();
+
 
 -- Source: canonical_migrations_draft/04_projects/022_add_project_public_id.sql
 DROP TRIGGER IF EXISTS trg_projects_public_id_immutable ON projects;

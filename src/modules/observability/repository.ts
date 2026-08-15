@@ -288,6 +288,22 @@ export class ObservabilityRepository implements QueryExecutor {
     return '';
   }
 
+  private errorGroupPublicIdPredicate(paramRef: string): string {
+    return `EXISTS (
+      SELECT 1
+        FROM error_groups eg
+       WHERE eg.organization_id = events_errors.organization_id
+         AND (
+           eg.id = events_errors.error_group_id
+           OR (
+             eg.fingerprint = events_errors.fingerprint
+             AND eg.project_id IS NOT DISTINCT FROM events_errors.project_id
+           )
+         )
+         AND eg.public_id = ${paramRef}
+    )`;
+  }
+
   /**
    * Fetch audit log history for an error group from `error_group_history`.
    */
@@ -340,10 +356,10 @@ export class ObservabilityRepository implements QueryExecutor {
 
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
+      sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
+      sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
     } else if (fingerprint) {
       params.push(fingerprint);
       sql += ` AND fingerprint = $2`;
@@ -386,10 +402,10 @@ export class ObservabilityRepository implements QueryExecutor {
 
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
+      sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      sql += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
+      sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
     } else if (fingerprint) {
       params.push(fingerprint);
       sql += ` AND fingerprint = $2`;
@@ -429,10 +445,10 @@ export class ObservabilityRepository implements QueryExecutor {
     let whereClause = `WHERE organization_id = $1`;
     if (groupId && fingerprint) {
       params.push(groupId, fingerprint);
-      whereClause += ` AND (error_group_id::text = $2 OR error_group_public_id = $2 OR fingerprint = $3)`;
+      whereClause += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
     } else if (groupId) {
       params.push(groupId);
-      whereClause += ` AND (error_group_id::text = $2 OR error_group_public_id = $2)`;
+      whereClause += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
     } else if (fingerprint) {
       params.push(fingerprint);
       whereClause += ` AND fingerprint = $2`;
@@ -487,7 +503,7 @@ export class ObservabilityRepository implements QueryExecutor {
     const params: unknown[] = [ctx.organizationId, groupIdentifier];
     let sql = `SELECT ${buildDetailProjection(errorsResource)} FROM events_errors
                WHERE organization_id = $1
-                 AND (error_group_public_id = $2 OR error_group_id::text = $2 OR fingerprint = $2)`;
+                 AND (${this.errorGroupPublicIdPredicate('$2')} OR error_group_id::text = $2 OR fingerprint = $2)`;
     sql += this.projectPredicate(ctx, params);
     sql += ` ORDER BY occurred_at DESC LIMIT 1`;
     const rows = await this.run<Record<string, unknown>>(sql, params);
@@ -680,12 +696,21 @@ export class ObservabilityRepository implements QueryExecutor {
     if (cleanIds.length === 0) return map;
 
     const params: unknown[] = [ctx.organizationId, cleanIds.slice(0, 200)];
-    let sql = `SELECT DISTINCT ON (error_group_id) error_group_id, error_group_public_id, public_id
-               FROM events_errors
-              WHERE organization_id = $1
-                AND (error_group_id::text = ANY($2::text[]) OR error_group_public_id = ANY($2::text[]))`;
-    sql += this.projectPredicate(ctx, params);
-    sql += ` ORDER BY error_group_id, occurred_at DESC`;
+    let sql = `SELECT DISTINCT ON (e.error_group_id) e.error_group_id, eg.public_id AS error_group_public_id, e.public_id
+               FROM events_errors e
+               LEFT JOIN error_groups eg
+                 ON eg.organization_id = e.organization_id
+                AND (
+                  eg.id = e.error_group_id
+                  OR (
+                    eg.fingerprint = e.fingerprint
+                    AND eg.project_id IS NOT DISTINCT FROM e.project_id
+                  )
+                )
+              WHERE e.organization_id = $1
+                AND (e.error_group_id::text = ANY($2::text[]) OR eg.public_id = ANY($2::text[]))`;
+    sql += this.projectPredicate(ctx, params, 'e');
+    sql += ` ORDER BY e.error_group_id, e.occurred_at DESC`;
 
     const rows = await this.run<{ error_group_id: string; error_group_public_id: string; public_id: string }>(sql, params);
     for (const r of rows) {

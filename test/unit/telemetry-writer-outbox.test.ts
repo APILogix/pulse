@@ -77,7 +77,7 @@ describe('TelemetryWriter transactional outbox', () => {
         if (sql.startsWith('INSERT INTO events_errors')) {
           return { rowCount: 1, rows: [{ event_id: 'evt_1' }] };
         }
-        if (sql.startsWith('INSERT INTO telemetry_outbox')) {
+        if (sql.includes('INSERT INTO telemetry_outbox')) {
           return { rowCount: 1, rows: [{ id: '1' }] };
         }
         return { rowCount: 0, rows: [] };
@@ -91,7 +91,7 @@ describe('TelemetryWriter transactional outbox', () => {
     expect(result.totalInserted).toBe(1);
     expect(calls[0]).toBe('BEGIN');
     expect(calls.some((sql) => sql.startsWith('INSERT INTO events_errors'))).toBe(true);
-    expect(calls.some((sql) => sql.startsWith('INSERT INTO telemetry_outbox'))).toBe(true);
+    expect(calls.some((sql) => sql.includes('INSERT INTO telemetry_outbox'))).toBe(true);
     expect(calls.at(-1)).toBe('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
@@ -104,7 +104,7 @@ describe('TelemetryWriter transactional outbox', () => {
         if (sql.startsWith('INSERT INTO events_errors')) {
           return { rowCount: 1, rows: [{ event_id: 'evt_1' }] };
         }
-        if (sql.startsWith('INSERT INTO telemetry_outbox')) {
+        if (sql.includes('INSERT INTO telemetry_outbox')) {
           throw new Error('outbox failed');
         }
         return { rowCount: 0, rows: [] };

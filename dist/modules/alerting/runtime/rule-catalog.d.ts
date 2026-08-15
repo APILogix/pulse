@@ -10,9 +10,19 @@ export interface ResolvedRuntimeRule {
     effective: EffectiveRule;
 }
 export declare function tierForFieldPath(fieldPath: string): AlertRuntimeTier | null;
+export declare class AlertCatalogSnapshot {
+    readonly organizationId: string;
+    readonly tier: AlertRuntimeTier;
+    readonly rules: RuntimeRuleRow[];
+    readonly conditionsByRule: Map<string, AlertRuleConditionRow[]>;
+    readonly bindingsByRule: Map<string, AlertRuleBindingRow[]>;
+    constructor(organizationId: string, tier: AlertRuntimeTier, rules: RuntimeRuleRow[], conditionsByRule: Map<string, AlertRuleConditionRow[]>, bindingsByRule: Map<string, AlertRuleBindingRow[]>);
+    resolveRulesForScope(scope: EvaluationScope): ResolvedRuntimeRule[];
+}
 export declare class AlertRuntimeRuleCatalog {
     private readonly db;
     constructor(db: Pool);
+    loadCatalogSnapshot(organizationId: string, tier: AlertRuntimeTier): Promise<AlertCatalogSnapshot>;
     listRulesForTier(organizationId: string, tier: AlertRuntimeTier): Promise<RuntimeRuleRow[]>;
     listConditions(ruleIds: string[]): Promise<Map<string, AlertRuleConditionRow[]>>;
     listBindings(organizationId: string, ruleIds: string[]): Promise<Map<string, AlertRuleBindingRow[]>>;

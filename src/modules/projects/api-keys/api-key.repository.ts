@@ -169,8 +169,11 @@ export class ApiKeyRepository {
       const result = await db.query<ApiKeyRow>(
         `INSERT INTO project_api_keys (
            organization_id, project_id, environment_id, name, public_key, secret_hash,
-           created_by, expires_at, rotated_from_key_id
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+           created_by, expires_at, rotated_from_key_id, is_active,
+           auto_rotate_enabled, usage_count, error_count,
+           rate_limit_per_second, rate_limit_per_minute, rate_limit_per_hour,
+           permissions, allowed_endpoints, blocked_endpoints, metadata
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,FALSE,0,0,0,0,0,'{}'::jsonb,'{}'::text[],'{}'::text[],'{}'::jsonb)
          RETURNING ${API_KEY_COLUMNS}`,
         [
           input.organizationId,

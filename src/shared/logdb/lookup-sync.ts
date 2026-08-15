@@ -5,6 +5,25 @@ import { logger } from '../../config/logger.js';
 
 const lookupLogger = logger.child({ component: 'logdb-lookup-sync' });
 
+function isMissingLookupRelation(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === '42P01';
+}
+
+function logBestEffortLookupFailure(
+  err: unknown,
+  context: Record<string, unknown>,
+  message: string,
+): void {
+  if (isMissingLookupRelation(err)) {
+    lookupLogger.debug(
+      { ...context, code: '42P01' },
+      'Log DB lookup sync skipped: lookup tables are not provisioned',
+    );
+    return;
+  }
+  lookupLogger.warn({ err, ...context }, message);
+}
+
 interface OrganizationLookupSourceRow extends QueryResultRow {
   organization_id: string;
   name: string;
@@ -132,8 +151,9 @@ export function syncOrganizationLookupToLogDbBestEffort(
   reason: string,
 ): void {
   void syncOrganizationLookupToLogDb(organizationId, reason).catch((err) => {
-    lookupLogger.warn(
-      { err, organizationId, reason },
+    logBestEffortLookupFailure(
+      err,
+      { organizationId, reason },
       'Organization lookup sync failed; primary transaction remains committed',
     );
   });
@@ -223,8 +243,9 @@ export async function syncProjectLookupToLogDb(
 
 export function syncProjectLookupToLogDbBestEffort(projectId: string, reason: string): void {
   void syncProjectLookupToLogDb(projectId, reason).catch((err) => {
-    lookupLogger.warn(
-      { err, projectId, reason },
+    logBestEffortLookupFailure(
+      err,
+      { projectId, reason },
       'Project lookup sync failed; primary transaction remains committed',
     );
   });
@@ -318,8 +339,9 @@ export async function syncEnvironmentLookupToLogDb(
 
 export function syncEnvironmentLookupToLogDbBestEffort(environmentId: string, reason: string): void {
   void syncEnvironmentLookupToLogDb(environmentId, reason).catch((err) => {
-    lookupLogger.warn(
-      { err, environmentId, reason },
+    logBestEffortLookupFailure(
+      err,
+      { environmentId, reason },
       'Environment lookup sync failed; primary transaction remains committed',
     );
   });
@@ -403,8 +425,9 @@ export async function syncApiKeyLookupToLogDb(
 
 export function syncApiKeyLookupToLogDbBestEffort(apiKeyId: string, reason: string): void {
   void syncApiKeyLookupToLogDb(apiKeyId, reason).catch((err) => {
-    lookupLogger.warn(
-      { err, apiKeyId, reason },
+    logBestEffortLookupFailure(
+      err,
+      { apiKeyId, reason },
       'API key lookup sync failed; primary transaction remains committed',
     );
   });
@@ -513,8 +536,9 @@ export function syncEnvironmentSdkConfigLookupToLogDbBestEffort(
   reason: string,
 ): void {
   void syncEnvironmentSdkConfigLookupToLogDb(environmentId, reason).catch((err) => {
-    lookupLogger.warn(
-      { err, environmentId, reason },
+    logBestEffortLookupFailure(
+      err,
+      { environmentId, reason },
       'Environment SDK config lookup sync failed; primary transaction remains committed',
     );
   });
