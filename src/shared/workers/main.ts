@@ -15,8 +15,9 @@
  */
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
-import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
+import { logDB } from '../../config/log-database.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../config/postgres-ssl.js';
 import { registerAlertingWorkers } from '../../modules/alerting/queue.js';
 import { registerAuthAutomationWorkers } from '../../modules/auth/infrastructure/jobs/queue.js';
 import { registerBillingJobWorkers } from '../../modules/billing/queue.js';
@@ -33,12 +34,15 @@ import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.pr
 import { startAuthEmailWorker, stopAuthEmailWorker } from './auth-email.processor.js';
 import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.js';
 import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
-
 const workerLogger = logger.child({ component: 'workers' });
 
 async function bootstrapWorkers(): Promise<void> {
   const pgPool = new Pool({
     connectionString: env.DATABASE_URL,
+    ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
+      enabled: env.DB_SSL_ENABLED,
+      rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
+    }),
     max: env.DB_POOL_MAX,
     min: env.DB_POOL_MIN,
     idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
@@ -49,7 +53,11 @@ async function bootstrapWorkers(): Promise<void> {
   });
 
   pgPool.on('error', (err: Error) => {
-    workerLogger.error({ err }, 'Unexpected worker pool error (idle connection lost)');
+    if (isExpectedServerlessDisconnect(err)) {
+      workerLogger.debug({ err: err.message }, 'Idle worker pool connection closed by server (Neon/PgBouncer)');
+      return;
+    }
+    workerLogger.error({ err }, 'Unexpected worker pool error');
   });
 
   await pgPool.query('SELECT 1');

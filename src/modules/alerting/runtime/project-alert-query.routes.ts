@@ -43,4 +43,29 @@ export async function projectAlertQueryRoutes(fastify: FastifyInstance): Promise
     if (!alert) return reply.code(404).send({ success: false, error: { code: 'ALERT_NOT_FOUND', message: 'Alert not found' } });
     return reply.send({ success: true, data: alert });
   });
+
+  fastify.get('/projects/:projectId/alerting/status', { preHandler: [authenticate] }, async (request, reply) => {
+    const { orgId, projectId } = ProjectAlertListParamsSchema.parse(request.params);
+    await fastify.projects.service.requireProjectAccess(
+      orgId,
+      projectId,
+      request.user!.id,
+      ProjectMemberRole.VIEWER,
+    );
+    const status = await fastify.alerting.projectAlerts.getAlertingStatus(orgId, projectId);
+    return reply.send({ success: true, data: status });
+  });
+
+  fastify.get('/projects/:projectId/alerts/status', { preHandler: [authenticate] }, async (request, reply) => {
+    const { orgId, projectId } = ProjectAlertListParamsSchema.parse(request.params);
+    await fastify.projects.service.requireProjectAccess(
+      orgId,
+      projectId,
+      request.user!.id,
+      ProjectMemberRole.VIEWER,
+    );
+    const status = await fastify.alerting.projectAlerts.getAlertingStatus(orgId, projectId);
+    return reply.send({ success: true, data: status });
+  });
 }
+

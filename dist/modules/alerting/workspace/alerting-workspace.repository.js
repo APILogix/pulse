@@ -18,59 +18,41 @@ export class AlertingWorkspaceRepository {
             return this.readySummary(workspace.id);
         }
         const catalogRules = await seedDefaultPresetsForOrgInTransaction(client, context.organizationId, context.initializedBy);
-        const categoryIds = new Map();
-        for (const category of POLICY_CATEGORIES) {
-            const result = await client.query(`INSERT INTO alerting_policy_categories
-           (organization_id, slug, name, sort_order, is_system)
-         VALUES ($1, $2, $3, $4, TRUE)
-         ON CONFLICT (organization_id, slug) DO UPDATE
-           SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, updated_at = NOW()
-         RETURNING id`, [context.organizationId, category.slug, category.name, category.sortOrder]);
-            categoryIds.set(category.slug, result.rows[0].id);
-        }
-        let policyVersions = 0;
-        for (const definition of POLICY_DEFAULTS) {
+        const categoryResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(slug text, name text, sort_order integer)
+       )
+       INSERT INTO alerting_policy_categories
+          (organization_id, slug, name, sort_order, is_system)
+       SELECT $1::uuid, slug, name, sort_order, TRUE
+       FROM defaults
+       ON CONFLICT (organization_id, slug) DO UPDATE
+         SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, updated_at = NOW()
+       RETURNING slug, id`, [
+            context.organizationId,
+            JSON.stringify(POLICY_CATEGORIES.map((category) => ({
+                slug: category.slug,
+                name: category.name,
+                sort_order: category.sortOrder,
+            }))),
+        ]);
+        const categoryIds = new Map(categoryResult.rows.map((row) => [row.slug, row.id]));
+        const policyPayload = POLICY_DEFAULTS.map((definition) => {
             const categoryId = categoryIds.get(definition.category);
             if (!categoryId)
                 throw new Error(`Missing Alerting policy category: ${definition.category}`);
-            const policyResult = await client.query(`INSERT INTO alerting_policy_catalog
-           (organization_id, slug, name, description, category_id, severity,
-            default_threshold, recovery_threshold, cooldown_seconds,
-            evaluation_window_seconds, enabled, is_system, current_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, TRUE, 1)
-         ON CONFLICT (organization_id, slug) DO UPDATE SET
-           name = EXCLUDED.name,
-           description = EXCLUDED.description,
-           category_id = EXCLUDED.category_id,
-           severity = EXCLUDED.severity,
-           default_threshold = EXCLUDED.default_threshold,
-           recovery_threshold = EXCLUDED.recovery_threshold,
-           cooldown_seconds = EXCLUDED.cooldown_seconds,
-           evaluation_window_seconds = EXCLUDED.evaluation_window_seconds,
-           enabled = EXCLUDED.enabled,
-           updated_at = NOW()
-         RETURNING id`, [
-                context.organizationId,
-                definition.slug,
-                definition.name,
-                definition.description,
-                categoryId,
-                definition.severity,
-                JSON.stringify(definition.defaultThreshold),
-                JSON.stringify(definition.recoveryThreshold),
-                definition.cooldownSeconds,
-                definition.evaluationWindowSeconds,
-                definition.enabled,
-            ]);
-            const policyId = policyResult.rows[0].id;
-            const versionResult = await client.query(`INSERT INTO alerting_policy_versions
-           (organization_id, policy_id, version, definition, created_by)
-         VALUES ($1, $2, 1, $3::jsonb, $4)
-         ON CONFLICT (policy_id, version) DO NOTHING
-         RETURNING id`, [
-                context.organizationId,
-                policyId,
-                JSON.stringify({
+            return {
+                slug: definition.slug,
+                name: definition.name,
+                description: definition.description,
+                category_id: categoryId,
+                severity: definition.severity,
+                default_threshold: definition.defaultThreshold,
+                recovery_threshold: definition.recoveryThreshold,
+                cooldown_seconds: definition.cooldownSeconds,
+                evaluation_window_seconds: definition.evaluationWindowSeconds,
+                enabled: definition.enabled,
+                version_definition: {
                     slug: definition.slug,
                     name: definition.name,
                     description: definition.description,
@@ -85,43 +67,129 @@ export class AlertingWorkspaceRepository {
                     enabled: definition.enabled,
                     documentation: definition.documentation,
                     dependencies: definition.dependencies,
-                }),
-                context.initializedBy,
-            ]);
-            policyVersions += versionResult.rowCount ?? 0;
-        }
-        for (const routing of ROUTING_DEFAULTS) {
-            await client.query(`INSERT INTO alerting_routing_defaults
-           (organization_id, severity, destination_type, connector_id, route_id, is_enabled, priority, config)
-         VALUES ($1, $2, $3, NULL, NULL, TRUE, $4, '{}'::jsonb)
-         ON CONFLICT (organization_id, severity, priority) DO UPDATE SET
-           destination_type = EXCLUDED.destination_type,
-           is_enabled = EXCLUDED.is_enabled,
-           updated_at = NOW()`, [context.organizationId, routing.severity, routing.destinationType, routing.priority]);
-        }
-        const escalationIds = new Map();
-        for (const escalation of ESCALATION_DEFAULTS) {
-            const result = await client.query(`INSERT INTO alerting_escalation_policies_v2
-           (organization_id, system_key, name, description, acknowledgement_timeout_seconds,
-            repeat_interval_seconds, max_repeats, cancellation_rules, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, '{}'::jsonb, TRUE)
-         ON CONFLICT (organization_id, system_key) DO UPDATE SET
+                },
+            };
+        });
+        const policyVersionResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($3::jsonb) AS d(
+           slug text,
+           name text,
+           description text,
+           category_id uuid,
+           severity text,
+           default_threshold jsonb,
+           recovery_threshold jsonb,
+           cooldown_seconds integer,
+           evaluation_window_seconds integer,
+           enabled boolean,
+           version_definition jsonb
+         )
+       ),
+       policies AS (
+         INSERT INTO alerting_policy_catalog
+            (organization_id, slug, name, description, category_id, severity,
+             default_threshold, recovery_threshold, cooldown_seconds,
+             evaluation_window_seconds, enabled, is_system, current_version)
+         SELECT
+           $1::uuid, slug, name, description, category_id, severity::alert_severity,
+           default_threshold, recovery_threshold, cooldown_seconds,
+           evaluation_window_seconds, enabled, TRUE, 1
+         FROM defaults
+         ON CONFLICT (organization_id, slug) DO UPDATE SET
            name = EXCLUDED.name,
            description = EXCLUDED.description,
-           acknowledgement_timeout_seconds = EXCLUDED.acknowledgement_timeout_seconds,
-           repeat_interval_seconds = EXCLUDED.repeat_interval_seconds,
-           max_repeats = EXCLUDED.max_repeats,
-           is_default = TRUE,
+           category_id = EXCLUDED.category_id,
+           severity = EXCLUDED.severity,
+           default_threshold = EXCLUDED.default_threshold,
+           recovery_threshold = EXCLUDED.recovery_threshold,
+           cooldown_seconds = EXCLUDED.cooldown_seconds,
+           evaluation_window_seconds = EXCLUDED.evaluation_window_seconds,
+           enabled = EXCLUDED.enabled,
            updated_at = NOW()
-         RETURNING id`, [context.organizationId, escalation.systemKey, escalation.name, escalation.description, escalation.acknowledgementTimeoutSeconds, escalation.repeatIntervalSeconds, escalation.maxRepeats]);
-            escalationIds.set(escalation.systemKey, result.rows[0].id);
-        }
-        let escalationSteps = 0;
-        for (const escalation of ESCALATION_DEFAULTS) {
-            const policyId = escalationIds.get(escalation.systemKey);
-            const stepResult = await client.query(`INSERT INTO alerting_escalation_steps_v2
-           (policy_id, step_number, wait_seconds, connector_ids, route_ids, notify_on_call, is_active)
-         VALUES ($1, 1, $2, '{}', '{}', FALSE, TRUE)
+         RETURNING id, slug
+       ),
+       versions AS (
+         INSERT INTO alerting_policy_versions
+            (organization_id, policy_id, version, definition, created_by)
+         SELECT $1::uuid, p.id, 1, d.version_definition, $2::uuid
+         FROM policies p
+         JOIN defaults d ON d.slug = p.slug
+         ON CONFLICT (policy_id, version) DO NOTHING
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS policy_versions FROM versions`, [context.organizationId, context.initializedBy, JSON.stringify(policyPayload)]);
+        const policyVersions = Number.parseInt(policyVersionResult.rows[0]?.policy_versions ?? '0', 10);
+        await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(severity text, destination_type text, priority integer)
+       )
+       INSERT INTO alerting_routing_defaults
+          (organization_id, severity, destination_type, connector_id, route_id, is_enabled, priority, config)
+       SELECT $1::uuid, severity, destination_type, NULL, NULL, TRUE, priority, '{}'::jsonb
+       FROM defaults
+       ON CONFLICT (organization_id, severity, priority) DO UPDATE SET
+         destination_type = EXCLUDED.destination_type,
+         is_enabled = EXCLUDED.is_enabled,
+         updated_at = NOW()`, [
+            context.organizationId,
+            JSON.stringify(ROUTING_DEFAULTS.map((routing) => ({
+                severity: routing.severity,
+                destination_type: routing.destinationType,
+                priority: routing.priority,
+            }))),
+        ]);
+        const escalationResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(
+           system_key text,
+           name text,
+           description text,
+           acknowledgement_timeout_seconds integer,
+           repeat_interval_seconds integer,
+           max_repeats integer
+         )
+       )
+       INSERT INTO alerting_escalation_policies_v2
+          (organization_id, system_key, name, description, acknowledgement_timeout_seconds,
+           repeat_interval_seconds, max_repeats, cancellation_rules, is_default)
+       SELECT
+         $1::uuid, system_key, name, description, acknowledgement_timeout_seconds,
+         repeat_interval_seconds, max_repeats, '{}'::jsonb, TRUE
+       FROM defaults
+       ON CONFLICT (organization_id, system_key) DO UPDATE SET
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         acknowledgement_timeout_seconds = EXCLUDED.acknowledgement_timeout_seconds,
+         repeat_interval_seconds = EXCLUDED.repeat_interval_seconds,
+         max_repeats = EXCLUDED.max_repeats,
+         is_default = TRUE,
+         updated_at = NOW()
+       RETURNING system_key, id`, [
+            context.organizationId,
+            JSON.stringify(ESCALATION_DEFAULTS.map((escalation) => ({
+                system_key: escalation.systemKey,
+                name: escalation.name,
+                description: escalation.description,
+                acknowledgement_timeout_seconds: escalation.acknowledgementTimeoutSeconds,
+                repeat_interval_seconds: escalation.repeatIntervalSeconds,
+                max_repeats: escalation.maxRepeats,
+            }))),
+        ]);
+        const escalationIds = new Map(escalationResult.rows.map((row) => [row.system_key, row.id]));
+        const escalationStepPayload = ESCALATION_DEFAULTS.map((escalation) => ({
+            policy_id: escalationIds.get(escalation.systemKey),
+            wait_seconds: escalation.acknowledgementTimeoutSeconds,
+        }));
+        const escalationStepResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($1::jsonb) AS d(policy_id uuid, wait_seconds integer)
+       ),
+       upserted AS (
+         INSERT INTO alerting_escalation_steps_v2
+            (policy_id, step_number, wait_seconds, connector_ids, route_ids, notify_on_call, is_active)
+         SELECT policy_id, 1, wait_seconds, '{}', '{}', FALSE, TRUE
+         FROM defaults
          ON CONFLICT (policy_id, step_number) DO UPDATE SET
            wait_seconds = EXCLUDED.wait_seconds,
            connector_ids = '{}',
@@ -129,9 +197,10 @@ export class AlertingWorkspaceRepository {
            notify_on_call = FALSE,
            is_active = TRUE,
            updated_at = NOW()
-         RETURNING id`, [policyId, escalation.acknowledgementTimeoutSeconds]);
-            escalationSteps += stepResult.rowCount ?? 0;
-        }
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS escalation_steps FROM upserted`, [JSON.stringify(escalationStepPayload)]);
+        const escalationSteps = Number.parseInt(escalationStepResult.rows[0]?.escalation_steps ?? '0', 10);
         const defaultEscalationId = escalationIds.get('default') ?? null;
         await client.query(`INSERT INTO alerting_settings
          (workspace_id, timezone, default_escalation_policy_id)
@@ -145,18 +214,30 @@ export class AlertingWorkspaceRepository {
         await client.query(`INSERT INTO alerting_notification_defaults (workspace_id)
        VALUES ($1)
        ON CONFLICT (workspace_id) DO NOTHING`, [workspace.id]);
-        let providers = 0;
-        for (const provider of PROVIDER_DEFAULTS) {
-            const result = await client.query(`INSERT INTO alerting_provider_catalog
-           (organization_id, provider_key, display_name, status, capabilities, metadata)
-         VALUES ($1, $2, $3, 'not_configured', $4::jsonb, '{}'::jsonb)
+        const providerResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(provider_key text, display_name text, capabilities jsonb)
+       ),
+       upserted AS (
+         INSERT INTO alerting_provider_catalog
+            (organization_id, provider_key, display_name, status, capabilities, metadata)
+         SELECT $1::uuid, provider_key, display_name, 'not_configured', capabilities, '{}'::jsonb
+         FROM defaults
          ON CONFLICT (organization_id, provider_key) DO UPDATE SET
            display_name = EXCLUDED.display_name,
            capabilities = EXCLUDED.capabilities,
            updated_at = NOW()
-         RETURNING id`, [context.organizationId, provider.providerKey, provider.displayName, JSON.stringify(provider.capabilities)]);
-            providers += result.rowCount ?? 0;
-        }
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS providers FROM upserted`, [
+            context.organizationId,
+            JSON.stringify(PROVIDER_DEFAULTS.map((provider) => ({
+                provider_key: provider.providerKey,
+                display_name: provider.displayName,
+                capabilities: provider.capabilities,
+            }))),
+        ]);
+        const providers = Number.parseInt(providerResult.rows[0]?.providers ?? '0', 10);
         const entitlementResult = await client.query(`SELECT bf.feature_key, pfe.boolean_value, pfe.integer_value, pfe.decimal_value, pfe.string_value
        FROM plan_feature_entitlements pfe
        JOIN billing_features bf ON bf.id = pfe.feature_id
@@ -190,42 +271,77 @@ export class AlertingWorkspaceRepository {
         await client.query(`INSERT INTO alerting_usage_counters (workspace_id, organization_id)
        VALUES ($1, $2)
        ON CONFLICT (workspace_id) DO NOTHING`, [workspace.id, context.organizationId]);
-        let featureFlags = 0;
-        for (const flag of FEATURE_FLAG_DEFAULTS) {
-            const entitlement = entitlementMap.get(flag.entitlementKey);
-            const enabled = entitlement?.boolean_value === true;
-            const result = await client.query(`INSERT INTO feature_flags (key, scope, scope_id, enabled, description, payload)
-         VALUES ($1, 'organization', $2, $3, $4, '{}'::jsonb)
+        const featureFlagResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(key text, enabled boolean, description text)
+       ),
+       upserted AS (
+         INSERT INTO feature_flags (key, scope, scope_id, enabled, description, payload)
+         SELECT key, 'organization', $1::uuid, enabled, description, '{}'::jsonb
+         FROM defaults
          ON CONFLICT (key, scope, scope_id) DO UPDATE SET
            enabled = EXCLUDED.enabled,
            description = EXCLUDED.description,
            updated_at = NOW()
-         RETURNING id`, [flag.key, context.organizationId, enabled, flag.description]);
-            featureFlags += result.rowCount ?? 0;
-        }
-        let dashboardWidgets = 0;
-        for (const [index, widgetKey] of DASHBOARD_WIDGET_DEFAULTS.entries()) {
-            const result = await client.query(`INSERT INTO alerting_dashboard_widgets
-           (workspace_id, widget_key, display_name, position, configuration, is_visible)
-         VALUES ($1, $2, $3, $4::jsonb, '{}'::jsonb, TRUE)
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS feature_flags FROM upserted`, [
+            context.organizationId,
+            JSON.stringify(FEATURE_FLAG_DEFAULTS.map((flag) => ({
+                key: flag.key,
+                enabled: entitlementMap.get(flag.entitlementKey)?.boolean_value === true,
+                description: flag.description,
+            }))),
+        ]);
+        const featureFlags = Number.parseInt(featureFlagResult.rows[0]?.feature_flags ?? '0', 10);
+        const dashboardWidgetResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(widget_key text, display_name text, position jsonb)
+       ),
+       upserted AS (
+         INSERT INTO alerting_dashboard_widgets
+            (workspace_id, widget_key, display_name, position, configuration, is_visible)
+         SELECT $1::uuid, widget_key, display_name, position, '{}'::jsonb, TRUE
+         FROM defaults
          ON CONFLICT (workspace_id, widget_key) DO UPDATE SET
            display_name = EXCLUDED.display_name,
            position = EXCLUDED.position,
            updated_at = NOW()
-         RETURNING id`, [workspace.id, widgetKey, widgetKey.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()), JSON.stringify({ order: index })]);
-            dashboardWidgets += result.rowCount ?? 0;
-        }
-        let savedViews = 0;
-        for (const view of SAVED_VIEW_DEFAULTS) {
-            const result = await client.query(`INSERT INTO alerting_saved_views (workspace_id, view_key, name, filters, is_system, created_by)
-         VALUES ($1, $2, $3, $4::jsonb, TRUE, $5)
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS dashboard_widgets FROM upserted`, [
+            workspace.id,
+            JSON.stringify(DASHBOARD_WIDGET_DEFAULTS.map((widgetKey, index) => ({
+                widget_key: widgetKey,
+                display_name: widgetKey.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()),
+                position: { order: index },
+            }))),
+        ]);
+        const dashboardWidgets = Number.parseInt(dashboardWidgetResult.rows[0]?.dashboard_widgets ?? '0', 10);
+        const savedViewResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($3::jsonb) AS d(view_key text, name text, filters jsonb)
+       ),
+       upserted AS (
+         INSERT INTO alerting_saved_views (workspace_id, view_key, name, filters, is_system, created_by)
+         SELECT $1::uuid, view_key, name, filters, TRUE, $2::uuid
+         FROM defaults
          ON CONFLICT (workspace_id, view_key) DO UPDATE SET
            name = EXCLUDED.name,
            filters = EXCLUDED.filters,
            updated_at = NOW()
-         RETURNING id`, [workspace.id, view.key, view.name, JSON.stringify(view.filters), context.initializedBy]);
-            savedViews += result.rowCount ?? 0;
-        }
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS saved_views FROM upserted`, [
+            workspace.id,
+            context.initializedBy,
+            JSON.stringify(SAVED_VIEW_DEFAULTS.map((view) => ({
+                view_key: view.key,
+                name: view.name,
+                filters: view.filters,
+            }))),
+        ]);
+        const savedViews = Number.parseInt(savedViewResult.rows[0]?.saved_views ?? '0', 10);
         await client.query(`INSERT INTO alerting_audit_roots (workspace_id, root_version)
        VALUES ($1, 1)
        ON CONFLICT (workspace_id) DO NOTHING`, [workspace.id]);

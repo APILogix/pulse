@@ -1,6 +1,4 @@
--- Normalized final definition for api_key_usage_minute.
--- Canonical/historical sources include:
--- - migrations/003_project_module_refactor.sql
+-- Normalized final definition for per-key minute usage.
 
 CREATE TABLE IF NOT EXISTS api_key_usage_minute (
   api_key_id UUID NOT NULL REFERENCES project_api_keys(id) ON DELETE CASCADE,
@@ -8,15 +6,14 @@ CREATE TABLE IF NOT EXISTS api_key_usage_minute (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   environment_id UUID REFERENCES project_environments(id) ON DELETE SET NULL,
   bucket TIMESTAMPTZ NOT NULL,
-  event_type VARCHAR(50) NOT NULL DEFAULT '__all__',
-  requests BIGINT NOT NULL DEFAULT 0,
-  events BIGINT NOT NULL DEFAULT 0,
-  errors BIGINT NOT NULL DEFAULT 0,
-  latency_ms_p50 NUMERIC,
-  latency_ms_p95 NUMERIC,
-  latency_ms_p99 NUMERIC,
-  rate_limited BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (api_key_id, bucket, event_type)
+  event_type_id SMALLINT NOT NULL REFERENCES telemetry_event_types(id),
+  request_count BIGINT NOT NULL DEFAULT 0,
+  accepted_event_count BIGINT NOT NULL DEFAULT 0,
+  error_event_count BIGINT NOT NULL DEFAULT 0,
+  ingestion_failure_count BIGINT NOT NULL DEFAULT 0,
+  accepted_bytes BIGINT NOT NULL DEFAULT 0,
+  rate_limited_request_count BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (api_key_id, bucket, event_type_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_key_usage_minute_project

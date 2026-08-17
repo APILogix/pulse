@@ -1,6 +1,11 @@
 import { Pool } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
+import {
+  isExpectedServerlessDisconnect,
+  isTransientPostgresError,
+  resolvePostgresSslConfig,
+} from './postgres-ssl.js';
 
 const dbLogger = logger.child({ component: 'database' });
 
@@ -20,9 +25,10 @@ if (!env.DATABASE_URL) {
  */
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,
-  // ssl: {
-  //   rejectUnauthorized: false,
-  // },
+  ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
+    enabled: env.DB_SSL_ENABLED,
+    rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
+  }),
   max: env.DB_POOL_MAX,
   min: env.DB_POOL_MIN,
   idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
@@ -45,22 +51,18 @@ pool.on('remove', () => {
   dbLogger.debug('Connection removed from pool');
 });
 
-pool.on("error", (err) => {
-  const expected =
-    err.message.includes("Connection terminated unexpectedly") ||
-    err.message.includes("Connection ended unexpectedly");
-
-  if (expected) {
+pool.on('error', (err: Error) => {
+  if (isExpectedServerlessDisconnect(err)) {
     dbLogger.debug(
       { err: err.message },
-      "Idle database connection closed by server."
+      'Idle database connection closed by server (Neon/PgBouncer); pool will reconnect.',
     );
     return;
   }
 
   dbLogger.error(
     { err },
-    "Unexpected database pool error"
+    'Unexpected database pool error',
   );
 });
 
@@ -82,26 +84,42 @@ export const connectDB = async (): Promise<void> => {
 };
 
 /**
- * Query helper with duration tracking.
+ * Query helper with duration tracking and transient connection retry.
+ * Automatically retries if a serverless host dropped the idle socket
+ * before or during connection checkout.
  * Slow queries (>1s) are logged at warn level for investigation.
  */
 export const query = async (text: string, params?: any[]) => {
-  const start = Date.now();
+  const maxRetries = 2;
+  let attempt = 0;
 
-  try {
-    const result = await pool.query(text, params);
-    const duration = Date.now() - start;
+  while (true) {
+    const start = Date.now();
+    try {
+      const result = await pool.query(text, params);
+      const duration = Date.now() - start;
 
-    if (duration > 1000) {
-      dbLogger.warn({ query: text.slice(0, 120), duration, rows: result.rowCount }, 'Slow query');
-    } else {
-      dbLogger.debug({ query: text.slice(0, 80), duration, rows: result.rowCount }, 'Query executed');
+      if (duration > 1000) {
+        dbLogger.warn({ query: text.slice(0, 120), duration, rows: result.rowCount }, 'Slow query');
+      } else {
+        dbLogger.debug({ query: text.slice(0, 80), duration, rows: result.rowCount }, 'Query executed');
+      }
+
+      return result;
+    } catch (err: any) {
+      attempt++;
+      if (attempt <= maxRetries && isTransientPostgresError(err)) {
+        const delayMs = 150 * attempt;
+        dbLogger.debug(
+          { attempt, maxRetries, delayMs, err: err?.message || String(err) },
+          'Transient database connection error in query; retrying...',
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      dbLogger.error({ err, query: text.slice(0, 120) }, 'Query failed');
+      throw err;
     }
-
-    return result;
-  } catch (err) {
-    dbLogger.error({ err, query: text.slice(0, 120) }, 'Query failed');
-    throw err;
   }
 };
 

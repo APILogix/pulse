@@ -4,6 +4,7 @@ export const SwitchOrganizationSchema = z.object({ orgId: UuidSchema });
 export const SlugParamsSchema = z.object({ slug: z.string().min(1).max(255) });
 export const CreateOrganizationSchema = z.object({
     name: z.string().min(1).max(255).trim(),
+    slug: z.string().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional(),
     description: z.string().max(1000).optional(),
     industry: z.string().max(100).optional(),
     companySize: z.string().max(50).optional(),

@@ -4,6 +4,7 @@ import type { CursorPaginationQuery, CursorPaginatedResponse } from "../shared/t
 import type { OrganizationRow, OrgSettingsRow, OrganizationProvisioningResult } from "./core.schema.js";
 export declare class CoreRepository extends BaseRepository {
     createOrg(client: PoolClient, name: string, ownerUserId: string, data: {
+        slug?: string | null;
         description?: string | null;
         industry?: string | null;
         companySize?: string | null;

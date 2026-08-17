@@ -30,6 +30,7 @@ import { Pool } from 'pg';
 import { env } from '../../config/env.js';
 import { logDB } from '../../config/log-database.js';
 import { logger } from '../../config/logger.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../config/postgres-ssl.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { WorkerRegistry } from '../../modules/ingestion/workers/worker-registry.js';
 import { applyLogDbMigrations } from '../logdb/migrations.js';
@@ -41,13 +42,24 @@ class IngestionWorkerProcess {
     async start() {
         this.pool = new Pool({
             connectionString: env.DATABASE_URL,
+            ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
+                enabled: env.DB_SSL_ENABLED,
+                rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
+            }),
             max: env.INGESTION_DB_POOL_SIZE,
             idleTimeoutMillis: env.INGESTION_DB_IDLE_TIMEOUT_MS,
             connectionTimeoutMillis: env.INGESTION_DB_CONNECTION_TIMEOUT_MS,
             application_name: `pulse_ingestion_workers_${env.NODE_ENV}`,
             keepAlive: true,
+            keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
         });
-        this.pool.on('error', (err) => log.error({ err }, 'Ingestion worker pool error (idle connection lost)'));
+        this.pool.on('error', (err) => {
+            if (isExpectedServerlessDisconnect(err)) {
+                log.debug({ err: err.message }, 'Idle ingestion worker pool connection closed by server (Neon/PgBouncer)');
+                return;
+            }
+            log.error({ err }, 'Ingestion worker pool error');
+        });
         // Fail fast if either required database is unreachable at boot.
         await this.pool.query('SELECT 1');
         await logDB.connect();

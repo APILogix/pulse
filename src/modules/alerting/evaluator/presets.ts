@@ -470,63 +470,107 @@ export async function seedDefaultPresetsForOrgInTransaction(
   orgId: string,
   createdBy: string,
 ): Promise<number> {
-  let seeded = 0;
-  for (const preset of DEFAULT_ALERT_PRESETS) {
-    const inserted = await client.query<{ id: string }>(
-      `INSERT INTO alert_rules
-         (organization_id, name, description, severity, enabled,
-          evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
-          deduplication_window_seconds,
-          labels, annotations, metadata, created_by, enabled_at,
-          project_id, preset_key, is_default)
-       VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9, $10, $11, $12, NOW(),
-               NULL, $13, TRUE)
+  const presets = DEFAULT_ALERT_PRESETS.map((preset) => ({
+    preset_key: preset.presetKey,
+    name: preset.name,
+    description: preset.description,
+    severity: preset.severity,
+    evaluation_interval_seconds: preset.evaluationIntervalSeconds,
+    cooldown_seconds: preset.cooldownSeconds,
+    auto_resolve_after_minutes: preset.autoResolveAfterMinutes,
+    deduplication_window_seconds: preset.deduplicationWindowSeconds,
+    metadata: preset.metadata ?? {},
+    field_path: preset.condition.fieldPath,
+    operator: preset.condition.operator,
+    threshold_value: preset.condition.thresholdValue ?? null,
+    lookback_minutes: preset.condition.lookbackMinutes,
+    aggregate_function: preset.condition.aggregateFunction ?? null,
+  }));
+
+  const result = await client.query<{ seeded: string }>(
+    `WITH presets AS (
+       SELECT *
+       FROM jsonb_to_recordset($3::jsonb) AS p(
+         preset_key text,
+         name text,
+         description text,
+         severity text,
+         evaluation_interval_seconds integer,
+         cooldown_seconds integer,
+         auto_resolve_after_minutes integer,
+         deduplication_window_seconds integer,
+         metadata jsonb,
+         field_path text,
+         operator text,
+         threshold_value jsonb,
+         lookback_minutes integer,
+         aggregate_function text
+       )
+     ),
+     inserted_rules AS (
+       INSERT INTO alert_rules
+          (organization_id, name, description, severity, enabled,
+           evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
+           deduplication_window_seconds, labels, annotations, metadata, created_by,
+           enabled_at, project_id, preset_key, is_default)
+       SELECT
+         $1::uuid,
+         p.name,
+         p.description,
+         p.severity::alert_severity,
+         TRUE,
+         p.evaluation_interval_seconds,
+         p.cooldown_seconds,
+         p.auto_resolve_after_minutes,
+         p.deduplication_window_seconds,
+         '{"preset":true}'::jsonb,
+         jsonb_build_object('preset_key', p.preset_key),
+         p.metadata,
+         $2::uuid,
+         NOW(),
+         NULL,
+         p.preset_key,
+         TRUE
+       FROM presets p
        ON CONFLICT DO NOTHING
-       RETURNING id`,
-      [
-        orgId,
-        preset.name,
-        preset.description,
-        preset.severity,
-        preset.evaluationIntervalSeconds,
-        preset.cooldownSeconds,
-        preset.autoResolveAfterMinutes,
-        preset.deduplicationWindowSeconds,
-        JSON.stringify({ preset: true }),
-        JSON.stringify({ preset_key: preset.presetKey }),
-        JSON.stringify(preset.metadata ?? {}),
-        createdBy,
-        preset.presetKey,
-      ],
-    );
-    const rule = inserted.rows[0];
-    if (!rule) continue;
+       RETURNING id, preset_key
+     ),
+     inserted_conditions AS (
+       INSERT INTO alert_rule_conditions
+          (rule_id, condition_type, field_path, operator, threshold_value,
+           lookback_minutes, aggregate_function, is_required, order_index)
+       SELECT
+         r.id,
+         'threshold'::alert_condition_type,
+         p.field_path,
+         p.operator::alert_condition_operator,
+         p.threshold_value,
+         p.lookback_minutes,
+         p.aggregate_function,
+         TRUE,
+         0
+       FROM inserted_rules r
+       JOIN presets p ON p.preset_key = r.preset_key
+       RETURNING id
+     ),
+     inserted_actions AS (
+       INSERT INTO alert_rule_actions
+          (rule_id, action_type, priority, order_index, action_conditions, is_active)
+       SELECT
+         id,
+         'notify'::alert_action_type,
+         100,
+         0,
+         '{"channel":"in_app","audience":"project_members"}'::jsonb,
+         TRUE
+       FROM inserted_rules
+       RETURNING id
+     )
+     SELECT COUNT(*)::text AS seeded FROM inserted_rules`,
+    [orgId, createdBy, JSON.stringify(presets)],
+  );
 
-    await client.query(
-      `INSERT INTO alert_rule_conditions
-         (rule_id, condition_type, field_path, operator, threshold_value,
-          lookback_minutes, aggregate_function, is_required, order_index)
-       VALUES ($1, 'threshold'::alert_condition_type, $2, $3::alert_condition_operator,
-               $4, $5, $6, TRUE, 0)`,
-      [
-        rule.id,
-        preset.condition.fieldPath,
-        preset.condition.operator,
-        JSON.stringify(preset.condition.thresholdValue ?? null),
-        preset.condition.lookbackMinutes,
-        preset.condition.aggregateFunction ?? null,
-      ],
-    );
-
-    await client.query(
-      `INSERT INTO alert_rule_actions
-         (rule_id, action_type, priority, order_index, action_conditions, is_active)
-       VALUES ($1, 'notify'::alert_action_type, 100, 0, $2, TRUE)`,
-      [rule.id, JSON.stringify({ channel: 'in_app', audience: 'project_members' })],
-    );
-    seeded += 1;
-  }
-  return seeded;
+  return Number.parseInt(result.rows[0]?.seeded ?? '0', 10);
 }
 
 export async function seedDefaultPresetsForOrg(pool: Pool, orgId: string): Promise<number> {

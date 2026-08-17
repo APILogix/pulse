@@ -9,17 +9,36 @@ export class CoreRepository extends BaseRepository {
         const dup = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE owner_user_id=$1 AND deleted_at IS NULL) AS x`, [ownerUserId]);
         if (dup.rows[0]?.x)
             throw new ConflictError("User already owns an organization");
-        let slug = generateSlug(name);
+        let baseSlug = (data.slug ? generateSlug(data.slug) : '') || generateSlug(name);
+        if (!baseSlug)
+            baseSlug = "org";
+        let slug = baseSlug;
         let i = 1;
         while (true) {
             const c = await client.query(`SELECT EXISTS(SELECT 1 FROM organizations WHERE slug=$1 AND deleted_at IS NULL) AS x`, [slug]);
             if (!c.rows[0]?.x)
                 break;
-            slug = `${generateSlug(name)}-${i++}`;
+            slug = `${baseSlug}-${i++}`;
         }
-        const r = await client.query(`INSERT INTO organizations (name,slug,description,industry,company_size,country,timezone,billing_email,owner_user_id,created_by,status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
-         RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, [name, slug, data.description ?? null, data.industry ?? null, data.companySize ?? null, data.country ?? null, data.timezone ?? 'UTC', data.billingEmail ?? null, ownerUserId, status]);
+        let r;
+        try {
+            r = await client.query(`INSERT INTO organizations (name,slug,description,industry,company_size,country,timezone,billing_email,owner_user_id,created_by,status)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
+           RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, [name, slug, data.description ?? null, data.industry ?? null, data.companySize ?? null, data.country ?? null, data.timezone ?? 'UTC', data.billingEmail ?? null, ownerUserId, status]);
+        }
+        catch (err) {
+            if (err?.code === '23505') {
+                const constraint = String(err.constraint || '');
+                if (constraint === 'uq_organizations_active_owner' || constraint.includes('owner')) {
+                    throw new ConflictError("User already owns an organization");
+                }
+                if (constraint === 'idx_org_slug_active' || constraint.includes('slug')) {
+                    throw new ConflictError(`An organization with URL slug '${slug}' already exists. Please choose a different name.`);
+                }
+                throw new ConflictError("Organization creation conflict. Please try again.");
+            }
+            throw err;
+        }
         const org = r.rows[0];
         await client.query(`INSERT INTO organization_settings (org_id) VALUES ($1)`, [org.id]);
         await client.query(`INSERT INTO organization_members (org_id,user_id,role,status,joined_at,joined_method,last_active_at)

@@ -8,6 +8,7 @@ export declare const SlugParamsSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const CreateOrganizationSchema: z.ZodObject<{
     name: z.ZodString;
+    slug: z.ZodOptional<z.ZodString>;
     description: z.ZodOptional<z.ZodString>;
     industry: z.ZodOptional<z.ZodString>;
     companySize: z.ZodOptional<z.ZodString>;

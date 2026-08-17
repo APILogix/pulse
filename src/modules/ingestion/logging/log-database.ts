@@ -22,6 +22,7 @@
 import { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { env } from '../../../config/env.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../../config/postgres-ssl.js';
 
 export interface MetricTags {
   [key: string]: string | number | boolean;
@@ -97,13 +98,21 @@ export class LogDatabase {
 
     this.pool = new Pool({
       connectionString: url,
+      ssl: resolvePostgresSslConfig(url),
       max: env.INGESTION_LOG_DB_POOL_SIZE,
       idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
+      connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS ?? 30_000,
       application_name: 'pulse_ingestion_logdb',
       keepAlive: true,
+      keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS ?? 10_000,
     });
-    this.pool.on('error', (err) => this.log.error({ err }, 'LogDatabase pool error'));
+    this.pool.on('error', (err: Error) => {
+      if (isExpectedServerlessDisconnect(err)) {
+        this.log.debug({ err: err.message }, 'Idle LogDatabase connection closed by server (Neon/PgBouncer)');
+        return;
+      }
+      this.log.error({ err }, 'LogDatabase pool error');
+    });
 
     try {
       await this.pool.query('SELECT 1');

@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from './postgres-ssl.js';
 const dbLogger = logger.child({ component: 'log-database' });
 /** PostgreSQL error codes that must never be retried — retrying cannot help. */
 const NON_RETRYABLE_PG_CODES = new Set([
@@ -90,28 +91,14 @@ class LogDatabaseManager {
         return pool;
     }
     resolveSslConfig(connectionString, appName) {
-        if (env.LOG_DB_SSL_ENABLED !== undefined) {
-            return env.LOG_DB_SSL_ENABLED
-                ? { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED }
-                : false;
+        const ssl = resolvePostgresSslConfig(connectionString, {
+            enabled: env.LOG_DB_SSL_ENABLED,
+            rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED,
+        });
+        if (ssl === false) {
+            dbLogger.debug({ appName }, 'Log DB SSL disabled');
         }
-        try {
-            const url = new URL(connectionString);
-            const sslMode = url.searchParams.get('sslmode')?.toLowerCase();
-            if (sslMode === 'disable')
-                return false;
-            if (sslMode === 'require' ||
-                sslMode === 'verify-ca' ||
-                sslMode === 'verify-full' ||
-                sslMode === 'prefer' ||
-                sslMode === 'allow') {
-                return { rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED };
-            }
-        }
-        catch {
-            dbLogger.warn({ appName }, 'Invalid log DB connection string while inferring SSL; defaulting to SSL disabled');
-        }
-        return false;
+        return ssl;
     }
     setupPoolMonitoring(pool, name) {
         pool.on('connect', () => {
@@ -120,11 +107,8 @@ class LogDatabaseManager {
         // Idle server-side disconnects are expected with managed providers; only
         // surface genuinely unexpected pool errors at error level.
         pool.on('error', (err) => {
-            const expected = err.message.includes('Connection terminated unexpectedly') ||
-                err.message.includes('Connection ended unexpectedly') ||
-                err.message.includes('terminating connection');
-            if (expected) {
-                dbLogger.debug({ pool: name, err: err.message }, 'Idle log DB connection closed by server');
+            if (isExpectedServerlessDisconnect(err)) {
+                dbLogger.debug({ pool: name, err: err.message }, 'Idle log DB connection closed by server (Neon/PgBouncer)');
                 return;
             }
             dbLogger.error({ err, pool: name }, 'Unexpected log DB pool error');

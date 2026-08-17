@@ -24,6 +24,7 @@ export declare class CoreService {
     requireMutableOrg(orgId: string): Promise<OrganizationRow>;
     createOrganization(meta: RequestMeta, data: {
         name: string;
+        slug?: string;
         description?: string;
         industry?: string;
         companySize?: string;

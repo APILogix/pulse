@@ -16,7 +16,9 @@ export declare const pool: Pool;
  */
 export declare const connectDB: () => Promise<void>;
 /**
- * Query helper with duration tracking.
+ * Query helper with duration tracking and transient connection retry.
+ * Automatically retries if a serverless host dropped the idle socket
+ * before or during connection checkout.
  * Slow queries (>1s) are logged at warn level for investigation.
  */
 export declare const query: (text: string, params?: any[]) => Promise<import("pg").QueryResult<any>>;

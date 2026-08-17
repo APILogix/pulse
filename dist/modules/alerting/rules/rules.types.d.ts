@@ -167,10 +167,10 @@ export declare const CreateRuleSchema: z.ZodObject<{
 }, z.core.$strip>;
 export type CreateRuleBody = z.infer<typeof CreateRuleSchema>;
 export declare const UpdateRuleSchema: z.ZodObject<{
+    enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     projectId: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     name: z.ZodOptional<z.ZodString>;
-    enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     metadata: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     severity: z.ZodOptional<z.ZodDefault<z.ZodEnum<{
         error: "error";

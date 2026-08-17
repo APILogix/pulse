@@ -32,12 +32,46 @@ FULL OUTER JOIN (
     counter_type,
     date_trunc('hour', created_at) AS period_start,
     SUM(increment_by) AS unflushed_value
-  FROM usage_counter_staging
-  GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
+FROM usage_counter_staging
+GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
 ) s
   ON p.project_id = s.project_id
  AND p.counter_type = s.counter_type
  AND p.period_start = s.period_start;
+
+CREATE OR REPLACE VIEW api_key_usage_hourly AS
+SELECT
+  api_key_id,
+  project_id,
+  organization_id,
+  environment_id,
+  date_trunc('hour', bucket) AS bucket,
+  event_type_id,
+  SUM(request_count)::bigint AS request_count,
+  SUM(accepted_event_count)::bigint AS accepted_event_count,
+  SUM(error_event_count)::bigint AS error_event_count,
+  SUM(ingestion_failure_count)::bigint AS ingestion_failure_count,
+  SUM(accepted_bytes)::bigint AS accepted_bytes,
+  SUM(rate_limited_request_count)::bigint AS rate_limited_request_count
+FROM api_key_usage_minute
+GROUP BY api_key_id, project_id, organization_id, environment_id, date_trunc('hour', bucket), event_type_id;
+
+CREATE OR REPLACE VIEW api_key_usage_monthly AS
+SELECT
+  api_key_id,
+  project_id,
+  organization_id,
+  environment_id,
+  date_trunc('month', bucket) AS bucket,
+  event_type_id,
+  SUM(request_count)::bigint AS request_count,
+  SUM(accepted_event_count)::bigint AS accepted_event_count,
+  SUM(error_event_count)::bigint AS error_event_count,
+  SUM(ingestion_failure_count)::bigint AS ingestion_failure_count,
+  SUM(accepted_bytes)::bigint AS accepted_bytes,
+  SUM(rate_limited_request_count)::bigint AS rate_limited_request_count
+FROM api_key_usage_daily
+GROUP BY api_key_id, project_id, organization_id, environment_id, date_trunc('month', bucket), event_type_id;
 
 -- Source: canonical_migrations_draft/19_automation/014_automation_indexes_and_views.sql
 CREATE OR REPLACE VIEW v_automation_workflow_summaries AS

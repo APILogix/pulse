@@ -8,14 +8,24 @@ function sqlText(sql: unknown): string {
 }
 
 function createClient() {
-  let policyId = 0;
-  let escalationId = 0;
   const query = vi.fn(async (sql: unknown) => {
     const text = sqlText(sql);
     if (text.includes('INSERT INTO alerting_workspaces') && text.includes('RETURNING')) return { rows: [{ id: 'workspace-1', initialization_version: ALERTING_WORKSPACE_INITIALIZATION_VERSION, provisioning_status: 'initializing' }] };
-    if (text.includes('INSERT INTO alerting_policy_categories')) return { rows: [{ id: `category-${policyId++}` }], rowCount: 1 };
-    if (text.includes('INSERT INTO alerting_policy_catalog')) return { rows: [{ id: `policy-${policyId++}` }], rowCount: 1 };
-    if (text.includes('INSERT INTO alerting_escalation_policies_v2')) return { rows: [{ id: `escalation-${escalationId++}` }], rowCount: 1 };
+    if (text.includes('INSERT INTO alert_rules')) return { rows: [{ seeded: '1' }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_policy_categories')) return {
+      rows: POLICY_CATEGORIES.map((category, index) => ({ slug: category.slug, id: `category-${index}` })),
+      rowCount: POLICY_CATEGORIES.length,
+    };
+    if (text.includes('INSERT INTO alerting_policy_catalog')) return { rows: [{ policy_versions: String(POLICY_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_escalation_policies_v2')) return {
+      rows: ESCALATION_DEFAULTS.map((escalation, index) => ({ system_key: escalation.systemKey, id: `escalation-${index}` })),
+      rowCount: ESCALATION_DEFAULTS.length,
+    };
+    if (text.includes('INSERT INTO alerting_escalation_steps_v2')) return { rows: [{ escalation_steps: String(ESCALATION_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_provider_catalog')) return { rows: [{ providers: String(PROVIDER_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO feature_flags')) return { rows: [{ feature_flags: String(FEATURE_FLAG_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_dashboard_widgets')) return { rows: [{ dashboard_widgets: String(DASHBOARD_WIDGET_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_saved_views')) return { rows: [{ saved_views: String(SAVED_VIEW_DEFAULTS.length) }], rowCount: 1 };
     if (text.includes('SELECT key FROM plans')) return { rows: [{ key: 'enterprise' }] };
     if (text.includes('FROM plan_feature_entitlements')) return { rows: [
       { feature_key: 'in_app_alerts', boolean_value: true, integer_value: null, decimal_value: null, string_value: null },
@@ -59,6 +69,7 @@ describe('AlertingWorkspaceRepository', () => {
     expect(statements.some((sql) => sql.includes('insert into connector_configs'))).toBe(false);
     expect(statements.some((sql) => sql.includes('insert into alerting_usage_counters'))).toBe(true);
     expect(statements.some((sql) => sql.includes("'not_configured'"))).toBe(true);
+    expect(client.query).toHaveBeenCalledTimes(22);
   });
 
   it('short-circuits a ready workspace without reseeding', async () => {

@@ -86,13 +86,13 @@ function logger() {
   };
 }
 
-describe('connector queue workers', () => {
+describe('connector queue workers', { timeout: 15000 }, () => {
   beforeEach(() => {
-    work.mockReset();
-    send.mockReset();
-    schedule.mockReset();
-    unschedule.mockReset();
-    createQueue.mockReset();
+    work.mockReset().mockResolvedValue(undefined);
+    send.mockReset().mockResolvedValue(undefined);
+    schedule.mockReset().mockResolvedValue(undefined);
+    unschedule.mockReset().mockResolvedValue(undefined);
+    createQueue.mockReset().mockResolvedValue(undefined);
     retryDelivery.mockReset();
     insertAuditLog.mockReset();
     getByIds.mockReset();
@@ -115,32 +115,35 @@ describe('connector queue workers', () => {
     insertAuditLog.mockResolvedValue(undefined);
 
     const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
-    await registerConnectorWorkers(logger() as never);
+    const workers = await registerConnectorWorkers(logger() as never);
+    try {
+      const deadLetterWork = work.mock.calls.find((call) => call[0] === CONNECTOR_JOBS.deadLetterRetry);
+      expect(deadLetterWork).toBeTruthy();
 
-    const deadLetterWork = work.mock.calls.find((call) => call[0] === CONNECTOR_JOBS.deadLetterRetry);
-    expect(deadLetterWork).toBeTruthy();
+      const handler = deadLetterWork![2] as (job: unknown) => Promise<void>;
+      await handler({
+        id: 'job-1',
+        data: {
+          organizationId: 'org-1',
+          deliveryId: 'delivery-1',
+          actorUserId: 'user-1',
+        },
+      });
 
-    const handler = deadLetterWork![2] as (job: unknown) => Promise<void>;
-    await handler({
-      id: 'job-1',
-      data: {
+      expect(retryDelivery).toHaveBeenCalledWith('org-1', 'delivery-1');
+      expect(insertAuditLog).toHaveBeenCalledWith(expect.objectContaining({
         organizationId: 'org-1',
-        deliveryId: 'delivery-1',
-        actorUserId: 'user-1',
-      },
-    });
-
-    expect(retryDelivery).toHaveBeenCalledWith('org-1', 'delivery-1');
-    expect(insertAuditLog).toHaveBeenCalledWith(expect.objectContaining({
-      organizationId: 'org-1',
-      connectorId: 'connector-1',
-      action: 'delivery.dead_letter_retry_requested',
-    }));
-    expect(send).toHaveBeenCalledWith(
-      CONNECTOR_JOBS.deliveryRetry,
-      { organizationId: 'org-1', deliveryId: 'delivery-1' },
-      { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 120 },
-    );
+        connectorId: 'connector-1',
+        action: 'delivery.dead_letter_retry_requested',
+      }));
+      expect(send).toHaveBeenCalledWith(
+        CONNECTOR_JOBS.deliveryRetry,
+        { organizationId: 'org-1', deliveryId: 'delivery-1' },
+        { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: 120 },
+      );
+    } finally {
+      await workers.stop();
+    }
   });
 
   it('fails closed when the requested connector is unavailable', async () => {

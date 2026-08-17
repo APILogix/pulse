@@ -73,7 +73,7 @@ export class CoreService {
     return org;
   }
 
-  async createOrganization(meta: RequestMeta, data: { name: string; description?: string; industry?: string; companySize?: string; country?: string; timezone?: string; billingEmail?: string }) {
+  async createOrganization(meta: RequestMeta, data: { name: string; slug?: string; description?: string; industry?: string; companySize?: string; country?: string; timezone?: string; billingEmail?: string }) {
     const provisioned = await this.deps.repository.withTransaction(async (client) => {
       // 1. Create organization (status is synced to default billing below)
       const created = await this.deps.repository.createOrg(client, data.name, meta.actorUserId, data, 'trialing');

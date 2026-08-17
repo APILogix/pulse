@@ -29,6 +29,20 @@ const envSchema = z.object({
     DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
     DB_QUERY_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
     DB_KEEPALIVE_INITIAL_DELAY_MS: z.coerce.number().int().min(0).default(10000),
+    // Controls TLS for the primary database. When unset, SSL is inferred from
+    // the connection string (`sslmode=require|verify-*`) and managed DB hosts.
+    DB_SSL_ENABLED: z
+        .string()
+        .optional()
+        .transform((value) => {
+        if (value === undefined)
+            return undefined;
+        return value === 'true';
+    }),
+    DB_SSL_REJECT_UNAUTHORIZED: z
+        .string()
+        .optional()
+        .transform((value) => value !== 'false'),
     // Log Database (Primary + Replica)
     LOG_DB_PRIMARY: z.string().optional(),
     LOG_DB_REPLICA: z.string().optional(),
@@ -217,7 +231,7 @@ const envSchema = z.object({
     INGESTION_IDLE_POLL_MS: z.coerce.number().int().min(10).max(60_000).default(500),
     INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(8),
     INGESTION_DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
-    INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(5_000),
+    INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30_000),
     MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
     MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
     GAUGE_UPDATE_INTERVAL_BATCHES: z.coerce.number().int().min(1).default(1),

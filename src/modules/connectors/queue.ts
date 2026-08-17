@@ -49,7 +49,7 @@ function allJobs<T>(arg: unknown): Array<MinimalJob<T>> {
 async function safeCreateQueue(name: string): Promise<void> {
   const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
   if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name).catch(() => undefined);
+    await Promise.resolve(boss.createQueue(name)).catch(() => undefined);
   }
 }
 

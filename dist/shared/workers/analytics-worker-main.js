@@ -21,6 +21,7 @@ import { createServer } from 'node:http';
 import { Pool } from 'pg';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../config/postgres-ssl.js';
 import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { registerAnalyticsEngineWorkers, } from '../../modules/analytics-engine/queue.js';
 import { AnalyticsWatermarkRepository } from '../../modules/analytics-engine/watermark.repository.js';
@@ -104,8 +105,13 @@ async function bootstrap() {
         workerLogger.warn('ANALYTICS_ENGINE_ENABLED=false — analytics worker process exiting');
         return;
     }
+    const connectionString = logDbConnectionString();
     const pool = new Pool({
-        connectionString: logDbConnectionString(),
+        connectionString,
+        ssl: resolvePostgresSslConfig(connectionString, {
+            enabled: env.LOG_DB_SSL_ENABLED,
+            rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED,
+        }),
         max: env.ANALYTICS_DB_POOL_MAX,
         min: 0,
         idleTimeoutMillis: env.LOG_DB_IDLE_TIMEOUT,
@@ -115,7 +121,11 @@ async function bootstrap() {
         keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
     });
     pool.on('error', (error) => {
-        workerLogger.error({ err: error }, 'Analytics Log DB pool error (idle connection lost)');
+        if (isExpectedServerlessDisconnect(error)) {
+            workerLogger.debug({ err: error.message }, 'Idle analytics worker Log DB pool connection closed by server (Neon/PgBouncer)');
+            return;
+        }
+        workerLogger.error({ err: error }, 'Analytics Log DB pool error');
     });
     await pool.query('SELECT 1');
     const watermarks = new AnalyticsWatermarkRepository(pool);

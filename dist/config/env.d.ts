@@ -27,6 +27,8 @@ declare const envSchema: z.ZodObject<{
     DB_STATEMENT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_QUERY_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_KEEPALIVE_INITIAL_DELAY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    DB_SSL_ENABLED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
+    DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     LOG_DB_PRIMARY: z.ZodOptional<z.ZodString>;
     LOG_DB_REPLICA: z.ZodOptional<z.ZodString>;
     LOG_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -222,6 +224,8 @@ export declare const env: {
     DB_STATEMENT_TIMEOUT_MS: number;
     DB_QUERY_TIMEOUT_MS: number;
     DB_KEEPALIVE_INITIAL_DELAY_MS: number;
+    DB_SSL_ENABLED: boolean | undefined;
+    DB_SSL_REJECT_UNAUTHORIZED: boolean;
     LOG_POOL_MAX: number;
     LOG_POOL_MIN: number;
     LOG_QUERY_TIMEOUT: number;

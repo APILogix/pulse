@@ -1,6 +1,7 @@
+import { pool } from '../../../config/database.js';
 export class ProjectOwnerRepository {
     db;
-    constructor(db) {
+    constructor(db = pool) {
         this.db = db;
     }
     async findActiveVerifiedOwner(organizationId, projectId) {

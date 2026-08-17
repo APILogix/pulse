@@ -283,7 +283,7 @@ RETURNS TABLE(flushed_project_id UUID, flushed_count BIGINT) AS $$
 BEGIN
   RETURN QUERY
   WITH batch AS (
-    SELECT id, project_id, org_id, counter_type, increment_by, created_at
+    SELECT id, project_id, org_id, api_key_id, event_type, counter_type, increment_by, created_at
     FROM usage_counter_staging
     WHERE created_at < NOW() - INTERVAL '5 seconds'
     ORDER BY id
@@ -301,6 +301,29 @@ BEGIN
     FROM batch
     GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
   ),
+  keyed AS (
+    SELECT
+      b.project_id,
+      b.org_id,
+      b.api_key_id,
+      k.environment_id,
+      COALESCE(t.id, fallback.id) AS event_type_id,
+      date_trunc('minute', b.created_at) AS minute_bucket,
+      date_trunc('day', b.created_at) AS day_bucket,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'requests') AS request_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'events') AS accepted_event_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'errors') AS error_event_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'ingestion_failures') AS ingestion_failure_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'bytes_ingested') AS accepted_bytes,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'rate_limited') AS rate_limited_request_count
+    FROM batch b
+    JOIN project_api_keys k ON k.id = b.api_key_id
+    LEFT JOIN telemetry_event_types t ON t.name = b.event_type
+    JOIN telemetry_event_types fallback ON fallback.name = '__all__'
+    WHERE b.api_key_id IS NOT NULL
+    GROUP BY b.project_id, b.org_id, b.api_key_id, k.environment_id, COALESCE(t.id, fallback.id),
+             date_trunc('minute', b.created_at), date_trunc('day', b.created_at)
+  ),
   upserted AS (
     INSERT INTO project_usage
       (project_id, org_id, counter_type, period_start, period_end, value, updated_at)
@@ -308,6 +331,47 @@ BEGIN
     FROM aggregated
     ON CONFLICT (project_id, counter_type, period_start)
     DO UPDATE SET value = project_usage.value + EXCLUDED.value, updated_at = NOW()
+    RETURNING project_id
+  ),
+  upserted_api_minute AS (
+    INSERT INTO api_key_usage_minute (
+      api_key_id, project_id, organization_id, environment_id, bucket, event_type_id,
+      request_count, accepted_event_count, error_event_count, ingestion_failure_count,
+      accepted_bytes, rate_limited_request_count
+    )
+    SELECT
+      api_key_id, project_id, org_id, environment_id, minute_bucket, event_type_id,
+      COALESCE(request_count, 0), COALESCE(accepted_event_count, 0), COALESCE(error_event_count, 0),
+      COALESCE(ingestion_failure_count, 0), COALESCE(accepted_bytes, 0), COALESCE(rate_limited_request_count, 0)
+    FROM keyed
+    ON CONFLICT (api_key_id, bucket, event_type_id) DO UPDATE SET
+      request_count = api_key_usage_minute.request_count + EXCLUDED.request_count,
+      accepted_event_count = api_key_usage_minute.accepted_event_count + EXCLUDED.accepted_event_count,
+      error_event_count = api_key_usage_minute.error_event_count + EXCLUDED.error_event_count,
+      ingestion_failure_count = api_key_usage_minute.ingestion_failure_count + EXCLUDED.ingestion_failure_count,
+      accepted_bytes = api_key_usage_minute.accepted_bytes + EXCLUDED.accepted_bytes,
+      rate_limited_request_count = api_key_usage_minute.rate_limited_request_count + EXCLUDED.rate_limited_request_count
+    RETURNING project_id
+  ),
+  upserted_api_daily AS (
+    INSERT INTO api_key_usage_daily (
+      api_key_id, project_id, organization_id, environment_id, bucket, event_type_id,
+      request_count, accepted_event_count, error_event_count, ingestion_failure_count,
+      accepted_bytes, rate_limited_request_count
+    )
+    SELECT
+      api_key_id, project_id, org_id, environment_id, day_bucket, event_type_id,
+      COALESCE(SUM(request_count), 0), COALESCE(SUM(accepted_event_count), 0), COALESCE(SUM(error_event_count), 0),
+      COALESCE(SUM(ingestion_failure_count), 0), COALESCE(SUM(accepted_bytes), 0), COALESCE(SUM(rate_limited_request_count), 0)
+    FROM keyed
+    GROUP BY api_key_id, project_id, org_id, environment_id, day_bucket, event_type_id
+    ON CONFLICT (api_key_id, bucket, event_type_id) DO UPDATE SET
+      request_count = api_key_usage_daily.request_count + EXCLUDED.request_count,
+      accepted_event_count = api_key_usage_daily.accepted_event_count + EXCLUDED.accepted_event_count,
+      error_event_count = api_key_usage_daily.error_event_count + EXCLUDED.error_event_count,
+      ingestion_failure_count = api_key_usage_daily.ingestion_failure_count + EXCLUDED.ingestion_failure_count,
+      accepted_bytes = api_key_usage_daily.accepted_bytes + EXCLUDED.accepted_bytes,
+      rate_limited_request_count = api_key_usage_daily.rate_limited_request_count + EXCLUDED.rate_limited_request_count
     RETURNING project_id
   ),
   deleted AS (

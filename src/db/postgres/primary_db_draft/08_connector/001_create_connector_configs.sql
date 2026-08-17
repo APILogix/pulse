@@ -10,6 +10,7 @@
 CREATE TABLE IF NOT EXISTS connector_configs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
   provider VARCHAR(50) NOT NULL,
   name VARCHAR(255) NOT NULL,
   description TEXT,
@@ -48,6 +49,10 @@ WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_connector_org
 ON connector_configs (organization_id)
 WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_connector_project
+ON connector_configs (project_id)
+WHERE deleted_at IS NULL AND project_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_connector_provider
 ON connector_configs (provider)
