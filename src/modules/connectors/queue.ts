@@ -46,11 +46,17 @@ function allJobs<T>(arg: unknown): Array<MinimalJob<T>> {
   return arg ? [arg as MinimalJob<T>] : [];
 }
 
-async function safeCreateQueue(name: string): Promise<void> {
+async function safeCreateQueue(name: string, strict = false): Promise<void> {
   const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
-  if (typeof boss.createQueue === 'function') {
-    await Promise.resolve(boss.createQueue(name)).catch(() => undefined);
+  if (typeof boss.createQueue !== 'function') {
+    if (strict) throw new Error(`PgBoss queue factory is unavailable for required queue ${name}`);
+    return;
   }
+  if (strict) {
+    await boss.createQueue(name);
+    return;
+  }
+  await Promise.resolve(boss.createQueue(name)).catch(() => undefined);
 }
 
 export interface ConnectorSendJobData {
@@ -85,9 +91,16 @@ export interface ConnectorDeliveryRetryJobData {
   actorUserId?: string | null;
 }
 
+export type ConnectorWorkerGroup = 'all' | 'alert-delivery';
+
 export interface ConnectorOAuthRefreshJobData {
   organizationId: string;
   connectorId: string;
+}
+
+export interface ConnectorWorkerConfig {
+  group?: ConnectorWorkerGroup;
+  strictQueueCreation?: boolean;
 }
 
 function workerMeta(actorUserId: string | null = null): RequestMeta {
@@ -251,8 +264,10 @@ async function processManagedEmailJob(
 export async function registerConnectorWorkers(
   logger: FastifyBaseLogger,
   runtimeRepository: AlertRuntimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()),
+  config: ConnectorWorkerConfig = {},
 ): Promise<{ stop: () => Promise<void> }> {
-  const log = logger.child({ component: 'connector-workers' });
+  const alertDeliveryOnly = config.group === 'alert-delivery';
+  const log = logger.child({ component: 'connector-workers', group: config.group ?? 'all' });
   const repository = new ConnectorRepository();
   const notificationEntitlement = new NotificationEntitlementService();
   const owners = new ProjectOwnerRepository(pool);
@@ -267,12 +282,16 @@ export async function registerConnectorWorkers(
   });
   const monitor = new ConnectorMonitor(repository, dispatcher, service, logger, {}, notificationEntitlement);
 
-  await Promise.all(Object.values(CONNECTOR_JOBS).map((queue) => safeCreateQueue(queue)));
-
+  const baseQueues = alertDeliveryOnly
+    ? [CONNECTOR_JOBS.deliveryRetry]
+    : Object.values(CONNECTOR_JOBS);
   const connectorTypes = listConnectorTypes();
   const providerQueues = connectorTypes.map((t) => `${CONNECTOR_JOBS.send}-${t.type}`);
   const transportQueues = connectorTypes.map((t) => `connector.v2.${t.type}`);
-  await Promise.all([...providerQueues, ...transportQueues].map((queue) => safeCreateQueue(queue)));
+  const registeredQueueNames = [...baseQueues, ...providerQueues, ...transportQueues];
+  await Promise.all(registeredQueueNames.map((queue) =>
+    safeCreateQueue(queue, config.strictQueueCreation === true),
+  ));
 
   const circuitProbeTimer = setInterval(async () => {
     try {
@@ -436,13 +455,14 @@ export async function registerConnectorWorkers(
     }) as never,
   );
 
-  await pgboss.work(
-    CONNECTOR_JOBS.healthCheck,
-    {} as never,
-    (async () => {
-      await monitor.runHealthChecks();
-    }) as never,
-  );
+  if (!alertDeliveryOnly) {
+    await pgboss.work(
+      CONNECTOR_JOBS.healthCheck,
+      {} as never,
+      (async () => {
+        await monitor.runHealthChecks();
+      }) as never,
+    );
 
   await pgboss.work(
     CONNECTOR_JOBS.test,
@@ -577,10 +597,10 @@ export async function registerConnectorWorkers(
     }) as never,
   );
 
-  await pgboss.work(
-    CONNECTOR_JOBS.deadLetterRetry,
-    { localConcurrency: 3, batchSize: 3 } as never,
-    (async (arg: unknown) => {
+    await pgboss.work(
+      CONNECTOR_JOBS.deadLetterRetry,
+      { localConcurrency: 3, batchSize: 3 } as never,
+      (async (arg: unknown) => {
       const jobs = allJobs<ConnectorDeliveryRetryJobData>(arg);
       await Promise.all(jobs.map(async (job) => {
         const delivery = await repository.retryDelivery(job.data.organizationId, job.data.deliveryId);
@@ -601,21 +621,29 @@ export async function registerConnectorWorkers(
           { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: env.CONNECTOR_RETRY_EXPIRE_SECONDS } as never,
         );
       }));
-    }) as never,
-  );
+      }) as never,
+    );
+  }
 
   await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, { singletonKey: 'connector-delivery-retry' } as never);
-  await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' } as never);
-  await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' } as never);
+  if (!alertDeliveryOnly) {
+    await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' } as never);
+    await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' } as never);
+  }
 
-  log.info({ queues: CONNECTOR_JOBS }, 'Connector pg-boss workers registered');
+  log.info(
+    { queues: alertDeliveryOnly ? registeredQueueNames : CONNECTOR_JOBS },
+    'Connector pg-boss workers registered',
+  );
 
   return {
     stop: async () => {
       clearInterval(circuitProbeTimer);
       await pgboss.unschedule(CONNECTOR_JOBS.deliveryRetry).catch(() => undefined);
-      await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
-      await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);
+      if (!alertDeliveryOnly) {
+        await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
+        await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);
+      }
     },
   };
 }

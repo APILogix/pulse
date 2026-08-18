@@ -6,7 +6,9 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import './registry.js';
-export declare function startConnectorMonitor(logger: FastifyBaseLogger): Promise<{
+import { type ConnectorWorkerConfig } from './queue.js';
+export type { ConnectorWorkerConfig } from './queue.js';
+export declare function startConnectorMonitor(logger: FastifyBaseLogger, config?: ConnectorWorkerConfig): Promise<{
     stop: () => Promise<void>;
 }>;
 //# sourceMappingURL=workers.d.ts.map

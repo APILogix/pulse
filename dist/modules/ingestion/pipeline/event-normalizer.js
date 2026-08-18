@@ -270,13 +270,77 @@ export function normalizeEvent(raw) {
     }
     return { ok: true, event: parsed.data };
 }
+/** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
+export function parseSafeEpochMs(raw) {
+    if (raw === null || raw === undefined || raw === '') {
+        return null;
+    }
+    if (typeof raw === 'number') {
+        if (!Number.isFinite(raw) || Number.isNaN(raw)) {
+            return null;
+        }
+        // Unix epoch scale detection:
+        // Milliseconds: ~1e11 to ~1e14 (e.g. 1786963046732 or 1786963046966.2644)
+        if (raw >= 1e11 && raw <= 1e14) {
+            return Math.round(raw);
+        }
+        // Seconds: ~1e9 to ~1e11 (e.g. 1786963046)
+        if (raw >= 1e9 && raw < 1e11) {
+            return Math.round(raw * 1000);
+        }
+        // Microseconds: ~1e14 to ~1e17 (e.g. 1786963046732000)
+        if (raw > 1e14 && raw <= 1e17) {
+            return Math.round(raw / 1000);
+        }
+        // Nanoseconds: ~1e17 to ~1e20 (e.g. 1786963046732000000)
+        if (raw > 1e17 && raw <= 1e20) {
+            return Math.round(raw / 1_000_000);
+        }
+        // Small ms or relative offset
+        if (raw >= 0 && raw < 1e9) {
+            return Math.round(raw);
+        }
+        return null;
+    }
+    if (typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (trimmed.length === 0)
+            return null;
+        const numVal = Number(trimmed);
+        if (Number.isFinite(numVal) && !Number.isNaN(numVal)) {
+            return parseSafeEpochMs(numVal);
+        }
+        const parsed = Date.parse(trimmed);
+        if (Number.isFinite(parsed) && !Number.isNaN(parsed)) {
+            return parsed;
+        }
+        return null;
+    }
+    if (raw instanceof Date) {
+        const t = raw.getTime();
+        return Number.isFinite(t) && !Number.isNaN(t) ? t : null;
+    }
+    return null;
+}
 /** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */
 export function resolveTimestamp(ev) {
-    const ts = ev.timestamp ?? ev.startTime;
-    if (typeof ts === 'number' && ts > 0) {
-        // Clamp future timestamps to now + 1m (defends partition-key abuse).
-        const max = Date.now() + 60_000;
-        return Math.round(ts > max ? Date.now() : ts);
+    const rootSpan = ev.rootSpan;
+    const root = rootSpan && typeof rootSpan === 'object' && !Array.isArray(rootSpan)
+        ? rootSpan
+        : null;
+    const raw = ev.timestamp
+        ?? ev.startTime
+        ?? ev.start_time
+        ?? root?.startTime
+        ?? root?.start_time
+        ?? root?.timestamp;
+    if (raw != null) {
+        const ms = parseSafeEpochMs(raw);
+        if (ms != null && ms > 0) {
+            // Clamp future timestamps to now + 1m (defends partition-key abuse).
+            const max = Date.now() + 60_000;
+            return Math.round(ms > max ? Date.now() : ms);
+        }
     }
     return Date.now();
 }

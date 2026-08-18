@@ -27,7 +27,15 @@ export declare class AlertingWorkspaceService {
         audit: any[];
         search: any;
     } | null>;
-    listPolicies(organizationId: string): Promise<any[]>;
+    listPolicies(organizationId: string, query?: {
+        limit?: number;
+        offset?: number;
+    }): Promise<{
+        data: any[];
+        total: number;
+        limit: number;
+        offset: number;
+    }>;
     getPolicy(organizationId: string, policyId: string): Promise<any>;
     createPolicy(organizationId: string, actorId: string, input: {
         slug: string;

@@ -239,4 +239,44 @@ describe('connector queue workers', { timeout: 15000 }, () => {
     expect(getOrCreateManagedEmailConnector).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
   });
+
+  it('registers only alert delivery connector consumers in alert-delivery mode', async () => {
+    createQueue.mockResolvedValue(undefined);
+    work.mockResolvedValue(undefined);
+    schedule.mockResolvedValue(undefined);
+
+    const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
+    const workers = await registerConnectorWorkers(logger() as never, undefined, {
+      group: 'alert-delivery',
+    });
+    try {
+      const registeredQueues = work.mock.calls.map((call) => call[0] as string);
+      const providers = ['email', 'slack', 'discord', 'teams', 'pagerduty', 'webhook', 'sms'];
+
+      expect(registeredQueues).toEqual(expect.arrayContaining([
+        CONNECTOR_JOBS.deliveryRetry,
+        ...providers.flatMap((provider) => [
+          `${CONNECTOR_JOBS.send}-${provider}`,
+          `connector.v2.${provider}`,
+        ]),
+      ]));
+      expect(registeredQueues).not.toEqual(expect.arrayContaining([
+        CONNECTOR_JOBS.healthCheck,
+        CONNECTOR_JOBS.test,
+        CONNECTOR_JOBS.secretRotation,
+        CONNECTOR_JOBS.oauthRefresh,
+        CONNECTOR_JOBS.cleanup,
+        CONNECTOR_JOBS.deadLetterRetry,
+      ]));
+      expect(schedule).toHaveBeenCalledWith(
+        CONNECTOR_JOBS.deliveryRetry,
+        '* * * * *',
+        {},
+        { singletonKey: 'connector-delivery-retry' },
+      );
+      expect(schedule).toHaveBeenCalledTimes(1);
+    } finally {
+      await workers.stop();
+    }
+  });
 });

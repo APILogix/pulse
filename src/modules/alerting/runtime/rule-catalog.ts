@@ -48,6 +48,15 @@ const TIER_FIELD_PREFIXES: Record<AlertRuntimeTier, string[]> = {
     'logs.security',
     'cron.failed',
     'requests.auth_failure',
+    'requests.latency',
+    'requests.latency_ms',
+    'requests.duration',
+    'requests.duration_ms',
+    'requests.status_code',
+    'latency',
+    'latency_ms',
+    'duration',
+    'duration_ms',
     'deployment.failed',
     'heartbeat.lost',
     'connector.failure',
@@ -59,10 +68,18 @@ const TIER_FIELD_PREFIXES: Record<AlertRuntimeTier, string[]> = {
     'requests.degraded_rate',
     'requests.5xx_rate',
     '5xx.rate',
+    'requests.latency',
     'requests.latency.p95',
-    'latency.p95',
     'requests.latency.p99',
+    'requests.latency_ms',
+    'requests.duration',
+    'requests.duration_ms',
+    'latency',
+    'latency.p95',
     'latency.p99',
+    'latency_ms',
+    'duration',
+    'duration_ms',
     'availability.pct',
     'requests.count',
     'traffic.count',
@@ -102,6 +119,15 @@ const TIER_FIELD_PREFIXES: Record<AlertRuntimeTier, string[]> = {
 
 export function tierForFieldPath(fieldPath: string): AlertRuntimeTier | null {
   const normalized = fieldPath.trim().toLowerCase();
+  if (
+    normalized.includes('.p95') ||
+    normalized.includes('.p99') ||
+    normalized.includes('.rate') ||
+    normalized.includes('rate.') ||
+    normalized.endsWith('_rate')
+  ) {
+    return 'window';
+  }
   for (const [tier, prefixes] of Object.entries(TIER_FIELD_PREFIXES) as Array<[AlertRuntimeTier, string[]]>) {
     if (prefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}.`))) {
       return tier;
@@ -120,19 +146,59 @@ export class AlertCatalogSnapshot {
   ) {}
 
   resolveRulesForScope(scope: EvaluationScope): ResolvedRuntimeRule[] {
-    if (!scope.projectId) return [];
-    return this.rules
-      .map((rule) => ({
+    if (!scope.projectId) {
+      console.log(`[ALERTING] [Phase 1/4: Rule Fetch] ⚠️ Scope has no projectId; skipping project resolution.`);
+      return [];
+    }
+
+    const candidateRules = this.rules.filter(
+      (rule) => rule.project_id === null || rule.project_id === scope.projectId,
+    );
+
+    console.log(
+      `[ALERTING] [Phase 1/4: Rule Fetch] 🔍 Fetching subscribed rules for Project: "${scope.projectId}" | Tier: "${this.tier}" | Organization Catalog Total: ${this.rules.length} | Project Candidates: ${candidateRules.length}`,
+    );
+
+    const resolved: ResolvedRuntimeRule[] = [];
+
+    for (const rule of candidateRules) {
+      const bindings = this.bindingsByRule.get(rule.id) ?? [];
+      const conditions = this.conditionsByRule.get(rule.id) ?? [];
+      // Default organization rules (is_default = true) and project-specific rules apply automatically.
+      // Optional catalog rules (is_default = false and project_id = null) require an explicit project subscription binding.
+      const requireProjectSubscription = !rule.is_default && rule.project_id === null;
+
+      const effective = resolveEffectiveRule(
         rule,
-        effective: resolveEffectiveRule(
-          rule,
-          this.conditionsByRule.get(rule.id) ?? [],
-          this.bindingsByRule.get(rule.id) ?? [],
-          scope,
-          { requireProjectSubscription: true },
-        ),
-      }))
-      .filter(({ effective }) => effective.enabled);
+        conditions,
+        bindings,
+        scope,
+        { requireProjectSubscription },
+      );
+
+      const conditionsDesc = effective.conditions
+        .map((c) => `${c.field_path} ${c.operator} ${c.threshold_value}`)
+        .join(' AND ');
+
+      if (!effective.enabled) {
+        console.log(
+          `[ALERTING] [Phase 1/4: Rule Fetch] ⏭️ Rule "${rule.name}" (${rule.id}) is DISABLED or UNSUBSCRIBED for project ${scope.projectId} (requireProjectSubscription=${requireProjectSubscription}, bindings=${bindings.length}).`,
+        );
+        continue;
+      }
+
+      console.log(
+        `[ALERTING] [Phase 1/4: Rule Fetch] ✅ Rule SUBSCRIBED & ACTIVE: "${rule.name}" (${rule.id}) | Scope: [Project: ${scope.projectId}, Env: ${scope.environment ?? 'all'}] | Severity: ${effective.severity} | ConsecutiveBreaches: ${effective.consecutiveBreaches} | Cooldown: ${effective.cooldownSeconds}s | Conditions: [${conditionsDesc}]`,
+      );
+
+      resolved.push({ rule, effective });
+    }
+
+    console.log(
+      `[ALERTING] [Phase 1/4: Rule Fetch] 🎯 Total active subscribed rules ready for evaluation: ${resolved.length}`,
+    );
+
+    return resolved;
   }
 }
 
@@ -143,8 +209,7 @@ export class AlertRuntimeRuleCatalog {
     organizationId: string,
     tier: AlertRuntimeTier,
   ): Promise<AlertCatalogSnapshot> {
-    const rules = (await this.listRulesForTier(organizationId, tier))
-      .filter((rule) => rule.project_id === null);
+    const rules = await this.listRulesForTier(organizationId, tier);
     const ruleIds = rules.map((rule) => rule.id);
     const [conditionsByRule, bindingsByRule] = await Promise.all([
       this.listConditions(ruleIds),

@@ -101,7 +101,7 @@ export class EventProcessor {
     private readonly log: Logger,
     usagePool: Pool = pool,
   ) {
-    this.writer = new TelemetryWriter(pool);
+    this.writer = new TelemetryWriter(pool, log);
     // The usage-rollup cron job is the ONLY rollup driver (driveRollup: false)
     // — this instance just drains tier-1 memory into usage_counter_staging.
     this.usage = new UsageCounter(usagePool, log, {
@@ -134,7 +134,7 @@ export class EventProcessor {
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
-    this.log.info(
+    this.log.debug(
       {
         queue,
         eventType: type ?? 'unknown',
@@ -143,9 +143,6 @@ export class EventProcessor {
       },
       'ingestion event type picked',
     );
-    console.log('--- INCOMING PAYLOAD ---');
-    console.log(JSON.stringify(rawEvents, null, 2));
-    console.log('------------------------');
 
     // 1) Validate + 2) assign deterministic identity.
     const scoped: ScopedEvent[] = [];
@@ -188,113 +185,121 @@ export class EventProcessor {
     // 3) Persist all writes for this job through one checked-out client and one transaction.
     let result = { totalInserted: 0, totalReceived: rawEvents.length, insertedErrors: [] as any[] };
     let errorDomainEvents: Parameters<ErrorIngestionService['publishBatchDomainEvents']>[0] = [];
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
 
-      if (type === 'error') {
-        const errorBatch = scoped.map(s => {
-          const e = s.event as any;
-          const errorName = errorNameOf(s.event);
-          const fingerprint = errorFingerprint(s.event, errorName);
-          const req = (e.context?.request as any) || e.context || {};
-          return {
-            groupParams: {
-              organizationId: s.orgId as string,
-              projectId: s.projectId,
-              fingerprint,
-              fingerprintVersion: 2,
-              eventId: e.eventId,
-              severity: e.level || e.severity || 'error',
-              message: e.message,
-              errorName,
-              ...(typeof e.release === 'string' ? { release: e.release } : {}),
-              ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
-              ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
-              ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
-              environment: s.environment,
-              service: typeof e.service === 'string' ? e.service : undefined,
-              occurredAt: new Date(resolveTimestamp(e)),
-            },
-            eventRecord: {
-              id: typeof e.id === 'string' ? e.id : randomUUID(),
-              organization_id: s.orgId as string,
-              project_id: s.projectId,
-              api_key_name: s.apiKeyName ?? '',
-              environment: s.environment,
-              event_id: e.eventId,
-              request_id: e.requestId ?? null,
-              trace_id: e.traceId ?? null,
-              span_id: e.spanId ?? null,
-              parent_span_id: e.parentSpanId ?? null,
-              session_id: e.sessionId ?? null,
-              user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
-              fingerprint,
-              fingerprint_version: 2,
-              message: e.message || errorName,
-              error_name: errorName,
-              severity: e.level || e.severity || 'error',
-              mechanism: e.mechanism ?? null,
-              handled: typeof e.handled === 'boolean' ? e.handled : null,
-              method: e.method ?? req.method ?? null,
-              route: e.route ?? req.route ?? null,
-              url: e.url ?? req.url ?? null,
-              status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
-              status_text: e.statusText ?? req.statusText ?? null,
-              stack_frames: e.stack ?? [],
-              breadcrumbs: e.breadcrumbs ?? [],
-              context: e.context ?? {},
-              service: e.service ?? null,
-              server_name: e.serverName ?? e.metadata?.serverName ?? null,
-              release: e.release ?? e.metadata?.release ?? null,
-              sdk_name: e.sdkName ?? e.sdk?.name ?? e.metadata?.sdkName ?? null,
-              sdk_version: e.sdkVersion ?? e.sdk?.version ?? e.metadata?.sdkVersion ?? null,
-              application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
-              application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
-              tags: e.tags ?? {},
-              extra: e.extra ?? {},
-              metadata: e.metadata ?? {},
-              ai_response: e.aiResponse ?? null,
-              occurred_at: new Date(resolveTimestamp(e)),
-              payload: e
-            }
-          };
-        });
+    if (scoped.length > 0) {
+      const client = await this.pool.connect();
+      try {
+        await client.query('BEGIN');
 
-        const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
-        result.totalInserted = errorResult.inserted;
-        result.totalReceived = errorBatch.length;
-        errorDomainEvents = errorResult.domainEvents;
-        if (result.totalInserted > 0) {
-          await this.writer.appendTelemetryOutbox(scoped, client);
+        if (type === 'error') {
+          const errorBatch = scoped.map(s => {
+            const e = s.event as any;
+            const errorName = errorNameOf(s.event);
+            const fingerprint = errorFingerprint(s.event, errorName);
+            const req = (e.context?.request as any) || e.context || {};
+            return {
+              groupParams: {
+                organizationId: s.orgId as string,
+                projectId: s.projectId,
+                fingerprint,
+                fingerprintVersion: 2,
+                eventId: e.eventId,
+                severity: e.level || e.severity || 'error',
+                message: e.message,
+                errorName,
+                ...(typeof e.release === 'string' ? { release: e.release } : {}),
+                ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
+                ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
+                ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
+                environment: s.environment,
+                service: typeof e.service === 'string' ? e.service : undefined,
+                occurredAt: new Date(resolveTimestamp(e)),
+              },
+              eventRecord: {
+                id: typeof e.id === 'string' ? e.id : randomUUID(),
+                organization_id: s.orgId as string,
+                project_id: s.projectId,
+                api_key_name: s.apiKeyName ?? '',
+                environment: s.environment,
+                event_id: e.eventId,
+                request_id: e.requestId ?? null,
+                trace_id: e.traceId ?? null,
+                span_id: e.spanId ?? null,
+                parent_span_id: e.parentSpanId ?? null,
+                session_id: e.sessionId ?? null,
+                user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
+                fingerprint,
+                fingerprint_version: 2,
+                message: e.message || errorName,
+                error_name: errorName,
+                severity: e.level || e.severity || 'error',
+                mechanism: e.mechanism ?? null,
+                handled: typeof e.handled === 'boolean' ? e.handled : null,
+                method: e.method ?? req.method ?? null,
+                route: e.route ?? req.route ?? null,
+                url: e.url ?? req.url ?? null,
+                status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
+                status_text: e.statusText ?? req.statusText ?? null,
+                stack_raw: e.stack ? JSON.stringify(e.stack) : null,
+                breadcrumbs: e.breadcrumbs ? JSON.stringify(e.breadcrumbs) : null,
+                user_agent: req.headers?.['user-agent'] ?? null,
+                client_ip: req.headers?.['x-forwarded-for'] ?? req.ip ?? null,
+                service: typeof e.service === 'string' ? e.service : (typeof req.service === 'string' ? req.service : null),
+                release: e.release ?? e.metadata?.release ?? null,
+                server_name: e.serverName ?? e.metadata?.serverName ?? null,
+                application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
+                application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
+                tags: e.tags ?? {},
+                extra: e.extra ?? {},
+                metadata: e.metadata ?? {},
+                ai_response: e.aiResponse ?? null,
+                occurred_at: new Date(resolveTimestamp(e)),
+                payload: e
+              }
+            };
+          });
+
+          const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
+          result.totalInserted = errorResult.inserted;
+          result.totalReceived = errorBatch.length;
+          errorDomainEvents = errorResult.domainEvents;
+          if (result.totalInserted > 0) {
+            await this.writer.appendTelemetryOutbox(scoped, client);
+          }
+        } else {
+          result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
         }
-      } else {
-        result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
-      }
 
-      await client.query('COMMIT');
-      if (errorDomainEvents.length > 0) {
-        this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+        await client.query('COMMIT');
+        if (errorDomainEvents.length > 0) {
+          this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+        }
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        this.log.error({ err, queue, batchId: payload?.metadata?.batchId }, 'ingestion batch transaction failed');
+        throw err;
+      } finally {
+        client.release();
       }
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      this.log.error({ err, queue, batchId: payload?.metadata?.batchId }, 'ingestion batch transaction failed');
-      throw err;
-    } finally {
-      client.release();
     }
 
-    this.log.info(
-      {
-        queue,
-        eventType: type ?? 'unknown',
-        batchId: payload?.metadata?.batchId,
-        received: rawEvents.length,
-        rejected: rejected.length,
-        inserted: result.totalInserted,
-      },
-      'ingestion event type stored',
-    );
+    if (result.totalInserted > 0) {
+      this.log.info(
+        {
+          phase: '2_inserted',
+          queue,
+          eventType: type ?? 'unknown',
+          batchId: payload?.metadata?.batchId,
+          projectId,
+          environment,
+          received: rawEvents.length,
+          rejected: rejected.length,
+          inserted: result.totalInserted,
+          durationMs: Date.now() - startedAt,
+        },
+        '[Phase 2/4] Ingest event stored',
+      );
+    }
 
     // 5) Usage accounting (inserted rows only — duplicates are never billed).
     if (result.totalInserted > 0 && orgId && projectId) {

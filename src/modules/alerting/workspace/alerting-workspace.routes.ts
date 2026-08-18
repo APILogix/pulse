@@ -10,6 +10,7 @@ import {
   UpdateMaintenanceConfigSchema,
   UpdateNotificationDefaultsSchema,
   UpdateAlertingSettingsSchema,
+  PaginationSchema,
 } from './alerting-workspace.schemas.js';
 import { AlertingWorkspaceService } from './alerting-workspace.service.js';
 import type { JsonObject } from './alerting-workspace.types.js';
@@ -50,8 +51,13 @@ export async function alertingWorkspaceRoutes(fastify: FastifyInstance): Promise
 
   fastify.get('/alert-policies', guard, withErrorHandling(async (request, reply) => {
     const { orgId } = AlertingWorkspaceParamsSchema.parse(request.params);
-    const data = await service.listPolicies(orgId);
-    return reply.send({ success: true, data, meta: { total: data.length } });
+    const query = PaginationSchema.parse(request.query);
+    const result = await service.listPolicies(orgId, query);
+    return reply.send({
+      success: true,
+      data: result.data,
+      meta: { total: result.total, limit: result.limit, offset: result.offset },
+    });
   }));
 
   fastify.get('/alert-policies/:policyId', guard, withErrorHandling(async (request, reply) => {

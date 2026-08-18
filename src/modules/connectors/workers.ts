@@ -6,8 +6,13 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import './registry.js'; // ensure built-in connector types register
-import { registerConnectorWorkers } from './queue.js';
+import { registerConnectorWorkers, type ConnectorWorkerConfig } from './queue.js';
 
-export async function startConnectorMonitor(logger: FastifyBaseLogger): Promise<{ stop: () => Promise<void> }> {
-  return registerConnectorWorkers(logger);
+export type { ConnectorWorkerConfig } from './queue.js';
+
+export async function startConnectorMonitor(
+  logger: FastifyBaseLogger,
+  config: ConnectorWorkerConfig = {},
+): Promise<{ stop: () => Promise<void> }> {
+  return registerConnectorWorkers(logger, undefined, config);
 }

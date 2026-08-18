@@ -35,8 +35,9 @@
 import { randomUUID } from 'crypto';
 import { STATUS_CODES } from 'http';
 import type { Pool, PoolClient } from 'pg';
+import type { Logger } from 'pino';
 import type { NormalizedEvent } from './event-normalizer.js';
-import { resolveTimestamp } from './event-normalizer.js';
+import { parseSafeEpochMs, resolveTimestamp } from './event-normalizer.js';
 import { RequestEnricher } from './request-enrichment.js';
 import { computeErrorFingerprint, ERROR_FINGERPRINT_VERSION } from '../../errors/fingerprint.js';
 
@@ -51,8 +52,75 @@ export interface ScopedEvent {
   event: NormalizedEvent;
 }
 
-function iso(ms: number): string {
-  return new Date(ms).toISOString();
+export interface TimestampContext {
+  traceId?: string | null | undefined;
+  spanId?: string | null | undefined;
+  field?: string | null | undefined;
+  logger?: Logger | { warn: (...args: unknown[]) => void; debug: (...args: unknown[]) => void } | null | undefined;
+}
+
+export function parseSafeIsoTimestamp(
+  raw: unknown,
+  context?: TimestampContext,
+): string | null {
+  if (raw === null || raw === undefined || raw === '') {
+    return null;
+  }
+
+  const ms = parseSafeEpochMs(raw);
+  if (ms !== null && Number.isFinite(ms) && !Number.isNaN(ms)) {
+    try {
+      return new Date(ms).toISOString();
+    } catch (err) {
+      if (context?.logger) {
+        context.logger.warn(
+          {
+            err,
+            traceId: context.traceId,
+            spanId: context.spanId,
+            field: context.field,
+            rawValue: typeof raw === 'object' ? JSON.stringify(raw) : String(raw),
+            rawType: typeof raw,
+          },
+          'invalid timestamp failed to convert to ISO string',
+        );
+      }
+      return null;
+    }
+  }
+
+  if (context?.logger) {
+    context.logger.warn(
+      {
+        traceId: context.traceId,
+        spanId: context.spanId,
+        field: context.field,
+        rawValue: typeof raw === 'object' ? JSON.stringify(raw) : String(raw),
+        rawType: typeof raw,
+      },
+      'unparseable or invalid timestamp in telemetry',
+    );
+  }
+  return null;
+}
+
+function iso(ms: unknown): string {
+  if (typeof ms === 'number' && Number.isFinite(ms) && !Number.isNaN(ms)) {
+    try {
+      return new Date(Math.round(ms)).toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  }
+  const safe = parseSafeEpochMs(ms);
+  if (safe !== null && Number.isFinite(safe) && !Number.isNaN(safe)) {
+    try {
+      return new Date(safe).toISOString();
+    } catch {
+      return new Date().toISOString();
+    }
+  }
+  return new Date().toISOString();
 }
 
 /** Cast a normalized event to a loose record for passthrough field access. */
@@ -406,7 +474,10 @@ type Queryable = Pool | PoolClient;
 export class TelemetryWriter {
   private readonly enricher = RequestEnricher.get();
 
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly log?: Logger,
+  ) {}
 
   /**
    * Route a batch of scoped events to the correct events_* table(s). Mixed
@@ -496,24 +567,31 @@ export class TelemetryWriter {
       .filter((event) => event.orgId !== null)
       .map((event) => {
         const record = rec(event.event);
-        return [
-          event.orgId,
-          event.projectId,
-          event.environment,
-          event.event.type,
-          this.eventId(event.event),
-          outboxSeverity(event.event),
-          isFastPathSignal(event),
-          JSON.stringify({
-            eventType: event.event.type,
-            message: str(record.message, 4096),
-            service: str(record.service, 100),
-            requestId: str(record.requestId, 64),
-            monitorSlug: str(record.monitorSlug, 255),
-          }),
-          iso(resolveTimestamp(event.event)),
-        ];
-      });
+          const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
+          return [
+            event.orgId,
+            event.projectId,
+            event.environment,
+            event.event.type,
+            this.eventId(event.event),
+            outboxSeverity(event.event),
+            isFastPathSignal(event),
+            JSON.stringify({
+              eventType: event.event.type,
+              message: str(record.message, 4096),
+              service: str(record.service, 100),
+              requestId: str(record.requestId, 64),
+              monitorSlug: str(record.monitorSlug, 255),
+              statusCode: record.statusCode ?? record.status_code,
+              latency: latencyVal,
+              latencyMs: latencyVal,
+              durationMs: latencyVal,
+              method: record.method,
+              route: record.route ?? record.endpoint,
+            }),
+            iso(resolveTimestamp(event.event)),
+          ];
+        });
     if (rows.length === 0) return 0;
 
     const result = await db.query(
@@ -804,7 +882,8 @@ export class TelemetryWriter {
         orgId, projectId, apiKeyName ?? '', this.eventId(event), e.spanId, e.traceId, e.parentSpanId ?? null,
         kind, spanType, status, e.parentSpanId == null, isHttp, isDb, isCache, isMessaging,
         e.name, e.statusMessage ?? null, endpoint,
-        iso(e.startTime), e.endTime != null ? iso(e.endTime) : null,
+        parseSafeIsoTimestamp(e.startTime, { traceId: e.traceId, spanId: e.spanId, field: 'startTime', logger: this.log }),
+        parseSafeIsoTimestamp(e.endTime, { traceId: e.traceId, spanId: e.spanId, field: 'endTime', logger: this.log }),
         num(e.duration), num(e.exclusiveDuration), iso(resolveTimestamp(event)),
         str(attrValue(attrs, 'http.method'), 10), str(attrValue(attrs, 'http.route'), 500),
         str(attrValue(attrs, 'http.url'), 8192), str(attrValue(attrs, 'http.target'), 2048),
@@ -953,13 +1032,45 @@ export class TelemetryWriter {
     const isDb = spanType === 'database';
     const isCache = spanType === 'cache';
     const isMessaging = ['messaging', 'queue', 'producer', 'consumer'].includes(spanType);
+
+    const rawStartTime = s.startTime ?? s.start_time ?? s.timestamp ?? s.time ?? s.start;
+    const startTimeIso = parseSafeIsoTimestamp(rawStartTime, {
+      traceId: event.traceId,
+      spanId,
+      field: 'startTime',
+      logger: this.log,
+    });
+
+    const rawEndTime = s.endTime ?? s.end_time ?? s.end;
+    let endTimeIso = parseSafeIsoTimestamp(rawEndTime, {
+      traceId: event.traceId,
+      spanId,
+      field: 'endTime',
+      logger: this.log,
+    });
+
+    if (endTimeIso == null && rawStartTime != null && s.duration != null) {
+      const startMs = parseSafeEpochMs(rawStartTime);
+      const durMs = num(s.duration);
+      if (startMs != null && durMs != null && durMs >= 0) {
+        endTimeIso = parseSafeIsoTimestamp(startMs + durMs, {
+          traceId: event.traceId,
+          spanId,
+          field: 'endTime (derived)',
+          logger: this.log,
+        });
+      }
+    }
+
+    const spanOccurredAt = startTimeIso ?? timestamp;
+
     rows.push([
       scoped.orgId, scoped.projectId, scoped.apiKeyName ?? '', eventId, spanId, event.traceId, parentSpanId,
       name, kind, spanType, status, str(s.statusMessage, 1024), endpoint,
       parentSpanId == null, isHttp, isDb, isCache, isMessaging,
-      s.startTime != null ? iso(Number(s.startTime)) : null,
-      s.endTime != null ? iso(Number(s.endTime)) : null,
-      num(s.duration), num(s.exclusiveDuration), timestamp, JSON.stringify(normalizedSpanAttributes(attrs)),
+      startTimeIso,
+      endTimeIso,
+      num(s.duration), num(s.exclusiveDuration), spanOccurredAt, JSON.stringify(normalizedSpanAttributes(attrs)),
       s.events != null ? JSON.stringify(s.events) : JSON.stringify([]),
       s.links != null ? JSON.stringify(s.links) : JSON.stringify([]),
       depth,
@@ -1198,8 +1309,8 @@ export class TelemetryWriter {
       return [
         orgId, projectId, apiKeyName ?? '', this.eventId(event), str(e.profileType, 20) ?? 'cpu',
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255),
-        e.startTime != null ? iso(e.startTime) : iso(ts),
-        e.endTime != null ? iso(e.endTime) : null, num(e.duration),
+        parseSafeIsoTimestamp(e.startTime, { traceId: e.traceId, spanId: e.spanId, field: 'startTime', logger: this.log }) ?? iso(ts),
+        parseSafeIsoTimestamp(e.endTime, { traceId: e.traceId, spanId: e.spanId, field: 'endTime', logger: this.log }), num(e.duration),
         e.profile != null ? JSON.stringify(e.profile) : null,
         str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
         str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
@@ -1269,8 +1380,8 @@ export class TelemetryWriter {
         e.status, isSuccess,
         // timing
         num(e.duration),
-        e.startedAt != null ? iso(Number(e.startedAt)) : null,
-        e.finishedAt != null ? iso(Number(e.finishedAt)) : null,
+        parseSafeIsoTimestamp(e.startedAt, { traceId: e.traceId, spanId: e.spanId, field: 'startedAt', logger: this.log }),
+        parseSafeIsoTimestamp(e.finishedAt, { traceId: e.traceId, spanId: e.spanId, field: 'finishedAt', logger: this.log }),
         // classification
         checkinType, str(e.scheduleType ?? r.scheduleType, 64),
         // correlation IDs
@@ -1364,8 +1475,9 @@ function isFastPathSignal(scoped: ScopedEvent): boolean {
     return /out of memory|heap out of memory|oom|security|csrf|xss|sql injection|auth bypass/i.test(message);
   }
   if (event.type === 'request') {
-    const status = Number(record.statusCode);
-    return status === 401 || status === 403;
+    const status = Number(record.statusCode ?? record.status_code);
+    const duration = Number(record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration);
+    return status === 401 || status === 403 || status >= 500 || (Number.isFinite(duration) && duration >= 1000);
   }
   return false;
 }

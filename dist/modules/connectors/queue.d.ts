@@ -42,11 +42,16 @@ export interface ConnectorDeliveryRetryJobData {
     deliveryId: string;
     actorUserId?: string | null;
 }
+export type ConnectorWorkerGroup = 'all' | 'alert-delivery';
 export interface ConnectorOAuthRefreshJobData {
     organizationId: string;
     connectorId: string;
 }
-export declare function registerConnectorWorkers(logger: FastifyBaseLogger, runtimeRepository?: AlertRuntimeRepository): Promise<{
+export interface ConnectorWorkerConfig {
+    group?: ConnectorWorkerGroup;
+    strictQueueCreation?: boolean;
+}
+export declare function registerConnectorWorkers(logger: FastifyBaseLogger, runtimeRepository?: AlertRuntimeRepository, config?: ConnectorWorkerConfig): Promise<{
     stop: () => Promise<void>;
 }>;
 //# sourceMappingURL=queue.d.ts.map

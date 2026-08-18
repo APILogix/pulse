@@ -243,7 +243,7 @@ export class AlertDecisionEngine {
       return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs } satisfies AlertDecisionResult;
     });
 
-    this.log.info({ alertKey, duplicate: result.duplicate, jobs: result.notificationJobs.length }, 'Alert decision persisted');
+    this.log.debug({ alertKey, duplicate: result.duplicate, jobs: result.notificationJobs.length }, 'Alert decision persisted');
     return result;
   }
 }

@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "dev:workers": "tsx watch src/shared/workers/main.ts",
+    "dev:alert:workers": "tsx watch src/shared/workers/alert-workers-main.ts",
     "dev:ingestion": "tsx watch src/shared/workers/ingestion-worker-main.ts",
     "dev:analytics": "tsx watch src/shared/workers/analytics-worker-main.ts",
     "dev:cron": "tsx watch src/shared/workers/cron.ts",
@@ -17,6 +18,7 @@
     "start": "node dist/main.js",
     "start:prod": "cross-env NODE_ENV=production PROCESS_ROLE=api node --max-old-space-size=512 dist/main.js",
     "start:workers": "cross-env PROCESS_ROLE=worker node dist/shared/workers/main.js",
+    "start:alert:workers": "cross-env PROCESS_ROLE=alert-worker node dist/shared/workers/alert-workers-main.js",
     "start:ingestion": "cross-env PROCESS_ROLE=ingestion node dist/shared/workers/ingestion-worker-main.js",
     "start:analytics": "cross-env PROCESS_ROLE=analytics node dist/shared/workers/analytics-worker-main.js",
     "start:cron": "cross-env PROCESS_ROLE=cron node dist/shared/workers/cron.js",

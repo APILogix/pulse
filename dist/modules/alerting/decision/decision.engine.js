@@ -186,7 +186,7 @@ export class AlertDecisionEngine {
             })), client);
             return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs };
         });
-        this.log.info({ alertKey, duplicate: result.duplicate, jobs: result.notificationJobs.length }, 'Alert decision persisted');
+        this.log.debug({ alertKey, duplicate: result.duplicate, jobs: result.notificationJobs.length }, 'Alert decision persisted');
         return result;
     }
 }

@@ -291,6 +291,8 @@ export type NormalizeResult = NormalizeOk | NormalizeErr;
  * whole batch (partial-success ingestion).
  */
 export declare function normalizeEvent(raw: unknown): NormalizeResult;
+/** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
+export declare function parseSafeEpochMs(raw: unknown): number | null;
 /** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */
 export declare function resolveTimestamp(ev: NormalizedEvent): number;
 //# sourceMappingURL=event-normalizer.d.ts.map

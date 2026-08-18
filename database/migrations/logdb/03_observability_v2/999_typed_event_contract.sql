@@ -58,7 +58,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Apply the contract trigger to all canonical typed-event and state tables.
+-- Apply the contract trigger to all canonical typed-event tables.
 DO $$
 DECLARE
   t TEXT;
@@ -73,9 +73,7 @@ BEGIN
     'events_messages',
     'events_profiles',
     'events_replays',
-    'events_cron_checkins',
-    'analytics_error_groups',
-    'error_groups'
+    'events_cron_checkins'
   ] LOOP
     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = t) THEN
       EXECUTE format('DROP TRIGGER IF EXISTS trg_sync_typed_event_contract ON %I', t);

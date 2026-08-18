@@ -107,6 +107,7 @@ function outboxToScopedEvent(row) {
         severity: row.severity ?? undefined,
         status: row.signal_kind === 'cron_checkin' ? 'error' : undefined,
         message: row.attributes?.message ?? '',
+        ...(typeof row.attributes === 'object' && row.attributes !== null ? row.attributes : {}),
     };
     return {
         projectId: row.project_id,

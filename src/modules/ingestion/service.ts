@@ -617,7 +617,7 @@ export class IngestionService {
         byType: acceptedByType,
       });
       const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
-      svcLogger.info(
+      svcLogger.debug(
         {
           batchId,
           expectedType: expectedType ?? 'mixed',
@@ -635,6 +635,20 @@ export class IngestionService {
       );
       const result = await enqueueIngestJobs(jobs);
       accepted = result.enqueuedEvents;
+      svcLogger.info(
+        {
+          phase: '1_received',
+          batchId,
+          eventType: expectedType ?? 'mixed',
+          projectId: project.id,
+          environment,
+          received: (events as unknown[]).length,
+          accepted,
+          rejected: errors.length,
+          shed,
+        },
+        '[Phase 1/4] Event ingestion received',
+      );
       if (accepted < submittedEvents) {
         acceptedBytes = submittedEvents > 0 ? Math.floor(acceptedBytes * accepted / submittedEvents) : 0;
         svcLogger.warn(

@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { type AlertingProvisioningContext, type AlertingProvisioningSummary, type JsonObject } from './alerting-workspace.types.js';
 export declare class AlertingWorkspaceRepository {
     provision(client: PoolClient, context: AlertingProvisioningContext): Promise<AlertingProvisioningSummary>;
+    private syncDefaultPolicyCatalog;
     private readySummary;
     private lockWorkspace;
     getWorkspaceSnapshot(organizationId: string): Promise<{
@@ -22,7 +23,15 @@ export declare class AlertingWorkspaceRepository {
         audit: any[];
         search: any;
     } | null>;
-    listPolicies(organizationId: string): Promise<any[]>;
+    listPolicies(organizationId: string, query?: {
+        limit?: number;
+        offset?: number;
+    }): Promise<{
+        data: any[];
+        total: number;
+        limit: number;
+        offset: number;
+    }>;
     getPolicy(organizationId: string, policyId: string): Promise<any>;
     createPolicy(organizationId: string, actorId: string, input: {
         slug: string;

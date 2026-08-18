@@ -1,7 +1,58 @@
 import { pool } from '../../../config/database.js';
-import { seedDefaultPresetsForOrgInTransaction } from '../evaluator/presets.js';
+import { DEFAULT_ALERT_PRESETS, seedDefaultPresetsForOrgInTransaction } from '../evaluator/presets.js';
 import { DASHBOARD_WIDGET_DEFAULTS, ESCALATION_DEFAULTS, FEATURE_FLAG_DEFAULTS, POLICY_CATEGORIES, POLICY_DEFAULTS, PROVIDER_DEFAULTS, ROUTING_DEFAULTS, SAVED_VIEW_DEFAULTS, } from './alerting-workspace.defaults.js';
 import { ALERTING_WORKSPACE_INITIALIZATION_VERSION, } from './alerting-workspace.types.js';
+const POLICY_CATEGORY_BY_PREFIX = [
+    ['errors.', 'errors'],
+    ['requests.latency', 'performance'],
+    ['requests.error', 'errors'],
+    ['requests.degraded', 'availability'],
+    ['requests.auth', 'security'],
+    ['requests.count', 'availability'],
+    ['logs.security', 'security'],
+    ['logs.', 'errors'],
+    ['cron.', 'cron'],
+    ['metrics.cpu', 'infrastructure'],
+    ['metrics.memory', 'infrastructure'],
+    ['queue.', 'queues'],
+    ['db.', 'database'],
+    ['service.', 'availability'],
+    ['endpoint.', 'availability'],
+    ['deployment.', 'deployments'],
+    ['heartbeat.', 'availability'],
+    ['connector.', 'errors'],
+    ['ai.', 'ai'],
+];
+function categoryForFieldPath(fieldPath) {
+    const normalized = fieldPath.toLowerCase();
+    return POLICY_CATEGORY_BY_PREFIX.find(([prefix]) => normalized.startsWith(prefix))?.[1] ?? 'custom';
+}
+function expressionFor(operator, fieldPath) {
+    const op = operator === 'gte' ? '>=' : operator === 'lte' ? '<=' : operator === 'lt' ? '<' : operator === 'gt' ? '>' : operator;
+    return `${fieldPath} ${op} threshold`;
+}
+function thresholdObject(value) {
+    return { value };
+}
+function defaultPolicyPayload() {
+    return DEFAULT_ALERT_PRESETS.map((preset) => ({
+        slug: preset.presetKey,
+        name: preset.name,
+        description: preset.description,
+        category: categoryForFieldPath(preset.condition.fieldPath),
+        severity: preset.severity,
+        metricSource: preset.condition.fieldPath,
+        expression: expressionFor(preset.condition.operator, preset.condition.fieldPath),
+        defaultThreshold: thresholdObject(preset.condition.thresholdValue),
+        recoveryThreshold: {},
+        cooldownSeconds: preset.cooldownSeconds,
+        evaluationWindowSeconds: Math.max(60, preset.condition.lookbackMinutes * 60 || preset.evaluationIntervalSeconds),
+        enabled: true,
+        documentation: preset.description,
+        dependencies: [],
+    }));
+}
+const DEFAULT_POLICY_COUNT = DEFAULT_ALERT_PRESETS.length;
 export class AlertingWorkspaceRepository {
     async provision(client, context) {
         const workspaceResult = await client.query(`INSERT INTO alerting_workspaces
@@ -18,108 +69,7 @@ export class AlertingWorkspaceRepository {
             return this.readySummary(workspace.id);
         }
         const catalogRules = await seedDefaultPresetsForOrgInTransaction(client, context.organizationId, context.initializedBy);
-        const categoryResult = await client.query(`WITH defaults AS (
-         SELECT *
-         FROM jsonb_to_recordset($2::jsonb) AS d(slug text, name text, sort_order integer)
-       )
-       INSERT INTO alerting_policy_categories
-          (organization_id, slug, name, sort_order, is_system)
-       SELECT $1::uuid, slug, name, sort_order, TRUE
-       FROM defaults
-       ON CONFLICT (organization_id, slug) DO UPDATE
-         SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, updated_at = NOW()
-       RETURNING slug, id`, [
-            context.organizationId,
-            JSON.stringify(POLICY_CATEGORIES.map((category) => ({
-                slug: category.slug,
-                name: category.name,
-                sort_order: category.sortOrder,
-            }))),
-        ]);
-        const categoryIds = new Map(categoryResult.rows.map((row) => [row.slug, row.id]));
-        const policyPayload = POLICY_DEFAULTS.map((definition) => {
-            const categoryId = categoryIds.get(definition.category);
-            if (!categoryId)
-                throw new Error(`Missing Alerting policy category: ${definition.category}`);
-            return {
-                slug: definition.slug,
-                name: definition.name,
-                description: definition.description,
-                category_id: categoryId,
-                severity: definition.severity,
-                default_threshold: definition.defaultThreshold,
-                recovery_threshold: definition.recoveryThreshold,
-                cooldown_seconds: definition.cooldownSeconds,
-                evaluation_window_seconds: definition.evaluationWindowSeconds,
-                enabled: definition.enabled,
-                version_definition: {
-                    slug: definition.slug,
-                    name: definition.name,
-                    description: definition.description,
-                    category: definition.category,
-                    severity: definition.severity,
-                    metricSource: definition.metricSource,
-                    expression: definition.expression,
-                    defaultThreshold: definition.defaultThreshold,
-                    recoveryThreshold: definition.recoveryThreshold,
-                    cooldownSeconds: definition.cooldownSeconds,
-                    evaluationWindowSeconds: definition.evaluationWindowSeconds,
-                    enabled: definition.enabled,
-                    documentation: definition.documentation,
-                    dependencies: definition.dependencies,
-                },
-            };
-        });
-        const policyVersionResult = await client.query(`WITH defaults AS (
-         SELECT *
-         FROM jsonb_to_recordset($3::jsonb) AS d(
-           slug text,
-           name text,
-           description text,
-           category_id uuid,
-           severity text,
-           default_threshold jsonb,
-           recovery_threshold jsonb,
-           cooldown_seconds integer,
-           evaluation_window_seconds integer,
-           enabled boolean,
-           version_definition jsonb
-         )
-       ),
-       policies AS (
-         INSERT INTO alerting_policy_catalog
-            (organization_id, slug, name, description, category_id, severity,
-             default_threshold, recovery_threshold, cooldown_seconds,
-             evaluation_window_seconds, enabled, is_system, current_version)
-         SELECT
-           $1::uuid, slug, name, description, category_id, severity::alert_severity,
-           default_threshold, recovery_threshold, cooldown_seconds,
-           evaluation_window_seconds, enabled, TRUE, 1
-         FROM defaults
-         ON CONFLICT (organization_id, slug) DO UPDATE SET
-           name = EXCLUDED.name,
-           description = EXCLUDED.description,
-           category_id = EXCLUDED.category_id,
-           severity = EXCLUDED.severity,
-           default_threshold = EXCLUDED.default_threshold,
-           recovery_threshold = EXCLUDED.recovery_threshold,
-           cooldown_seconds = EXCLUDED.cooldown_seconds,
-           evaluation_window_seconds = EXCLUDED.evaluation_window_seconds,
-           enabled = EXCLUDED.enabled,
-           updated_at = NOW()
-         RETURNING id, slug
-       ),
-       versions AS (
-         INSERT INTO alerting_policy_versions
-            (organization_id, policy_id, version, definition, created_by)
-         SELECT $1::uuid, p.id, 1, d.version_definition, $2::uuid
-         FROM policies p
-         JOIN defaults d ON d.slug = p.slug
-         ON CONFLICT (policy_id, version) DO NOTHING
-         RETURNING id
-       )
-       SELECT COUNT(*)::text AS policy_versions FROM versions`, [context.organizationId, context.initializedBy, JSON.stringify(policyPayload)]);
-        const policyVersions = Number.parseInt(policyVersionResult.rows[0]?.policy_versions ?? '0', 10);
+        const policyVersions = await this.syncDefaultPolicyCatalog(client, context.organizationId, context.initializedBy);
         await client.query(`WITH defaults AS (
          SELECT *
          FROM jsonb_to_recordset($2::jsonb) AS d(severity text, destination_type text, priority integer)
@@ -361,7 +311,7 @@ export class AlertingWorkspaceRepository {
             workspaceId: workspace.id,
             initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
             categories: POLICY_CATEGORIES.length,
-            policies: POLICY_DEFAULTS.length,
+            policies: DEFAULT_POLICY_COUNT,
             catalogRules,
             policyVersions,
             routingDefaults: ROUTING_DEFAULTS.length,
@@ -373,14 +323,127 @@ export class AlertingWorkspaceRepository {
             featureFlags,
         };
     }
+    async syncDefaultPolicyCatalog(client, organizationId, actorId) {
+        const categoryResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($2::jsonb) AS d(slug text, name text, sort_order integer)
+       )
+       INSERT INTO alerting_policy_categories
+          (organization_id, slug, name, sort_order, is_system)
+       SELECT $1::uuid, slug, name, sort_order, TRUE
+       FROM defaults
+       ON CONFLICT (organization_id, slug) DO UPDATE
+         SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order, updated_at = NOW()
+       RETURNING slug, id`, [
+            organizationId,
+            JSON.stringify(POLICY_CATEGORIES.map((category) => ({
+                slug: category.slug,
+                name: category.name,
+                sort_order: category.sortOrder,
+            }))),
+        ]);
+        const categoryIds = new Map(categoryResult.rows.map((row) => [row.slug, row.id]));
+        const policyPayload = defaultPolicyPayload().map((definition) => {
+            const categoryId = categoryIds.get(definition.category);
+            if (!categoryId)
+                throw new Error(`Missing Alerting policy category: ${definition.category}`);
+            return {
+                slug: definition.slug,
+                name: definition.name,
+                description: definition.description,
+                category_id: categoryId,
+                severity: definition.severity,
+                default_threshold: definition.defaultThreshold,
+                recovery_threshold: definition.recoveryThreshold,
+                cooldown_seconds: definition.cooldownSeconds,
+                evaluation_window_seconds: definition.evaluationWindowSeconds,
+                enabled: definition.enabled,
+                version_definition: {
+                    slug: definition.slug,
+                    name: definition.name,
+                    description: definition.description,
+                    category: definition.category,
+                    severity: definition.severity,
+                    metricSource: definition.metricSource,
+                    expression: definition.expression,
+                    defaultThreshold: definition.defaultThreshold,
+                    recoveryThreshold: definition.recoveryThreshold,
+                    cooldownSeconds: definition.cooldownSeconds,
+                    evaluationWindowSeconds: definition.evaluationWindowSeconds,
+                    enabled: definition.enabled,
+                    documentation: definition.documentation,
+                    dependencies: definition.dependencies,
+                },
+            };
+        });
+        const policyVersionResult = await client.query(`WITH defaults AS (
+         SELECT *
+         FROM jsonb_to_recordset($3::jsonb) AS d(
+           slug text,
+           name text,
+           description text,
+           category_id uuid,
+           severity text,
+           default_threshold jsonb,
+           recovery_threshold jsonb,
+           cooldown_seconds integer,
+           evaluation_window_seconds integer,
+           enabled boolean,
+           version_definition jsonb
+         )
+       ),
+       policies AS (
+         INSERT INTO alerting_policy_catalog
+            (organization_id, slug, name, description, category_id, severity,
+             default_threshold, recovery_threshold, cooldown_seconds,
+             evaluation_window_seconds, enabled, is_system, current_version)
+         SELECT
+           $1::uuid, slug, name, description, category_id, severity::alert_severity,
+           default_threshold, recovery_threshold, cooldown_seconds,
+           evaluation_window_seconds, enabled, TRUE, 1
+         FROM defaults
+         ON CONFLICT (organization_id, slug) DO UPDATE SET
+           name = EXCLUDED.name,
+           description = EXCLUDED.description,
+           category_id = EXCLUDED.category_id,
+           severity = EXCLUDED.severity,
+           default_threshold = EXCLUDED.default_threshold,
+           recovery_threshold = EXCLUDED.recovery_threshold,
+           cooldown_seconds = EXCLUDED.cooldown_seconds,
+           evaluation_window_seconds = EXCLUDED.evaluation_window_seconds,
+           enabled = EXCLUDED.enabled,
+           updated_at = NOW()
+         RETURNING id, slug
+       ),
+       versions AS (
+         INSERT INTO alerting_policy_versions
+            (organization_id, policy_id, version, definition, created_by)
+         SELECT
+           $1::uuid,
+           p.id,
+           1,
+           d.version_definition,
+           CASE
+             WHEN $2::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+             THEN $2::uuid
+             ELSE NULL
+           END
+         FROM policies p
+         JOIN defaults d ON d.slug = p.slug
+         ON CONFLICT (policy_id, version) DO NOTHING
+         RETURNING id
+       )
+       SELECT COUNT(*)::text AS policy_versions FROM versions`, [organizationId, actorId, JSON.stringify(policyPayload)]);
+        return Number.parseInt(policyVersionResult.rows[0]?.policy_versions ?? '0', 10);
+    }
     readySummary(workspaceId) {
         return {
             workspaceId,
             initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
             categories: POLICY_CATEGORIES.length,
-            policies: POLICY_DEFAULTS.length,
+            policies: DEFAULT_POLICY_COUNT,
             catalogRules: 0,
-            policyVersions: POLICY_DEFAULTS.length,
+            policyVersions: DEFAULT_POLICY_COUNT,
             routingDefaults: ROUTING_DEFAULTS.length,
             escalationPolicies: ESCALATION_DEFAULTS.length,
             escalationSteps: ESCALATION_DEFAULTS.length,
@@ -444,22 +507,49 @@ export class AlertingWorkspaceRepository {
             search: search.rows[0] ?? null,
         };
     }
-    async listPolicies(organizationId) {
-        const result = await pool.query(`SELECT p.id, p.organization_id, p.slug, p.name, p.description, c.slug AS category,
-              p.severity, p.default_threshold, p.recovery_threshold, p.cooldown_seconds,
-              p.evaluation_window_seconds, p.enabled, p.is_system, p.current_version,
-              COALESCE(v.definition->>'metricSource', '') AS metric_source,
-              COALESCE(v.definition->>'expression', '') AS expression,
-              COALESCE(v.definition->>'documentation', p.description) AS documentation,
-              COALESCE(v.definition->'dependencies', '[]'::jsonb) AS dependencies,
-              COALESCE(v.definition, '{}'::jsonb) AS current_definition,
-              p.created_at, p.updated_at
-       FROM alerting_policy_catalog p
-       LEFT JOIN alerting_policy_versions v ON v.policy_id = p.id AND v.version = p.current_version
-       JOIN alerting_policy_categories c ON c.id = p.category_id
-       WHERE p.organization_id = $1
-       ORDER BY c.sort_order, p.slug`, [organizationId]);
-        return result.rows;
+    async listPolicies(organizationId, query = {}) {
+        const limit = query.limit ?? 15;
+        const offset = query.offset ?? 0;
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const workspace = await client.query(`SELECT initialized_by
+         FROM alerting_workspaces
+         WHERE organization_id = $1
+           AND provisioning_status = 'ready'
+         FOR UPDATE`, [organizationId]);
+            const actorId = workspace.rows[0]?.initialized_by ?? null;
+            if (actorId !== null) {
+                await this.syncDefaultPolicyCatalog(client, organizationId, actorId);
+            }
+            const count = await client.query(`SELECT COUNT(*)::text AS count
+         FROM alerting_policy_catalog p
+         WHERE p.organization_id = $1`, [organizationId]);
+            const result = await client.query(`SELECT p.id, p.organization_id, p.slug, p.name, p.description, c.slug AS category,
+                p.severity, p.default_threshold, p.recovery_threshold, p.cooldown_seconds,
+                p.evaluation_window_seconds, p.enabled, p.is_system, p.current_version,
+                COALESCE(v.definition->>'metricSource', '') AS metric_source,
+                COALESCE(v.definition->>'expression', '') AS expression,
+                COALESCE(v.definition->>'documentation', p.description) AS documentation,
+                COALESCE(v.definition->'dependencies', '[]'::jsonb) AS dependencies,
+                COALESCE(v.definition, '{}'::jsonb) AS current_definition,
+                p.created_at, p.updated_at
+         FROM alerting_policy_catalog p
+         LEFT JOIN alerting_policy_versions v ON v.policy_id = p.id AND v.version = p.current_version
+         JOIN alerting_policy_categories c ON c.id = p.category_id
+         WHERE p.organization_id = $1
+         ORDER BY c.sort_order, p.slug
+         LIMIT $2 OFFSET $3`, [organizationId, limit, offset]);
+            await client.query('COMMIT');
+            return { data: result.rows, total: Number(count.rows[0]?.count ?? 0), limit, offset };
+        }
+        catch (error) {
+            await client.query('ROLLBACK').catch(() => undefined);
+            throw error;
+        }
+        finally {
+            client.release();
+        }
     }
     async getPolicy(organizationId, policyId) {
         const result = await pool.query(`SELECT p.id, p.organization_id, p.slug, p.name, p.description, c.slug AS category,

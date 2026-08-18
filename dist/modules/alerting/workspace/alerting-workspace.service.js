@@ -18,8 +18,8 @@ export class AlertingWorkspaceService {
     getWorkspaceSnapshot(organizationId) {
         return this.repository.getWorkspaceSnapshot(organizationId);
     }
-    listPolicies(organizationId) {
-        return this.repository.listPolicies(organizationId);
+    listPolicies(organizationId, query = {}) {
+        return this.repository.listPolicies(organizationId, query);
     }
     async getPolicy(organizationId, policyId) {
         const policy = await this.repository.getPolicy(organizationId, policyId);

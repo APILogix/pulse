@@ -50,7 +50,7 @@ export const UpdateRoutingDefaultSchema = z.object({
     config: z.record(z.string(), z.unknown()).optional(),
 });
 export const PaginationSchema = z.object({
-    limit: z.coerce.number().int().min(1).max(200).default(50),
+    limit: z.coerce.number().int().min(1).max(200).default(15),
     offset: z.coerce.number().int().min(0).default(0),
 });
 //# sourceMappingURL=alerting-workspace.schemas.js.map

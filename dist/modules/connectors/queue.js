@@ -23,11 +23,18 @@ function allJobs(arg) {
         return arg;
     return arg ? [arg] : [];
 }
-async function safeCreateQueue(name) {
+async function safeCreateQueue(name, strict = false) {
     const boss = pgboss;
-    if (typeof boss.createQueue === 'function') {
-        await boss.createQueue(name).catch(() => undefined);
+    if (typeof boss.createQueue !== 'function') {
+        if (strict)
+            throw new Error(`PgBoss queue factory is unavailable for required queue ${name}`);
+        return;
     }
+    if (strict) {
+        await boss.createQueue(name);
+        return;
+    }
+    await Promise.resolve(boss.createQueue(name)).catch(() => undefined);
 }
 function workerMeta(actorUserId = null) {
     return {
@@ -181,8 +188,9 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
         }
     }
 }
-export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool())) {
-    const log = logger.child({ component: 'connector-workers' });
+export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()), config = {}) {
+    const alertDeliveryOnly = config.group === 'alert-delivery';
+    const log = logger.child({ component: 'connector-workers', group: config.group ?? 'all' });
     const repository = new ConnectorRepository();
     const notificationEntitlement = new NotificationEntitlementService();
     const owners = new ProjectOwnerRepository(pool);
@@ -196,11 +204,14 @@ export async function registerConnectorWorkers(logger, runtimeRepository = new A
         emitEvent: async () => undefined,
     });
     const monitor = new ConnectorMonitor(repository, dispatcher, service, logger, {}, notificationEntitlement);
-    await Promise.all(Object.values(CONNECTOR_JOBS).map((queue) => safeCreateQueue(queue)));
+    const baseQueues = alertDeliveryOnly
+        ? [CONNECTOR_JOBS.deliveryRetry]
+        : Object.values(CONNECTOR_JOBS);
     const connectorTypes = listConnectorTypes();
     const providerQueues = connectorTypes.map((t) => `${CONNECTOR_JOBS.send}-${t.type}`);
     const transportQueues = connectorTypes.map((t) => `connector.v2.${t.type}`);
-    await Promise.all([...providerQueues, ...transportQueues].map((queue) => safeCreateQueue(queue)));
+    const registeredQueueNames = [...baseQueues, ...providerQueues, ...transportQueues];
+    await Promise.all(registeredQueueNames.map((queue) => safeCreateQueue(queue, config.strictQueueCreation === true)));
     const circuitProbeTimer = setInterval(async () => {
         try {
             const recovered = await globalGuards.probeOpenCircuits(env.CONNECTOR_CIRCUIT_RESET_SECONDS);
@@ -349,144 +360,150 @@ export async function registerConnectorWorkers(logger, runtimeRepository = new A
         await monitor.processRetries();
         sweepRateLimiter();
     }));
-    await pgboss.work(CONNECTOR_JOBS.healthCheck, {}, (async () => {
-        await monitor.runHealthChecks();
-    }));
-    await pgboss.work(CONNECTOR_JOBS.test, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-            if (!row) {
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test skipped: connector not found');
-                return;
-            }
-            const capability = await notificationEntitlement.resolve(job.data.organizationId);
-            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
-                || !capability.isProviderAllowed(row.type, true)) {
-                recordNotificationDelivery('notification.delivery.entitlement_blocked');
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test blocked by entitlement');
-                return;
-            }
-            const result = await service.runConnectionTest(row, null);
-            await repository.insertAuditLog({
-                organizationId: job.data.organizationId,
-                connectorId: job.data.connectorId,
-                action: 'test.completed',
-                actorId: null,
-                changesSummary: { success: result.success },
-            });
+    if (!alertDeliveryOnly) {
+        await pgboss.work(CONNECTOR_JOBS.healthCheck, {}, (async () => {
+            await monitor.runHealthChecks();
         }));
-    }));
-    await pgboss.work(CONNECTOR_JOBS.secretRotation, { localConcurrency: 2, batchSize: 2 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            await service.rotateSecret(job.data.organizationId, workerMeta(job.data.actorUserId ?? null), job.data.connectorId, { config: job.data.config });
-            log.info({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector secret rotation job completed');
-        }));
-    }));
-    await pgboss.work(CONNECTOR_JOBS.oauthRefresh, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-            if (!row) {
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh skipped: connector not found');
-                return;
-            }
-            const capability = await notificationEntitlement.resolve(job.data.organizationId);
-            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
-                || !capability.isProviderAllowed(row.type, true)) {
-                recordNotificationDelivery('notification.delivery.entitlement_blocked');
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh blocked by entitlement');
-                return;
-            }
-            const credential = await repository.getCredential(job.data.organizationId, job.data.connectorId, 'oauth');
-            if (!credential) {
+        await pgboss.work(CONNECTOR_JOBS.test, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
+            const jobs = allJobs(arg);
+            await Promise.all(jobs.map(async (job) => {
+                const row = await repository.findById(job.data.organizationId, job.data.connectorId);
+                if (!row) {
+                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test skipped: connector not found');
+                    return;
+                }
+                const capability = await notificationEntitlement.resolve(job.data.organizationId);
+                if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
+                    || !capability.isProviderAllowed(row.type, true)) {
+                    recordNotificationDelivery('notification.delivery.entitlement_blocked');
+                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test blocked by entitlement');
+                    return;
+                }
+                const result = await service.runConnectionTest(row, null);
                 await repository.insertAuditLog({
                     organizationId: job.data.organizationId,
                     connectorId: job.data.connectorId,
-                    action: 'oauth.refresh_failed',
+                    action: 'test.completed',
                     actorId: null,
-                    changesSummary: { reason: 'missing_oauth_credential' },
+                    changesSummary: { success: result.success },
                 });
-                return;
-            }
-            if (credential.credential_type !== 'oauth') {
+            }));
+        }));
+        await pgboss.work(CONNECTOR_JOBS.secretRotation, { localConcurrency: 2, batchSize: 2 }, (async (arg) => {
+            const jobs = allJobs(arg);
+            await Promise.all(jobs.map(async (job) => {
+                await service.rotateSecret(job.data.organizationId, workerMeta(job.data.actorUserId ?? null), job.data.connectorId, { config: job.data.config });
+                log.info({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector secret rotation job completed');
+            }));
+        }));
+        await pgboss.work(CONNECTOR_JOBS.oauthRefresh, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
+            const jobs = allJobs(arg);
+            await Promise.all(jobs.map(async (job) => {
+                const row = await repository.findById(job.data.organizationId, job.data.connectorId);
+                if (!row) {
+                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh skipped: connector not found');
+                    return;
+                }
+                const capability = await notificationEntitlement.resolve(job.data.organizationId);
+                if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
+                    || !capability.isProviderAllowed(row.type, true)) {
+                    recordNotificationDelivery('notification.delivery.entitlement_blocked');
+                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh blocked by entitlement');
+                    return;
+                }
+                const credential = await repository.getCredential(job.data.organizationId, job.data.connectorId, 'oauth');
+                if (!credential) {
+                    await repository.insertAuditLog({
+                        organizationId: job.data.organizationId,
+                        connectorId: job.data.connectorId,
+                        action: 'oauth.refresh_failed',
+                        actorId: null,
+                        changesSummary: { reason: 'missing_oauth_credential' },
+                    });
+                    return;
+                }
+                if (credential.credential_type !== 'oauth') {
+                    await repository.insertAuditLog({
+                        organizationId: job.data.organizationId,
+                        connectorId: job.data.connectorId,
+                        action: 'oauth.refresh_skipped',
+                        actorId: null,
+                        changesSummary: { reason: 'credential_not_active', credentialType: credential.credential_type },
+                    });
+                    return;
+                }
+                const connector = await dispatcher.instantiate(row);
+                const currentCredential = decryptConfig(credential.encrypted_value);
+                const refreshed = await connector.refreshCredentials(currentCredential);
+                if (!refreshed.valid) {
+                    await repository.insertAuditLog({
+                        organizationId: job.data.organizationId,
+                        connectorId: job.data.connectorId,
+                        action: 'oauth.refresh_failed',
+                        actorId: null,
+                        changesSummary: { errors: refreshed.errors },
+                    });
+                    return;
+                }
+                if (refreshed.normalized) {
+                    const expiresAt = resolveCredentialExpiry(refreshed.normalized, credential.expires_at);
+                    await repository.upsertCredential({
+                        organizationId: job.data.organizationId,
+                        connectorId: job.data.connectorId,
+                        credentialType: credential.credential_type,
+                        keyName: credential.key_name,
+                        encryptedValue: encryptConfig(refreshed.normalized),
+                        expiresAt,
+                        actorUserId: null,
+                    });
+                }
                 await repository.insertAuditLog({
                     organizationId: job.data.organizationId,
                     connectorId: job.data.connectorId,
-                    action: 'oauth.refresh_skipped',
+                    action: 'oauth.refreshed',
                     actorId: null,
-                    changesSummary: { reason: 'credential_not_active', credentialType: credential.credential_type },
                 });
-                return;
+            }));
+        }));
+        await pgboss.work(CONNECTOR_JOBS.cleanup, {}, (async () => {
+            const expiredOAuthStates = await repository.cleanupExpiredOAuthStates();
+            if (expiredOAuthStates > 0) {
+                log.info({ expiredOAuthStates }, 'Connector cleanup removed expired OAuth states');
             }
-            const connector = await dispatcher.instantiate(row);
-            const currentCredential = decryptConfig(credential.encrypted_value);
-            const refreshed = await connector.refreshCredentials(currentCredential);
-            if (!refreshed.valid) {
+        }));
+        await pgboss.work(CONNECTOR_JOBS.deadLetterRetry, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
+            const jobs = allJobs(arg);
+            await Promise.all(jobs.map(async (job) => {
+                const delivery = await repository.retryDelivery(job.data.organizationId, job.data.deliveryId);
+                if (!delivery) {
+                    log.warn({ jobId: job.id, deliveryId: job.data.deliveryId }, 'Dead-letter retry skipped: delivery not retryable');
+                    return;
+                }
                 await repository.insertAuditLog({
                     organizationId: job.data.organizationId,
-                    connectorId: job.data.connectorId,
-                    action: 'oauth.refresh_failed',
-                    actorId: null,
-                    changesSummary: { errors: refreshed.errors },
+                    connectorId: delivery.connector_id,
+                    action: 'delivery.dead_letter_retry_requested',
+                    actorId: job.data.actorUserId ?? null,
+                    changesSummary: { deliveryId: delivery.id },
                 });
-                return;
-            }
-            if (refreshed.normalized) {
-                const expiresAt = resolveCredentialExpiry(refreshed.normalized, credential.expires_at);
-                await repository.upsertCredential({
-                    organizationId: job.data.organizationId,
-                    connectorId: job.data.connectorId,
-                    credentialType: credential.credential_type,
-                    keyName: credential.key_name,
-                    encryptedValue: encryptConfig(refreshed.normalized),
-                    expiresAt,
-                    actorUserId: null,
-                });
-            }
-            await repository.insertAuditLog({
-                organizationId: job.data.organizationId,
-                connectorId: job.data.connectorId,
-                action: 'oauth.refreshed',
-                actorId: null,
-            });
+                await pgboss.send(CONNECTOR_JOBS.deliveryRetry, { organizationId: job.data.organizationId, deliveryId: delivery.id }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: env.CONNECTOR_RETRY_EXPIRE_SECONDS });
+            }));
         }));
-    }));
-    await pgboss.work(CONNECTOR_JOBS.cleanup, {}, (async () => {
-        const expiredOAuthStates = await repository.cleanupExpiredOAuthStates();
-        if (expiredOAuthStates > 0) {
-            log.info({ expiredOAuthStates }, 'Connector cleanup removed expired OAuth states');
-        }
-    }));
-    await pgboss.work(CONNECTOR_JOBS.deadLetterRetry, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.all(jobs.map(async (job) => {
-            const delivery = await repository.retryDelivery(job.data.organizationId, job.data.deliveryId);
-            if (!delivery) {
-                log.warn({ jobId: job.id, deliveryId: job.data.deliveryId }, 'Dead-letter retry skipped: delivery not retryable');
-                return;
-            }
-            await repository.insertAuditLog({
-                organizationId: job.data.organizationId,
-                connectorId: delivery.connector_id,
-                action: 'delivery.dead_letter_retry_requested',
-                actorId: job.data.actorUserId ?? null,
-                changesSummary: { deliveryId: delivery.id },
-            });
-            await pgboss.send(CONNECTOR_JOBS.deliveryRetry, { organizationId: job.data.organizationId, deliveryId: delivery.id }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: env.CONNECTOR_RETRY_EXPIRE_SECONDS });
-        }));
-    }));
+    }
     await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, { singletonKey: 'connector-delivery-retry' });
-    await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' });
-    await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' });
-    log.info({ queues: CONNECTOR_JOBS }, 'Connector pg-boss workers registered');
+    if (!alertDeliveryOnly) {
+        await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' });
+        await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' });
+    }
+    log.info({ queues: alertDeliveryOnly ? registeredQueueNames : CONNECTOR_JOBS }, 'Connector pg-boss workers registered');
     return {
         stop: async () => {
             clearInterval(circuitProbeTimer);
             await pgboss.unschedule(CONNECTOR_JOBS.deliveryRetry).catch(() => undefined);
-            await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
-            await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);
+            if (!alertDeliveryOnly) {
+                await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
+                await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);
+            }
         },
     };
 }

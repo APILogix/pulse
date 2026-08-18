@@ -1,7 +1,7 @@
 import { authenticate } from '../../../shared/middleware/auth.js';
 import { requireOrgAccess } from '../../../shared/middleware/requireorg.js';
 import { AppError, NotFoundError } from '../../../shared/errors/app-error.js';
-import { AlertingPolicyParamsSchema, AlertingWorkspaceParamsSchema, CreateAlertingPolicySchema, CreateAlertingPolicyVersionSchema, UpdateMaintenanceConfigSchema, UpdateNotificationDefaultsSchema, UpdateAlertingSettingsSchema, } from './alerting-workspace.schemas.js';
+import { AlertingPolicyParamsSchema, AlertingWorkspaceParamsSchema, CreateAlertingPolicySchema, CreateAlertingPolicyVersionSchema, UpdateMaintenanceConfigSchema, UpdateNotificationDefaultsSchema, UpdateAlertingSettingsSchema, PaginationSchema, } from './alerting-workspace.schemas.js';
 import { AlertingWorkspaceService } from './alerting-workspace.service.js';
 function handleError(error, reply) {
     if (error instanceof AppError) {
@@ -35,8 +35,13 @@ export async function alertingWorkspaceRoutes(fastify) {
     }));
     fastify.get('/alert-policies', guard, withErrorHandling(async (request, reply) => {
         const { orgId } = AlertingWorkspaceParamsSchema.parse(request.params);
-        const data = await service.listPolicies(orgId);
-        return reply.send({ success: true, data, meta: { total: data.length } });
+        const query = PaginationSchema.parse(request.query);
+        const result = await service.listPolicies(orgId, query);
+        return reply.send({
+            success: true,
+            data: result.data,
+            meta: { total: result.total, limit: result.limit, offset: result.offset },
+        });
     }));
     fastify.get('/alert-policies/:policyId', guard, withErrorHandling(async (request, reply) => {
         const { orgId, policyId } = AlertingPolicyParamsSchema.parse(request.params);

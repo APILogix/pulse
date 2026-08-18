@@ -58,6 +58,6 @@ export const UpdateRoutingDefaultSchema = z.object({
 });
 
 export const PaginationSchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  limit: z.coerce.number().int().min(1).max(200).default(15),
   offset: z.coerce.number().int().min(0).default(0),
 });

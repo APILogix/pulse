@@ -66,16 +66,31 @@ export function isExpectedServerlessDisconnect(err) {
         message.includes('ETIMEDOUT') ||
         message.includes('timeout exceeded when trying to connect'));
 }
+const NON_TRANSIENT_PREFIXES = ['28', '42', '23', '22', '3D', '0A'];
 /**
  * Identifies transient connection errors that can be safely retried
  * during database operations or pg-boss background ticks.
  */
 export function isTransientPostgresError(err) {
+    if (!err)
+        return false;
+    const message = typeof err === 'string' ? err : err?.message || String(err);
+    const code = err?.code;
+    if (typeof code === 'string') {
+        if (NON_TRANSIENT_PREFIXES.some((prefix) => code.startsWith(prefix))) {
+            return false;
+        }
+    }
+    if (message.includes('role "') ||
+        message.includes('does not exist') ||
+        message.includes('password authentication failed') ||
+        message.includes('permission denied') ||
+        message.includes('syntax error')) {
+        return false;
+    }
     if (isExpectedServerlessDisconnect(err)) {
         return true;
     }
-    const message = typeof err === 'string' ? err : err?.message || String(err);
-    const code = err?.code;
     if (code && ['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) {
         return true;
     }

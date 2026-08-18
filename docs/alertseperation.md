@@ -593,3 +593,170 @@ npm run dev:ingestion:workers
 ```
 
 without duplicating the worker architecture.
+
+---
+
+# Implementation Report
+
+## 1. Alert Architecture
+
+The active runtime path discovered in the repository is:
+
+```text
+telemetry_outbox / connector-failure signal
+    -> alert.telemetry-outbox-relay or alert.error-group-regressed
+    -> alert.evaluate.fast
+    -> AlertRuntimeEngines.evaluateFast()
+
+scheduled telemetry/rollup evaluation
+    -> alert.evaluate.window / alert.evaluate.operational / alert.evaluate.ai
+    -> AlertRuntimeEngines.evaluateTier()
+
+AlertRuntimeEngines
+    -> rule catalog + effective policy resolution
+    -> evaluator state, consecutive-breach, cooldown, and recovery checks
+    -> AlertDecisionEngine.decide()
+    -> alert_events_v2 + alert_event_state + alert_event_history_v2
+    -> alert_notification_jobs + alert_notification_ledger
+    -> alert.notification-router
+
+AlertNotificationRouter
+    -> in_app: marks the notification sent in Log DB
+    -> managed email: connector.v2.email or connector-send-email
+    -> connector-backed alert: connector.v2.<provider> or connector-send-<provider>
+
+connector transport worker
+    -> entitlement and tenant checks
+    -> ConnectorRepository
+    -> NotificationDispatcher
+    -> registered provider connector
+    -> external provider destination
+    -> delivery status, attempts, circuit state, retry, or dead letter
+
+connector-delivery-retry
+    -> ConnectorMonitor.processRetries()
+    -> NotificationDispatcher.processRetry()
+    -> provider delivery
+```
+
+The legacy `alert.form-batches` and `alert.process-batch` references are disconnected legacy documentation/comments. `src/shared/workers/alerting.processor.ts` is a placeholder and is not an active consumer. `alert.correlate` and `notification.digest` are published by escalation code but have no registered consumers.
+
+## 2. Alert Workers
+
+The alert-only group registers these real consumers:
+
+| Queue | Worker purpose | Required |
+| --- | --- | --- |
+| `alert.telemetry-outbox-relay` | Claims durable telemetry outbox rows and publishes fast evaluation jobs | Yes |
+| `alert.error-group-regressed` | Converts error-group regression signals into fast evaluation | Yes |
+| `alert.evaluate.fast` | Evaluates event-driven alert rules | Yes |
+| `alert.evaluate.window` | Evaluates window-tier rules from existing rollups | Yes |
+| `alert.evaluate.operational` | Evaluates operational-tier rules from existing rollups | Yes |
+| `alert.evaluate.ai` | Evaluates AI/capacity-tier rules from existing rollups | Yes |
+| `alert.notification-router` | Claims notification jobs and dispatches transport jobs | Yes |
+| `alert.escalation-sweep` | Advances due legacy escalation steps | Yes |
+| `alert.escalate` | Runs snapshot escalation when `ESCALATION_V2=true` | Yes |
+| `connector.v2.<provider>` | Canonical provider transport, including managed email | Yes |
+| `connector-send-<provider>` | Legacy transport and legacy escalation compatibility | Yes |
+| `connector-delivery-retry` | Replays retryable connector delivery rows | Yes |
+
+Providers are sourced from the runtime registry: email, Slack, Discord, Microsoft Teams, PagerDuty, webhook, and SMS. Runtime dispatch timers produce the periodic evaluator, router, and outbox jobs. The circuit-probe timer remains active because it supports connector delivery recovery.
+
+## 3. Email Flow
+
+Managed alert email follows:
+
+```text
+AlertDecisionEngine.decide()
+    -> alert_notification_jobs(channel_kind=email, connector_id=NULL)
+    -> alert.notification-router
+    -> connector.v2.email (or connector-send-email when ALERTING_V2_READ=false)
+    -> processManagedEmailJob()
+    -> entitlement and verified owner/fallback checks
+    -> sendEmail()
+    -> configured SMTP provider
+    -> alert delivery status and attempt record
+```
+
+Connector-backed email follows the same router boundary but enters `NotificationDispatcher`, which creates the registered `EmailConnector` and calls Nodemailer/SMTP. Auth and organization email polling workers are not involved in alert email delivery.
+
+Transient managed-email failures are rethrown for pg-boss retry; permanent recipient/SMTP syntax-style failures are recorded as failed. Connector provider failures use the existing delivery retry and dead-letter state machine.
+
+## 4. Connector Flow
+
+For each registered provider:
+
+```text
+Alert notification job
+    -> alert.notification-router
+    -> connector.v2.<provider> (canonical read mode)
+       or connector-send-<provider> (legacy read mode/escalation)
+    -> registerConnectorWorkers() provider consumer
+    -> entitlement and tenant-scoped connector lookup
+    -> NotificationDispatcher.dispatch()
+    -> createConnector(provider)
+    -> provider implementation
+    -> external destination
+```
+
+Provider implementations are `EmailConnector`, `SlackConnector`, `DiscordConnector`, `TeamsConnector`, `PagerDutyConnector`, `WebhookConnector`, and `SmsConnector`. Delivery results are recorded in the V2 alert/connector runtime tables. Retryable delivery rows are handled by `connector-delivery-retry`; exhausted or permanent failures enter connector dead-letter state. Manual `connector-dead-letter-retry` is intentionally not required for automatic alert delivery.
+
+## 5. Worker Dependencies
+
+- Primary Postgres: alert configuration, connector configuration/credentials, routing, entitlements, and connector guard state.
+- Log DB primary pool: telemetry, alert runtime state, notification jobs, delivery attempts, and dead letters.
+- pg-boss: durable queues, scheduled jobs, locking, and job retry behavior.
+- Alert configuration/routing services: effective rules, silences, channels, recipients, and entitlements.
+- Connector registry/dispatcher: provider construction, transport, rate limits, circuit breakers, and delivery persistence.
+- Ingestion workers are upstream producers of telemetry/outbox rows, not alert consumers.
+- Analytics workers are upstream producers of rollups for slower tiers, not notification consumers. Existing rollups or a separately run analytics process are needed for those inputs.
+
+## 6. New Command
+
+```bash
+npm run dev:alert:workers
+```
+
+This starts `src/shared/workers/alert-workers-main.ts`, which starts pg-boss, runs database ownership assertions, registers the alert-delivery mode of the alerting and connector registrars, logs an explicit `[alert-workers] Alert worker group ready` message, and forwards SIGINT/SIGTERM into idempotent graceful shutdown. The production/default `dev:workers` and `start:workers` paths still use the full worker registrations.
+
+The additive production entrypoint is also available as:
+
+```bash
+npm run start:alert:workers
+```
+
+## 7. Workers Excluded
+
+The alert-only command does not register:
+
+- `alert.cleanup` or its daily retention schedule.
+- `connector-health-check`, `connector-test`, `connector-secret-rotation`, `connector-oauth-refresh`, `connector-cleanup`, or `connector-dead-letter-retry`.
+- Ingestion, analytics, billing, auth automation, AI reliability, automation, organization cleanup, user export, telemetry maintenance, or auth/org email polling workers.
+
+These are excluded because they do not consume an alert delivery queue. Ingestion and analytics can be run separately when a test requires fresh telemetry or newly materialized rollups.
+
+## 8. Files Changed
+
+- `package.json`
+- `src/modules/alerting/queue.ts`
+- `src/modules/connectors/queue.ts`
+- `src/modules/connectors/workers.ts`
+- `src/shared/workers/alert-workers-main.ts`
+- `test/unit/modules/connector-queue.test.ts`
+- `test/unit/alert-worker-topology.test.ts`
+- `test/unit/alert-worker-bootstrap.test.ts`
+- `docs/alertseperation.md`
+
+## 9. Validation
+
+Passed:
+
+- `npm run build`
+- targeted IDE diagnostics for all changed TypeScript files
+- `npx vitest run test/unit/alert-worker-topology.test.ts test/unit/alert-worker-bootstrap.test.ts test/unit/modules/connector-queue.test.ts` — 7 tests passed
+- `npx vitest run test/unit/alerting-worker-hardening.test.ts test/unit/alerting-runtime-routing.test.ts test/unit/alerting-decision-engine.test.ts test/unit/notification-entitlement-routing.test.ts test/unit/telemetry-writer-outbox.test.ts` — 24 tests passed
+- `npx tsx scripts/verify-alerting-runtime.ts --assert` — all database/runtime gates passed
+- direct `npx tsx src/shared/workers/alert-workers-main.ts` smoke test — primary and Log DB connected, pool assertions passed, pg-boss started, alert-only registrars completed, and `[alert-workers] Alert worker group ready` was logged
+- no tracked shell/monitor process remains after smoke testing
+
+`npm run lint` could not run because the repository checkout does not contain an `eslint` executable. The full `npx vitest run` sweep was attempted but did not complete cleanly: it exposed an ADR pool-boundary failure in unchanged runtime files, failures in unrelated migration/analytics/auth/SDK areas, and a connector-queue timeout under full-suite load; the focused alert/connector suites passed independently. No pre-change full-suite baseline was available, so those unrelated failures are reported without labeling them as regressions. No real external-provider delivery was claimed; SMTP/provider credentials and a generated test alert were not exercised in this validation run.

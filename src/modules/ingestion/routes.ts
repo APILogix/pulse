@@ -183,52 +183,7 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.addHook("onClose", async () => service.shutdown());
 
-  // ── Ingestion request telemetry ─────────────────────────────────────────
-  // Request gzip decompression is handled by the root @fastify/compress plugin.
-  // Do not gunzip again here: double-decompression causes FST_CP_ERR_INVALID_CONTENT.
-  fastify.addHook("onRequest", async (request) => {
-    request.log.info(
-      {
-        method: request.method,
-        url: request.url,
-        contentType: request.headers["content-type"],
-        contentEncoding: request.headers["content-encoding"],
-        contentLength: request.headers["content-length"],
-        userAgent: request.headers["user-agent"],
-      },
-      "Ingestion request received",
-    );
-  });
 
-  fastify.addHook("preHandler", async (request) => {
-    if (request.method !== "POST") return;
-    const summary = ingestBodySummary(request.body);
-    // console.log("[PULSE INGEST DEBUG] event types received:", summary.eventTypes);
-
-    if (request.body && typeof request.body === "object") {
-      const ingest = request.body as Partial<IngestRequest>;
-      const events = Array.isArray(ingest.events)
-        ? ingest.events
-        : Array.isArray(request.body)
-        ? (request.body as unknown[])
-        : [request.body];
-
-      for (const event of events) {
-        console.log(event);
-      }
-    }
-console.log("[PULSE INGEST DEBUG] event types received:", summary);
-    // request.log.info(
-    //   {
-    //     method: request.method,
-    //     url: request.url,
-    //     contentEncoding: request.headers["content-encoding"],
-    //     decompressed: request.headers["content-encoding"] === "gzip",
-    //     body: summary,
-    //   },
-    //   "Ingestion request body after decompression",
-    // );
-  });
 
   // fastify.addHook("onResponse", async (request, reply) => {
   //   request.log.info(

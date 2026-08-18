@@ -35,14 +35,57 @@ export interface EvaluationResult {
   }>;
 }
 
-/** Read a dotted path from an object. Returns undefined if any segment is missing. */
+/** Read a dotted path from an object with support for case normalization and metric unwrapping. */
 export function readPath(obj: unknown, path: string): unknown {
-  if (!path) return undefined;
+  if (!path || obj === null || obj === undefined) return undefined;
   let cur: unknown = obj;
-  for (const seg of path.split('.')) {
+  for (const rawSeg of path.split('.')) {
+    const seg = rawSeg.trim();
+    if (typeof cur === 'number') {
+      // If we already reached a scalar number and next segment is a standard statistical/unit suffix, keep the number
+      if (/^(p95|p99|p50|p90|ms|value|avg|max|min|count|rate|pct)$/i.test(seg)) {
+        continue;
+      }
+      return undefined;
+    }
     if (cur === null || cur === undefined || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
+    const rec = cur as Record<string, unknown>;
+    if (seg in rec) {
+      cur = rec[seg];
+    } else {
+      // Try camelCase <-> snake_case fallback
+      const camel = seg.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+      const snake = seg.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+      if (camel in rec) {
+        cur = rec[camel];
+      } else if (snake in rec) {
+        cur = rec[snake];
+      } else {
+        // Case-insensitive fallback
+        const lower = seg.toLowerCase();
+        const foundKey = Object.keys(rec).find((k) => k.toLowerCase() === lower);
+        if (foundKey !== undefined) {
+          cur = rec[foundKey];
+        } else {
+          return undefined;
+        }
+      }
+    }
   }
+
+  // If the resolved leaf is an object containing standard metric scalar representations, unwrap it:
+  if (cur !== null && typeof cur === 'object' && !Array.isArray(cur)) {
+    const objRec = cur as Record<string, unknown>;
+    if (typeof objRec.p95 === 'number') return objRec.p95;
+    if (typeof objRec.value === 'number') return objRec.value;
+    if (typeof objRec.ms === 'number') return objRec.ms;
+    if (typeof objRec.avg === 'number') return objRec.avg;
+    if (typeof objRec.p99 === 'number') return objRec.p99;
+    if (typeof objRec.count === 'number') return objRec.count;
+    if (typeof objRec.rate === 'number') return objRec.rate;
+    if (typeof objRec.pct === 'number') return objRec.pct;
+  }
+
   return cur;
 }
 

@@ -45,7 +45,11 @@ export const ALERT_JOBS = {
   errorGroupRegressed: 'alert.error-group-regressed',
 } as const;
 
+export type AlertingWorkerGroup = 'all' | 'alert-delivery';
+
 export interface AlertingWorkerConfig {
+  group?: AlertingWorkerGroup;
+  strictQueueCreation?: boolean;
   sweepClaimLimit?: number;
   retentionResolvedEventsDays?: number;
   retentionBatchesDays?: number;
@@ -53,13 +57,27 @@ export interface AlertingWorkerConfig {
   retentionDeadLettersDays?: number;
 }
 
-const DEFAULTS: Required<AlertingWorkerConfig> = {
+const DEFAULTS = {
+  group: 'all' as AlertingWorkerGroup,
+  strictQueueCreation: false,
   sweepClaimLimit: 200,
   retentionResolvedEventsDays: 30,
   retentionBatchesDays: 14,
   retentionDeliveryAttemptsDays: 30,
   retentionDeadLettersDays: 30,
 };
+
+export const ALERT_DELIVERY_WORKER_JOBS = [
+  ALERT_JOBS.escalate,
+  ALERT_JOBS.escalationSweep,
+  ALERT_JOBS.evaluateFast,
+  ALERT_JOBS.evaluateWindow,
+  ALERT_JOBS.evaluateOperational,
+  ALERT_JOBS.evaluateAi,
+  ALERT_JOBS.notificationRouter,
+  ALERT_JOBS.telemetryOutboxRelay,
+  ALERT_JOBS.errorGroupRegressed,
+] as const;
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -78,7 +96,8 @@ export async function registerAlertingWorkers(
   telemetryPool?: Pool,
 ): Promise<{ stop: () => Promise<void> }> {
   const cfg = { ...DEFAULTS, ...config };
-  const log = logger.child({ component: 'alerting-workers' });
+  const alertDeliveryOnly = cfg.group === 'alert-delivery';
+  const log = logger.child({ component: 'alerting-workers', group: cfg.group });
 
   const alertRepo = new AlertingRepository();
   const connectorRepo = new ConnectorRepository();
@@ -98,21 +117,18 @@ export async function registerAlertingWorkers(
   const escalationSweep = new AlertEscalationSweep(alertRepo, connectorRepo, enqueueConnectorJob, logger);
 
   // ── Queue creation with enterprise defaults ─────────────────────────────
-  await safeCreateQueue(ALERT_JOBS.cleanup);
-  await safeCreateQueue(ALERT_JOBS.escalate);
-  await safeCreateQueue(ALERT_JOBS.escalationSweep);
-  await safeCreateQueue(ALERT_JOBS.evaluateFast);
-  await safeCreateQueue(ALERT_JOBS.evaluateWindow);
-  await safeCreateQueue(ALERT_JOBS.evaluateOperational);
-  await safeCreateQueue(ALERT_JOBS.evaluateAi);
-  await safeCreateQueue(ALERT_JOBS.notificationRouter);
-  await safeCreateQueue(ALERT_JOBS.telemetryOutboxRelay);
-  await safeCreateQueue(ALERT_JOBS.errorGroupRegressed, {
-    retryLimit: 3,
-    retryDelay: 1,
-    retryBackoff: true,
-    expireInSeconds: 300,
-  });
+  const alertJobs = alertDeliveryOnly
+    ? ALERT_DELIVERY_WORKER_JOBS
+    : Object.values(ALERT_JOBS);
+  for (const job of alertJobs) {
+    await safeCreateQueue(
+      job,
+      job === ALERT_JOBS.errorGroupRegressed
+        ? { retryLimit: 3, retryDelay: 1, retryBackoff: true, expireInSeconds: 300 }
+        : undefined,
+      cfg.strictQueueCreation,
+    );
+  }
 
   const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
   const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
@@ -129,23 +145,25 @@ export async function registerAlertingWorkers(
   );
 
   // ── cleanup: retention purge ────────────────────────────────────────────
-  await pgboss.work(
-    ALERT_JOBS.cleanup,
-    {} as never,
-    (async () => {
-      const [events, batches, attempts, deadLetters, throttles] = await Promise.all([
-        alertRepo.purgeOldTerminalEvents(cfg.retentionResolvedEventsDays),
-        alertRepo.purgeOldBatches(cfg.retentionBatchesDays),
-        alertRepo.purgeOldDeliveryAttempts(cfg.retentionDeliveryAttemptsDays),
-        alertRepo.purgeOldDeadLetters(cfg.retentionDeadLettersDays),
-        alertRepo.purgeOldThrottleWindows(),
-      ]);
-      log.info(
-        { events, batches, attempts, deadLetters, throttles },
-        'Alerting retention cleanup finished',
-      );
-    }) as never,
-  );
+  if (!alertDeliveryOnly) {
+    await pgboss.work(
+      ALERT_JOBS.cleanup,
+      {} as never,
+      (async () => {
+        const [events, batches, attempts, deadLetters, throttles] = await Promise.all([
+          alertRepo.purgeOldTerminalEvents(cfg.retentionResolvedEventsDays),
+          alertRepo.purgeOldBatches(cfg.retentionBatchesDays),
+          alertRepo.purgeOldDeliveryAttempts(cfg.retentionDeliveryAttemptsDays),
+          alertRepo.purgeOldDeadLetters(cfg.retentionDeadLettersDays),
+          alertRepo.purgeOldThrottleWindows(),
+        ]);
+        log.info(
+          { events, batches, attempts, deadLetters, throttles },
+          'Alerting retention cleanup finished',
+        );
+      }) as never,
+    );
+  }
 
   // ── Snapshot escalation worker ──────────────────────────────────────────
   await pgboss.work(
@@ -253,7 +271,9 @@ export async function registerAlertingWorkers(
 
   // ── Schedules (cron & timers) ───────────────────────────────────────────
   await pgboss.schedule(ALERT_JOBS.escalationSweep, '* * * * *', {}, { singletonKey: 'alert-escalation-sweep' } as never);
-  await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' } as never);
+  if (!alertDeliveryOnly) {
+    await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' } as never);
+  }
 
   const runtimeTimers = startRuntimeDispatchTimers(runtimePool, log);
 
@@ -262,7 +282,9 @@ export async function registerAlertingWorkers(
   return {
     stop: async () => {
       await pgboss.unschedule(ALERT_JOBS.escalationSweep).catch(() => undefined);
-      await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
+      if (!alertDeliveryOnly) {
+        await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
+      }
       for (const timer of runtimeTimers) clearInterval(timer);
     },
   };
@@ -348,9 +370,19 @@ async function activeRuntimeOrganizations(telemetryPool: Pool): Promise<string[]
   return fallbackResult.rows.map((row) => row.organization_id);
 }
 
-async function safeCreateQueue(name: string, options?: Record<string, unknown>): Promise<void> {
+async function safeCreateQueue(
+  name: string,
+  options?: Record<string, unknown>,
+  strict = false,
+): Promise<void> {
   const boss = pgboss as unknown as { createQueue?: (n: string, o?: Record<string, unknown>) => Promise<void> };
-  if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name, options).catch(() => undefined);
+  if (typeof boss.createQueue !== 'function') {
+    if (strict) throw new Error(`PgBoss queue factory is unavailable for required queue ${name}`);
+    return;
   }
+  if (strict) {
+    await boss.createQueue(name, options);
+    return;
+  }
+  await boss.createQueue(name, options).catch(() => undefined);
 }

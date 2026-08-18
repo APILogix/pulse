@@ -116,7 +116,7 @@ export class WorkerRegistry {
     // ── Per-type ingest batch handler ─────────────────────────────────────────
     async handleIngestBatch(queue, type, arg) {
         const jobs = normalizeJobs(arg);
-        this.log.info({
+        this.log.debug({
             queue,
             eventType: type,
             jobs: jobs.length,

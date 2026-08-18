@@ -185,7 +185,7 @@ export class WorkerRegistry {
 
   private async handleIngestBatch(queue: string, type: SdkEventType, arg: unknown): Promise<JobOutcome[]> {
     const jobs = normalizeJobs(arg);
-    this.log.info(
+    this.log.debug(
       {
         queue,
         eventType: type,

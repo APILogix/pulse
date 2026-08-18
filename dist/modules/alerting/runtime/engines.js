@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { pgboss } from '../../../lib/pgboss.js';
-import { evaluateCondition, evaluateRule } from '../evaluator.js';
+import { evaluateCondition, evaluateRule, readPath } from '../evaluator.js';
 import { AlertRuntimeRepository } from './alert-runtime.repository.js';
 import { AlertRuntimeRuleCatalog } from './rule-catalog.js';
 import { AlertChannelRepository } from '../../projects/alerts/channels/channel.repository.js';
@@ -35,6 +35,7 @@ export class AlertRuntimeEngines {
         this.log = logger.child({ component: 'alert-runtime-engines' });
     }
     async evaluateFast(input) {
+        const startedAt = Date.now();
         const summary = emptySummary();
         const snapshot = await this.catalog.loadCatalogSnapshot(input.organizationId, 'fast');
         const scope = {
@@ -45,6 +46,23 @@ export class AlertRuntimeEngines {
         const resolved = snapshot.resolveRulesForScope(scope);
         summary.scopes = 1;
         summary.rules = resolved.length;
+        console.log(`[ALERTING] 🚀 Moving to alert rules checking (fast tier) | Org: ${input.organizationId} | Project: ${input.projectId ?? 'all'} | Events: ${(input.events ?? []).length + (input.signals ?? []).length} | Rules Found: ${resolved.length}`);
+        if (resolved.length > 0) {
+            console.log(`[ALERTING] 📋 Alert rules found for scope:`, resolved.map((r) => ({ id: r.rule.id, name: r.rule.name, severity: r.effective.severity, enabled: r.effective.enabled, conditionCount: r.effective.conditions.length })));
+        }
+        else {
+            console.log(`[ALERTING] ⚠️ No active alert rules matched scope for Org: ${input.organizationId}, Project: ${input.projectId ?? 'all'} (Total in Catalog for tier: ${snapshot.rules.length})`);
+        }
+        this.log.info({
+            phase: '3_alert_check_started',
+            tier: 'fast',
+            organizationId: input.organizationId,
+            projectId: input.projectId ?? null,
+            environment: input.environment ?? null,
+            eventCount: (input.events ?? []).length + (input.signals ?? []).length,
+            rulesToEvaluate: resolved.length,
+            catalogRulesTotal: snapshot.rules.length,
+        }, '[Phase 3/4] Moving to alert rules checking');
         for (const scoped of input.events ?? []) {
             const payload = fastPayload(scoped);
             for (const candidate of resolved) {
@@ -70,9 +88,22 @@ export class AlertRuntimeEngines {
                 await this.evaluateCandidate(candidate.rule, candidate.effective, signalScope, payload, 'fast', summary);
             }
         }
+        console.log(`[ALERTING] ✅ Alert rules check complete (fast tier) | Evaluated: ${summary.evaluated} | Fired: ${summary.fired} | Recovered: ${summary.recovered} | Suppressed: ${summary.suppressed} | Duration: ${Date.now() - startedAt}ms`);
+        this.log.info({
+            phase: '4_alert_check_complete',
+            tier: 'fast',
+            organizationId: input.organizationId,
+            projectId: input.projectId ?? null,
+            rulesEvaluated: summary.evaluated,
+            fired: summary.fired,
+            recovered: summary.recovered,
+            suppressed: summary.suppressed,
+            durationMs: Date.now() - startedAt,
+        }, '[Phase 4/4] Alert rules check complete');
         return summary;
     }
     async evaluateTier(input) {
+        const startedAt = Date.now();
         const summary = emptySummary();
         const scopes = await this.loadRollupScopes(input.organizationId, input.tier, input.maxScopes ?? DEFAULT_MAX_SCOPES);
         summary.scopes = scopes.length;
@@ -80,6 +111,14 @@ export class AlertRuntimeEngines {
             return summary;
         // Load organization rule catalog snapshot once per tick (3 queries total instead of 3 * N)
         const snapshot = await this.catalog.loadCatalogSnapshot(input.organizationId, input.tier);
+        console.log(`[ALERTING] 🚀 Moving to alert rules checking (${input.tier} tier) | Org: ${input.organizationId} | Scopes: ${scopes.length} | Catalog Rules: ${snapshot.rules.length}`);
+        this.log.info({
+            phase: '3_alert_check_started',
+            tier: input.tier,
+            organizationId: input.organizationId,
+            scopesCount: scopes.length,
+            catalogRulesTotal: snapshot.rules.length,
+        }, '[Phase 3/4] Moving to alert rules checking');
         for (const scopePayload of scopes) {
             // In-memory pure resolution of effective rules and bindings (Zero Control DB queries)
             const resolved = snapshot.resolveRulesForScope(scopePayload.scope);
@@ -88,6 +127,17 @@ export class AlertRuntimeEngines {
                 await this.evaluateCandidate(candidate.rule, candidate.effective, scopePayload.scope, scopePayload.payload, input.tier === 'ai' ? 'reconcile' : 'window', summary);
             }
         }
+        console.log(`[ALERTING] ✅ Alert rules check complete (${input.tier} tier) | Evaluated: ${summary.evaluated} | Fired: ${summary.fired} | Recovered: ${summary.recovered} | Suppressed: ${summary.suppressed} | Duration: ${Date.now() - startedAt}ms`);
+        this.log.info({
+            phase: '4_alert_check_complete',
+            tier: input.tier,
+            organizationId: input.organizationId,
+            rulesEvaluated: summary.evaluated,
+            fired: summary.fired,
+            recovered: summary.recovered,
+            suppressed: summary.suppressed,
+            durationMs: Date.now() - startedAt,
+        }, '[Phase 4/4] Alert rules check complete');
         return summary;
     }
     async evaluateCandidate(rule, effective, scope, payload, engine, summary) {
@@ -104,6 +154,17 @@ export class AlertRuntimeEngines {
                 thresholdValue: condition.threshold_value,
                 isRequired: condition.is_required,
             }));
+            // If the telemetry payload does not contain ANY metrics for this rule's domain, skip it
+            const hasRelevantMetrics = evaluable.some((c) => {
+                if (c.operator === 'exists')
+                    return true;
+                const val = readPath(payload.values, c.fieldPath);
+                return val !== undefined && val !== null;
+            });
+            if (!hasRelevantMetrics) {
+                // Payload belongs to a different domain (e.g. evaluating CPU rules on a Log payload)
+                return;
+            }
             const result = evaluateRule(payload.values, evaluable);
             const observed = firstObservedValue(result.conditionResults);
             const threshold = firstThresholdValue(effective.conditions);
@@ -120,6 +181,13 @@ export class AlertRuntimeEngines {
             const previous = states[0] ?? null;
             const now = payload.observedAt;
             summary.evaluated += 1;
+            console.log(`\n[ALERTING] [Phase 2/4: Candidate Evaluation] Rule: "${rule.name}" (${rule.id}) | Scope: [Project: ${scope.projectId ?? 'all'}, Env: ${scope.environment ?? 'all'}] | Tier: ${engine}`);
+            console.log(`[ALERTING] [Phase 3/4: Payload Inspection] Payload Values:`, JSON.stringify(payload.values));
+            for (const res of result.conditionResults) {
+                const statusEmoji = res.passed ? '✅ PASSED' : '❌ FAILED';
+                console.log(`[ALERTING]   👉 Condition [${res.fieldPath}]: Operator "${res.operator}" | Expected Threshold: ${JSON.stringify(res.expected)} | Actual Found: ${JSON.stringify(res.actual ?? 'undefined')} -> ${statusEmoji}`);
+            }
+            console.log(`[ALERTING] [Phase 3/4: Evaluation Verdict] Rule "${rule.name}": Matched = ${result.matched} | Observed = ${observed ?? 'n/a'} | Threshold = ${threshold ?? 'n/a'}`);
             if (!result.matched) {
                 await this.runtime.upsertRuleEvalState({
                     scopeHash,
@@ -136,6 +204,7 @@ export class AlertRuntimeEngines {
                     recoveredAt: previous?.is_breaching ? now : null,
                 });
                 if (previous?.is_breaching) {
+                    console.log(`[ALERTING] 🔄 Alert RECOVERED: "${rule.name}" (${rule.id})`);
                     await this.appendDecision(rule, effective, scope, payload, engine, 'recovered', observed, threshold);
                     summary.recovered += 1;
                 }
@@ -146,6 +215,16 @@ export class AlertRuntimeEngines {
             const coolingDown = previous?.last_fired_at
                 ? now.getTime() - previous.last_fired_at.getTime() < effective.cooldownSeconds * 1000
                 : false;
+            console.log(`[ALERTING] [Phase 4/4: Action Gate] 🚨 Rule "${rule.name}" MATCHED! Consecutive Breaches: ${consecutive}/${effective.consecutiveBreaches} | ShouldFire: ${shouldFire} | InCooldown: ${coolingDown}`);
+            this.log.info({
+                ruleId: rule.id,
+                ruleName: rule.name,
+                organizationId: rule.organization_id,
+                projectId: scope.projectId ?? null,
+                engine,
+                observed,
+                threshold,
+            }, 'alert rule matches condition');
             await this.runtime.upsertRuleEvalState({
                 scopeHash,
                 organizationId: rule.organization_id,
@@ -161,18 +240,22 @@ export class AlertRuntimeEngines {
                 firedAt: shouldFire && !coolingDown ? now : null,
             });
             if (!shouldFire) {
+                console.log(`[ALERTING]   ⏳ SUPPRESSED: Waiting for ${effective.consecutiveBreaches} consecutive breaches (currently ${consecutive}/${effective.consecutiveBreaches}).`);
                 summary.suppressed += 1;
                 return;
             }
             if (coolingDown) {
+                console.log(`[ALERTING]   ⏳ SUPPRESSED: Rule "${rule.name}" is currently in cooldown (${effective.cooldownSeconds}s window active).`);
                 summary.suppressed += 1;
                 return;
             }
+            console.log(`[ALERTING]   🔥 FIRED! Dispatched alert notification decision for "${rule.name}".`);
             await this.appendDecision(rule, effective, scope, payload, engine, 'fired', observed, threshold);
             summary.fired += 1;
         }
         catch (err) {
             summary.failed += 1;
+            console.error(`[ALERTING] 💥 Evaluation error for rule "${rule.name}" (${rule.id}):`, err);
             this.log.error({ err, ruleId: rule.id, orgId: rule.organization_id }, 'Runtime alert evaluation failed');
         }
     }
@@ -216,7 +299,13 @@ export class AlertRuntimeEngines {
             kind,
             observedValue: observed,
             thresholdValue: threshold,
-            evidence: payload.evidence,
+            evidence: {
+                ...payload.evidence,
+                labels: payload.labels,
+                values: payload.values,
+                observedValue: observed,
+                thresholdValue: threshold,
+            },
             labels: {
                 ...payload.labels,
                 rule_id: rule.id,
@@ -233,6 +322,17 @@ export class AlertRuntimeEngines {
             conditionFieldPaths: effective.conditions.map((condition) => condition.field_path),
         });
         await Promise.all(result.notificationJobs.map((job) => this.enqueueNotificationJob(job.id)));
+        if (result.notificationJobs.length > 0) {
+            console.log(`[ALERTING] 🔔 Alert queued: "${rule.name}" | AlertKey: ${result.alertKey} | Notification Jobs: ${result.notificationJobs.length}`);
+            this.log.info({
+                alertKey: result.alertKey,
+                ruleId: rule.id,
+                ruleName: rule.name,
+                organizationId: rule.organization_id,
+                projectId: scope.projectId ?? null,
+                notificationJobs: result.notificationJobs.length,
+            }, 'alert queued');
+        }
     }
     async enqueueNotificationJob(notificationJobId) {
         await pgboss.send('alert.notification-router', { notificationJobId }, { retryLimit: 3, retryDelay: 10, retryBackoff: true, expireInSeconds: 600 });
@@ -300,9 +400,22 @@ export class AlertRuntimeEngines {
                             latency: {
                                 p95: numberOrNull(row.latency_p95_ms),
                                 p99: numberOrNull(row.latency_p99_ms),
+                                ms: numberOrNull(row.latency_p95_ms),
+                                value: numberOrNull(row.latency_p95_ms),
                             },
+                            latency_ms: numberOrNull(row.latency_p95_ms),
+                            duration_ms: numberOrNull(row.latency_p95_ms),
+                            duration: numberOrNull(row.latency_p95_ms),
                         },
-                        latency: { p95: numberOrNull(row.latency_p95_ms), p99: numberOrNull(row.latency_p99_ms) },
+                        latency: {
+                            p95: numberOrNull(row.latency_p95_ms),
+                            p99: numberOrNull(row.latency_p99_ms),
+                            ms: numberOrNull(row.latency_p95_ms),
+                            value: numberOrNull(row.latency_p95_ms),
+                        },
+                        latency_ms: numberOrNull(row.latency_p95_ms),
+                        duration_ms: numberOrNull(row.latency_p95_ms),
+                        duration: numberOrNull(row.latency_p95_ms),
                         availability: { pct: numberOrNull(row.availability_pct) },
                     },
                     observedAt: row.bucket instanceof Date ? row.bucket : new Date(String(row.bucket)),
@@ -593,11 +706,33 @@ function fastPayload(scoped) {
         };
     }
     else if (event.type === 'request') {
+        const rawLatency = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration ?? record.responseTime ?? record.response_time;
+        const duration = numberOrNull(rawLatency);
+        const statusCode = numberOrNull(record.statusCode ?? record.status_code);
         values.requests = {
-            auth_failure: Number(record.statusCode) === 401 || Number(record.statusCode) === 403,
-            status_code: record.statusCode,
-            latency_ms: record.latency,
+            auth_failure: statusCode === 401 || statusCode === 403,
+            status_code: statusCode,
+            latency_ms: duration,
+            latency: {
+                p95: duration,
+                p99: duration,
+                ms: duration,
+                value: duration,
+            },
+            latency_p95: duration,
+            latency_p99: duration,
+            duration_ms: duration,
+            duration: duration,
         };
+        values.latency = {
+            p95: duration,
+            p99: duration,
+            ms: duration,
+            value: duration,
+        };
+        values.latency_ms = duration;
+        values.duration = duration;
+        values.duration_ms = duration;
     }
     return {
         values,

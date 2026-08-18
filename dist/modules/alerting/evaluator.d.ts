@@ -32,7 +32,7 @@ export interface EvaluationResult {
         passed: boolean;
     }>;
 }
-/** Read a dotted path from an object. Returns undefined if any segment is missing. */
+/** Read a dotted path from an object with support for case normalization and metric unwrapping. */
 export declare function readPath(obj: unknown, path: string): unknown;
 /** Evaluate a single condition against an actual value. */
 export declare function evaluateCondition(operator: ConditionOperator, actual: unknown, expected: unknown): boolean;

@@ -59,6 +59,26 @@ describe('evaluator: operators', () => {
     expect(readPath({ a: { b: { c: 7 } } }, 'a.b.c')).toBe(7);
     expect(readPath({ a: 1 }, 'a.b')).toBeUndefined();
   });
+  it('unwraps numeric metric objects and handles camel/snake case', () => {
+    expect(readPath({ requests: { latency: { p95: 1250, p99: 1800 } } }, 'requests.latency')).toBe(1250);
+    expect(readPath({ requests: { latency_ms: 1250 } }, 'requests.latencyMs')).toBe(1250);
+    expect(readPath({ requests: { durationMs: 1400 } }, 'requests.duration_ms')).toBe(1400);
+    expect(readPath({ latency: { ms: 1100 } }, 'latency')).toBe(1100);
+  });
+  it('evaluates latency rules when latency exceeds 1s / 1000ms threshold', () => {
+    const condition: EvaluableCondition = {
+      conditionGroupId: null,
+      fieldPath: 'requests.latency',
+      operator: 'gt',
+      thresholdValue: 1000,
+      isRequired: true,
+    };
+    const payload = { requests: { latency: { p95: 1450, p99: 2100 } } };
+    const result = evaluateRule(payload, [condition]);
+    expect(result.matched).toBe(true);
+    expect(result.conditionResults[0]?.actual).toBe(1450);
+    expect(result.conditionResults[0]?.passed).toBe(true);
+  });
 });
 
 describe('evaluator: rule combination', () => {

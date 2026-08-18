@@ -22,8 +22,8 @@ export class AlertingWorkspaceService {
     return this.repository.getWorkspaceSnapshot(organizationId);
   }
 
-  listPolicies(organizationId: string) {
-    return this.repository.listPolicies(organizationId);
+  listPolicies(organizationId: string, query: { limit?: number; offset?: number } = {}) {
+    return this.repository.listPolicies(organizationId, query);
   }
 
   async getPolicy(organizationId: string, policyId: string) {

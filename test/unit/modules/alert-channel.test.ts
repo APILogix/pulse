@@ -71,9 +71,8 @@ describe("AlertChannelRepository.resolveImmediateDeliveryTargets", () => {
     expect(sql).toContain("connector.status = 'active'");
     expect(sql).toContain("project_pref.digest_mode = 'immediate'");
     expect(sql).toContain("member_pref.digest_mode = 'immediate'");
-    expect(sql).toContain("subscription.digest_mode = 'immediate'");
-    expect(sql).toContain("project_pref.category IN ('all', $3)");
-    expect(sql).toContain("member_pref.category IN ('all', $3)");
+    expect(sql).toContain("project_pref.category::text IN ('all', $3::text)");
+    expect(sql).toContain("member_pref.category::text IN ('all', $3::text)");
   });
 });
 

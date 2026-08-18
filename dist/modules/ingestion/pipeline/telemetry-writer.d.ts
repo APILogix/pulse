@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import type { Logger } from 'pino';
 import type { NormalizedEvent } from './event-normalizer.js';
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
@@ -10,6 +11,16 @@ export interface ScopedEvent {
     environment: string;
     event: NormalizedEvent;
 }
+export interface TimestampContext {
+    traceId?: string | null | undefined;
+    spanId?: string | null | undefined;
+    field?: string | null | undefined;
+    logger?: Logger | {
+        warn: (...args: unknown[]) => void;
+        debug: (...args: unknown[]) => void;
+    } | null | undefined;
+}
+export declare function parseSafeIsoTimestamp(raw: unknown, context?: TimestampContext): string | null;
 /** Storage error_name for an error event (shared with the error grouper). */
 export declare function errorNameOf(event: NormalizedEvent): string;
 /**
@@ -40,8 +51,9 @@ export interface DetailedWriteResult {
 type Queryable = Pool | PoolClient;
 export declare class TelemetryWriter {
     private readonly pool;
+    private readonly log?;
     private readonly enricher;
-    constructor(pool: Pool);
+    constructor(pool: Pool, log?: Logger | undefined);
     /**
      * Route a batch of scoped events to the correct events_* table(s). Mixed
      * types are grouped so each table gets one multi-row insert. Events without a

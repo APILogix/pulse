@@ -463,7 +463,7 @@ export class AlertChannelRepository {
        JOIN project_notification_preferences project_pref
          ON project_pref.organization_id = member.organization_id
         AND project_pref.project_id = member.project_id
-        AND project_pref.category IN ('all', $3)
+        AND project_pref.category::text IN ('all', $3::text)
         AND project_pref.enabled = TRUE
         AND project_pref.deleted_at IS NULL
        WHERE member.organization_id = $1
@@ -488,7 +488,7 @@ export class AlertChannelRepository {
             WHERE disabled_pref.organization_id = member.organization_id
               AND disabled_pref.project_id = member.project_id
               AND disabled_pref.user_id = member.user_id
-              AND disabled_pref.category IN ('all', $3)
+              AND disabled_pref.category::text IN ('all', $3::text)
               AND disabled_pref.enabled = FALSE
               AND disabled_pref.deleted_at IS NULL
          )
@@ -541,13 +541,13 @@ export class AlertChannelRepository {
        JOIN project_notification_preferences project_pref
          ON project_pref.organization_id = member.organization_id
         AND project_pref.project_id = member.project_id
-        AND project_pref.category IN ('all', $3)
+        AND project_pref.category::text IN ('all', $3::text)
         AND project_pref.enabled = TRUE AND project_pref.deleted_at IS NULL
        JOIN project_member_alert_channel_preferences member_pref
          ON member_pref.organization_id = member.organization_id
         AND member_pref.project_id = member.project_id
         AND member_pref.user_id = member.user_id
-        AND member_pref.category IN ('all', $3)
+        AND member_pref.category::text IN ('all', $3::text)
         AND member_pref.enabled = TRUE AND member_pref.deleted_at IS NULL
        JOIN project_alert_channels channel
          ON channel.id = member_pref.project_alert_channel_id
@@ -596,8 +596,8 @@ export class AlertChannelRepository {
           OR (
             (cardinality(subscription.member_ids) = 0 OR member.user_id = ANY(subscription.member_ids))
             AND (cardinality(subscription.alert_categories) = 0
-                 OR 'all' = ANY(subscription.alert_categories)
-                 OR $3 = ANY(subscription.alert_categories))
+                 OR 'all' = ANY(subscription.alert_categories::text[])
+                 OR $3::text = ANY(subscription.alert_categories::text[]))
             AND CASE $4 WHEN 'info' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3
                         WHEN 'critical' THEN 4 ELSE 0 END
                 >= CASE subscription.severity_threshold
@@ -607,7 +607,7 @@ export class AlertChannelRepository {
           )
         )
       ORDER BY member.user_id, channel.id, subscription.id,
-               (project_pref.category = $3) DESC, (member_pref.category = $3) DESC`,
+               (project_pref.category::text = $3::text) DESC, (member_pref.category::text = $3::text) DESC`,
       [request.organizationId, request.projectId, request.category, request.severity],
     );
     const targets: ImmediateDeliveryTarget[] = result.rows.map((row) => ({

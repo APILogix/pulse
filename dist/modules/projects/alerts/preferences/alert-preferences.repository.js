@@ -183,7 +183,7 @@ export class AlertPreferencesRepository {
           AND channel.deleted_at IS NULL
         WHERE pref.organization_id = $1 AND pref.project_id = $2
           AND pref.deleted_at IS NULL AND pref.enabled = TRUE
-          AND (pref.category = 'all' OR pref.category = $3)
+          AND (pref.category::text = 'all' OR pref.category::text = $3::text)
           AND CASE pref.severity_threshold
                 WHEN 'info' THEN 0 WHEN 'warning' THEN 1 WHEN 'error' THEN 2 WHEN 'critical' THEN 3
                 ELSE 4

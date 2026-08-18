@@ -144,6 +144,7 @@ function outboxToScopedEvent(row: TelemetryOutboxRow): ScopedEvent {
     severity: row.severity ?? undefined,
     status: row.signal_kind === 'cron_checkin' ? 'error' : undefined,
     message: row.attributes?.message ?? '',
+    ...(typeof row.attributes === 'object' && row.attributes !== null ? row.attributes : {}),
   } as unknown as NormalizedEvent;
   return {
     projectId: row.project_id,

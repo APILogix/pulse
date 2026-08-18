@@ -27,13 +27,17 @@ export declare const ALERT_JOBS: {
     readonly telemetryOutboxRelay: "alert.telemetry-outbox-relay";
     readonly errorGroupRegressed: "alert.error-group-regressed";
 };
+export type AlertingWorkerGroup = 'all' | 'alert-delivery';
 export interface AlertingWorkerConfig {
+    group?: AlertingWorkerGroup;
+    strictQueueCreation?: boolean;
     sweepClaimLimit?: number;
     retentionResolvedEventsDays?: number;
     retentionBatchesDays?: number;
     retentionDeliveryAttemptsDays?: number;
     retentionDeadLettersDays?: number;
 }
+export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert.escalate", "alert.escalation-sweep", "alert.evaluate.fast", "alert.evaluate.window", "alert.evaluate.operational", "alert.evaluate.ai", "alert.notification-router", "alert.telemetry-outbox-relay", "alert.error-group-regressed"];
 /**
  * Register all Alerting V2 pg-boss workers + timers. Idempotent per process.
  */
