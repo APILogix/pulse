@@ -29,16 +29,27 @@ function getTransporter(): nodemailer.Transporter {
 }
 
 export async function sendEmail(message: EmailMessage): Promise<void> {
+  const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
+  console.log(`[EMAIL] 📧 Sending email | To: "${message.to}" | From: "${from}" | Subject: "${message.subject}" | SMTP Host: "${env.SMTP_HOST}:${env.SMTP_PORT}"`);
+  if (message.text) {
+    const preview = message.text.length > 300 ? `${message.text.slice(0, 300)}...` : message.text;
+    console.log(`[EMAIL] 📄 Preview:\n${preview}`);
+  }
   try {
-    const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
-    await getTransporter().sendMail({
+    const info = await getTransporter().sendMail({
       from,
       to: message.to,
       subject: message.subject,
       html: message.html,
       text: message.text,
     });
+    console.log(`[EMAIL] ✅ Email sent successfully! | MessageId: "${info.messageId}" | Response: "${info.response}" | To: "${message.to}"`);
+    logger.info(
+      { to: message.to, subject: message.subject, messageId: info.messageId },
+      "Email delivered successfully",
+    );
   } catch (error) {
+    console.error(`[EMAIL] ❌ Failed to send email to "${message.to}" | Subject: "${message.subject}" | Error:`, error);
     logger.error(
       { err: error, to: message.to, subject: message.subject },
       "Failed to send email",

@@ -1,5 +1,4 @@
 import type { Pool } from 'pg';
-import { pool } from '../../../config/database.js';
 import type { NotificationProvider, NotificationRecipientType } from './notification-entitlement.service.js';
 
 export type RestrictedRoutingReason = 'EMAIL_ONLY_RESTRICTED' | 'OWNER_EMAIL_UNAVAILABLE';
@@ -32,7 +31,7 @@ export interface RestrictedRoutingResult {
 }
 
 export class ProjectOwnerRepository implements ProjectOwnerReader {
-  constructor(private readonly db: Pool = pool) {}
+  constructor(private readonly db?: Pool) {}
 
 
   async findActiveVerifiedOwner(

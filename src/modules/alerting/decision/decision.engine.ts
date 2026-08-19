@@ -11,6 +11,8 @@ import {
 } from '../runtime/alert-runtime.repository.js';
 import { NotificationRoutingService } from '../runtime/notification-routing.service.js';
 import { transitionAlert, type AlertActorType, type AlertLifecycleState, type AlertTransition } from './state-machine.js';
+import { normalizeRoute } from '../runtime/route-normalizer.js';
+import { buildAlertNotificationPayload } from '../runtime/alert-notification-formatter.js';
 
 export interface AlertDecisionCandidate {
   organizationId: string;
@@ -43,13 +45,14 @@ export interface AlertDecisionResult {
 }
 
 export function alertFingerprint(candidate: Pick<AlertDecisionCandidate, 'organizationId' | 'projectId' | 'policy' | 'environment' | 'service' | 'endpoint' | 'dimension'>): string {
+  const normalizedEndpoint = candidate.endpoint ? normalizeRoute(candidate.endpoint) : 'all';
   return hash([
     candidate.organizationId,
     candidate.projectId ?? 'organization',
     candidate.policy.policyId,
     candidate.environment ?? 'all',
     candidate.service ?? 'all',
-    candidate.endpoint ?? 'all',
+    normalizedEndpoint,
     candidate.dimension ?? 'all',
   ].join(':'));
 }
@@ -90,6 +93,8 @@ export class AlertDecisionEngine {
     const alertKey = alertFingerprint(candidate);
     const idempotencyKey = hash(`${alertKey}:${kind}:${candidate.observedAt.toISOString()}`);
 
+    console.log(`\n[ALERT_DECISION] ⚙️ Processing alert decision | Rule: "${candidate.policy.ruleId}" | Kind: ${kind.toUpperCase()} | Severity: ${candidate.policy.severity} | Org: ${candidate.organizationId} | Project: ${candidate.projectId ?? 'all'} | AlertKey: ${alertKey}`);
+
     const result = await this.runtime.withTransaction(async (client) => {
       const previous = await this.runtime.lockState(client, alertKey);
       const event = await this.runtime.appendEvent({
@@ -121,6 +126,7 @@ export class AlertDecisionEngine {
 
       if (!event) {
         const duplicateState = await this.runtime.incrementDuplicate(alertKey, candidate.observedAt, client);
+        console.log(`[ALERT_DECISION] 🔁 Duplicate alert suppressed (AlertKey: ${alertKey}, DedupKey: ${alertKey}:${kind})`);
         return {
           alertKey,
           duplicate: true,
@@ -151,6 +157,20 @@ export class AlertDecisionEngine {
       const previousState = (previous?.state ?? 'healthy') as AlertLifecycleState;
       const transition: AlertTransition = kind === 'recovered' ? 'recover' : 'trigger';
       const nextState = transitionAlert(previousState, transition, 'worker');
+
+      console.log(`[ALERT_DECISION] 🔄 State Machine: "${previousState}" ➡️ "${nextState}" (Transition: "${transition}", Actor: worker) | AlertKey: ${alertKey}`);
+
+      if (routingDecision) {
+        if (routingDecision.suppressed) {
+          console.log(`[ALERT_ROUTING] 🚫 Notification routing suppressed: ${routingDecision.suppressionReason} (Mode: ${routingDecision.deliveryMode})`);
+        } else {
+          console.log(`[ALERT_ROUTING] 🎯 Resolved ${routingDecision.targets.length} notification target(s) for Org: ${candidate.organizationId} (Mode: ${routingDecision.deliveryMode})`);
+          for (const target of routingDecision.targets) {
+            console.log(`[ALERT_ROUTING]   👉 Target: Provider=${target.provider} | ChannelKind=${target.channelKind} | Mode=${target.deliveryMode} | RecipientType=${target.recipientType} | Recipient=${target.recipientRef ?? target.recipientUserId ?? 'N/A'}`);
+          }
+        }
+      }
+
       const state = await this.runtime.upsertState({
         alertKey,
         organizationId: candidate.organizationId,
@@ -194,17 +214,12 @@ export class AlertDecisionEngine {
         } satisfies AlertDecisionResult;
       }
 
+      const richPayload = buildAlertNotificationPayload(candidate, routingDecision.decisionHash);
       const jobs = await this.runtime.insertNotificationJobs(
         routingDecision.targets.map((target) => {
           const destinationIdentity = target.deliveryMode === 'EMAIL_ONLY_RESTRICTED'
             ? `${target.recipientUserId ?? 'owner'}:${target.recipientRef ?? 'missing'}`
             : target.channelId ?? target.connectorId ?? target.recipientRef ?? 'default';
-          const payload = {
-            policy: candidate.policy,
-            evidence: candidate.evidence ?? {},
-            annotations: candidate.annotations ?? {},
-            routingDecisionHash: routingDecision.decisionHash,
-          };
           return {
             organizationId: candidate.organizationId,
             projectId: candidate.projectId ?? null,
@@ -218,12 +233,20 @@ export class AlertDecisionEngine {
             routeId: target.routeId,
             recipientUserId: target.recipientUserId,
             recipientRef: target.recipientRef,
-            notificationType: 'alert',
+            notificationType: candidate.kind === 'recovered' ? 'alert.recovered' : 'alert',
             deliveryMode: target.deliveryMode,
             recipientType: target.recipientType,
             provider: target.provider,
             severity: toSeverity(candidate.policy.severity),
-            payload,
+            payload: {
+              ...richPayload,
+              alertEventId: event.id,
+              channelId: target.channelId,
+              channelKind: target.channelKind,
+              connectorId: target.connectorId,
+              recipientRef: target.recipientRef,
+              recipientUserId: target.recipientUserId,
+            },
             idempotencyKey: hash(`${event.id}:${destinationIdentity}:alert:0:0`),
             routingDecisionHash: routingDecision.decisionHash,
             billable: target.channelKind !== 'in_app',
@@ -240,6 +263,12 @@ export class AlertDecisionEngine {
         recipientUserId: job.recipient_user_id,
         notificationJobId: job.id,
       })), client);
+
+      console.log(`[ALERT_DECISION] 📋 Created ${jobs.length} notification job(s) for Event ID: ${event.id}:`);
+      for (const job of jobs) {
+        console.log(`[ALERT_DECISION]   📌 Job ID: ${job.id} | Channel: ${job.channel_kind} | Status: ${job.status} | Recipient User: ${job.recipient_user_id ?? 'N/A'}`);
+      }
+
       return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs } satisfies AlertDecisionResult;
     });
 

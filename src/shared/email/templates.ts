@@ -27,11 +27,14 @@
 import {
   TEXT_RULE,
   button,
+  buttonRow,
   callout,
+  codeBlock,
   dataTable,
   esc,
   glyph,
   linkFallback,
+  metricCompare,
   otpBlock,
   p,
   pill,
@@ -44,7 +47,9 @@ import {
   textGreeting,
   textRows,
   type DataRow,
+  type FooterKind,
 } from './components.js';
+import type { Tone } from './theme.js';
 
 /* ════════════════════════════════════════════════════════════════════════
    PUBLIC TYPES
@@ -715,6 +720,141 @@ export function apiKeyCreatedTemplate(
       contextText(input.context),
       input.manageUrl ? `Manage keys: ${safeUrlText(input.manageUrl)}` : '',
       'If you did not create this key, revoke it immediately.',
+    ),
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STANDARD MONO NOTIFICATION TEMPLATE
+   ════════════════════════════════════════════════════════════════════════ */
+
+export interface StandardNotificationInput {
+  appName?: string | undefined;
+  title: string;
+  subject?: string | undefined;
+  eyebrowText?: string | undefined;
+  preheader?: string | undefined;
+  tone?: Tone | undefined;
+  chip?: string | undefined;
+  userName?: string | undefined;
+  summary?: string | undefined;
+  message?: string | undefined;
+  metric?: {
+    label: string;
+    value: string | number;
+    threshold?: string | number | undefined;
+    window?: string | undefined;
+  } | undefined;
+  details?: DataRow[] | undefined;
+  primaryAction?: {
+    label: string;
+    url: string;
+    tone?: Tone | undefined;
+  } | undefined;
+  secondaryAction?: {
+    label: string;
+    url: string;
+  } | undefined;
+  callout?: {
+    tone?: Tone | undefined;
+    title?: string | undefined;
+    message: string;
+  } | undefined;
+  codeSnippet?: {
+    code: string;
+    caption?: string | undefined;
+  } | undefined;
+  context?: RequestContext | undefined;
+  footerKind?: FooterKind | undefined;
+  footerLink?: {
+    url: string;
+    label: string;
+  } | undefined;
+}
+
+/**
+ * Standard multi-purpose notification email template rendered in Sentinel Mono design.
+ * Suitable for general alerts, system reports, digests, and operational notifications.
+ */
+export function standardNotificationTemplate(input: StandardNotificationInput): EmailTemplate {
+  const app = input.appName || 'Pulsiv';
+  const tone = input.tone ?? 'brand';
+  const title = stripControl(input.title);
+  const eyebrow = input.eyebrowText ?? `${app} · notification`;
+  const subject = input.subject ?? subjectLine(app, title);
+  const rows: DataRow[] = input.details ? [...input.details] : [];
+
+  let actionsHtml = '';
+  if (input.primaryAction && input.secondaryAction) {
+    actionsHtml = buttonRow(input.primaryAction, input.secondaryAction);
+  } else if (input.primaryAction) {
+    actionsHtml = stack([
+      button(input.primaryAction.url, input.primaryAction.label, { tone: input.primaryAction.tone ?? tone }),
+      linkFallback(input.primaryAction.url),
+    ]);
+  }
+
+  const metricHtml = input.metric
+    ? metricCompare({
+        label: input.metric.window ? `${input.metric.label} · ${input.metric.window}` : input.metric.label,
+        value: String(input.metric.value),
+        threshold: input.metric.threshold !== undefined ? String(input.metric.threshold) : '—',
+        tone,
+      })
+    : '';
+
+  const calloutHtml = input.callout
+    ? callout(input.callout.tone ?? 'neutral', esc(input.callout.message), input.callout.title)
+    : '';
+
+  const codeHtml = input.codeSnippet
+    ? codeBlock(input.codeSnippet.code)
+    : '';
+
+  const body = stack([
+    input.userName ? p(esc(textGreeting(input.userName))) : '',
+    input.summary ? p(esc(input.summary)) : '',
+    input.message ? p(esc(input.message)) : '',
+    metricHtml,
+    rows.length > 0 ? dataTable(rows) : '',
+    actionsHtml,
+    calloutHtml,
+    codeHtml,
+    contextTable(input.context),
+  ]);
+
+  const preheaderText = input.preheader
+    ? stripControl(input.preheader)
+    : input.summary
+      ? stripControl(input.summary)
+      : `${title} on ${app}`;
+
+  return {
+    subject,
+    html: renderLayout({
+      appName: app,
+      title,
+      eyebrowText: eyebrow,
+      preheader: preheaderText,
+      tone,
+      chip: input.chip,
+      body,
+      footer: input.footerKind ?? 'alert',
+      footerLink: input.footerLink,
+      closing: null,
+    }),
+    text: textBody(
+      input.userName ? textGreeting(input.userName) : '',
+      title,
+      input.summary,
+      input.message,
+      input.metric ? `${input.metric.label}: ${input.metric.value}${input.metric.threshold ? ` (threshold: ${input.metric.threshold})` : ''}` : '',
+      rows.length > 0 ? textRows(rows.map((r) => ({ label: r.label, value: r.value }))) : '',
+      input.primaryAction ? `${input.primaryAction.label}: ${safeUrlText(input.primaryAction.url)}` : '',
+      input.secondaryAction ? `${input.secondaryAction.label}: ${safeUrlText(input.secondaryAction.url)}` : '',
+      input.callout ? `${input.callout.title ? `${input.callout.title}: ` : ''}${input.callout.message}` : '',
+      input.codeSnippet ? input.codeSnippet.code : '',
+      contextText(input.context),
     ),
   };
 }

@@ -12,11 +12,11 @@ export interface AlertRuleTemplate {
 function presetToTemplate(preset: DefaultAlertPreset): AlertRuleTemplate {
   return {
     key: preset.presetKey,
-    name: preset.name.replace(' (default)', ''),
+    name: preset.name,
     description: preset.description,
     category: preset.presetKey.startsWith('ai_') ? 'ai' : 'default',
     rule: {
-      name: preset.name.replace(' (default)', ''),
+      name: preset.name,
       description: preset.description,
       severity: preset.severity,
       enabled: false,

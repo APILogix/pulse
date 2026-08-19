@@ -41,13 +41,12 @@ export function withErrorHandling(
   handler: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>,
 ) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (reply.sent) return reply;
     try {
       return await handler(request, reply);
     } catch (error) {
+      if (reply.sent) return reply;
       request.log.error({ err: error, path: request.url }, "Projects route failed");
-      if (reply.sent) {
-        return;
-      }
       return handleProjectError(error, reply);
     }
   };

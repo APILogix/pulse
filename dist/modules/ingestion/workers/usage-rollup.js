@@ -106,18 +106,34 @@ export class UsageRollup {
                 acc.total += n;
                 eventsTotal += n;
             }
-            // (c) Org-level fast-path entitlement counters.
-            for (const [orgId, total] of orgTotals) {
-                await client.query('SELECT increment_event_usage($1, $2)', [orgId, total]);
-            }
-            // (d) Per (org, project, day) historical counters.
-            for (const acc of scopes.values()) {
-                await client.query(DAILY_UPSERT_SQL, [
-                    acc.orgId,
-                    acc.projectId,
-                    acc.total,
-                    ...COUNTER_COLUMNS.map((c) => acc.byColumn.get(c) ?? 0),
-                ]);
+            if (orgTotals.size > 0) {
+                const orgIds = Array.from(orgTotals.keys());
+                const validOrgsRes = await client.query(`SELECT id FROM organizations WHERE id = ANY($1::uuid[])`, [orgIds]);
+                const validOrgIds = new Set(validOrgsRes.rows.map((r) => r.id));
+                const projectIds = Array.from(new Set(Array.from(scopes.values()).map((s) => s.projectId)));
+                const validProjectsRes = await client.query(`SELECT id, org_id FROM projects WHERE id = ANY($1::uuid[])`, [projectIds]);
+                const validProjectIds = new Set(validProjectsRes.rows.map((r) => r.id));
+                // (c) Org-level fast-path entitlement counters (only for active organizations).
+                for (const [orgId, total] of orgTotals) {
+                    if (!validOrgIds.has(orgId)) {
+                        this.log.warn({ orgId, total }, 'Skipping usage increment for non-existent or deleted organization');
+                        continue;
+                    }
+                    await client.query('SELECT increment_event_usage($1, $2)', [orgId, total]);
+                }
+                // (d) Per (org, project, day) historical counters (only for valid org + project).
+                for (const acc of scopes.values()) {
+                    if (!validOrgIds.has(acc.orgId) || !validProjectIds.has(acc.projectId)) {
+                        this.log.warn({ orgId: acc.orgId, projectId: acc.projectId, total: acc.total }, 'Skipping daily usage counters upsert for non-existent org or project');
+                        continue;
+                    }
+                    await client.query(DAILY_UPSERT_SQL, [
+                        acc.orgId,
+                        acc.projectId,
+                        acc.total,
+                        ...COUNTER_COLUMNS.map((c) => acc.byColumn.get(c) ?? 0),
+                    ]);
+                }
             }
             await client.query('COMMIT');
         }

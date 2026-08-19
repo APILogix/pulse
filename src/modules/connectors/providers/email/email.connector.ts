@@ -20,6 +20,7 @@ import {
   type EmailConfig,
   type NotificationPayload,
 } from '../../types.js';
+import { renderEnterpriseAlertEmail } from '../../../alerting/runtime/alert-notification-formatter.js';
 
 const SEVERITY_LABEL: Record<string, string> = {
   info: 'ℹ️ Info',
@@ -111,13 +112,39 @@ export class EmailConnector extends BaseConnector {
       const destination = typeof projectChannel?.destination === 'string' && projectChannel.destination.trim()
         ? projectChannel.destination.trim()
         : null;
+
+      const isAlert = Boolean(
+        notification.notificationType?.startsWith('alert')
+        || notification.metadata?.alertKey
+        || notification.metadata?.ruleId
+        || notification.metadata?.endpoint
+        || notification.metadata?.policy,
+      );
+
+      const enterprise = isAlert
+        ? renderEnterpriseAlertEmail({ payload: notification as unknown as Record<string, unknown> })
+        : null;
+
+      const subject = enterprise?.subject
+        ?? (typeof notification.metadata?.subject === 'string' ? notification.metadata.subject : `[${notification.severity.toUpperCase()}] ${notification.title}`);
+      const text = enterprise?.text ?? this.renderText(notification);
+      const html = enterprise?.html ?? this.renderHtml(notification);
+
+      const destinationTarget = (destination ? [destination] : cfg.to).join(', ');
+      console.log(`\n[ALERT_EMAIL_CONNECTOR] 📨 Delivering connector email | To: "${destinationTarget}" | Subject: "${subject}"`);
+      if (text) {
+        const preview = text.length > 300 ? `${text.slice(0, 300)}...` : text;
+        console.log(`[ALERT_EMAIL_CONNECTOR] 📄 Text Preview:\n--------------------------------------------------\n${preview}\n--------------------------------------------------`);
+      }
+
       const info = await transporter.sendMail({
         from: `"${fromName}" <${fromEmail}>`,
-        to: (destination ? [destination] : cfg.to).join(', '),
-        subject: `[${notification.severity.toUpperCase()}] ${notification.title}`,
-        text: this.renderText(notification),
-        html: this.renderHtml(notification),
+        to: destinationTarget,
+        subject,
+        text,
+        html,
       });
+      console.log(`[ALERT_EMAIL_CONNECTOR] ✅ Connector email delivered | MessageId: "${info.messageId}" | To: "${destinationTarget}" | Latency: ${Date.now() - start}ms`);
       return {
         success: true,
         externalMessageId: info.messageId,
@@ -126,6 +153,7 @@ export class EmailConnector extends BaseConnector {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'SMTP send failed';
+      console.error(`[ALERT_EMAIL_CONNECTOR] ❌ Connector email delivery failed:`, message);
       // Auth failures are not retryable; transient SMTP errors are.
       const isAuth = /auth|credential|535|534/i.test(message);
       throw new ConnectorDeliveryError(message, isAuth ? 'auth_error' : 'network_error', !isAuth);

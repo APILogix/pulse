@@ -1,4 +1,3 @@
-import { pool } from '../../../config/database.js';
 import { AlertRuntimeRepository } from './alert-runtime.repository.js';
 import { NotificationEntitlementService } from './notification-entitlement.service.js';
 import { ProjectOwnerRepository } from './email-only-restricted-routing.js';
@@ -7,7 +6,7 @@ export class ProjectAlertQueryService {
     entitlement;
     owners;
     primaryDb;
-    constructor(logDb, primaryDb = pool, entitlement, owners) {
+    constructor(logDb, primaryDb, entitlement, owners) {
         this.runtime = new AlertRuntimeRepository(logDb);
         this.primaryDb = primaryDb;
         this.entitlement = entitlement ?? new NotificationEntitlementService();

@@ -19,7 +19,7 @@ export { font, palette, radius, severityGlyph, severityTone, size, tint, tintBor
 /* ── Component library (for one-off surfaces) ── */
 export { aiInsight, block, button, buttonRow, callout, codeBlock, dataTable, digestList, divider, esc, eyebrow, glyph, glyphChip, heading, link, linkFallback, metricCompare, otpBlock, p, pill, renderLayout, safeUrl, safeUrlText, stack, statStrip, strong, stripControl, TEXT_RULE, textBody, textGreeting, textRows, } from './components.js';
 /* ── Transactional templates: auth, account, organization ── */
-export { accountDeletionConfirmTemplate, accountUnlockTemplate, apiKeyCreatedTemplate, emailVerificationTemplate, mfaCodeTemplate, mfaDisableConfirmTemplate, mfaStatusTemplate, newSignInTemplate, orgInvitationTemplate, passwordChangedTemplate, passwordResetTemplate, } from './templates.js';
+export { accountDeletionConfirmTemplate, accountUnlockTemplate, apiKeyCreatedTemplate, emailVerificationTemplate, mfaCodeTemplate, mfaDisableConfirmTemplate, mfaStatusTemplate, newSignInTemplate, orgInvitationTemplate, passwordChangedTemplate, passwordResetTemplate, standardNotificationTemplate, } from './templates.js';
 /* ── Alert & monitoring templates ── */
 export { alertAcknowledgedTemplate, alertDigestTemplate, alertEscalatedTemplate, alertFiringTemplate, alertResolvedTemplate, alertSilencedTemplate, anomalyDetectedTemplate, deliveryFailureTemplate, errorSpikeTemplate, latencyAlertTemplate, quotaAlertTemplate, ruleChangedTemplate, serviceHealthTemplate, } from './alert-templates.js';
 //# sourceMappingURL=index.js.map

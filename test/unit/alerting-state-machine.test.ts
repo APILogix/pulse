@@ -15,10 +15,20 @@ describe('alert lifecycle state machine', () => {
     expect(transitionAlert('resolved', 'close', 'user')).toBe('closed');
   });
 
+  it('supports ongoing breaches and idempotent recovery transitions', () => {
+    expect(transitionAlert('triggered', 'trigger', 'worker')).toBe('triggered');
+    expect(transitionAlert('firing', 'trigger', 'worker')).toBe('firing');
+    expect(transitionAlert('acknowledged', 'trigger', 'worker')).toBe('acknowledged');
+    expect(transitionAlert('escalated', 'trigger', 'worker')).toBe('escalated');
+    expect(transitionAlert('healthy', 'recover', 'worker')).toBe('healthy');
+    expect(transitionAlert('resolved', 'recover', 'worker')).toBe('resolved');
+    expect(transitionAlert('closed', 'trigger', 'worker')).toBe('triggered');
+  });
+
   it('rejects invalid shortcuts and unauthorized actors', () => {
     expect(() => transitionAlert('healthy', 'close', 'user')).toThrow(InvalidAlertTransitionError);
-    expect(() => transitionAlert('triggered', 'trigger', 'worker')).toThrow(InvalidAlertTransitionError);
     expect(() => transitionAlert('triggered', 'escalate', 'user')).toThrow(InvalidAlertTransitionError);
-    expect(canTransition('closed', 'recover', 'worker')).toBe(false);
+    expect(() => transitionAlert('healthy', 'evaluate_breach', 'user')).toThrow(InvalidAlertTransitionError);
+    expect(canTransition('healthy', 'close', 'user')).toBe(false);
   });
 });

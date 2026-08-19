@@ -39,18 +39,18 @@ declare module 'fastify' {
         };
     }
 }
-export declare function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+export declare function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void>;
 /**
  * Hard-checks the platform-admin flag derived from `users.is_admin`. This is
  * a global flag and does NOT imply org-level admin rights. Org-level admin
  * is enforced inside the organization module.
  */
-export declare function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+export declare function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void>;
 /**
  * Reject requests where the access token's `mfa_verified` claim is false.
  * Used by routes that need MFA at session level.
  */
-export declare function requireMFA(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+export declare function requireMFA(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void>;
 /**
  * Reject requests that have not completed a fresh step-up MFA challenge in
  * the last STEP_UP_FRESHNESS_TTL_SECONDS. Used by sensitive in-session
@@ -60,5 +60,5 @@ export declare function requireMFA(request: FastifyRequest, reply: FastifyReply)
  * because MFA was performed at login, but step-up freshness is only set
  * when the user proves possession of MFA AGAIN via /auth/mfa/verify.
  */
-export declare function requireStepUp(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+export declare function requireStepUp(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void>;
 //# sourceMappingURL=auth.d.ts.map

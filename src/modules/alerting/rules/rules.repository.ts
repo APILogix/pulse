@@ -46,7 +46,8 @@ const RULE_COLS = `
   labels, annotations, metadata, created_by, updated_by,
   enabled_at, disabled_at, created_at, updated_at, deleted_at,
   project_id, preset_key, is_default, last_evaluated_at,
-  COALESCE(current_revision, 1) AS current_revision
+  COALESCE(current_revision, 1) AS current_revision,
+  evaluation_category
 `;
 
 export interface RuleConditionInsert {
@@ -101,6 +102,8 @@ export interface CreateRuleInput {
   createdBy: string;
   conditions: RuleConditionInsert[];
   actions: RuleActionInsert[];
+  /** Backend evaluation category: 'fast' or 'analytics'. Defaults to 'analytics'. */
+  evaluationCategory?: 'fast' | 'analytics';
 }
 
 export class RulesRepository {
@@ -134,6 +137,7 @@ export class RulesRepository {
   async createRule(input: CreateRuleInput): Promise<AlertRuleRow> {
     return this.withTransaction(async (client) => {
       let rule: AlertRuleRow;
+      const evaluationCategory = input.evaluationCategory ?? 'analytics';
       try {
         const r = await client.query<AlertRuleRow>(
           `INSERT INTO alert_rules
@@ -142,9 +146,9 @@ export class RulesRepository {
               deduplication_window_seconds, deduplication_key_template,
               grouping_enabled, grouping_key_template, grouping_wait_seconds,
               labels, annotations, metadata, created_by, enabled_at,
-              project_id, preset_key, is_default)
+              project_id, preset_key, is_default, evaluation_category)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-                   CASE WHEN $5 THEN NOW() ELSE NULL END, $18,$19,$20)
+                   CASE WHEN $5 THEN NOW() ELSE NULL END, $18,$19,$20,$21)
            RETURNING ${RULE_COLS}`,
           [
             input.organizationId, input.name, input.description, input.severity, input.enabled,
@@ -154,6 +158,7 @@ export class RulesRepository {
             JSON.stringify(input.labels), JSON.stringify(input.annotations), JSON.stringify(input.metadata),
             input.createdBy,
             input.projectId ?? null, input.presetKey ?? null, input.isDefault ?? false,
+            evaluationCategory,
           ],
         );
         rule = r.rows[0]!;

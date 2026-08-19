@@ -70,6 +70,17 @@ function identityRows(identity, scope) {
         { label: 'Rule', value: identity.ruleName, sans: true },
         { label: 'Severity', value: identity.severity.toUpperCase(), tone: severityTone(identity.severity) },
     ];
+    if (identity.endpoint)
+        rows.push({ label: 'Route', value: identity.endpoint, sans: true });
+    if (identity.method)
+        rows.push({ label: 'Method', value: String(identity.method).toUpperCase() });
+    if (identity.statusCode !== undefined && identity.statusCode !== null && String(identity.statusCode).trim() !== '') {
+        rows.push({ label: 'Status code', value: String(identity.statusCode) });
+    }
+    if (identity.duration)
+        rows.push({ label: 'Time taken', value: identity.duration });
+    if (identity.service)
+        rows.push({ label: 'Service', value: identity.service, sans: true });
     if (scope.projectName)
         rows.push({ label: 'Project', value: scope.projectName, sans: true });
     if (scope.environment)
@@ -84,10 +95,19 @@ function identityRows(identity, scope) {
             value: `${identity.occurrences} in this window`,
         });
     }
+    if (identity.traceId)
+        rows.push({ label: 'Trace ID', value: identity.traceId });
+    if (identity.spanId)
+        rows.push({ label: 'Span ID', value: identity.spanId });
+    if (identity.clientIp)
+        rows.push({ label: 'Client IP', value: identity.clientIp });
     if (identity.fingerprint)
         rows.push({ label: 'Fingerprint', value: identity.fingerprint });
     if (identity.eventId)
         rows.push({ label: 'Event id', value: identity.eventId });
+    if (identity.extraRows && identity.extraRows.length > 0) {
+        rows.push(...identity.extraRows);
+    }
     return rows;
 }
 function plainRows(rows) {
@@ -189,6 +209,10 @@ export function alertResolvedTemplate(input) {
         { label: 'Rule', value: input.identity.ruleName, sans: true },
         { label: 'Severity', value: input.identity.severity.toUpperCase() },
     ];
+    if (input.identity.endpoint)
+        rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
+    if (input.identity.method)
+        rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
     if (input.projectName)
         rows.push({ label: 'Project', value: input.projectName, sans: true });
     if (input.environment)
@@ -205,6 +229,8 @@ export function alertResolvedTemplate(input) {
         rows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
     if (input.reason)
         rows.push({ label: 'Reason', value: input.reason, sans: true });
+    if (input.identity.traceId)
+        rows.push({ label: 'Trace ID', value: input.identity.traceId });
     if (input.identity.fingerprint)
         rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
     const body = stack([
@@ -295,6 +321,14 @@ export function alertEscalatedTemplate(input) {
         { label: 'Policy', value: input.policyName, sans: true },
         { label: 'Step', value: step, tone: 'danger' },
     ];
+    if (input.identity.endpoint)
+        rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
+    if (input.identity.method)
+        rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
+    if (input.identity.statusCode !== undefined && input.identity.statusCode !== null)
+        rows.push({ label: 'Status code', value: String(input.identity.statusCode) });
+    if (input.identity.duration)
+        rows.push({ label: 'Time taken', value: input.identity.duration });
     if (input.firingFor)
         rows.push({ label: 'Firing for', value: input.firingFor, tone: 'danger' });
     if (input.trigger)
@@ -305,8 +339,16 @@ export function alertEscalatedTemplate(input) {
         rows.push({ label: 'Project', value: input.projectName, sans: true });
     if (input.environment)
         rows.push({ label: 'Environment', value: input.environment });
+    if (input.identity.traceId)
+        rows.push({ label: 'Trace ID', value: input.identity.traceId });
+    if (input.identity.spanId)
+        rows.push({ label: 'Span ID', value: input.identity.spanId });
+    if (input.identity.clientIp)
+        rows.push({ label: 'Client IP', value: input.identity.clientIp });
     if (input.identity.fingerprint)
         rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
+    if (input.identity.extraRows && input.identity.extraRows.length > 0)
+        rows.push(...input.identity.extraRows);
     const body = stack([
         p(`This alert has not been acknowledged, so ${esc(input.policyName)} advanced to ${esc(step.toLowerCase())} and widened the notification.`),
         dataTable(rows),
@@ -508,18 +550,33 @@ export function latencyAlertTemplate(input) {
     const ruleName = `${input.percentile} latency${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
     const rows = [{ label: 'Percentile', value: input.percentile }];
     if (input.endpoint)
-        rows.push({ label: 'Endpoint', value: input.endpoint });
+        rows.push({ label: 'Route', value: input.endpoint, sans: true });
+    if (input.method)
+        rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+    if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
+        rows.push({ label: 'Status code', value: String(input.statusCode) });
+    }
     if (input.window)
         rows.push({ label: 'Window', value: input.window });
     if (typeof input.sampleSize === 'number') {
         rows.push({ label: 'Samples', value: String(input.sampleSize) });
     }
+    if (input.service)
+        rows.push({ label: 'Service', value: input.service, sans: true });
     if (input.projectName)
         rows.push({ label: 'Project', value: input.projectName, sans: true });
     if (input.environment)
         rows.push({ label: 'Environment', value: input.environment });
     if (input.startedAt)
         rows.push({ label: 'Started', value: input.startedAt });
+    if (input.traceId)
+        rows.push({ label: 'Trace ID', value: input.traceId });
+    if (input.spanId)
+        rows.push({ label: 'Span ID', value: input.spanId });
+    if (input.clientIp)
+        rows.push({ label: 'Client IP', value: input.clientIp });
+    if (input.extraRows && input.extraRows.length > 0)
+        rows.push(...input.extraRows);
     const contributors = input.topContributors && input.topContributors.length > 0
         ? callout('neutral', input.topContributors.map((c) => esc(c)).join('<br />'), 'Slowest operations')
         : '';
@@ -582,7 +639,11 @@ export function errorSpikeTemplate(input) {
     if (input.topError)
         rows.push({ label: 'Top error', value: input.topError, sans: true });
     if (input.endpoint)
-        rows.push({ label: 'Endpoint', value: input.endpoint });
+        rows.push({ label: 'Route', value: input.endpoint, sans: true });
+    if (input.method)
+        rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+    if (input.service)
+        rows.push({ label: 'Service', value: input.service, sans: true });
     if (input.window)
         rows.push({ label: 'Window', value: input.window });
     if (input.projectName)
@@ -591,6 +652,14 @@ export function errorSpikeTemplate(input) {
         rows.push({ label: 'Environment', value: input.environment });
     if (input.startedAt)
         rows.push({ label: 'Started', value: input.startedAt });
+    if (input.traceId)
+        rows.push({ label: 'Trace ID', value: input.traceId });
+    if (input.spanId)
+        rows.push({ label: 'Span ID', value: input.spanId });
+    if (input.clientIp)
+        rows.push({ label: 'Client IP', value: input.clientIp });
+    if (input.extraRows && input.extraRows.length > 0)
+        rows.push(...input.extraRows);
     const body = stack([
         p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`),
         metricCompare({

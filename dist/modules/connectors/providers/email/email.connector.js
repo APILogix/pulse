@@ -9,6 +9,7 @@ import nodemailer from 'nodemailer';
 import { BaseConnector } from '../../shared/base.connector.js';
 import { env } from '../../../../config/env.js';
 import { EmailConfigSchema, ConnectorDeliveryError, } from '../../types.js';
+import { renderEnterpriseAlertEmail } from '../../../alerting/runtime/alert-notification-formatter.js';
 const SEVERITY_LABEL = {
     info: 'ℹ️ Info',
     warning: '⚠️ Warning',
@@ -91,12 +92,24 @@ export class EmailConnector extends BaseConnector {
             const destination = typeof projectChannel?.destination === 'string' && projectChannel.destination.trim()
                 ? projectChannel.destination.trim()
                 : null;
+            const isAlert = Boolean(notification.notificationType?.startsWith('alert')
+                || notification.metadata?.alertKey
+                || notification.metadata?.ruleId
+                || notification.metadata?.endpoint
+                || notification.metadata?.policy);
+            const enterprise = isAlert
+                ? renderEnterpriseAlertEmail({ payload: notification })
+                : null;
+            const subject = enterprise?.subject
+                ?? (typeof notification.metadata?.subject === 'string' ? notification.metadata.subject : `[${notification.severity.toUpperCase()}] ${notification.title}`);
+            const text = enterprise?.text ?? this.renderText(notification);
+            const html = enterprise?.html ?? this.renderHtml(notification);
             const info = await transporter.sendMail({
                 from: `"${fromName}" <${fromEmail}>`,
                 to: (destination ? [destination] : cfg.to).join(', '),
-                subject: `[${notification.severity.toUpperCase()}] ${notification.title}`,
-                text: this.renderText(notification),
-                html: this.renderHtml(notification),
+                subject,
+                text,
+                html,
             });
             return {
                 success: true,

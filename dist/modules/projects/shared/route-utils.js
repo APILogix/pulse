@@ -32,14 +32,15 @@ export function authenticatedUser(request) {
 }
 export function withErrorHandling(handler) {
     return async (request, reply) => {
+        if (reply.sent)
+            return reply;
         try {
             return await handler(request, reply);
         }
         catch (error) {
+            if (reply.sent)
+                return reply;
             request.log.error({ err: error, path: request.url }, "Projects route failed");
-            if (reply.sent) {
-                return;
-            }
             return handleProjectError(error, reply);
         }
     };

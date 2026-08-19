@@ -15,9 +15,6 @@
  * route", and the org attaches real connectors later via routing rules or by
  * editing the action. This matches the platform default of "notify org
  * members in-app" without requiring a connector that may not exist yet.
- *
- * Condition fieldPaths are evaluated by evaluator/rule-evaluator.ts against
- * the observability event tables; see that file for the exact SQL per kind.
  */
 import type { Pool } from 'pg';
 import type { AlertSeverity, ConditionOperator } from '../rules/rules.types.js';
@@ -27,6 +24,7 @@ export interface DefaultAlertPreset {
   name: string;
   description: string;
   severity: AlertSeverity;
+  evaluationCategory: 'fast' | 'analytics';
   cooldownSeconds: number;
   evaluationIntervalSeconds: number;
   deduplicationWindowSeconds: number;
@@ -45,9 +43,10 @@ export interface DefaultAlertPreset {
 export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   {
     presetKey: 'unhandled_exception_fast',
-    name: 'Unhandled exception (instant)',
+    name: 'Unhandled Exception',
     description: 'Any unhandled exception should page immediately after telemetry is committed.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -56,9 +55,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'fatal_exception_fast',
-    name: 'Fatal exception (instant)',
+    name: 'Fatal Exception',
     description: 'Any fatal or critical exception should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -67,9 +67,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'process_crash_fast',
-    name: 'Process crash (instant)',
+    name: 'Process Crash',
     description: 'Crash-class error events should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -78,9 +79,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'out_of_memory_fast',
-    name: 'Out of memory (instant)',
+    name: 'Out of Memory',
     description: 'Out-of-memory log events should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -89,9 +91,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'cron_failed_fast',
-    name: 'Cron failed (instant)',
+    name: 'Cron Check-in Failed',
     description: 'A failed cron check-in should page immediately.',
     severity: 'error',
+    evaluationCategory: 'fast',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -100,9 +103,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'security_event_fast',
-    name: 'Security event (instant)',
+    name: 'Security Event',
     description: 'Critical security-tagged log events should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -111,9 +115,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'auth_failure_fast',
-    name: 'Authentication failure (instant)',
+    name: 'Authentication Failure',
     description: 'Critical authentication failures should be evaluated immediately from request telemetry.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 300,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 1800,
@@ -122,9 +127,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'heartbeat_lost_fast',
-    name: 'Heartbeat lost (instant)',
+    name: 'Heartbeat Lost',
     description: 'A heartbeat timeout event should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -133,9 +139,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'deployment_failed_fast',
-    name: 'Deployment failed (instant)',
+    name: 'Deployment Failed',
     description: 'A failed deployment event should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -144,9 +151,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'connector_open_circuit_fast',
-    name: 'Connector open circuit (instant)',
+    name: 'Connector Open Circuit',
     description: 'A connector entering open circuit should page immediately.',
     severity: 'critical',
+    evaluationCategory: 'fast',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 1,
     deduplicationWindowSeconds: 3600,
@@ -155,9 +163,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'high_error_rate',
-    name: 'High error rate (default)',
+    name: 'High Error Rate',
     description: 'Errors as a percentage of requests exceeds the threshold within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -166,9 +175,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'high_latency_p95',
-    name: 'High latency p95 (default)',
+    name: 'High Latency (P95)',
     description: 'p95 request latency (latency_ms) exceeds the threshold within the lookback window.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -177,9 +187,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'elevated_5xx',
-    name: 'Elevated 5xx responses (default)',
+    name: 'Elevated 5xx Responses',
     description: 'Percentage of requests with status_code >= 500 exceeds the threshold.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -188,9 +199,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'failed_cron',
-    name: 'Failed cron check-ins (default)',
+    name: 'Failed Cron Check-ins',
     description: 'One or more cron check-ins report status error within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 3600,
@@ -199,9 +211,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'service_inactivity',
-    name: 'Service inactivity (default)',
+    name: 'Service Inactivity',
     description: 'No requests observed within the lookback window — the service may be down or not reporting.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 3600,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -210,9 +223,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'availability_degradation',
-    name: 'Availability degradation (default)',
+    name: 'Availability Degradation',
     description: 'Percentage of degraded requests (status_code >= 500 or latency_ms >= 10000) exceeds the threshold.',
     severity: 'critical',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -221,9 +235,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'traffic_spike',
-    name: 'Traffic spike (default)',
+    name: 'Traffic Volume Spike',
     description: 'Request volume within the lookback window exceeds the (org-customizable) absolute threshold.',
     severity: 'info',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -232,9 +247,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'log_error_burst',
-    name: 'Log error burst (default)',
+    name: 'Log Error Burst',
     description: 'Error-level logs exceed the threshold within the lookback window.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -243,9 +259,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'error_volume_spike',
-    name: 'Error volume spike (default)',
+    name: 'Error Volume Spike',
     description: 'Absolute error count exceeds the threshold within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 600,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -254,9 +271,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'high_latency_p99',
-    name: 'High latency p99 (default)',
+    name: 'High Latency (P99)',
     description: 'p99 request latency exceeds the threshold within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 60,
     deduplicationWindowSeconds: 3600,
@@ -265,9 +283,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'cron_failure_rate',
-    name: 'Cron failure rate (default)',
+    name: 'Cron Failure Rate',
     description: 'Cron failures or missed runs exceed the failure-rate threshold in recent rollups.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 10,
     deduplicationWindowSeconds: 3600,
@@ -276,9 +295,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'request_inactivity',
-    name: 'Request inactivity (default)',
+    name: 'Request Inactivity',
     description: 'No request traffic has been observed for longer than the threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 3600,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -287,9 +307,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'out_of_memory_logs',
-    name: 'Out-of-memory logs (default)',
+    name: 'Out-of-Memory Logs',
     description: 'Logs contain out-of-memory failure patterns within the lookback window.',
     severity: 'critical',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -298,9 +319,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'database_connection_logs',
-    name: 'Database connection errors (default)',
+    name: 'Database Connection Errors (Logs)',
     description: 'Logs contain database connection failure patterns within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -309,9 +331,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'high_cpu_usage',
-    name: 'High CPU usage (default)',
+    name: 'High CPU Usage',
     description: 'Average custom CPU usage metric exceeds the threshold within the lookback window.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -320,9 +343,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'high_memory_usage',
-    name: 'High memory usage (default)',
+    name: 'High Memory Usage',
     description: 'Average custom memory usage metric exceeds the threshold within the lookback window.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 7200,
@@ -331,9 +355,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'queue_backlog',
-    name: 'Queue backlog (default)',
+    name: 'Queue Backlog',
     description: 'Queue backlog metrics exceed the operational threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 30,
     deduplicationWindowSeconds: 7200,
@@ -342,9 +367,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'db_connection_errors',
-    name: 'Database connection errors (default)',
+    name: 'Database Connection Error Rollup',
     description: 'Database connection error rollups exceed the operational threshold.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 30,
     deduplicationWindowSeconds: 7200,
@@ -353,9 +379,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'service_health_degradation',
-    name: 'Service health degradation (default)',
+    name: 'Service Health Degradation',
     description: 'Service health score falls below the operational threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 30,
     deduplicationWindowSeconds: 7200,
@@ -364,9 +391,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'endpoint_health_degradation',
-    name: 'Endpoint health degradation (default)',
+    name: 'Endpoint Health Degradation',
     description: 'Endpoint health score falls below the operational threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 30,
     deduplicationWindowSeconds: 7200,
@@ -375,9 +403,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'ai_failed_requests',
-    name: 'AI failed requests (default)',
+    name: 'AI Failed Requests',
     description: 'One or more AI feature calls failed, timed out, or were cancelled within the lookback window.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 3600,
@@ -386,9 +415,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'ai_slow_requests_p95',
-    name: 'AI slow requests p95 (default)',
+    name: 'AI Slow Requests (P95)',
     description: 'p95 AI request duration exceeds the threshold within the lookback window.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 120,
     deduplicationWindowSeconds: 3600,
@@ -397,9 +427,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'ai_failure_rate',
-    name: 'AI failure rate (default)',
+    name: 'AI Failure Rate',
     description: 'AI failure rate exceeds the short-window threshold.',
     severity: 'error',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 900,
     evaluationIntervalSeconds: 10,
     deduplicationWindowSeconds: 3600,
@@ -408,9 +439,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'ai_credit_burn_spike',
-    name: 'AI credit burn spike (default)',
+    name: 'AI Credit Burn Spike',
     description: 'AI credits consumed within the lookback window exceed the threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 1800,
     evaluationIntervalSeconds: 300,
     deduplicationWindowSeconds: 7200,
@@ -419,9 +451,10 @@ export const DEFAULT_ALERT_PRESETS: readonly DefaultAlertPreset[] = [
   },
   {
     presetKey: 'ai_cost_spike',
-    name: 'AI cost spike (default)',
+    name: 'AI Cost Spike',
     description: 'Estimated AI spend within the lookback window exceeds the threshold.',
     severity: 'warning',
+    evaluationCategory: 'analytics',
     cooldownSeconds: 3600,
     evaluationIntervalSeconds: 300,
     deduplicationWindowSeconds: 7200,
@@ -475,6 +508,7 @@ export async function seedDefaultPresetsForOrgInTransaction(
     name: preset.name,
     description: preset.description,
     severity: preset.severity,
+    evaluation_category: preset.evaluationCategory,
     evaluation_interval_seconds: preset.evaluationIntervalSeconds,
     cooldown_seconds: preset.cooldownSeconds,
     auto_resolve_after_minutes: preset.autoResolveAfterMinutes,
@@ -495,6 +529,7 @@ export async function seedDefaultPresetsForOrgInTransaction(
          name text,
          description text,
          severity text,
+         evaluation_category text,
          evaluation_interval_seconds integer,
          cooldown_seconds integer,
          auto_resolve_after_minutes integer,
@@ -510,15 +545,16 @@ export async function seedDefaultPresetsForOrgInTransaction(
      inserted_rules AS (
        INSERT INTO alert_rules
           (organization_id, name, description, severity, enabled,
-           evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
-           deduplication_window_seconds, labels, annotations, metadata, created_by,
-           enabled_at, project_id, preset_key, is_default)
+           evaluation_category, evaluation_interval_seconds, cooldown_seconds,
+           auto_resolve_after_minutes, deduplication_window_seconds, labels,
+           annotations, metadata, created_by, enabled_at, project_id, preset_key, is_default)
        SELECT
          $1::uuid,
          p.name,
          p.description,
          p.severity::alert_severity,
          TRUE,
+         p.evaluation_category,
          p.evaluation_interval_seconds,
          p.cooldown_seconds,
          p.auto_resolve_after_minutes,

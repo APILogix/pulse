@@ -10,7 +10,9 @@ import { AlertRuntimeRuleCatalog, type AlertRuntimeTier, type RuntimeRuleRow } f
 import { AlertChannelRepository } from '../../projects/alerts/channels/channel.repository.js';
 import { AlertConfigRepository } from '../config/alert-config.repository.js';
 import { NotificationRoutingService } from './notification-routing.service.js';
-import { AlertDecisionEngine } from '../decision/decision.engine.js';
+import { AlertDecisionEngine, alertFingerprint } from '../decision/decision.engine.js';
+import { AlertRedisStateService } from './alert-redis-state.js';
+import { computeAlertFingerprint } from './alert-fingerprint.js';
 import { resolveAllEffectiveThresholds } from '../policy/resolve-threshold.js';
 import { buildEffectiveProjectRule } from './effective-rule-contract.js';
 import type { ScopedEvent } from '../../ingestion/pipeline/telemetry-writer.js';
@@ -53,7 +55,7 @@ export interface RuntimeEvaluationSummary {
   failed: number;
 }
 
-interface RuntimePayload {
+export interface RuntimePayload {
   values: Record<string, unknown>;
   observedAt: Date;
   source: string;
@@ -74,15 +76,19 @@ export class AlertRuntimeEngines {
   private readonly catalog: AlertRuntimeRuleCatalog;
   private readonly runtime: AlertRuntimeRepository;
   private readonly decision: AlertDecisionEngine;
+  private readonly redisState: AlertRedisStateService;
   private readonly log: FastifyBaseLogger;
+  private readonly workerId: string;
 
   constructor(
     logger: FastifyBaseLogger,
     private readonly logDb: Pool,
     private readonly controlDb: Pool,
     routing?: NotificationRoutingService,
+    redisState?: AlertRedisStateService,
+    catalog?: AlertRuntimeRuleCatalog,
   ) {
-    this.catalog = new AlertRuntimeRuleCatalog(controlDb);
+    this.catalog = catalog ?? new AlertRuntimeRuleCatalog(controlDb);
     this.runtime = new AlertRuntimeRepository(logDb);
     this.decision = new AlertDecisionEngine(logDb, logger, {
       routing: routing ?? new NotificationRoutingService({
@@ -91,7 +97,9 @@ export class AlertRuntimeEngines {
         configRepository: new AlertConfigRepository(controlDb),
       }),
     });
+    this.redisState = redisState ?? new AlertRedisStateService({ logger });
     this.log = logger.child({ component: 'alert-runtime-engines' });
+    this.workerId = `worker_${process.pid}_${Math.random().toString(36).slice(2, 8)}`;
   }
 
   async evaluateFast(input: FastEvaluationInput): Promise<RuntimeEvaluationSummary> {
@@ -319,11 +327,54 @@ export class AlertRuntimeEngines {
 
       const consecutive = (previous?.is_breaching ? previous.consecutive_breaches : 0) + 1;
       const shouldFire = consecutive >= effective.consecutiveBreaches;
-      const coolingDown = previous?.last_fired_at
+      const dbCoolingDown = previous?.last_fired_at
         ? now.getTime() - previous.last_fired_at.getTime() < effective.cooldownSeconds * 1000
         : false;
 
-      console.log(`[ALERTING] [Phase 4/4: Action Gate] 🚨 Rule "${rule.name}" MATCHED! Consecutive Breaches: ${consecutive}/${effective.consecutiveBreaches} | ShouldFire: ${shouldFire} | InCooldown: ${coolingDown}`);
+      // Extract groupBy from rule metadata / labels / groupingKeyTemplate
+      const ruleMetadata = (rule.metadata ?? {}) as Record<string, unknown>;
+      const ruleLabels = (rule.labels ?? {}) as Record<string, unknown>;
+      const groupBy = (ruleMetadata.groupBy ?? ruleMetadata.group_by ?? ruleLabels.groupBy ?? ruleLabels.group_by ?? null) as string[] | null;
+
+      // Compute deterministic fingerprint with normalized route and bounded grouping dimensions
+      const { fingerprint: alertKey, dimensionKey, normalizedDimensions } = computeAlertFingerprint({
+        organizationId: rule.organization_id,
+        projectId: scope.projectId ?? null,
+        environment: scope.environment ?? null,
+        ruleId: rule.id,
+        policyId: `${rule.organization_id}:${rule.id}:${rule.current_revision}`,
+        groupBy,
+        groupingKeyTemplate: rule.grouping_key_template,
+        groupingEnabled: rule.grouping_enabled,
+        scope,
+        payload,
+        severity: effective.severity,
+      });
+
+      let inCooldown = dbCoolingDown;
+      if (shouldFire && effective.cooldownSeconds > 0) {
+        const cooldownResult = await this.redisState.acquireCooldown({
+          organizationId: rule.organization_id,
+          projectId: scope.projectId ?? null,
+          ruleId: rule.id,
+          fingerprint: alertKey,
+          cooldownSeconds: effective.cooldownSeconds,
+          workerId: this.workerId,
+          tier: engine,
+        });
+
+        if (!cooldownResult.acquired) {
+          inCooldown = true;
+        } else if (cooldownResult.fallback) {
+          // Redis unavailable - fallback to database cooldown state
+          inCooldown = dbCoolingDown;
+        } else {
+          // Successfully acquired Redis cooldown gate
+          inCooldown = false;
+        }
+      }
+
+      console.log(`[ALERTING] [Phase 4/4: Action Gate] 🚨 Rule "${rule.name}" MATCHED! Consecutive Breaches: ${consecutive}/${effective.consecutiveBreaches} | ShouldFire: ${shouldFire} | InCooldown: ${inCooldown} | Dimension: ${dimensionKey}`);
 
       this.log.info(
         {
@@ -334,6 +385,9 @@ export class AlertRuntimeEngines {
           engine,
           observed,
           threshold,
+          shouldFire,
+          inCooldown,
+          dimensionKey,
         },
         'alert rule matches condition',
       );
@@ -350,7 +404,7 @@ export class AlertRuntimeEngines {
         consecutiveBreaches: consecutive,
         isBreaching: true,
         evaluatedAt: now,
-        firedAt: shouldFire && !coolingDown ? now : null,
+        firedAt: shouldFire && !inCooldown ? now : null,
       });
 
       if (!shouldFire) {
@@ -358,14 +412,26 @@ export class AlertRuntimeEngines {
         summary.suppressed += 1;
         return;
       }
-      if (coolingDown) {
-        console.log(`[ALERTING]   ⏳ SUPPRESSED: Rule "${rule.name}" is currently in cooldown (${effective.cooldownSeconds}s window active).`);
+      if (inCooldown) {
+        console.log(`[ALERTING]   ⏳ SUPPRESSED: Rule "${rule.name}" is currently in cooldown (${effective.cooldownSeconds}s window active, dimension: ${dimensionKey}).`);
         summary.suppressed += 1;
         return;
       }
 
-      console.log(`[ALERTING]   🔥 FIRED! Dispatched alert notification decision for "${rule.name}".`);
-      await this.appendDecision(rule, effective, scope, payload, engine, 'fired', observed, threshold);
+      console.log(`[ALERTING]   🔥 FIRED! Dispatched alert notification decision for "${rule.name}" (dimension: ${dimensionKey}).`);
+      await this.appendDecision(
+        rule,
+        effective,
+        scope,
+        payload,
+        engine,
+        'fired',
+        observed,
+        threshold,
+        normalizedDimensions.route ?? scope.endpoint ?? null,
+        normalizedDimensions.service ?? scope.service ?? null,
+        dimensionKey !== 'global' ? dimensionKey : null,
+      );
       summary.fired += 1;
     } catch (err) {
       summary.failed += 1;
@@ -383,15 +449,22 @@ export class AlertRuntimeEngines {
     kind: 'fired' | 'recovered',
     observed: number | null,
     threshold: number | null,
+    endpointOverride?: string | null,
+    serviceOverride?: string | null,
+    dimensionOverride?: string | null,
   ): Promise<void> {
     const effectiveProjectRule = buildEffectiveProjectRule(rule, effective, scope);
-    if (!effectiveProjectRule) return;
+    if (!effectiveProjectRule) {
+      console.log(`[ALERTING] ⚠️ Skipping decision: Could not build effective project rule for "${rule.name}" (${rule.id})`);
+      return;
+    }
     const result = await this.decision.decide({
       organizationId: rule.organization_id,
       projectId: scope.projectId ?? null,
       environment: scope.environment ?? null,
-      service: scope.service ?? null,
-      endpoint: scope.endpoint ?? null,
+      service: serviceOverride ?? scope.service ?? null,
+      endpoint: endpointOverride ?? scope.endpoint ?? null,
+      dimension: dimensionOverride ?? null,
       ruleRevision: rule.current_revision,
       policy: {
         policyId: `${rule.organization_id}:${rule.id}:${rule.current_revision}`,
@@ -845,12 +918,20 @@ export class AlertRuntimeEngines {
   }
 }
 
-function fastPayload(scoped: ScopedEvent): RuntimePayload {
-  const event = scoped.event;
-  const record = event as unknown as Record<string, unknown>;
-  const timestamp = new Date(resolveTimestamp(event));
+function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayload {
+  const event = ((scoped as ScopedEvent).event ?? scoped) as Record<string, unknown>;
+  const record = (event.record ?? event.data ?? event) as Record<string, unknown>;
+  let timestamp = new Date();
+  try {
+    const rawTs = resolveTimestamp(event as never);
+    if (rawTs) timestamp = new Date(rawTs);
+  } catch {
+    const rawTs = event.timestamp ?? (scoped as Record<string, unknown>).timestamp;
+    timestamp = rawTs instanceof Date ? rawTs : rawTs ? new Date(rawTs as string | number) : new Date();
+  }
+  const eventType = String(event.type ?? record.type ?? 'unknown');
   const values: Record<string, unknown> = {
-    telemetry: { type: event.type },
+    telemetry: { type: eventType },
   };
 
   if (event.type === 'error') {

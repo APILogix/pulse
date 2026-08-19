@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { LRUCache } from 'lru-cache';
 import type { AlertRuleConditionRow, AlertRuleRow } from '../rules/rules.types.js';
 import {
   resolveEffectiveRule,
@@ -6,6 +7,12 @@ import {
   type EffectiveRule,
   type EvaluationScope,
 } from '../policy/resolve-rule.js';
+import {
+  recordCatalogCacheHit,
+  recordCatalogCacheMiss,
+  recordCatalogCacheLoad,
+  recordCatalogCacheInvalidation,
+} from './alert-runtime-metrics.js';
 
 export type AlertRuntimeTier = 'fast' | 'window' | 'operational' | 'ai';
 
@@ -26,7 +33,8 @@ const RULE_COLUMNS = `
   labels, annotations, metadata, created_by, updated_by,
   enabled_at, disabled_at, created_at, updated_at, deleted_at,
   project_id, preset_key, is_default, last_evaluated_at,
-  COALESCE(current_revision, 1) AS current_revision
+  COALESCE(current_revision, 1) AS current_revision,
+  evaluation_category
 `;
 
 const BINDING_COLUMNS = `
@@ -164,9 +172,8 @@ export class AlertCatalogSnapshot {
     for (const rule of candidateRules) {
       const bindings = this.bindingsByRule.get(rule.id) ?? [];
       const conditions = this.conditionsByRule.get(rule.id) ?? [];
-      // Default organization rules (is_default = true) and project-specific rules apply automatically.
-      // Optional catalog rules (is_default = false and project_id = null) require an explicit project subscription binding.
-      const requireProjectSubscription = !rule.is_default && rule.project_id === null;
+      // Project scope requires an explicit project subscription binding for organization-level catalog rules.
+      const requireProjectSubscription = rule.project_id === null;
 
       const effective = resolveEffectiveRule(
         rule,
@@ -203,28 +210,165 @@ export class AlertCatalogSnapshot {
 }
 
 export class AlertRuntimeRuleCatalog {
-  constructor(private readonly db: Pool) {}
+  private static readonly globalCache = new LRUCache<string, AlertCatalogSnapshot>({
+    max: 2000,
+    ttl: 60_000,
+    updateAgeOnGet: false,
+    allowStale: false,
+  });
 
+  private readonly cache: LRUCache<string, AlertCatalogSnapshot>;
+  private readonly inFlightLoads = new Map<string, Promise<AlertCatalogSnapshot>>();
+
+  constructor(
+    private readonly db: Pool,
+    options: { maxEntries?: number; ttlMs?: number; isolatedCache?: boolean } = {},
+  ) {
+    if (options.isolatedCache) {
+      this.cache = new LRUCache<string, AlertCatalogSnapshot>({
+        max: options.maxEntries ?? 2000,
+        ttl: options.ttlMs ?? 60_000, // 60s default TTL
+        updateAgeOnGet: false,
+        allowStale: false,
+      });
+    } else {
+      this.cache = AlertRuntimeRuleCatalog.globalCache;
+    }
+  }
+
+  public static invalidateGlobal(organizationId?: string, tier?: AlertRuntimeTier, reason = 'mutation'): void {
+    if (organizationId && tier) {
+      AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${tier}`);
+    } else if (organizationId) {
+      for (const t of ['fast', 'window', 'operational', 'ai'] as AlertRuntimeTier[]) {
+        AlertRuntimeRuleCatalog.globalCache.delete(`${organizationId}:${t}`);
+      }
+    } else {
+      AlertRuntimeRuleCatalog.globalCache.clear();
+    }
+    recordCatalogCacheInvalidation(reason);
+  }
+
+  public static clearGlobalCache(): void {
+    AlertRuntimeRuleCatalog.globalCache.clear();
+  }
+
+  /**
+   * Load catalog snapshot for an organization and runtime tier.
+   * Leverages process-local L1 LRU cache and single-flight coalescing to eliminate
+   * duplicate database queries across concurrent evaluations.
+   */
   async loadCatalogSnapshot(
     organizationId: string,
     tier: AlertRuntimeTier,
+    options: { skipCache?: boolean } = {},
   ): Promise<AlertCatalogSnapshot> {
-    const rules = await this.listRulesForTier(organizationId, tier);
-    const ruleIds = rules.map((rule) => rule.id);
-    const [conditionsByRule, bindingsByRule] = await Promise.all([
-      this.listConditions(ruleIds),
-      this.listBindings(organizationId, ruleIds),
-    ]);
-    return new AlertCatalogSnapshot(
-      organizationId,
-      tier,
-      rules,
-      conditionsByRule,
-      bindingsByRule,
-    );
+    const cacheKey = `${organizationId}:${tier}`;
+
+    if (!options.skipCache) {
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        recordCatalogCacheHit(tier);
+        return cached;
+      }
+    }
+
+    recordCatalogCacheMiss(tier);
+
+    // Single-flight deduplication for concurrent loads of the same org:tier
+    const inFlight = this.inFlightLoads.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const loadPromise = (async () => {
+      try {
+        const rules = await this.listRulesForTier(organizationId, tier);
+        const ruleIds = rules.map((rule) => rule.id);
+        const [conditionsByRule, bindingsByRule] = await Promise.all([
+          this.listConditions(ruleIds),
+          this.listBindings(organizationId, ruleIds),
+        ]);
+        const snapshot = new AlertCatalogSnapshot(
+          organizationId,
+          tier,
+          rules,
+          conditionsByRule,
+          bindingsByRule,
+        );
+
+        this.cache.set(cacheKey, snapshot);
+        recordCatalogCacheLoad(tier);
+        return snapshot;
+      } finally {
+        this.inFlightLoads.delete(cacheKey);
+      }
+    })();
+
+    this.inFlightLoads.set(cacheKey, loadPromise);
+    return loadPromise;
+  }
+
+  /**
+   * Invalidate cached catalog snapshot(s) after rule/binding/condition mutations.
+   */
+  invalidate(organizationId?: string, tier?: AlertRuntimeTier, reason = 'mutation'): void {
+    if (organizationId && tier) {
+      this.cache.delete(`${organizationId}:${tier}`);
+    } else if (organizationId) {
+      for (const t of ['fast', 'window', 'operational', 'ai'] as AlertRuntimeTier[]) {
+        this.cache.delete(`${organizationId}:${t}`);
+      }
+    } else {
+      this.cache.clear();
+    }
+    recordCatalogCacheInvalidation(reason);
+  }
+
+  /**
+   * Clear all cached snapshots in memory.
+   */
+  clearCache(): void {
+    this.cache.clear();
+    this.inFlightLoads.clear();
+  }
+
+  /**
+   * Return the current number of cached entries in L1 memory.
+   */
+  getCacheSize(): number {
+    return this.cache.size;
   }
 
   async listRulesForTier(organizationId: string, tier: AlertRuntimeTier): Promise<RuntimeRuleRow[]> {
+    if (tier === 'fast') {
+      const prefixes = TIER_FIELD_PREFIXES.fast;
+      const result = await this.db.query<RuntimeRuleRow>(
+        `SELECT ${RULE_COLUMNS}
+           FROM alert_rules r
+          WHERE r.organization_id = $1
+            AND r.enabled = TRUE
+            AND r.deleted_at IS NULL
+            AND (
+              r.evaluation_category = 'fast'
+              OR EXISTS (
+                SELECT 1
+                  FROM alert_rule_conditions c
+                 WHERE c.rule_id = r.id
+                   AND EXISTS (
+                     SELECT 1 FROM unnest($2::text[]) AS p(prefix)
+                      WHERE lower(c.field_path) = p.prefix
+                         OR lower(c.field_path) LIKE p.prefix || '.%'
+                   )
+              )
+            )
+          ORDER BY r.created_at ASC
+          LIMIT 1000`,
+        [organizationId, prefixes],
+      );
+      return result.rows;
+    }
+
     const prefixes = TIER_FIELD_PREFIXES[tier];
     const result = await this.db.query<RuntimeRuleRow>(
       `SELECT ${RULE_COLUMNS}
@@ -232,6 +376,7 @@ export class AlertRuntimeRuleCatalog {
         WHERE r.organization_id = $1
           AND r.enabled = TRUE
           AND r.deleted_at IS NULL
+          AND r.evaluation_category = 'analytics'
           AND EXISTS (
             SELECT 1
               FROM alert_rule_conditions c

@@ -164,17 +164,54 @@ describe('UsageAnalyticsService', () => {
     expect(decoded).toBe(query.offset + query.limit);
   });
 
-  it('evicts project-specific cache entries', async () => {
+  it('evicts project-specific cache entries including monthly usage', async () => {
     (repository.getSummary as ReturnType<typeof vi.fn>).mockResolvedValue(summary);
     (repository.getTimeSeries as ReturnType<typeof vi.fn>).mockResolvedValue({
       points: [point],
       hasMore: false,
     });
+    (repository.getMonthlyUsageVsPlan as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     await service.getUsageAnalytics('org-1', 'project-1', 'user-1', query);
+    await service.getMonthlyUsageVsPlan('org-1', 'project-1', 'user-1');
+
     service.evictProjectCache('project-1');
+
     await service.getUsageAnalytics('org-1', 'project-1', 'user-1', query);
+    await service.getMonthlyUsageVsPlan('org-1', 'project-1', 'user-1');
 
     expect(repository.getSummary).toHaveBeenCalledTimes(2);
+    expect(repository.getMonthlyUsageVsPlan).toHaveBeenCalledTimes(2);
+  });
+
+  it('authorizes viewers and returns monthly usage vs plan with caching', async () => {
+    const monthlyData = [
+      {
+        yearMonth: '2026-08',
+        totalEvents: 1000,
+        totalBytes: 204800,
+        apiKeyRequests: 500,
+        rateLimitedEvents: 0,
+        alertNotifications: 2,
+        activeUsers: 5,
+        planLimit: null,
+        usagePercent: null,
+      },
+    ];
+    (repository.getMonthlyUsageVsPlan as ReturnType<typeof vi.fn>).mockResolvedValue(monthlyData);
+
+    const first = await service.getMonthlyUsageVsPlan('org-1', 'project-1', 'user-1');
+    const second = await service.getMonthlyUsageVsPlan('org-1', 'project-1', 'user-1');
+
+    expect(base.requireProjectAccess).toHaveBeenCalledWith(
+      'org-1',
+      'project-1',
+      'user-1',
+      ProjectMemberRole.VIEWER,
+    );
+    expect(first).toEqual(monthlyData);
+    expect(second).toBe(first);
+    expect(repository.getMonthlyUsageVsPlan).toHaveBeenCalledTimes(1);
   });
 });
+

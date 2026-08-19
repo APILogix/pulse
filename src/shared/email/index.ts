@@ -85,11 +85,13 @@ export {
   orgInvitationTemplate,
   passwordChangedTemplate,
   passwordResetTemplate,
+  standardNotificationTemplate,
   type ActionTemplateInput,
   type EmailTemplate,
   type MfaCodeTemplateInput,
   type OrgInvitationTemplateInput,
   type RequestContext,
+  type StandardNotificationInput,
   type TemplateInput,
 } from './templates.js';
 

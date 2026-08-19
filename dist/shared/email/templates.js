@@ -23,7 +23,7 @@
  *   · Added preheaders, a severity rail, bulletproof VML buttons, a responsive
  *     breakpoint, dark-mode locks and real plaintext bodies.
  */
-import { TEXT_RULE, button, callout, dataTable, esc, glyph, linkFallback, otpBlock, p, pill, renderLayout, safeUrlText, stack, strong, stripControl, textBody, textGreeting, textRows, } from './components.js';
+import { TEXT_RULE, button, buttonRow, callout, codeBlock, dataTable, esc, glyph, linkFallback, metricCompare, otpBlock, p, pill, renderLayout, safeUrlText, stack, strong, stripControl, textBody, textGreeting, textRows, } from './components.js';
 /* ════════════════════════════════════════════════════════════════════════
    SHARED COMPOSITION
    ════════════════════════════════════════════════════════════════════════ */
@@ -462,6 +462,74 @@ export function apiKeyCreatedTemplate(input) {
             closing: null,
         }),
         text: textBody(textGreeting(input.userName), `A new API key was created on your ${input.appName} account.`, textRows(rows.map((r) => ({ label: r.label, value: r.value }))), contextText(input.context), input.manageUrl ? `Manage keys: ${safeUrlText(input.manageUrl)}` : '', 'If you did not create this key, revoke it immediately.'),
+    };
+}
+/**
+ * Standard multi-purpose notification email template rendered in Sentinel Mono design.
+ * Suitable for general alerts, system reports, digests, and operational notifications.
+ */
+export function standardNotificationTemplate(input) {
+    const app = input.appName || 'Pulsiv';
+    const tone = input.tone ?? 'brand';
+    const title = stripControl(input.title);
+    const eyebrow = input.eyebrowText ?? `${app} · notification`;
+    const subject = input.subject ?? subjectLine(app, title);
+    const rows = input.details ? [...input.details] : [];
+    let actionsHtml = '';
+    if (input.primaryAction && input.secondaryAction) {
+        actionsHtml = buttonRow(input.primaryAction, input.secondaryAction);
+    }
+    else if (input.primaryAction) {
+        actionsHtml = stack([
+            button(input.primaryAction.url, input.primaryAction.label, { tone: input.primaryAction.tone ?? tone }),
+            linkFallback(input.primaryAction.url),
+        ]);
+    }
+    const metricHtml = input.metric
+        ? metricCompare({
+            label: input.metric.window ? `${input.metric.label} · ${input.metric.window}` : input.metric.label,
+            value: String(input.metric.value),
+            threshold: input.metric.threshold !== undefined ? String(input.metric.threshold) : '—',
+            tone,
+        })
+        : '';
+    const calloutHtml = input.callout
+        ? callout(input.callout.tone ?? 'neutral', esc(input.callout.message), input.callout.title)
+        : '';
+    const codeHtml = input.codeSnippet
+        ? codeBlock(input.codeSnippet.code)
+        : '';
+    const body = stack([
+        input.userName ? p(esc(textGreeting(input.userName))) : '',
+        input.summary ? p(esc(input.summary)) : '',
+        input.message ? p(esc(input.message)) : '',
+        metricHtml,
+        rows.length > 0 ? dataTable(rows) : '',
+        actionsHtml,
+        calloutHtml,
+        codeHtml,
+        contextTable(input.context),
+    ]);
+    const preheaderText = input.preheader
+        ? stripControl(input.preheader)
+        : input.summary
+            ? stripControl(input.summary)
+            : `${title} on ${app}`;
+    return {
+        subject,
+        html: renderLayout({
+            appName: app,
+            title,
+            eyebrowText: eyebrow,
+            preheader: preheaderText,
+            tone,
+            chip: input.chip,
+            body,
+            footer: input.footerKind ?? 'alert',
+            footerLink: input.footerLink,
+            closing: null,
+        }),
+        text: textBody(input.userName ? textGreeting(input.userName) : '', title, input.summary, input.message, input.metric ? `${input.metric.label}: ${input.metric.value}${input.metric.threshold ? ` (threshold: ${input.metric.threshold})` : ''}` : '', rows.length > 0 ? textRows(rows.map((r) => ({ label: r.label, value: r.value }))) : '', input.primaryAction ? `${input.primaryAction.label}: ${safeUrlText(input.primaryAction.url)}` : '', input.secondaryAction ? `${input.secondaryAction.label}: ${safeUrlText(input.secondaryAction.url)}` : '', input.callout ? `${input.callout.title ? `${input.callout.title}: ` : ''}${input.callout.message}` : '', input.codeSnippet ? input.codeSnippet.code : '', contextText(input.context)),
     };
 }
 /* ── end of templates ── */

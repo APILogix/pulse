@@ -23,6 +23,8 @@
  *   · Added preheaders, a severity rail, bulletproof VML buttons, a responsive
  *     breakpoint, dark-mode locks and real plaintext bodies.
  */
+import { type DataRow, type FooterKind } from './components.js';
+import type { Tone } from './theme.js';
 export type EmailTemplate = {
     subject: string;
     html: string;
@@ -110,4 +112,52 @@ export declare function apiKeyCreatedTemplate(input: TemplateInput & {
     scopes?: string | undefined;
     manageUrl?: string | undefined;
 }): EmailTemplate;
+export interface StandardNotificationInput {
+    appName?: string | undefined;
+    title: string;
+    subject?: string | undefined;
+    eyebrowText?: string | undefined;
+    preheader?: string | undefined;
+    tone?: Tone | undefined;
+    chip?: string | undefined;
+    userName?: string | undefined;
+    summary?: string | undefined;
+    message?: string | undefined;
+    metric?: {
+        label: string;
+        value: string | number;
+        threshold?: string | number | undefined;
+        window?: string | undefined;
+    } | undefined;
+    details?: DataRow[] | undefined;
+    primaryAction?: {
+        label: string;
+        url: string;
+        tone?: Tone | undefined;
+    } | undefined;
+    secondaryAction?: {
+        label: string;
+        url: string;
+    } | undefined;
+    callout?: {
+        tone?: Tone | undefined;
+        title?: string | undefined;
+        message: string;
+    } | undefined;
+    codeSnippet?: {
+        code: string;
+        caption?: string | undefined;
+    } | undefined;
+    context?: RequestContext | undefined;
+    footerKind?: FooterKind | undefined;
+    footerLink?: {
+        url: string;
+        label: string;
+    } | undefined;
+}
+/**
+ * Standard multi-purpose notification email template rendered in Sentinel Mono design.
+ * Suitable for general alerts, system reports, digests, and operational notifications.
+ */
+export declare function standardNotificationTemplate(input: StandardNotificationInput): EmailTemplate;
 //# sourceMappingURL=templates.d.ts.map

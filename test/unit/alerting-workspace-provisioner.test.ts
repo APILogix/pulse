@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AlertingWorkspaceRepository } from '../../src/modules/alerting/workspace/alerting-workspace.repository.js';
-import { POLICY_CATEGORIES, POLICY_DEFAULTS, PROVIDER_DEFAULTS, ROUTING_DEFAULTS, ESCALATION_DEFAULTS, DASHBOARD_WIDGET_DEFAULTS, SAVED_VIEW_DEFAULTS, FEATURE_FLAG_DEFAULTS } from '../../src/modules/alerting/workspace/alerting-workspace.defaults.js';
+import { POLICY_CATEGORIES, PROVIDER_DEFAULTS, ROUTING_DEFAULTS, ESCALATION_DEFAULTS, DASHBOARD_WIDGET_DEFAULTS, SAVED_VIEW_DEFAULTS, FEATURE_FLAG_DEFAULTS } from '../../src/modules/alerting/workspace/alerting-workspace.defaults.js';
+import { DEFAULT_ALERT_PRESETS } from '../../src/modules/alerting/evaluator/presets.js';
 import { ALERTING_WORKSPACE_INITIALIZATION_VERSION } from '../../src/modules/alerting/workspace/alerting-workspace.types.js';
 
 function sqlText(sql: unknown): string {
@@ -16,7 +17,7 @@ function createClient() {
       rows: POLICY_CATEGORIES.map((category, index) => ({ slug: category.slug, id: `category-${index}` })),
       rowCount: POLICY_CATEGORIES.length,
     };
-    if (text.includes('INSERT INTO alerting_policy_catalog')) return { rows: [{ policy_versions: String(POLICY_DEFAULTS.length) }], rowCount: 1 };
+    if (text.includes('INSERT INTO alerting_policy_catalog')) return { rows: [{ policy_versions: String(DEFAULT_ALERT_PRESETS.length) }], rowCount: 1 };
     if (text.includes('INSERT INTO alerting_escalation_policies_v2')) return {
       rows: ESCALATION_DEFAULTS.map((escalation, index) => ({ system_key: escalation.systemKey, id: `escalation-${index}` })),
       rowCount: ESCALATION_DEFAULTS.length,
@@ -52,7 +53,7 @@ describe('AlertingWorkspaceRepository', () => {
       workspaceId: 'workspace-1',
       initializationVersion: ALERTING_WORKSPACE_INITIALIZATION_VERSION,
       categories: POLICY_CATEGORIES.length,
-      policies: POLICY_DEFAULTS.length,
+      policies: DEFAULT_ALERT_PRESETS.length,
       routingDefaults: ROUTING_DEFAULTS.length,
       escalationPolicies: ESCALATION_DEFAULTS.length,
       providers: PROVIDER_DEFAULTS.length,

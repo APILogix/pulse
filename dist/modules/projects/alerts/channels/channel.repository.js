@@ -294,7 +294,7 @@ export class AlertChannelRepository {
          AND users.status = 'active'
          AND users.email_verified = TRUE
          AND NULLIF(BTRIM(users.email), '') IS NOT NULL
-         AND project_pref.digest_mode = 'immediate'
+         AND project_pref.digest_mode::text = 'immediate'
          AND CASE $4 WHEN 'info' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3
                      WHEN 'critical' THEN 4 ELSE 0 END
              >= CASE project_pref.severity_threshold
@@ -314,16 +314,6 @@ export class AlertChannelRepository {
               AND disabled_pref.enabled = FALSE
               AND disabled_pref.deleted_at IS NULL
          )
-         AND NOT EXISTS (
-           SELECT 1
-             FROM user_notification_preferences user_pref
-            WHERE user_pref.organization_id = member.organization_id
-              AND user_pref.user_id = member.user_id
-              AND user_pref.channel_kind = 'email'
-              AND (user_pref.enabled = FALSE
-                OR (user_pref.temporary_mute_until IS NOT NULL AND user_pref.temporary_mute_until > NOW())
-                OR (user_pref.vacation_until IS NOT NULL AND user_pref.vacation_until > NOW()))
-         )
        ORDER BY LOWER(BTRIM(users.email)), member.user_id`, [request.organizationId, request.projectId, request.category, request.severity]);
         return result.rows.map((row) => ({ userId: row.user_id, email: row.email }));
     }
@@ -342,9 +332,9 @@ export class AlertChannelRepository {
          subscription.id AS subscription_id,
          subscription.connector_id AS subscription_connector_id,
          connector.provider AS connector_provider,
-         project_pref.digest_mode AS project_digest_mode,
-         member_pref.digest_mode AS member_digest_mode,
-         subscription.digest_mode AS subscription_digest_mode,
+         project_pref.digest_mode::text AS project_digest_mode,
+         member_pref.digest_mode::text AS member_digest_mode,
+         subscription.digest_mode::text AS subscription_digest_mode,
          project_pref.quiet_hours AS project_quiet_hours,
          member_pref.quiet_hours AS member_quiet_hours,
          subscription.quiet_hours AS subscription_quiet_hours,
@@ -418,7 +408,7 @@ export class AlertChannelRepository {
                 >= CASE subscription.severity_threshold
                      WHEN 'info' THEN 1 WHEN 'warning' THEN 2 WHEN 'error' THEN 3
                      WHEN 'critical' THEN 4 ELSE 5 END
-            AND subscription.digest_mode = 'immediate'
+            AND (subscription.digest_mode IS NULL OR subscription.digest_mode::text = 'immediate' OR subscription.digest_mode::text = '"immediate"')
           )
         )
       ORDER BY member.user_id, channel.id, subscription.id,

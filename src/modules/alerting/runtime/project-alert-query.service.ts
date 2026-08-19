@@ -1,5 +1,4 @@
 import type { Pool } from 'pg';
-import { pool } from '../../../config/database.js';
 import { AlertRuntimeRepository } from './alert-runtime.repository.js';
 import { NotificationEntitlementService } from './notification-entitlement.service.js';
 import { ProjectOwnerRepository } from './email-only-restricted-routing.js';
@@ -52,7 +51,7 @@ export class ProjectAlertQueryService {
 
   constructor(
     logDb: Pool,
-    primaryDb: Pool = pool,
+    primaryDb: Pool,
     entitlement?: NotificationEntitlementService,
     owners?: ProjectOwnerRepository,
   ) {

@@ -117,13 +117,13 @@ export async function requireOrgMembership(request, reply) {
     const userId = request.user?.id;
     const orgId = getParam(request, "orgId", "org_id");
     if (!userId) {
-        return void unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
+        return unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
     }
     if (!orgId) {
-        return void unauthorized(reply, "VALIDATION_ERROR", "Organization context is required", 400);
+        return unauthorized(reply, "VALIDATION_ERROR", "Organization context is required", 400);
     }
     if (!(await isActiveMember(orgId, userId))) {
-        return void unauthorized(reply, "INSUFFICIENT_PERMISSIONS", "You do not have access to this organization", 403);
+        return unauthorized(reply, "INSUFFICIENT_PERMISSIONS", "You do not have access to this organization", 403);
     }
 }
 /**

@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS alert_rules (
   project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
   preset_key VARCHAR(64),
   is_default BOOLEAN NOT NULL DEFAULT FALSE,
-  last_evaluated_at TIMESTAMPTZ
+  last_evaluated_at TIMESTAMPTZ,
+  evaluation_category VARCHAR(32) NOT NULL DEFAULT 'analytics' CHECK (evaluation_category IN ('fast', 'analytics'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rule_name_per_org
@@ -47,6 +48,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rule_name_per_org
 CREATE INDEX IF NOT EXISTS idx_alert_rules_org
   ON alert_rules(organization_id)
   WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alert_rules_org_eval_cat
+  ON alert_rules(organization_id, evaluation_category)
+  WHERE deleted_at IS NULL AND enabled = TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_alert_rules_enabled
   ON alert_rules(organization_id, enabled)

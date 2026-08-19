@@ -63,6 +63,8 @@ export interface CreateRuleInput {
     createdBy: string;
     conditions: RuleConditionInsert[];
     actions: RuleActionInsert[];
+    /** Backend evaluation category: 'fast' or 'analytics'. Defaults to 'analytics'. */
+    evaluationCategory?: 'fast' | 'analytics';
 }
 export declare class RulesRepository {
     private readonly db;

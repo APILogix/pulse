@@ -25,6 +25,7 @@
  *      body so an email can be correlated with the audit log and the dedupe
  *      chain without opening the app.
  */
+import { type DataRow } from './components.js';
 import { type AlertSeverity } from './theme.js';
 import type { EmailTemplate } from './templates.js';
 export type { AlertSeverity };
@@ -59,6 +60,24 @@ export interface AlertIdentity {
     startedAt?: string | undefined;
     /** How many times this fingerprint has fired in the current window. */
     occurrences?: number | undefined;
+    /** Route / endpoint, e.g. "/api/v1/checkout". */
+    endpoint?: string | undefined;
+    /** HTTP method, e.g. "POST". */
+    method?: string | undefined;
+    /** HTTP status code, e.g. 500. */
+    statusCode?: string | number | undefined;
+    /** Latency / time taken, e.g. "1,450 ms". */
+    duration?: string | undefined;
+    /** Service name, e.g. "api". */
+    service?: string | undefined;
+    /** Distributed trace ID for root cause analysis. */
+    traceId?: string | undefined;
+    /** Distributed span ID. */
+    spanId?: string | undefined;
+    /** Client IP address. */
+    clientIp?: string | undefined;
+    /** Optional extra data table rows. */
+    extraRows?: DataRow[] | undefined;
 }
 /** Observed value against the threshold that was crossed. */
 export interface AlertMeasurement {
@@ -241,6 +260,18 @@ export interface LatencyAlertInput extends AlertScope {
     window?: string | undefined;
     /** Route or service that is slow. */
     endpoint?: string | undefined;
+    /** HTTP method, e.g. "POST". */
+    method?: string | undefined;
+    /** HTTP status code, e.g. 504. */
+    statusCode?: string | number | undefined;
+    /** Distributed trace ID. */
+    traceId?: string | undefined;
+    /** Distributed span ID. */
+    spanId?: string | undefined;
+    /** Client IP address. */
+    clientIp?: string | undefined;
+    /** Service name. */
+    service?: string | undefined;
     /** Sample size behind the percentile — a p95 over 4 requests is noise. */
     sampleSize?: number | undefined;
     /** Slowest contributing operations. */
@@ -248,6 +279,7 @@ export interface LatencyAlertInput extends AlertScope {
     severity?: AlertSeverity | undefined;
     startedAt?: string | undefined;
     insight?: AlertInsight | undefined;
+    extraRows?: DataRow[] | undefined;
 }
 /**
  * Latency threshold breach.
@@ -272,9 +304,20 @@ export interface ErrorSpikeInput extends AlertScope {
     /** Most frequent error message or exception type. */
     topError?: string | undefined;
     endpoint?: string | undefined;
+    /** HTTP method, e.g. "POST". */
+    method?: string | undefined;
+    /** Distributed trace ID. */
+    traceId?: string | undefined;
+    /** Distributed span ID. */
+    spanId?: string | undefined;
+    /** Client IP address. */
+    clientIp?: string | undefined;
+    /** Service name. */
+    service?: string | undefined;
     severity?: AlertSeverity | undefined;
     startedAt?: string | undefined;
     insight?: AlertInsight | undefined;
+    extraRows?: DataRow[] | undefined;
 }
 /**
  * Error-rate spike.

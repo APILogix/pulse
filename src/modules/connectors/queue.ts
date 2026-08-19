@@ -37,7 +37,16 @@ import {
 } from './delivery/transport.types.js';
 import { recordNotificationDelivery } from '../alerting/runtime/notification-metrics.js';
 import { sendEmail } from '../../shared/email/mailer.js';
+import {
+  alertFiringTemplate,
+  alertResolvedTemplate,
+  latencyAlertTemplate,
+  standardNotificationTemplate,
+  type AlertSeverity,
+  type EmailTemplate,
+} from '../../shared/email/index.js';
 import { ProjectOwnerRepository } from '../alerting/runtime/email-only-restricted-routing.js';
+import { renderEnterpriseAlertEmail } from '../alerting/runtime/alert-notification-formatter.js';
 
 interface MinimalJob<T> { id: string; data: T }
 
@@ -164,6 +173,20 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
+function renderManagedAlertEmail(jobData: ManagedEmailJobData, targetEmail: string): EmailTemplate {
+  return renderEnterpriseAlertEmail({
+    payload: (jobData.payload ?? {}) as Record<string, unknown>,
+    organizationId: jobData.organizationId,
+    projectId: jobData.projectId ?? undefined,
+    alertKey: jobData.alertKey ?? undefined,
+    alertEventId: jobData.alertEventId ?? undefined,
+    severity: jobData.severity,
+    ruleId: jobData.ruleId ?? undefined,
+    deliveryMode: jobData.deliveryMode ?? undefined,
+    recipientEmail: targetEmail,
+  });
+}
+
 async function processManagedEmailJob(
   jobData: ManagedEmailJobData,
   jobId: string,
@@ -173,6 +196,8 @@ async function processManagedEmailJob(
   log: FastifyBaseLogger,
 ): Promise<void> {
   const startedAt = Date.now();
+  console.log(`\n[ALERT_EMAIL] 📨 Processing managed email job: ${jobId} | NotificationJob: ${jobData.notificationJobId} | Rule: ${jobData.ruleId ?? 'N/A'} | Severity: ${jobData.severity} | Org: ${jobData.organizationId}`);
+
   const capability = await notificationEntitlement.resolve(jobData.organizationId);
   if (!capability.alertingEnabled && !capability.managedEmailEnabled) {
     await runtimeRepository.recordNotificationDelivery({
@@ -185,6 +210,7 @@ async function processManagedEmailJob(
       latencyMs: Date.now() - startedAt,
     });
     recordNotificationDelivery('notification.delivery.entitlement_blocked');
+    console.log(`[ALERT_EMAIL] 🚫 Managed email blocked by entitlement for Org: ${jobData.organizationId}`);
     log.warn({ jobId, orgId: jobData.organizationId }, 'Managed email blocked by entitlement');
     return;
   }
@@ -194,12 +220,14 @@ async function processManagedEmailJob(
     const owner = await owners.findActiveVerifiedOwner(jobData.organizationId, jobData.projectId);
     if (owner) {
       targetEmail = owner.email;
+      console.log(`[ALERT_EMAIL] 👤 Target email resolved from Project Owner: "${targetEmail}" (User: ${owner.userId})`);
     } else {
       const fallback = owners.findActiveVerifiedFallbackRecipient
         ? await owners.findActiveVerifiedFallbackRecipient(jobData.organizationId, jobData.projectId)
         : null;
       if (fallback) {
         targetEmail = fallback.email;
+        console.log(`[ALERT_EMAIL] 👤 Target email resolved from Org Fallback (Admin/Owner): "${targetEmail}" (User: ${fallback.userId})`);
       } else {
         await runtimeRepository.recordNotificationDelivery({
           organizationId: jobData.organizationId,
@@ -211,23 +239,31 @@ async function processManagedEmailJob(
           latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.owner_unavailable');
+        console.log(`[ALERT_EMAIL] ❌ Managed email delivery failed: Neither project owner nor fallback email is available for Project: ${jobData.projectId}`);
         log.warn({ jobId, projectId: jobData.projectId }, 'Managed email delivery failed: owner email unavailable');
         return;
       }
     }
   }
 
-  const payload = jobData.payload as { title?: unknown; body?: unknown; severity?: unknown };
-  const title = typeof payload.title === 'string' ? payload.title : 'Alert notification';
-  const body = typeof payload.body === 'string' ? payload.body : title;
-  const subject = `[${String(payload.severity ?? jobData.severity).toUpperCase()}] ${title}`;
+  const template = renderManagedAlertEmail(jobData, targetEmail);
+
+  console.log(`[ALERT_EMAIL] 📝 Rendered Alert Email Template:`);
+  console.log(`[ALERT_EMAIL]   📌 To: "${targetEmail}"`);
+  console.log(`[ALERT_EMAIL]   📌 Subject: "${template.subject}"`);
+  console.log(`[ALERT_EMAIL]   📌 Rule ID: ${jobData.ruleId ?? 'N/A'}`);
+  console.log(`[ALERT_EMAIL]   📌 Alert Key: ${jobData.alertKey ?? 'N/A'}`);
+  console.log(`[ALERT_EMAIL]   📌 Severity: ${jobData.severity.toUpperCase()}`);
+  console.log(`[ALERT_EMAIL]   📌 Delivery Mode: ${jobData.deliveryMode}`);
+  console.log(`[ALERT_EMAIL] 📄 Email Body Preview (Plain Text):\n--------------------------------------------------\n${template.text}\n--------------------------------------------------`);
 
   try {
+    console.log(`[ALERT_EMAIL] 🚀 Sending email via SMTP to "${targetEmail}"...`);
     await sendEmail({
       to: targetEmail,
-      subject,
-      text: `${title}\n\n${body}`,
-      html: `<!doctype html><html><body><h2>${escapeHtml(title)}</h2><p>${escapeHtml(body).replace(/\n/g, '<br>')}</p></body></html>`,
+      subject: template.subject,
+      text: template.text,
+      html: template.html,
     });
 
     await runtimeRepository.recordNotificationDelivery({
@@ -238,9 +274,11 @@ async function processManagedEmailJob(
       latencyMs: Date.now() - startedAt,
     });
     recordNotificationDelivery('notification.delivery.sent');
+    console.log(`[ALERT_EMAIL] ✅ Managed email alert delivered successfully to "${targetEmail}" | NotificationJob: ${jobData.notificationJobId} | Latency: ${Date.now() - startedAt}ms`);
     log.info({ jobId, targetEmail, notificationJobId: jobData.notificationJobId }, 'Managed email alert delivered successfully');
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[ALERT_EMAIL] ❌ Managed email delivery error to "${targetEmail}":`, errMsg);
     const isPermanent = errMsg.includes('invalid') || errMsg.includes('recipient') || errMsg.includes('550') || errMsg.includes('syntax');
 
     await runtimeRepository.recordNotificationDelivery({

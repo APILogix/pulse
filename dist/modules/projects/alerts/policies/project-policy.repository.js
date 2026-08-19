@@ -52,12 +52,14 @@ export class ProjectPolicyRepository {
             const thresholdValue = (row.default_threshold && typeof row.default_threshold === 'object' && 'value' in row.default_threshold)
                 ? row.default_threshold.value
                 : row.default_threshold;
+            const evalCategory = (row.evaluation_window_seconds <= 1 || row.slug.endsWith('_fast')) ? 'fast' : 'analytics';
             const inserted = await client.query(`INSERT INTO alert_rules
            (organization_id, name, description, severity, enabled,
+            evaluation_category,
             evaluation_interval_seconds, cooldown_seconds, auto_resolve_after_minutes,
             deduplication_window_seconds, labels, annotations, metadata, created_by, enabled_at,
             project_id, preset_key, is_default)
-         VALUES ($1, $2, $3, $4::alert_severity, $5, $6, $7, 60, 3600,
+         VALUES ($1, $2, $3, $4::alert_severity, $5, $13, $6, $7, 60, 3600,
                  $8::jsonb, $9::jsonb, $10::jsonb, $11, CASE WHEN $5 THEN NOW() ELSE NULL END,
                  NULL, $12, TRUE)
          ON CONFLICT DO NOTHING
@@ -74,6 +76,7 @@ export class ProjectPolicyRepository {
                 JSON.stringify({ source: 'alerting_policy_catalog', policyId: row.id }),
                 createdBy,
                 row.slug,
+                evalCategory,
             ]);
             const ruleId = inserted.rows[0]?.id;
             if (ruleId) {

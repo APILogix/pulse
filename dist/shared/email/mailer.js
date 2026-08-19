@@ -22,17 +22,21 @@ function getTransporter() {
     return transporter;
 }
 export async function sendEmail(message) {
+    const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
+    console.log(`[EMAIL] 📧 Sending email | To: "${message.to}" | From: "${from}" | Subject: "${message.subject}" | SMTP Host: "${env.SMTP_HOST}:${env.SMTP_PORT}"`);
     try {
-        const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
-        await getTransporter().sendMail({
+        const info = await getTransporter().sendMail({
             from,
             to: message.to,
             subject: message.subject,
             html: message.html,
             text: message.text,
         });
+        console.log(`[EMAIL] ✅ Email sent successfully! | MessageId: "${info.messageId}" | Response: "${info.response}" | To: "${message.to}"`);
+        logger.info({ to: message.to, subject: message.subject, messageId: info.messageId }, "Email delivered successfully");
     }
     catch (error) {
+        console.error(`[EMAIL] ❌ Failed to send email to "${message.to}" | Subject: "${message.subject}" | Error:`, error);
         logger.error({ err: error, to: message.to, subject: message.subject }, "Failed to send email");
         throw error;
     }

@@ -44,7 +44,7 @@ export declare class ProjectAlertQueryService {
     private readonly entitlement;
     private readonly owners;
     private readonly primaryDb;
-    constructor(logDb: Pool, primaryDb?: Pool, entitlement?: NotificationEntitlementService, owners?: ProjectOwnerRepository);
+    constructor(logDb: Pool, primaryDb: Pool, entitlement?: NotificationEntitlementService, owners?: ProjectOwnerRepository);
     list(organizationId: string, projectId: string, query: ProjectAlertQuery): Promise<{
         data: Array<Record<string, unknown>>;
         total: number;

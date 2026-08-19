@@ -4,6 +4,7 @@ import { AlertingRepository } from './repository.js';
 import { AlertingService } from './service.js';
 import { alertingRoutes } from './routes.js';
 import { alertingWorkspaceRoutes } from './workspace/alerting-workspace.routes.js';
+import { pool } from '../../config/database.js';
 import { logDB } from '../../config/log-database.js';
 import { ProjectAlertQueryService } from './runtime/project-alert-query.service.js';
 import { projectAlertQueryRoutes } from './runtime/project-alert-query.routes.js';
@@ -11,7 +12,7 @@ const moduleLogger = logger.child({ component: 'alerting-module' });
 async function alertingModule(fastify, _options) {
     const repository = new AlertingRepository();
     const service = new AlertingService({ repository, logger: fastify.log });
-    const projectAlerts = new ProjectAlertQueryService(logDB.getPrimaryPool());
+    const projectAlerts = new ProjectAlertQueryService(logDB.getPrimaryPool(), pool);
     fastify.decorate('alerting', { repository, service, projectAlerts });
     await fastify.register(alertingWorkspaceRoutes, { prefix: '/organizations/:orgId' });
     await fastify.register(alertingRoutes, { prefix: '/organizations/:orgId/alerting' });

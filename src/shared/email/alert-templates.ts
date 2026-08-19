@@ -90,6 +90,24 @@ export interface AlertIdentity {
   startedAt?: string | undefined;
   /** How many times this fingerprint has fired in the current window. */
   occurrences?: number | undefined;
+  /** Route / endpoint, e.g. "/api/v1/checkout". */
+  endpoint?: string | undefined;
+  /** HTTP method, e.g. "POST". */
+  method?: string | undefined;
+  /** HTTP status code, e.g. 500. */
+  statusCode?: string | number | undefined;
+  /** Latency / time taken, e.g. "1,450 ms". */
+  duration?: string | undefined;
+  /** Service name, e.g. "api". */
+  service?: string | undefined;
+  /** Distributed trace ID for root cause analysis. */
+  traceId?: string | undefined;
+  /** Distributed span ID. */
+  spanId?: string | undefined;
+  /** Client IP address. */
+  clientIp?: string | undefined;
+  /** Optional extra data table rows. */
+  extraRows?: DataRow[] | undefined;
 }
 
 /** Observed value against the threshold that was crossed. */
@@ -155,6 +173,13 @@ function identityRows(identity: AlertIdentity, scope: AlertScope): DataRow[] {
     { label: 'Rule', value: identity.ruleName, sans: true },
     { label: 'Severity', value: identity.severity.toUpperCase(), tone: severityTone(identity.severity) },
   ];
+  if (identity.endpoint) rows.push({ label: 'Route', value: identity.endpoint, sans: true });
+  if (identity.method) rows.push({ label: 'Method', value: String(identity.method).toUpperCase() });
+  if (identity.statusCode !== undefined && identity.statusCode !== null && String(identity.statusCode).trim() !== '') {
+    rows.push({ label: 'Status code', value: String(identity.statusCode) });
+  }
+  if (identity.duration) rows.push({ label: 'Time taken', value: identity.duration });
+  if (identity.service) rows.push({ label: 'Service', value: identity.service, sans: true });
   if (scope.projectName) rows.push({ label: 'Project', value: scope.projectName, sans: true });
   if (scope.environment) rows.push({ label: 'Environment', value: scope.environment });
   if (identity.source) rows.push({ label: 'Source', value: identity.source });
@@ -165,8 +190,14 @@ function identityRows(identity: AlertIdentity, scope: AlertScope): DataRow[] {
       value: `${identity.occurrences} in this window`,
     });
   }
+  if (identity.traceId) rows.push({ label: 'Trace ID', value: identity.traceId });
+  if (identity.spanId) rows.push({ label: 'Span ID', value: identity.spanId });
+  if (identity.clientIp) rows.push({ label: 'Client IP', value: identity.clientIp });
   if (identity.fingerprint) rows.push({ label: 'Fingerprint', value: identity.fingerprint });
   if (identity.eventId) rows.push({ label: 'Event id', value: identity.eventId });
+  if (identity.extraRows && identity.extraRows.length > 0) {
+    rows.push(...identity.extraRows);
+  }
   return rows;
 }
 
@@ -320,6 +351,8 @@ export function alertResolvedTemplate(input: AlertResolvedInput): EmailTemplate 
     { label: 'Rule', value: input.identity.ruleName, sans: true },
     { label: 'Severity', value: input.identity.severity.toUpperCase() },
   ];
+  if (input.identity.endpoint) rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
+  if (input.identity.method) rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
   if (input.identity.startedAt) rows.push({ label: 'Started', value: input.identity.startedAt });
@@ -328,6 +361,7 @@ export function alertResolvedTemplate(input: AlertResolvedInput): EmailTemplate 
   if (input.recoveredValue) rows.push({ label: 'Recovered to', value: input.recoveredValue, tone: 'success' });
   if (input.resolvedBy) rows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
   if (input.reason) rows.push({ label: 'Reason', value: input.reason, sans: true });
+  if (input.identity.traceId) rows.push({ label: 'Trace ID', value: input.identity.traceId });
   if (input.identity.fingerprint) rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
 
   const body = stack([
@@ -470,12 +504,20 @@ export function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplat
     { label: 'Policy', value: input.policyName, sans: true },
     { label: 'Step', value: step, tone: 'danger' },
   ];
+  if (input.identity.endpoint) rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
+  if (input.identity.method) rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
+  if (input.identity.statusCode !== undefined && input.identity.statusCode !== null) rows.push({ label: 'Status code', value: String(input.identity.statusCode) });
+  if (input.identity.duration) rows.push({ label: 'Time taken', value: input.identity.duration });
   if (input.firingFor) rows.push({ label: 'Firing for', value: input.firingFor, tone: 'danger' });
   if (input.trigger) rows.push({ label: 'Trigger', value: input.trigger, sans: true });
   if (input.notifying) rows.push({ label: 'Notifying', value: input.notifying, sans: true });
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
+  if (input.identity.traceId) rows.push({ label: 'Trace ID', value: input.identity.traceId });
+  if (input.identity.spanId) rows.push({ label: 'Span ID', value: input.identity.spanId });
+  if (input.identity.clientIp) rows.push({ label: 'Client IP', value: input.identity.clientIp });
   if (input.identity.fingerprint) rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
+  if (input.identity.extraRows && input.identity.extraRows.length > 0) rows.push(...input.identity.extraRows);
 
   const body = stack([
     p(
@@ -800,6 +842,18 @@ export interface LatencyAlertInput extends AlertScope {
   window?: string | undefined;
   /** Route or service that is slow. */
   endpoint?: string | undefined;
+  /** HTTP method, e.g. "POST". */
+  method?: string | undefined;
+  /** HTTP status code, e.g. 504. */
+  statusCode?: string | number | undefined;
+  /** Distributed trace ID. */
+  traceId?: string | undefined;
+  /** Distributed span ID. */
+  spanId?: string | undefined;
+  /** Client IP address. */
+  clientIp?: string | undefined;
+  /** Service name. */
+  service?: string | undefined;
   /** Sample size behind the percentile — a p95 over 4 requests is noise. */
   sampleSize?: number | undefined;
   /** Slowest contributing operations. */
@@ -807,6 +861,7 @@ export interface LatencyAlertInput extends AlertScope {
   severity?: AlertSeverity | undefined;
   startedAt?: string | undefined;
   insight?: AlertInsight | undefined;
+  extraRows?: DataRow[] | undefined;
 }
 
 /**
@@ -822,14 +877,23 @@ export function latencyAlertTemplate(input: LatencyAlertInput): EmailTemplate {
   const ruleName = `${input.percentile} latency${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
 
   const rows: DataRow[] = [{ label: 'Percentile', value: input.percentile }];
-  if (input.endpoint) rows.push({ label: 'Endpoint', value: input.endpoint });
+  if (input.endpoint) rows.push({ label: 'Route', value: input.endpoint, sans: true });
+  if (input.method) rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
+    rows.push({ label: 'Status code', value: String(input.statusCode) });
+  }
   if (input.window) rows.push({ label: 'Window', value: input.window });
   if (typeof input.sampleSize === 'number') {
     rows.push({ label: 'Samples', value: String(input.sampleSize) });
   }
+  if (input.service) rows.push({ label: 'Service', value: input.service, sans: true });
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
   if (input.startedAt) rows.push({ label: 'Started', value: input.startedAt });
+  if (input.traceId) rows.push({ label: 'Trace ID', value: input.traceId });
+  if (input.spanId) rows.push({ label: 'Span ID', value: input.spanId });
+  if (input.clientIp) rows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) rows.push(...input.extraRows);
 
   const contributors =
     input.topContributors && input.topContributors.length > 0
@@ -897,9 +961,20 @@ export interface ErrorSpikeInput extends AlertScope {
   /** Most frequent error message or exception type. */
   topError?: string | undefined;
   endpoint?: string | undefined;
+  /** HTTP method, e.g. "POST". */
+  method?: string | undefined;
+  /** Distributed trace ID. */
+  traceId?: string | undefined;
+  /** Distributed span ID. */
+  spanId?: string | undefined;
+  /** Client IP address. */
+  clientIp?: string | undefined;
+  /** Service name. */
+  service?: string | undefined;
   severity?: AlertSeverity | undefined;
   startedAt?: string | undefined;
   insight?: AlertInsight | undefined;
+  extraRows?: DataRow[] | undefined;
 }
 
 /**
@@ -926,11 +1001,17 @@ export function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate {
   }
   if (input.topStatusCode) rows.push({ label: 'Top status', value: input.topStatusCode, tone });
   if (input.topError) rows.push({ label: 'Top error', value: input.topError, sans: true });
-  if (input.endpoint) rows.push({ label: 'Endpoint', value: input.endpoint });
+  if (input.endpoint) rows.push({ label: 'Route', value: input.endpoint, sans: true });
+  if (input.method) rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  if (input.service) rows.push({ label: 'Service', value: input.service, sans: true });
   if (input.window) rows.push({ label: 'Window', value: input.window });
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
   if (input.startedAt) rows.push({ label: 'Started', value: input.startedAt });
+  if (input.traceId) rows.push({ label: 'Trace ID', value: input.traceId });
+  if (input.spanId) rows.push({ label: 'Span ID', value: input.spanId });
+  if (input.clientIp) rows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) rows.push(...input.extraRows);
 
   const body = stack([
     p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`),

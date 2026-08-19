@@ -17,7 +17,9 @@ import { ConnectorGlobalGuards } from './runtime-global-guards.js';
 import { isConnectorTransportJob, isManagedEmailJob, } from './delivery/transport.types.js';
 import { recordNotificationDelivery } from '../alerting/runtime/notification-metrics.js';
 import { sendEmail } from '../../shared/email/mailer.js';
+import { alertFiringTemplate, alertResolvedTemplate, latencyAlertTemplate, standardNotificationTemplate, } from '../../shared/email/index.js';
 import { ProjectOwnerRepository } from '../alerting/runtime/email-only-restricted-routing.js';
+import { renderEnterpriseAlertEmail } from '../alerting/runtime/alert-notification-formatter.js';
 function allJobs(arg) {
     if (Array.isArray(arg))
         return arg;
@@ -102,6 +104,19 @@ function escapeHtml(value) {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
+function renderManagedAlertEmail(jobData, targetEmail) {
+    return renderEnterpriseAlertEmail({
+        payload: (jobData.payload ?? {}),
+        organizationId: jobData.organizationId,
+        projectId: jobData.projectId ?? undefined,
+        alertKey: jobData.alertKey ?? undefined,
+        alertEventId: jobData.alertEventId ?? undefined,
+        severity: jobData.severity,
+        ruleId: jobData.ruleId ?? undefined,
+        deliveryMode: jobData.deliveryMode ?? undefined,
+        recipientEmail: targetEmail,
+    });
+}
 async function processManagedEmailJob(jobData, jobId, runtimeRepository, notificationEntitlement, owners, log) {
     const startedAt = Date.now();
     const capability = await notificationEntitlement.resolve(jobData.organizationId);
@@ -148,16 +163,14 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             }
         }
     }
-    const payload = jobData.payload;
-    const title = typeof payload.title === 'string' ? payload.title : 'Alert notification';
-    const body = typeof payload.body === 'string' ? payload.body : title;
-    const subject = `[${String(payload.severity ?? jobData.severity).toUpperCase()}] ${title}`;
+    const template = renderManagedAlertEmail(jobData, targetEmail);
+    console.log(`[ALERT_EMAIL] 📨 Preparing managed email for: "${targetEmail}" | Subject: "${template.subject}" | Project: "${jobData.projectId ?? 'org'}" | DeliveryMode: "${jobData.deliveryMode}"`);
     try {
         await sendEmail({
             to: targetEmail,
-            subject,
-            text: `${title}\n\n${body}`,
-            html: `<!doctype html><html><body><h2>${escapeHtml(title)}</h2><p>${escapeHtml(body).replace(/\n/g, '<br>')}</p></body></html>`,
+            subject: template.subject,
+            text: template.text,
+            html: template.html,
         });
         await runtimeRepository.recordNotificationDelivery({
             organizationId: jobData.organizationId,
@@ -167,10 +180,12 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.sent');
+        console.log(`[ALERT_EMAIL] ✅ Managed email alert delivered successfully to "${targetEmail}" | NotificationJob: ${jobData.notificationJobId}`);
         log.info({ jobId, targetEmail, notificationJobId: jobData.notificationJobId }, 'Managed email alert delivered successfully');
     }
     catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[ALERT_EMAIL] ❌ Managed email delivery error to "${targetEmail}":`, errMsg);
         const isPermanent = errMsg.includes('invalid') || errMsg.includes('recipient') || errMsg.includes('550') || errMsg.includes('syntax');
         await runtimeRepository.recordNotificationDelivery({
             organizationId: jobData.organizationId,

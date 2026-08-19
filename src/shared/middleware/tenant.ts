@@ -184,15 +184,15 @@ export async function requireProjectMembershipFromBody(
 export async function requireOrgMembership(
   request: FastifyRequest,
   reply: FastifyReply,
-): Promise<void> {
+): Promise<FastifyReply | void> {
   const userId = request.user?.id;
   const orgId = getParam(request, "orgId", "org_id");
 
   if (!userId) {
-    return void unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
+    return unauthorized(reply, "UNAUTHORIZED", "Authentication required", 401);
   }
   if (!orgId) {
-    return void unauthorized(
+    return unauthorized(
       reply,
       "VALIDATION_ERROR",
       "Organization context is required",
@@ -200,7 +200,7 @@ export async function requireOrgMembership(
     );
   }
   if (!(await isActiveMember(orgId, userId))) {
-    return void unauthorized(
+    return unauthorized(
       reply,
       "INSUFFICIENT_PERMISSIONS",
       "You do not have access to this organization",

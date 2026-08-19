@@ -20,6 +20,7 @@ import { evaluateRule, type EvaluableCondition } from '../evaluator.js';
 import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting, type RoutableAlert } from '../routing.js';
 import { getAlertRuleTemplate, listAlertRuleTemplates } from '../evaluator/rule-templates.js';
+import { AlertRuntimeRuleCatalog } from '../runtime/rule-catalog.js';
 import {
   AlertNotFoundError,
   AlertValidationError,
@@ -55,6 +56,41 @@ export type CreateRuleTemplateOverrides = {
 import { entitlementsService } from '../../billing/entitlements/service.js';
 import { quotaGuard } from '../../billing/entitlements/quota-guard.js';
 
+const FAST_SIGNAL_PREFIXES = [
+  'errors.unhandled',
+  'errors.fatal',
+  'errors.crash',
+  'logs.oom',
+  'logs.security',
+  'cron.failed',
+  'requests.auth_failure',
+  'deployment.failed',
+  'heartbeat.lost',
+  'connector.failure',
+];
+
+function inferEvaluationCategory(
+  conditions: Array<{ fieldPath: string; lookbackMinutes?: number | null | undefined }>,
+  evaluationIntervalSeconds?: number,
+  presetKey?: string | null,
+): 'fast' | 'analytics' {
+  if (presetKey) {
+    if (presetKey.endsWith('_fast')) return 'fast';
+    return 'analytics';
+  }
+  const isFastSignal =
+    conditions.length > 0 &&
+    conditions.every((c) => {
+      const p = c.fieldPath.toLowerCase().trim();
+      const lookback = c.lookbackMinutes ?? 0;
+      return lookback === 0 && FAST_SIGNAL_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}.`));
+    });
+  if (isFastSignal && (evaluationIntervalSeconds === undefined || evaluationIntervalSeconds <= 1)) {
+    return 'fast';
+  }
+  return 'analytics';
+}
+
 export class RulesService {
   private readonly repo: AlertingRepository;
   private readonly logger: FastifyBaseLogger;
@@ -83,6 +119,8 @@ export class RulesService {
       });
     }
 
+    const evaluationCategory = inferEvaluationCategory(body.conditions, body.evaluationIntervalSeconds);
+
     const rule = await this.repo.createRule({
       organizationId: orgId,
       name: body.name,
@@ -104,8 +142,10 @@ export class RulesService {
       createdBy: meta.actorUserId,
       conditions: body.conditions.map(toConditionInsert),
       actions: body.actions.map(toActionInsert),
+      evaluationCategory,
     });
     this.audit(orgId, meta, 'alert_rule.created', 'alert_rule', rule.id, { name: body.name });
+    AlertRuntimeRuleCatalog.invalidateGlobal(orgId, undefined, 'rule_created');
     return this.ruleToDto(rule);
   }
 
@@ -143,17 +183,20 @@ export class RulesService {
       meta.actorUserId,
     );
     this.audit(orgId, meta, 'alert_rule.updated', 'alert_rule', id, { fields: Object.keys(fields).filter((k) => fields[k] !== undefined) });
+    AlertRuntimeRuleCatalog.invalidateGlobal(orgId, undefined, 'rule_updated');
     return this.ruleToDto(rule);
   }
 
   async deleteRule(orgId: string, meta: RequestMeta, id: string): Promise<void> {
     await this.repo.softDeleteRule(orgId, id);
     this.audit(orgId, meta, 'alert_rule.deleted', 'alert_rule', id);
+    AlertRuntimeRuleCatalog.invalidateGlobal(orgId, undefined, 'rule_deleted');
   }
 
   async setRuleEnabled(orgId: string, meta: RequestMeta, id: string, enabled: boolean): Promise<Record<string, unknown>> {
     const rule = await this.repo.setRuleEnabled(orgId, id, enabled);
     this.audit(orgId, meta, enabled ? 'alert_rule.enabled' : 'alert_rule.disabled', 'alert_rule', id);
+    AlertRuntimeRuleCatalog.invalidateGlobal(orgId, undefined, 'rule_toggled');
     return this.ruleToDto(rule);
   }
 
@@ -195,6 +238,7 @@ export class RulesService {
       })),
     });
     this.audit(orgId, meta, 'alert_rule.cloned', 'alert_rule', clone.id, { sourceRuleId: id });
+    AlertRuntimeRuleCatalog.invalidateGlobal(orgId, undefined, 'rule_cloned');
     return this.ruleToDto(clone);
   }
 

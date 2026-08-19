@@ -15,9 +15,6 @@
  * route", and the org attaches real connectors later via routing rules or by
  * editing the action. This matches the platform default of "notify org
  * members in-app" without requiring a connector that may not exist yet.
- *
- * Condition fieldPaths are evaluated by evaluator/rule-evaluator.ts against
- * the observability event tables; see that file for the exact SQL per kind.
  */
 import type { Pool } from 'pg';
 import type { AlertSeverity, ConditionOperator } from '../rules/rules.types.js';
@@ -26,6 +23,7 @@ export interface DefaultAlertPreset {
     name: string;
     description: string;
     severity: AlertSeverity;
+    evaluationCategory: 'fast' | 'analytics';
     cooldownSeconds: number;
     evaluationIntervalSeconds: number;
     deduplicationWindowSeconds: number;

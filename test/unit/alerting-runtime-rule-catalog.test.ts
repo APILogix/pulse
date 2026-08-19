@@ -141,7 +141,7 @@ describe('alert runtime rule catalog', () => {
     expect(snapshot.resolveRulesForScope({ organizationId: ORG, projectId: PROJECT })).toEqual([]);
   });
 
-  it('evaluates default presets for any project without requiring explicit binding', () => {
+  it('does not evaluate org-level rules for project when not subscribed', () => {
     const snapshot = new AlertCatalogSnapshot(
       ORG,
       'fast',
@@ -151,9 +151,7 @@ describe('alert runtime rule catalog', () => {
     );
 
     const resolved = snapshot.resolveRulesForScope({ organizationId: ORG, projectId: PROJECT });
-    expect(resolved).toHaveLength(1);
-    expect(resolved[0]?.effective.enabled).toBe(true);
-    expect(resolved[0]?.effective.conditions[0]?.field_path).toBe('errors.fatal');
+    expect(resolved).toHaveLength(0);
   });
 
   it('returns the effective rule when a project is subscribed by binding', () => {

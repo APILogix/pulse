@@ -34,7 +34,7 @@ export declare function requireProjectMembershipFromBody(request: FastifyRequest
  * Require the authenticated caller to be an active member of `:orgId`.
  * Use as a preHandler AFTER `authenticate`.
  */
-export declare function requireOrgMembership(request: FastifyRequest, reply: FastifyReply): Promise<void>;
+export declare function requireOrgMembership(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply | void>;
 /**
  * Invalidate cached membership for a user in an org. Call this from the org
  * service when a member is removed/suspended/role-changed so the read guards

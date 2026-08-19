@@ -61,9 +61,11 @@ export class AlertNotificationRouter {
 
   private async dispatch(job: NotificationJobDetailRow): Promise<NotificationJobStatus> {
     const startedAt = Date.now();
+    console.log(`\n[ALERT_ROUTER] 🚀 Dispatching notification job ${job.id} | Channel: ${job.channel_kind} | Mode: ${job.delivery_mode} | Recipient: ${job.recipient_ref ?? job.recipient_user_id ?? 'N/A'} | Severity: ${job.severity} | Rule: ${job.rule_id}`);
     try {
       if (job.channel_kind === 'in_app') {
         await this.mark(job, 'sent', startedAt);
+        console.log(`[ALERT_ROUTER] 📱 In-App notification job ${job.id} processed as sent`);
         return 'sent';
       }
 
@@ -72,6 +74,7 @@ export class AlertNotificationRouter {
           (job.recipient_type !== 'PROJECT_OWNER' && job.recipient_type !== 'ORGANIZATION_FALLBACK')
           || job.provider !== 'MANAGED_EMAIL'
         )) {
+          console.log(`[ALERT_ROUTER] ⚠️ Suppressing email job ${job.id}: invalid restricted delivery contract`);
           await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
           return 'suppressed';
         }
@@ -84,6 +87,7 @@ export class AlertNotificationRouter {
               ? await this.owners.findActiveVerifiedFallbackRecipient(job.organization_id, job.project_id)
               : null;
             if (!fallback) {
+              console.log(`[ALERT_ROUTER] ⚠️ Suppressing email job ${job.id}: owner email unavailable and no fallback found`);
               await this.mark(job, 'suppressed', startedAt, 'owner_email_unavailable');
               return 'suppressed';
             }
@@ -124,15 +128,18 @@ export class AlertNotificationRouter {
           } as never,
         );
         await this.mark(job, 'queued', startedAt);
+        console.log(`[ALERT_ROUTER] 📬 Queued managed email job ${job.id} -> Queue: "${queueName}" | Recipient: "${job.recipient_ref}" | RecipientType: ${job.recipient_type}`);
         return 'queued';
       }
 
       if (job.delivery_mode === 'EMAIL_ONLY_RESTRICTED') {
+        console.log(`[ALERT_ROUTER] ⚠️ Suppressing job ${job.id}: invalid restricted delivery contract`);
         await this.mark(job, 'suppressed', startedAt, 'invalid_restricted_delivery_contract');
         return 'suppressed';
       }
 
       if (!job.connector_id) {
+        console.log(`[ALERT_ROUTER] ⚠️ Suppressing job ${job.id}: missing connector ID`);
         await this.mark(job, 'suppressed', startedAt, 'missing_connector');
         return 'suppressed';
       }
@@ -171,8 +178,10 @@ export class AlertNotificationRouter {
         } as never,
       );
       await this.mark(job, 'queued', startedAt);
+      console.log(`[ALERT_ROUTER] 📬 Queued connector job ${job.id} -> Queue: "${queueName}" | Connector: ${job.connector_id} | Channel: ${job.channel_kind}`);
       return 'queued';
     } catch (err) {
+      console.error(`[ALERT_ROUTER] ❌ Notification job ${job.id} dispatch failed:`, err);
       await this.mark(job, 'failed', startedAt, err instanceof Error ? err.message : String(err));
       this.log.error({ err, notificationJobId: job.id }, 'Alert notification dispatch failed');
       return 'failed';

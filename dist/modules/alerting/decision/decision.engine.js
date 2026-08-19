@@ -2,14 +2,17 @@ import { createHash } from 'node:crypto';
 import { AlertRuntimeRepository, } from '../runtime/alert-runtime.repository.js';
 import { NotificationRoutingService } from '../runtime/notification-routing.service.js';
 import { transitionAlert } from './state-machine.js';
+import { normalizeRoute } from '../runtime/route-normalizer.js';
+import { buildAlertNotificationPayload } from '../runtime/alert-notification-formatter.js';
 export function alertFingerprint(candidate) {
+    const normalizedEndpoint = candidate.endpoint ? normalizeRoute(candidate.endpoint) : 'all';
     return hash([
         candidate.organizationId,
         candidate.projectId ?? 'organization',
         candidate.policy.policyId,
         candidate.environment ?? 'all',
         candidate.service ?? 'all',
-        candidate.endpoint ?? 'all',
+        normalizedEndpoint,
         candidate.dimension ?? 'all',
     ].join(':'));
 }
@@ -141,16 +144,11 @@ export class AlertDecisionEngine {
                     notificationJobs: [],
                 };
             }
+            const richPayload = buildAlertNotificationPayload(candidate, routingDecision.decisionHash);
             const jobs = await this.runtime.insertNotificationJobs(routingDecision.targets.map((target) => {
                 const destinationIdentity = target.deliveryMode === 'EMAIL_ONLY_RESTRICTED'
                     ? `${target.recipientUserId ?? 'owner'}:${target.recipientRef ?? 'missing'}`
                     : target.channelId ?? target.connectorId ?? target.recipientRef ?? 'default';
-                const payload = {
-                    policy: candidate.policy,
-                    evidence: candidate.evidence ?? {},
-                    annotations: candidate.annotations ?? {},
-                    routingDecisionHash: routingDecision.decisionHash,
-                };
                 return {
                     organizationId: candidate.organizationId,
                     projectId: candidate.projectId ?? null,
@@ -164,12 +162,20 @@ export class AlertDecisionEngine {
                     routeId: target.routeId,
                     recipientUserId: target.recipientUserId,
                     recipientRef: target.recipientRef,
-                    notificationType: 'alert',
+                    notificationType: candidate.kind === 'recovered' ? 'alert.recovered' : 'alert',
                     deliveryMode: target.deliveryMode,
                     recipientType: target.recipientType,
                     provider: target.provider,
                     severity: toSeverity(candidate.policy.severity),
-                    payload,
+                    payload: {
+                        ...richPayload,
+                        alertEventId: event.id,
+                        channelId: target.channelId,
+                        channelKind: target.channelKind,
+                        connectorId: target.connectorId,
+                        recipientRef: target.recipientRef,
+                        recipientUserId: target.recipientUserId,
+                    },
                     idempotencyKey: hash(`${event.id}:${destinationIdentity}:alert:0:0`),
                     routingDecisionHash: routingDecision.decisionHash,
                     billable: target.channelKind !== 'in_app',

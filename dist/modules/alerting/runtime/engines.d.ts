@@ -1,7 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { Pool } from 'pg';
-import { type AlertRuntimeTier } from './rule-catalog.js';
+import { AlertRuntimeRuleCatalog, type AlertRuntimeTier } from './rule-catalog.js';
 import { NotificationRoutingService } from './notification-routing.service.js';
+import { AlertRedisStateService } from './alert-redis-state.js';
 import type { ScopedEvent } from '../../ingestion/pipeline/telemetry-writer.js';
 export interface FastEvaluationInput {
     organizationId: string;
@@ -36,14 +37,23 @@ export interface RuntimeEvaluationSummary {
     skipped: number;
     failed: number;
 }
+export interface RuntimePayload {
+    values: Record<string, unknown>;
+    observedAt: Date;
+    source: string;
+    labels: Record<string, unknown>;
+    evidence: Record<string, unknown>;
+}
 export declare class AlertRuntimeEngines {
     private readonly logDb;
     private readonly controlDb;
     private readonly catalog;
     private readonly runtime;
     private readonly decision;
+    private readonly redisState;
     private readonly log;
-    constructor(logger: FastifyBaseLogger, logDb: Pool, controlDb: Pool, routing?: NotificationRoutingService);
+    private readonly workerId;
+    constructor(logger: FastifyBaseLogger, logDb: Pool, controlDb: Pool, routing?: NotificationRoutingService, redisState?: AlertRedisStateService, catalog?: AlertRuntimeRuleCatalog);
     evaluateFast(input: FastEvaluationInput): Promise<RuntimeEvaluationSummary>;
     evaluateTier(input: TierEvaluationInput): Promise<RuntimeEvaluationSummary>;
     private evaluateCandidate;

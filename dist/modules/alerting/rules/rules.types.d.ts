@@ -305,6 +305,8 @@ export interface AlertRuleRow {
     last_evaluated_at: Date | null;
     /** Monotonic configuration revision used in effective-policy snapshots. */
     current_revision: number;
+    /** Backend evaluation category: 'fast' (instant ingestion event) or 'analytics' (window rollup). */
+    evaluation_category: 'fast' | 'analytics';
 }
 export interface AlertRuleConditionRow {
     id: string;

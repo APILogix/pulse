@@ -27,18 +27,18 @@ export class InvalidAlertTransitionError extends Error {
 }
 
 const TRANSITIONS: Readonly<Record<AlertLifecycleState, Partial<Record<AlertTransition, AlertLifecycleState>>>> = {
-  healthy: { evaluate_breach: 'pending', trigger: 'triggered', suppress: 'suppressed' },
+  healthy: { evaluate_breach: 'pending', trigger: 'triggered', suppress: 'suppressed', recover: 'healthy' },
   pending: { trigger: 'triggered', recover: 'healthy', suppress: 'suppressed', expire: 'expired' },
-  triggered: { acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
-  firing: { acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
-  acknowledged: { escalate: 'escalated', mute: 'silenced', recover: 'resolved', expire: 'expired' },
-  escalated: { acknowledge: 'acknowledged', mute: 'silenced', recover: 'resolved', expire: 'expired' },
-  silenced: { unsuppress: 'firing', recover: 'resolved', expire: 'expired' },
-  suppressed: { unsuppress: 'pending', recover: 'resolved', expire: 'expired' },
-  resolved: { close: 'closed' },
-  expired: { close: 'closed' },
-  closed: {},
-  error: { recover: 'resolved', close: 'closed' },
+  triggered: { trigger: 'triggered', evaluate_breach: 'triggered', acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
+  firing: { trigger: 'firing', evaluate_breach: 'firing', acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
+  acknowledged: { trigger: 'acknowledged', evaluate_breach: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', expire: 'expired', close: 'closed' },
+  escalated: { trigger: 'escalated', evaluate_breach: 'escalated', acknowledge: 'acknowledged', mute: 'silenced', recover: 'resolved', expire: 'expired', close: 'closed' },
+  silenced: { trigger: 'silenced', evaluate_breach: 'silenced', unsuppress: 'firing', recover: 'resolved', expire: 'expired', close: 'closed' },
+  suppressed: { trigger: 'suppressed', evaluate_breach: 'suppressed', unsuppress: 'pending', recover: 'resolved', expire: 'expired', close: 'closed' },
+  resolved: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
+  expired: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
+  closed: { trigger: 'triggered', recover: 'closed' },
+  error: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
 };
 
 const USER_TRANSITIONS = new Set<AlertTransition>([
