@@ -1,0 +1,18 @@
+USAGE QUOTA AT 86%
+
+Events ingested: 8.6M of 10M used (86%).
+
+--- RESOURCE UTILIZATION ---
+
+RESOURCE        Events ingested
+CONSUMED        8.6M of 10M
+UTILIZATION     86%
+CURRENT PLAN    Scale
+BILLING RESETS  1 Sep 2026
+ORGANIZATION    Northwind Labs
+
+Policy: At 100% new events are throttled rather than dropped, and overage is billed at $0.20 per 100k events.
+
+Increase limit: https://app.pulsiv.io/settings/billing/plans
+
+View usage:     https://app.pulsiv.io/settings/usage

@@ -1,0 +1,16 @@
+Hi Ada,
+
+A request was made to disable multi-factor authentication on your Pulsiv account.
+
+Confirm (expires in 15 minutes):
+
+https://app.pulsiv.io/security/mfa/disable?token=b47c2e9081a6f3d5
+
+Request details
+------------------------------------------------------
+REQUESTED   1 Aug 2026, 01:12 UTC
+DEVICE      Chrome 141 on macOS
+IP ADDRESS  203.0.113.42
+LOCATION    Bengaluru, IN
+
+If this was not you, do nothing — MFA stays enabled. Then change your password immediately.

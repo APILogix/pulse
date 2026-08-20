@@ -1,0 +1,22 @@
+ALERT RESOLVED
+
+Checkout p95 latency above 800 ms has cleared after 18 minutes.
+
+--- RESOLUTION DETAILS ---
+
+RULE             Checkout p95 latency above 800 ms
+STATUS           RESOLVED
+RECOVERED TO     412 ms
+DURATION ACTIVE  18 minutes
+RESOLVED BY      Auto-resolve
+RESOLVED AT      1 Aug 2026, 01:26 UTC
+STARTED AT       1 Aug 2026, 01:08 UTC
+REASON           Metric returned below threshold for 3 consecutive windows
+
+--- INCIDENT SCOPE ---
+
+PROJECT      checkout-api
+ENVIRONMENT  production
+FINGERPRINT  a91f0c4e7b2d8815
+
+View timeline: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R

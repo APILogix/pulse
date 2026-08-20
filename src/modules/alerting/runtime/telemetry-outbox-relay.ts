@@ -137,18 +137,23 @@ export class TelemetryOutboxRelay {
 }
 
 function outboxToScopedEvent(row: TelemetryOutboxRow): ScopedEvent {
+  const attrs = typeof row.attributes === 'object' && row.attributes !== null ? row.attributes : {};
   const event = {
     type: row.signal_kind,
     eventId: row.event_id,
     timestamp: row.occurred_at.getTime(),
     severity: row.severity ?? undefined,
     status: row.signal_kind === 'cron_checkin' ? 'error' : undefined,
-    message: row.attributes?.message ?? '',
-    ...(typeof row.attributes === 'object' && row.attributes !== null ? row.attributes : {}),
+    message: attrs.message ?? '',
+    ...attrs,
   } as unknown as NormalizedEvent;
   return {
     projectId: row.project_id,
+    projectSlug: typeof attrs.projectSlug === 'string' ? attrs.projectSlug : undefined,
+    projectName: typeof attrs.projectName === 'string' ? attrs.projectName : undefined,
     orgId: row.organization_id,
+    orgSlug: typeof attrs.orgSlug === 'string' ? attrs.orgSlug : undefined,
+    orgName: typeof attrs.orgName === 'string' ? attrs.orgName : undefined,
     environment: row.environment ?? 'production',
     event,
   };

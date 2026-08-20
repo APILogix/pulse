@@ -1,0 +1,18 @@
+SERVICE RECOVERED
+
+payment-gateway is responding normally again after 11 minutes of downtime.
+
+--- HEALTH & AVAILABILITY ---
+
+SERVICE       payment-gateway
+STATUS        RECOVERED
+DOWNTIME      11 minutes
+AVAILABILITY  99.85%
+
+--- INCIDENT SCOPE ---
+
+PROJECT      checkout-api
+ENVIRONMENT  production
+OBSERVED AT  1 Aug 2026, 01:18 UTC
+
+View timeline: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R

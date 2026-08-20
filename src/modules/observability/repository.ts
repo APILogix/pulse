@@ -86,10 +86,26 @@ export class ObservabilityRepository implements QueryExecutor {
     id: string,
   ): Promise<Record<string, unknown> | null> {
     const isPubId = isPublicId(id);
-    const targetColumn = isPubId ? 'public_id' : resource.idColumn;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
     const params: unknown[] = [ctx.organizationId, id];
+    let filterClause: string;
+
+    if (isPubId) {
+      filterClause = `public_id = $2`;
+    } else if (isUuid) {
+      filterClause = `${resource.idColumn} = $2`;
+    } else if (resource.name === 'traces') {
+      filterClause = `(trace_id = $2 OR public_id = $2 OR event_id = $2)`;
+    } else if (resource.name === 'requests') {
+      filterClause = `(request_id = $2 OR event_id = $2 OR public_id = $2)`;
+    } else if (resource.name === 'errors') {
+      filterClause = `(event_id = $2 OR public_id = $2 OR fingerprint = $2)`;
+    } else {
+      filterClause = `public_id = $2`;
+    }
+
     let sql = `SELECT ${buildDetailProjection(resource)} FROM ${resource.table}
-               WHERE organization_id = $1 AND ${targetColumn} = $2`;
+               WHERE organization_id = $1 AND ${filterClause}`;
     sql += this.projectPredicate(ctx, params);
     sql += ` LIMIT 1`;
     const rows = await this.run<Record<string, unknown>>(sql, params);

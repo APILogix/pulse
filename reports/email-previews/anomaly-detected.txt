@@ -1,0 +1,22 @@
+ANOMALY DETECTED (AI)
+
+Unusual write volume on the events table
+
+Write throughput is 4.4× the 14-day baseline for this hour of the week, with no matching increase in request volume. The shape suggests a retry storm rather than genuine traffic growth.
+
+Confidence: 91%
+
+--- STATISTICAL CONTEXT ---
+
+METRIC       Rows written / minute
+BASELINE     41k
+OBSERVED     182k
+DEVIATION    +344%
+WINDOW       last 30 minutes
+PROJECT      checkout-api
+ENVIRONMENT  production
+DETECTED     1 Aug 2026, 01:05 UTC
+
+Suggested next step: Inspect the ingestion client retry policy for exponential backoff. A fixed-interval retry on a 5xx would produce exactly this curve.
+
+Investigate: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R

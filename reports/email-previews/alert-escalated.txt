@@ -1,0 +1,28 @@
+ALERT ESCALATED — STEP 2 OF 3
+
+Checkout p95 latency above 800 ms was not acknowledged; Payments on-call advanced to step 2 of 3.
+
+--- ESCALATION STATUS ---
+
+RULE               Checkout p95 latency above 800 ms
+SEVERITY           CRITICAL
+ESCALATION POLICY  Payments on-call
+CURRENT STEP       Step 2 of 3
+FIRING FOR         17 minutes
+TRIGGER            No acknowledgement within 15 minutes
+NOTIFYING          Platform leads, secondary on-call
+
+--- TELEMETRY ---
+
+PROJECT      checkout-api
+ENVIRONMENT  production
+FINGERPRINT  a91f0c4e7b2d8815
+
+--- ACTIONS ---
+
+Take Ownership: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack
+View Alert: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R
+Acknowledge: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack
+Silence: https://app.pulsiv.io/alerts/silences/new?fingerprint=a91f0c
+
+Acknowledging stops further escalation.

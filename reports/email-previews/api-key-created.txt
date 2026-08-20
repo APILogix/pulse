@@ -1,0 +1,19 @@
+Hi Ada,
+
+A new API key was created on your Pulsiv account.
+
+KEY NAME  CI pipeline — ingest
+PREFIX    plsv_live_9f2c…
+PROJECT   checkout-api
+SCOPES    ingest:write, telemetry:read
+
+Request details
+------------------------------------------------------
+REQUESTED   1 Aug 2026, 01:12 UTC
+DEVICE      Chrome 141 on macOS
+IP ADDRESS  203.0.113.42
+LOCATION    Bengaluru, IN
+
+Manage keys: https://app.pulsiv.io/settings/api-keys
+
+If you did not create this key, revoke it immediately.

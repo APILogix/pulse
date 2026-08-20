@@ -1,0 +1,18 @@
+USAGE QUOTA EXCEEDED
+
+Log volume: 52 GB of 50 GB used (104%).
+
+--- RESOURCE UTILIZATION ---
+
+RESOURCE        Log volume
+CONSUMED        52 GB of 50 GB
+UTILIZATION     104%
+CURRENT PLAN    Scale
+BILLING RESETS  1 Sep 2026
+ORGANIZATION    Northwind Labs
+
+Policy: Log ingestion is throttled to 60% of normal rate until the quota resets or the plan is upgraded.
+
+Increase limit: https://app.pulsiv.io/settings/billing/plans
+
+View usage:     https://app.pulsiv.io/settings/usage

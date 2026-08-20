@@ -1,0 +1,23 @@
+SERVICE DOWN
+
+payment-gateway is not responding to automated health checks.
+
+--- HEALTH & AVAILABILITY ---
+
+SERVICE         payment-gateway
+STATUS          DOWN
+FAILED CHECKS   4
+AVAILABILITY    99.87%
+PROBE REGION    ap-south-1
+CHECK ENDPOINT  https://gateway.internal/healthz
+
+--- INCIDENT SCOPE ---
+
+PROJECT      checkout-api
+ENVIRONMENT  production
+OBSERVED AT  1 Aug 2026, 01:07 UTC
+
+Observation: connection refused
+
+View alert:   https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R
+Acknowledge:  : https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack

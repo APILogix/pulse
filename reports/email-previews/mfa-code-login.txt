@@ -1,0 +1,14 @@
+Hi Ada,
+
+Your Pulsiv verification code is 481902
+
+It expires in 10 minutes.
+
+Request details
+------------------------------------------------------
+REQUESTED   1 Aug 2026, 01:12 UTC
+DEVICE      Chrome 141 on macOS
+IP ADDRESS  203.0.113.42
+LOCATION    Bengaluru, IN
+
+Never share this code. Pulsiv staff will never ask for it.

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pulsiv email templates — Sentinel Mono</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:#09090b; --bg1:#111113; --bg2:#18181b;
+    --border:#26262a; --text:#fafafa; --text2:#a1a1aa; --text3:#8a8a94;
+    --ai:#22d3ee;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text2); font-family:'Inter',system-ui,sans-serif; }
+  header.top { padding:40px 32px 28px; border-bottom:1px solid var(--border); }
+  h1 { margin:0; font-family:'Space Grotesk',sans-serif; font-size:30px; font-weight:600; letter-spacing:-0.02em; color:var(--text); }
+  .lede { margin:10px 0 0; font-size:14px; max-width:70ch; line-height:1.6; }
+  .meta { margin-top:14px; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text3); }
+  main { padding:8px 32px 64px; }
+  section { margin-top:40px; }
+  h2 { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:500; letter-spacing:0.12em; text-transform:uppercase; color:var(--text3); margin:0 0 16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:20px; }
+  .card { background:var(--bg1); border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+  .card header { padding:14px 16px; border-bottom:1px solid var(--border); }
+  .name { font-size:14px; font-weight:600; color:var(--text); }
+  .subject { margin-top:5px; font-family:'JetBrains Mono',monospace; font-size:11px; line-height:1.5; color:var(--text3); word-break:break-word; }
+  iframe { width:100%; height:620px; border:0; background:var(--bg); display:block; }
+  .card footer { padding:11px 16px; border-top:1px solid var(--border); display:flex; gap:16px; }
+  .card footer a { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--text2); text-decoration:none; border-bottom:1px solid transparent; }
+  .card footer a:hover { color:var(--ai); border-bottom-color:var(--ai); }
+</style>
+</head>
+<body>
+  <header class="top">
+    <h1>Email templates</h1>
+    <p class="lede">
+      Every transactional and alert email, rendered from the same component library.
+      Theme is Sentinel <strong style="color:var(--text)">Mono</strong> — brand channel white,
+      truth channel green/red/amber, AI channel cyan. Browsers do not execute the
+      <code style="font-family:'JetBrains Mono',monospace">[if mso]</code> branches, so download the
+      <code style="font-family:'JetBrains Mono',monospace">.eml</code> and open it in Outlook to verify the VML buttons.
+    </p>
+    <div class="meta">31 variants &middot; generated 2026-08-19 09:56 UTC</div>
+  </header>
+  <main>
+    <section>
+      <h2>Authentication &amp; account</h2>
+      <div class="grid">
+      <article class="card">
+        <header>
+          <div class="name">Password reset</div>
+          <div class="subject">Pulsiv: Reset your password</div>
+        </header>
+        <iframe src="./password-reset.html" title="Password reset" loading="lazy"></iframe>
+        <footer>
+          <a href="./password-reset.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./password-reset.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./password-reset.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Email verification</div>
+          <div class="subject">Pulsiv: Verify your email address</div>
+        </header>
+        <iframe src="./email-verification.html" title="Email verification" loading="lazy"></iframe>
+        <footer>
+          <a href="./email-verification.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./email-verification.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./email-verification.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">MFA code — sign-in</div>
+          <div class="subject">Pulsiv: Your sign-in code</div>
+        </header>
+        <iframe src="./mfa-code-login.html" title="MFA code — sign-in" loading="lazy"></iframe>
+        <footer>
+          <a href="./mfa-code-login.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./mfa-code-login.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./mfa-code-login.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">MFA code — setup</div>
+          <div class="subject">Pulsiv: Confirm email MFA setup</div>
+        </header>
+        <iframe src="./mfa-code-setup.html" title="MFA code — setup" loading="lazy"></iframe>
+        <footer>
+          <a href="./mfa-code-setup.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./mfa-code-setup.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./mfa-code-setup.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">MFA enabled</div>
+          <div class="subject">Pulsiv: Multi-factor authentication enabled</div>
+        </header>
+        <iframe src="./mfa-enabled.html" title="MFA enabled" loading="lazy"></iframe>
+        <footer>
+          <a href="./mfa-enabled.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./mfa-enabled.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./mfa-enabled.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">MFA disabled</div>
+          <div class="subject">Pulsiv: Multi-factor authentication disabled</div>
+        </header>
+        <iframe src="./mfa-disabled.html" title="MFA disabled" loading="lazy"></iframe>
+        <footer>
+          <a href="./mfa-disabled.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./mfa-disabled.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./mfa-disabled.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">MFA disable confirmation</div>
+          <div class="subject">Pulsiv: Confirm MFA disable request</div>
+        </header>
+        <iframe src="./mfa-disable-confirm.html" title="MFA disable confirmation" loading="lazy"></iframe>
+        <footer>
+          <a href="./mfa-disable-confirm.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./mfa-disable-confirm.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./mfa-disable-confirm.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Account unlock</div>
+          <div class="subject">Pulsiv: Unlock your account</div>
+        </header>
+        <iframe src="./account-unlock.html" title="Account unlock" loading="lazy"></iframe>
+        <footer>
+          <a href="./account-unlock.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./account-unlock.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./account-unlock.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Account deletion confirmation</div>
+          <div class="subject">Pulsiv: Confirm account deletion</div>
+        </header>
+        <iframe src="./account-deletion.html" title="Account deletion confirmation" loading="lazy"></iframe>
+        <footer>
+          <a href="./account-deletion.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./account-deletion.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./account-deletion.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Password changed</div>
+          <div class="subject">Pulsiv: Your password was changed</div>
+        </header>
+        <iframe src="./password-changed.html" title="Password changed" loading="lazy"></iframe>
+        <footer>
+          <a href="./password-changed.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./password-changed.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./password-changed.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">New sign-in (new)</div>
+          <div class="subject">Pulsiv: New sign-in to your account</div>
+        </header>
+        <iframe src="./new-sign-in.html" title="New sign-in (new)" loading="lazy"></iframe>
+        <footer>
+          <a href="./new-sign-in.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./new-sign-in.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./new-sign-in.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">API key created (new)</div>
+          <div class="subject">Pulsiv: New API key created — CI pipeline — ingest</div>
+        </header>
+        <iframe src="./api-key-created.html" title="API key created (new)" loading="lazy"></iframe>
+        <footer>
+          <a href="./api-key-created.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./api-key-created.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./api-key-created.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Organization invitation</div>
+          <div class="subject">Pulsiv: Join Northwind Labs</div>
+        </header>
+        <iframe src="./org-invitation.html" title="Organization invitation" loading="lazy"></iframe>
+        <footer>
+          <a href="./org-invitation.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./org-invitation.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./org-invitation.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      </div>
+    </section>
+    <section>
+      <h2>Alerts &amp; monitoring</h2>
+      <div class="grid">
+      <article class="card">
+        <header>
+          <div class="name">Alert firing</div>
+          <div class="subject">[FIRING · CRITICAL] Checkout p95 latency above 800 ms — checkout-api (production)</div>
+        </header>
+        <iframe src="./alert-firing.html" title="Alert firing" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-firing.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-firing.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-firing.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert resolved</div>
+          <div class="subject">[RESOLVED] Checkout p95 latency above 800 ms — checkout-api (production)</div>
+        </header>
+        <iframe src="./alert-resolved.html" title="Alert resolved" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-resolved.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-resolved.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-resolved.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert acknowledged</div>
+          <div class="subject">[ACKNOWLEDGED] Checkout p95 latency above 800 ms — checkout-api (production)</div>
+        </header>
+        <iframe src="./alert-acknowledged.html" title="Alert acknowledged" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-acknowledged.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-acknowledged.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-acknowledged.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert escalated</div>
+          <div class="subject">[ESCALATED S2 · CRITICAL] Checkout p95 latency above 800 ms — checkout-api (production)</div>
+        </header>
+        <iframe src="./alert-escalated.html" title="Alert escalated" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-escalated.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-escalated.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-escalated.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alerts silenced</div>
+          <div class="subject">[SILENCED] project=checkout-api, env=staging — checkout-api (production)</div>
+        </header>
+        <iframe src="./alert-silenced.html" title="Alerts silenced" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-silenced.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-silenced.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-silenced.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert digest</div>
+          <div class="subject">[DIGEST] 19 alerts · last 24 hours — Northwind Labs</div>
+        </header>
+        <iframe src="./alert-digest.html" title="Alert digest" loading="lazy"></iframe>
+        <footer>
+          <a href="./alert-digest.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./alert-digest.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./alert-digest.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Anomaly detected (AI)</div>
+          <div class="subject">[ANOMALY] Unusual write volume on the events table — checkout-api (production)</div>
+        </header>
+        <iframe src="./anomaly-detected.html" title="Anomaly detected (AI)" loading="lazy"></iframe>
+        <footer>
+          <a href="./anomaly-detected.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./anomaly-detected.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./anomaly-detected.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Latency threshold</div>
+          <div class="subject">[FIRING · ERROR] p95 latency · POST /v1/checkout/confirm — checkout-api (production)</div>
+        </header>
+        <iframe src="./latency-alert.html" title="Latency threshold" loading="lazy"></iframe>
+        <footer>
+          <a href="./latency-alert.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./latency-alert.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./latency-alert.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Error alert (developer)</div>
+          <div class="subject">[FIRING · CRITICAL] DatabaseConnectionTimeoutError — checkout-api (production)</div>
+        </header>
+        <iframe src="./error-alert.html" title="Error alert (developer)" loading="lazy"></iframe>
+        <footer>
+          <a href="./error-alert.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./error-alert.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./error-alert.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Error-rate spike</div>
+          <div class="subject">[FIRING · CRITICAL] Error rate · POST /v1/checkout/confirm — checkout-api (production)</div>
+        </header>
+        <iframe src="./error-spike.html" title="Error-rate spike" loading="lazy"></iframe>
+        <footer>
+          <a href="./error-spike.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./error-spike.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./error-spike.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Service down</div>
+          <div class="subject">[SERVICE DOWN · CRITICAL] payment-gateway — checkout-api (production)</div>
+        </header>
+        <iframe src="./service-down.html" title="Service down" loading="lazy"></iframe>
+        <footer>
+          <a href="./service-down.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./service-down.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./service-down.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Service degraded</div>
+          <div class="subject">[SERVICE DEGRADED · WARNING] payment-gateway — checkout-api (production)</div>
+        </header>
+        <iframe src="./service-degraded.html" title="Service degraded" loading="lazy"></iframe>
+        <footer>
+          <a href="./service-degraded.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./service-degraded.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./service-degraded.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Service recovered</div>
+          <div class="subject">[RECOVERED] payment-gateway — checkout-api (production)</div>
+        </header>
+        <iframe src="./service-recovered.html" title="Service recovered" loading="lazy"></iframe>
+        <footer>
+          <a href="./service-recovered.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./service-recovered.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./service-recovered.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Quota approaching limit</div>
+          <div class="subject">[QUOTA] Events ingested at 86% — production</div>
+        </header>
+        <iframe src="./quota-warning.html" title="Quota approaching limit" loading="lazy"></iframe>
+        <footer>
+          <a href="./quota-warning.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./quota-warning.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./quota-warning.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Quota exceeded</div>
+          <div class="subject">[QUOTA · EXCEEDED] Log volume at 104% — production</div>
+        </header>
+        <iframe src="./quota-exceeded.html" title="Quota exceeded" loading="lazy"></iframe>
+        <footer>
+          <a href="./quota-exceeded.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./quota-exceeded.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./quota-exceeded.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Notification delivery failing</div>
+          <div class="subject">[DELIVERY FAILED] Slack #payments-oncall — 7 notifications</div>
+        </header>
+        <iframe src="./delivery-failure.html" title="Notification delivery failing" loading="lazy"></iframe>
+        <footer>
+          <a href="./delivery-failure.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./delivery-failure.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./delivery-failure.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert rule updated</div>
+          <div class="subject">[RULE UPDATED] Checkout p95 latency above 800 ms — checkout-api (production)</div>
+        </header>
+        <iframe src="./rule-updated.html" title="Alert rule updated" loading="lazy"></iframe>
+        <footer>
+          <a href="./rule-updated.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./rule-updated.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./rule-updated.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      <article class="card">
+        <header>
+          <div class="name">Alert rule disabled</div>
+          <div class="subject">[RULE DISABLED] Ingestion lag above 60 s — checkout-api (production)</div>
+        </header>
+        <iframe src="./rule-disabled.html" title="Alert rule disabled" loading="lazy"></iframe>
+        <footer>
+          <a href="./rule-disabled.html" target="_blank" rel="noreferrer">Open HTML</a>
+          <a href="./rule-disabled.txt" target="_blank" rel="noreferrer">Plaintext</a>
+          <a href="./rule-disabled.eml" download>Download .eml</a>
+        </footer>
+      </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

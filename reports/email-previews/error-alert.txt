@@ -1,0 +1,54 @@
+ERROR ALERT — CRITICAL
+
+Unhandled Exception: Connection pool exhausted while acquiring client for replica pool [read-02]
+
+--- ERROR ---
+
+TYPE         DatabaseConnectionTimeoutError
+MESSAGE      Connection pool exhausted while acquiring client for replica pool [read-02]
+ERROR ID     ERR_01JQ8Z982K
+FINGERPRINT  e89a01f4c3b29
+HANDLED      No
+MECHANISM    onunhandledrejection
+
+--- SOURCE ---
+
+LOCATION  src/modules/db/pool.ts:184:12
+FUNCTION  acquireClient
+
+const client = await this.pool.connect({ timeout: 5000 });
+// -> throws DatabaseConnectionTimeoutError after 5012ms
+return client;
+
+--- TARGET & ROUTE ---
+
+ROUTE        GET /api/v1/orders/summary
+HTTP STATUS  500
+REQUEST ID   REQ-01JQ8Z-901
+
+--- IMPACT ---
+
+OCCURRENCES  48
+FIRST SEEN   1 Aug 2026, 01:02 UTC
+LAST SEEN    1 Aug 2026, 01:14 UTC
+
+--- RUNTIME ---
+
+SERVICE      checkout-api
+ENVIRONMENT  production
+RELEASE      v2.14.0
+FRAMEWORK    Fastify 4.28.1
+
+--- DISTRIBUTED TRACE ---
+
+TRACE      TRC-000000084
+SPAN       SPN-000000412
+CLIENT IP  198.51.100.24
+
+--- ACTIONS ---
+
+Analyze Trace: https://app.pulsiv.io/traces/TRC-000000084
+View Error: https://app.pulsiv.io/errors/ERR_01JQ8Z982K
+View Alert: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R
+Acknowledge: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack
+Silence: https://app.pulsiv.io/alerts/silences/new?fingerprint=a91f0c

@@ -45,6 +45,7 @@ import {
   shadow,
   size,
   tint,
+  tintBorder,
   toneStyle,
   type Tone,
 } from './theme.js';
@@ -166,6 +167,47 @@ export function eyebrow(text: string, color: string = palette.text3): string {
 /** Section heading inside the body — Inter 600 (§4 card/panel title). */
 export function heading(text: string): string {
   return `<div style="font-family:${font.sans};font-size:${px(size.cardTitle)};font-weight:600;line-height:21px;${LH}color:${palette.text};padding-bottom:10px;">${esc(text)}</div>`;
+}
+
+/**
+ * Developer section header — crisp uppercase mono with tracking and optional count badge.
+ */
+export function sectionHeader(title: string, count?: string | number | undefined): string {
+  const countPill = count !== undefined && count !== null && String(count).trim() !== ''
+    ? `&nbsp;<span style="font-family:${font.mono};font-size:${px(size.micro)};background-color:${palette.bg3};color:${palette.text2};padding:2px 6px;border-radius:${radius.sm};">${esc(String(count))}</span>`
+    : '';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="${TABLE}width:100%;margin-top:4px;">
+  <tr>
+    <td style="padding:0 0 8px;font-family:${font.mono};font-size:${px(size.eyebrow)};font-weight:600;line-height:15px;${LH}letter-spacing:0.1em;text-transform:uppercase;color:${palette.text3};">${esc(title)}${countPill}</td>
+  </tr>
+</table>`;
+}
+
+/**
+ * Route / Endpoint badge showing HTTP method and path cleanly formatted.
+ */
+export function routeBadge(method?: string | undefined, path?: string | undefined, statusCode?: string | number | undefined): string {
+  if (!path && !method) return '';
+  const m = method ? String(method).toUpperCase() : '';
+  const mTone = m === 'GET' ? palette.green : m === 'POST' ? palette.blue : m === 'DELETE' ? palette.red : palette.amber;
+  const mBg = m === 'GET' ? tint.green : m === 'POST' ? tint.blue : m === 'DELETE' ? tint.red : tint.amber;
+  const mBorder = m === 'GET' ? tintBorder.green : m === 'POST' ? tintBorder.blue : m === 'DELETE' ? tintBorder.red : tintBorder.amber;
+
+  const methodHtml = m
+    ? `<span style="display:inline-block;padding:2px 7px;background-color:${mBg};border:1px solid ${mBorder};border-radius:${radius.sm};font-family:${font.mono};font-size:${px(size.micro)};font-weight:600;line-height:14px;color:${mTone};margin-right:8px;vertical-align:middle;">${esc(m)}</span>`
+    : '';
+
+  const statusHtml = statusCode !== undefined && statusCode !== null && String(statusCode).trim() !== ''
+    ? `<span style="display:inline-block;padding:2px 7px;background-color:${Number(statusCode) >= 500 ? tint.red : Number(statusCode) >= 400 ? tint.amber : tint.green};border:1px solid ${Number(statusCode) >= 500 ? tintBorder.red : Number(statusCode) >= 400 ? tintBorder.amber : tintBorder.green};border-radius:${radius.sm};font-family:${font.mono};font-size:${px(size.micro)};font-weight:600;line-height:14px;color:${Number(statusCode) >= 500 ? palette.red : Number(statusCode) >= 400 ? palette.amber : palette.green};margin-left:8px;vertical-align:middle;">${esc(String(statusCode))}</span>`
+    : '';
+
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="${palette.bg2}" style="${TABLE}width:100%;background-color:${palette.bg2};border:1px solid ${palette.border};border-radius:${radius.md};margin-bottom:12px;">
+  <tr>
+    <td style="padding:10px 14px;font-family:${font.mono};font-size:${px(size.monoData)};font-weight:500;line-height:18px;color:${palette.text};word-break:break-all;">
+      ${methodHtml}<span style="vertical-align:middle;">${esc(path || '')}</span>${statusHtml}
+    </td>
+  </tr>
+</table>`;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -344,10 +386,14 @@ export function callout(tone: Tone, html: string, title?: string | undefined): s
 }
 
 /** Monospace code / token block. */
-export function codeBlock(value: string): string {
-  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="${TABLE}width:100%;">
+export function codeBlock(value: string, title?: string | undefined): string {
+  const headerHtml = title
+    ? `<tr><td bgcolor="${palette.bg1}" style="background-color:${palette.bg1};border-bottom:1px solid ${palette.border};padding:8px 14px;font-family:${font.mono};font-size:${px(size.micro)};letter-spacing:0.08em;text-transform:uppercase;color:${palette.text3};">${esc(title)}</td></tr>`
+    : '';
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="${palette.bg2}" style="${TABLE}width:100%;background-color:${palette.bg2};border:1px solid ${palette.border};border-radius:${radius.md};">
+  ${headerHtml}
   <tr>
-    <td bgcolor="${palette.bg2}" style="background-color:${palette.bg2};border:1px solid ${palette.border};border-radius:${radius.md};padding:14px 16px;font-family:${font.mono};font-size:${px(size.monoData)};line-height:20px;${LH}color:${palette.text2};word-break:break-all;">${esc(value)}</td>
+    <td style="padding:12px 14px;font-family:${font.mono};font-size:${px(size.monoData)};line-height:20px;${LH}color:${palette.text2};word-break:break-all;white-space:pre-wrap;">${esc(value)}</td>
   </tr>
 </table>`;
 }

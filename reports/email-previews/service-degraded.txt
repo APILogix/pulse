@@ -1,0 +1,21 @@
+SERVICE DEGRADED
+
+payment-gateway is responding, but outside its healthy operating envelope.
+
+--- HEALTH & AVAILABILITY ---
+
+SERVICE       payment-gateway
+STATUS        DEGRADED
+AVAILABILITY  99.87%
+PROBE REGION  ap-south-1
+
+--- INCIDENT SCOPE ---
+
+PROJECT      checkout-api
+ENVIRONMENT  production
+OBSERVED AT  1 Aug 2026, 01:07 UTC
+
+Observation: HTTP 200 but responding in 4.2 s (healthy envelope: under 1 s)
+
+View alert:   https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R
+Acknowledge:  : https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack

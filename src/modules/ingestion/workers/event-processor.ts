@@ -163,7 +163,17 @@ export class EventProcessor {
           event,
         );
       }
-      scoped.push({ projectId, orgId, environment, apiKeyName, event });
+      scoped.push({
+        projectId,
+        projectSlug: payload.metadata?.projectSlug,
+        projectName: payload.metadata?.projectName,
+        orgId,
+        orgSlug: payload.metadata?.orgSlug,
+        orgName: payload.metadata?.orgName,
+        environment,
+        apiKeyName,
+        event,
+      });
     }
 
     // Route validation rejects to the DLQ intake queue (one message per job).

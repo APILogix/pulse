@@ -28,11 +28,14 @@
 
 import {
   aiInsight,
+  block,
   button,
   buttonRow,
   callout,
+  codeBlock,
   dataTable,
   digestList,
+  divider,
   esc,
   glyph,
   heading,
@@ -40,7 +43,10 @@ import {
   p,
   pill,
   renderLayout,
+  routeBadge,
+  safeUrl,
   safeUrlText,
+  sectionHeader,
   stack,
   statStrip,
   stripControl,
@@ -49,7 +55,7 @@ import {
   type DataRow,
   type DigestItem,
 } from './components.js';
-import { severityGlyph, severityTone, type AlertSeverity, type Tone } from './theme.js';
+import { font, palette, severityGlyph, severityTone, type AlertSeverity, type Tone } from './theme.js';
 import type { EmailTemplate } from './templates.js';
 
 export type { AlertSeverity };
@@ -260,6 +266,59 @@ function actionsText(scope: AlertScope, extra?: { label: string; url: string | u
   return lines.join('\n');
 }
 
+/**
+ * Modern developer-focused action CTAs with visual hierarchy:
+ * Primary dominant button + Secondary ghost button + inline secondary links.
+ */
+function developerAlertActions(opts: {
+  primary?: { url: string; label: string; tone?: Tone } | undefined;
+  secondary?: { url: string; label: string } | undefined;
+  viewAlertUrl?: string | undefined;
+  acknowledgeUrl?: string | undefined;
+  silenceUrl?: string | undefined;
+}): { html: string; text: string } {
+  const buttonsHtml: string[] = [];
+  if (opts.primary && opts.secondary) {
+    buttonsHtml.push(buttonRow(opts.primary, opts.secondary));
+  } else if (opts.primary) {
+    buttonsHtml.push(button(opts.primary.url, opts.primary.label, { tone: opts.primary.tone ?? 'brand', variant: 'primary' }));
+  } else if (opts.viewAlertUrl) {
+    buttonsHtml.push(button(opts.viewAlertUrl, 'View Alert', { tone: 'brand', variant: 'primary' }));
+  }
+
+  const links: string[] = [];
+  if (opts.viewAlertUrl && (!opts.primary || opts.primary.url !== opts.viewAlertUrl) && (!opts.secondary || opts.secondary.url !== opts.viewAlertUrl)) {
+    links.push(`<a href="${safeUrl(opts.viewAlertUrl)}" style="color:${palette.text2};text-decoration:underline;">View Alert</a>`);
+  }
+  if (opts.acknowledgeUrl && (!opts.secondary || opts.secondary.url !== opts.acknowledgeUrl)) {
+    links.push(`<a href="${safeUrl(opts.acknowledgeUrl)}" style="color:${palette.text2};text-decoration:underline;">Acknowledge</a>`);
+  }
+  if (opts.silenceUrl) {
+    links.push(`<a href="${safeUrl(opts.silenceUrl)}" style="color:${palette.text2};text-decoration:underline;">Silence</a>`);
+  }
+
+  const linksHtml = links.length > 0
+    ? `<div style="margin-top:12px;font-family:${font.mono};font-size:12px;color:${palette.text3};">${links.join(' &nbsp;·&nbsp; ')}</div>`
+    : '';
+
+  const html = buttonsHtml.length > 0 || linksHtml
+    ? `<div style="margin-top:8px;">${buttonsHtml.join('\n')}${linksHtml}</div>`
+    : '';
+
+  const textLines: string[] = [];
+  if (opts.primary) textLines.push(`${opts.primary.label}: ${safeUrlText(opts.primary.url)}`);
+  if (opts.secondary) textLines.push(`${opts.secondary.label}: ${safeUrlText(opts.secondary.url)}`);
+  if (opts.viewAlertUrl && (!opts.primary || opts.primary.url !== opts.viewAlertUrl) && (!opts.secondary || opts.secondary.url !== opts.viewAlertUrl)) {
+    textLines.push(`View Alert: ${safeUrlText(opts.viewAlertUrl)}`);
+  }
+  if (opts.acknowledgeUrl && (!opts.secondary || opts.secondary.url !== opts.acknowledgeUrl)) {
+    textLines.push(`Acknowledge: ${safeUrlText(opts.acknowledgeUrl)}`);
+  }
+  if (opts.silenceUrl) textLines.push(`Silence: ${safeUrlText(opts.silenceUrl)}`);
+
+  return { html, text: textLines.join('\n') };
+}
+
 /* ════════════════════════════════════════════════════════════════════════
    1. ALERT FIRING
    ════════════════════════════════════════════════════════════════════════ */
@@ -274,51 +333,171 @@ export interface AlertFiringInput extends AlertScope {
   runbook?: string | undefined;
   /** Model output — the only cyan in the email. */
   insight?: AlertInsight | undefined;
+  traceUrl?: string | undefined;
+  requestUrl?: string | undefined;
 }
 
 /**
  * The core alert notification: a rule crossed its threshold and is firing.
+ * Enhanced with developer triage sections: Metric Compare, Route context, Trace correlation, and Actions.
  */
 export function alertFiringTemplate(input: AlertFiringInput): EmailTemplate {
-  const tone = severityTone(input.identity.severity);
-  const rows = identityRows(input.identity, input);
+  const severity = input.identity.severity;
+  const tone = severityTone(severity);
+  const id = input.identity;
 
-  const body = stack([
-    input.summary ? p(esc(input.summary)) : '',
-    input.measurement ? measurementBlock(input.measurement, tone) : '',
-    dataTable(rows),
-    input.insight ? aiInsight(input.insight) : '',
-    alertActions(input, 'View alert', { url: input.acknowledgeUrl, label: 'Acknowledge' }, tone),
-    input.runbook ? callout('neutral', esc(input.runbook), 'First response') : '',
-  ]);
+  // 1. REQUEST & ROUTE
+  const reqRows: DataRow[] = [];
+  if (id.endpoint) {
+    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
+    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (id.method && !id.endpoint) {
+    reqRows.push({ label: 'Method', value: String(id.method).toUpperCase() });
+  }
+  if (id.statusCode !== undefined && id.statusCode !== null && String(id.statusCode).trim() !== '') {
+    reqRows.push({ label: 'HTTP status', value: String(id.statusCode) });
+  }
+  if (id.duration) {
+    reqRows.push({ label: 'Time taken', value: id.duration });
+  }
+  if (id.service) {
+    reqRows.push({ label: 'Service', value: id.service, sans: true });
+  }
+
+  // 2. TRACE & CORRELATION
+  const traceRows: DataRow[] = [];
+  if (id.traceId) {
+    traceRows.push({ label: 'Trace ID', value: id.traceId });
+  }
+  if (id.spanId) {
+    traceRows.push({ label: 'Span ID', value: id.spanId });
+  }
+  if (id.clientIp) {
+    traceRows.push({ label: 'Client IP', value: id.clientIp });
+  }
+  if (id.fingerprint) {
+    traceRows.push({ label: 'Fingerprint', value: id.fingerprint });
+  }
+  if (id.eventId) {
+    traceRows.push({ label: 'Event ID', value: id.eventId });
+  }
+  if (id.extraRows && id.extraRows.length > 0) {
+    traceRows.push(...id.extraRows);
+  }
+
+  // 3. CONTEXT & METADATA
+  const metaRows: DataRow[] = [
+    { label: 'Severity', value: severity.toUpperCase(), tone },
+  ];
+  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
+  if (id.source) metaRows.push({ label: 'Source', value: id.source });
+  if (id.startedAt) metaRows.push({ label: 'Started', value: id.startedAt });
+  if (typeof id.occurrences === 'number') {
+    metaRows.push({ label: 'Occurrences', value: `${id.occurrences} in this window` });
+  }
+
+  // 4. ACTIONS
+  const primaryAction = input.traceUrl
+    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
+    : input.requestUrl
+      ? { url: input.requestUrl, label: 'View Request', tone }
+      : input.alertUrl
+        ? { url: input.alertUrl, label: 'View Alert', tone }
+        : undefined;
+
+  const secondaryAction = input.traceUrl && input.alertUrl
+    ? { url: input.alertUrl, label: 'View Alert' }
+    : input.acknowledgeUrl
+      ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
+      : undefined;
+
+  const actions = developerAlertActions({
+    primary: primaryAction,
+    secondary: secondaryAction,
+    viewAlertUrl: input.alertUrl,
+    acknowledgeUrl: input.acknowledgeUrl,
+    silenceUrl: input.silenceUrl,
+  });
+
+  const bodyBlocks: (string | null | undefined | false)[] = [];
+
+  if (input.summary) {
+    bodyBlocks.push(p(esc(input.summary)));
+  }
+
+  if (input.measurement) {
+    bodyBlocks.push(measurementBlock(input.measurement, tone));
+  }
+
+  if (reqRows.length > 0) {
+    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
+  }
+
+  if (traceRows.length > 0) {
+    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & CORRELATION'), dataTable(traceRows));
+  }
+
+  if (metaRows.length > 0) {
+    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
+  }
+
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+
+  if (input.runbook) {
+    bodyBlocks.push(callout('neutral', esc(input.runbook), 'First response / Runbook'));
+  }
+
+  if (actions.html) {
+    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    `ALERT FIRING — ${severity.toUpperCase()}`,
+    input.summary,
+    input.measurement
+      ? `${input.measurement.label}: ${input.measurement.value} (threshold ${input.measurement.threshold}${input.measurement.window ? `, ${input.measurement.window}` : ''})`
+      : '',
+  ];
+  if (reqRows.length > 0) {
+    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
+  }
+  if (traceRows.length > 0) {
+    textSections.push(`\n--- TRACE & CORRELATION ---`, plainRows(traceRows));
+  }
+  if (metaRows.length > 0) {
+    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
+  }
+  if (input.insight) {
+    textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (${Math.round(input.insight.confidence)}% confidence)` : ''}`);
+  }
+  if (input.runbook) {
+    textSections.push(`\nFirst response: ${input.runbook}`);
+  }
+  if (actions.text) {
+    textSections.push(`\n--- ACTIONS ---`, actions.text);
+  }
 
   return {
-    subject: alertSubject('firing', input.identity.severity, input.identity.ruleName, input),
+    subject: alertSubject('firing', severity, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: input.identity.ruleName,
-      eyebrowText: `Firing · ${input.identity.severity}`,
+      title: id.ruleName,
+      eyebrowText: `Firing · ${severity}`,
       preheader: input.measurement
         ? `${stripControl(input.measurement.label)} ${stripControl(input.measurement.value)} exceeded ${stripControl(input.measurement.threshold)}${scopeSuffix(input)}.`
-        : `${stripControl(input.identity.ruleName)} is firing${scopeSuffix(input)}.`,
+        : `${stripControl(id.ruleName)} is firing${scopeSuffix(input)}.`,
       tone,
-      chip: severityGlyph(input.identity.severity),
-      body,
+      chip: severityGlyph(severity),
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(
-      `ALERT FIRING — ${input.identity.severity.toUpperCase()}`,
-      input.summary,
-      input.measurement
-        ? `${input.measurement.label}: ${input.measurement.value} (threshold ${input.measurement.threshold}${input.measurement.window ? `, ${input.measurement.window}` : ''})`
-        : '',
-      plainRows(rows),
-      input.insight ? `AI insight: ${input.insight.text}${typeof input.insight.confidence === 'number' ? ` (${Math.round(input.insight.confidence)}% confidence)` : ''}` : '',
-      actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }),
-      input.runbook ? `First response: ${input.runbook}` : '',
-    ),
+    text: textBody(...textSections),
   };
 }
 
@@ -342,58 +521,83 @@ export interface AlertResolvedInput extends AlertScope {
 }
 
 /**
- * Recovery notice. Always sent when a firing alert clears — an unresolved
- * "firing" email with no counterpart teaches recipients to distrust the channel.
+ * Recovery notice. Always sent when a firing alert clears.
  * Green here is the truth channel doing its job: a verdict, not decoration.
  */
 export function alertResolvedTemplate(input: AlertResolvedInput): EmailTemplate {
-  const rows: DataRow[] = [
-    { label: 'Rule', value: input.identity.ruleName, sans: true },
-    { label: 'Severity', value: input.identity.severity.toUpperCase() },
-  ];
-  if (input.identity.endpoint) rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
-  if (input.identity.method) rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.identity.startedAt) rows.push({ label: 'Started', value: input.identity.startedAt });
-  if (input.resolvedAt) rows.push({ label: 'Resolved', value: input.resolvedAt });
-  if (input.duration) rows.push({ label: 'Duration', value: input.duration, tone: 'success' });
-  if (input.recoveredValue) rows.push({ label: 'Recovered to', value: input.recoveredValue, tone: 'success' });
-  if (input.resolvedBy) rows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
-  if (input.reason) rows.push({ label: 'Reason', value: input.reason, sans: true });
-  if (input.identity.traceId) rows.push({ label: 'Trace ID', value: input.identity.traceId });
-  if (input.identity.fingerprint) rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
+  const id = input.identity;
 
-  const body = stack([
+  // 1. RESOLUTION DETAILS
+  const resRows: DataRow[] = [
+    { label: 'Rule', value: id.ruleName, sans: true },
+    { label: 'Status', value: 'RESOLVED', tone: 'success' },
+  ];
+  if (input.recoveredValue) resRows.push({ label: 'Recovered to', value: input.recoveredValue, tone: 'success' });
+  if (input.duration) resRows.push({ label: 'Duration active', value: input.duration, tone: 'success' });
+  if (input.resolvedBy) resRows.push({ label: 'Resolved by', value: input.resolvedBy, sans: true });
+  if (input.resolvedAt) resRows.push({ label: 'Resolved at', value: input.resolvedAt });
+  if (id.startedAt) resRows.push({ label: 'Started at', value: id.startedAt });
+  if (input.reason) resRows.push({ label: 'Reason', value: input.reason, sans: true });
+
+  // 2. INCIDENT CONTEXT
+  const ctxRows: DataRow[] = [];
+  if (id.endpoint) {
+    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
+    ctxRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (id.service) ctxRows.push({ label: 'Service', value: id.service, sans: true });
+  if (input.projectName) ctxRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) ctxRows.push({ label: 'Environment', value: input.environment });
+  if (id.traceId) ctxRows.push({ label: 'Trace ID', value: id.traceId });
+  if (id.fingerprint) ctxRows.push({ label: 'Fingerprint', value: id.fingerprint });
+
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(
-      `${esc(input.identity.ruleName)} has cleared${input.duration ? ` after ${esc(input.duration)}` : ''}. No further action is needed.`,
+      `${esc(id.ruleName)} has cleared${input.duration ? ` after ${esc(input.duration)}` : ''}. All monitored metrics returned to normal thresholds.`,
     ),
     pill('Resolved', 'success'),
-    dataTable(rows),
-    input.insight ? aiInsight(input.insight) : '',
-    input.alertUrl ? button(input.alertUrl, 'View timeline') : '',
-  ]);
+    sectionHeader('RESOLUTION DETAILS'),
+    dataTable(resRows),
+  ];
+
+  if (ctxRows.length > 0) {
+    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(ctxRows));
+  }
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+  if (input.alertUrl) {
+    bodyBlocks.push(sectionHeader('TIMELINE'), button(input.alertUrl, 'View Incident Timeline'));
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    'ALERT RESOLVED',
+    `${id.ruleName} has cleared${input.duration ? ` after ${input.duration}` : ''}.`,
+    `\n--- RESOLUTION DETAILS ---`,
+    plainRows(resRows),
+  ];
+  if (ctxRows.length > 0) {
+    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(ctxRows));
+  }
+  if (input.alertUrl) {
+    textSections.push(`\nView timeline: ${safeUrlText(input.alertUrl)}`);
+  }
 
   return {
-    subject: alertSubject('resolved', null, input.identity.ruleName, input),
+    subject: alertSubject('resolved', null, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Resolved: ${input.identity.ruleName}`,
+      title: `Resolved: ${id.ruleName}`,
       eyebrowText: 'Resolved',
-      preheader: `${stripControl(input.identity.ruleName)} cleared${input.duration ? ` after ${stripControl(input.duration)}` : ''}${scopeSuffix(input)}.`,
+      preheader: `${stripControl(id.ruleName)} cleared${input.duration ? ` after ${stripControl(input.duration)}` : ''}${scopeSuffix(input)}.`,
       tone: 'success',
       chip: glyph.check,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(
-      'ALERT RESOLVED',
-      `${input.identity.ruleName} has cleared${input.duration ? ` after ${input.duration}` : ''}.`,
-      plainRows(rows),
-      input.alertUrl ? `View timeline: ${safeUrlText(input.alertUrl)}` : '',
-    ),
+    text: textBody(...textSections),
   };
 }
 
@@ -413,54 +617,62 @@ export interface AlertAcknowledgedInput extends AlertScope {
 }
 
 /**
- * Acknowledgement notice — tells the rest of the rotation the alert is owned,
- * which is the single most effective way to stop three people debugging the
- * same incident in parallel.
+ * Acknowledgement notice — tells the rest of the rotation the alert is owned.
  */
 export function alertAcknowledgedTemplate(input: AlertAcknowledgedInput): EmailTemplate {
-  const rows: DataRow[] = [
-    { label: 'Rule', value: input.identity.ruleName, sans: true },
+  const id = input.identity;
+
+  const ackRows: DataRow[] = [
+    { label: 'Rule', value: id.ruleName, sans: true },
     { label: 'Owner', value: input.acknowledgedBy, sans: true, tone: 'info' },
   ];
-  if (input.acknowledgedAt) rows.push({ label: 'Acknowledged', value: input.acknowledgedAt });
-  if (input.expiresAt) rows.push({ label: 'Ack expires', value: input.expiresAt, tone: 'warning' });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.identity.fingerprint) rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
+  if (input.acknowledgedAt) ackRows.push({ label: 'Acknowledged at', value: input.acknowledgedAt });
+  if (input.expiresAt) ackRows.push({ label: 'Ack expires', value: input.expiresAt, tone: 'warning' });
+  if (input.projectName) ackRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) ackRows.push({ label: 'Environment', value: input.environment });
+  if (id.fingerprint) ackRows.push({ label: 'Fingerprint', value: id.fingerprint });
 
-  const body = stack([
-    p(`${esc(input.acknowledgedBy)} has taken ownership of this alert. It is being worked on.`),
+  const bodyBlocks: (string | null | undefined | false)[] = [
+    p(`${esc(input.acknowledgedBy)} has taken ownership of this alert. Escalation is paused.`),
     pill('Acknowledged', 'info'),
-    dataTable(rows),
-    input.comment ? callout('neutral', esc(input.comment), 'Responder note') : '',
-    input.expiresAt
-      ? callout(
-          'warning',
-          `Escalation is paused until ${esc(input.expiresAt)}. If the alert is still firing then, the escalation policy resumes automatically.`,
-          'Escalation paused',
-        )
-      : '',
-    input.alertUrl ? button(input.alertUrl, 'View alert') : '',
-  ]);
+    sectionHeader('OWNERSHIP & STATUS'),
+    dataTable(ackRows),
+  ];
+
+  if (input.comment) {
+    bodyBlocks.push(callout('neutral', esc(input.comment), 'Responder note'));
+  }
+  if (input.expiresAt) {
+    bodyBlocks.push(
+      callout(
+        'warning',
+        `Escalation is paused until ${esc(input.expiresAt)}. If the alert is still firing then, the escalation policy resumes automatically.`,
+        'Escalation paused',
+      ),
+    );
+  }
+  if (input.alertUrl) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.alertUrl, 'View Alert'));
+  }
 
   return {
-    subject: alertSubject('acknowledged', null, input.identity.ruleName, input),
+    subject: alertSubject('acknowledged', null, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Acknowledged: ${input.identity.ruleName}`,
+      title: `Acknowledged: ${id.ruleName}`,
       eyebrowText: 'Acknowledged',
       preheader: `${stripControl(input.acknowledgedBy)} is on it — escalation is paused.`,
       tone: 'info',
       chip: glyph.dot,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
     text: textBody(
       'ALERT ACKNOWLEDGED',
-      `${input.acknowledgedBy} has taken ownership of ${input.identity.ruleName}.`,
-      plainRows(rows),
+      `${input.acknowledgedBy} has taken ownership of ${id.ruleName}.`,
+      plainRows(ackRows),
       input.comment ? `Responder note: ${input.comment}` : '',
       input.alertUrl ? `View alert: ${safeUrlText(input.alertUrl)}` : '',
     ),
@@ -488,69 +700,97 @@ export interface AlertEscalatedInput extends AlertScope {
 
 /**
  * Escalation notice — an alert went unanswered and the policy advanced.
- *
- * Always rendered in the danger tone regardless of the rule's own severity:
- * escalation means the process failed, and that is a more urgent fact than the
- * original threshold.
  */
 export function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplate {
+  const id = input.identity;
   const step = input.totalSteps
     ? `Step ${input.stepNumber} of ${input.totalSteps}`
     : `Step ${input.stepNumber}`;
 
-  const rows: DataRow[] = [
-    { label: 'Rule', value: input.identity.ruleName, sans: true },
-    { label: 'Severity', value: input.identity.severity.toUpperCase(), tone: severityTone(input.identity.severity) },
-    { label: 'Policy', value: input.policyName, sans: true },
-    { label: 'Step', value: step, tone: 'danger' },
+  // 1. ESCALATION STATUS
+  const escRows: DataRow[] = [
+    { label: 'Rule', value: id.ruleName, sans: true },
+    { label: 'Severity', value: id.severity.toUpperCase(), tone: severityTone(id.severity) },
+    { label: 'Escalation policy', value: input.policyName, sans: true },
+    { label: 'Current step', value: step, tone: 'danger' },
   ];
-  if (input.identity.endpoint) rows.push({ label: 'Route', value: input.identity.endpoint, sans: true });
-  if (input.identity.method) rows.push({ label: 'Method', value: String(input.identity.method).toUpperCase() });
-  if (input.identity.statusCode !== undefined && input.identity.statusCode !== null) rows.push({ label: 'Status code', value: String(input.identity.statusCode) });
-  if (input.identity.duration) rows.push({ label: 'Time taken', value: input.identity.duration });
-  if (input.firingFor) rows.push({ label: 'Firing for', value: input.firingFor, tone: 'danger' });
-  if (input.trigger) rows.push({ label: 'Trigger', value: input.trigger, sans: true });
-  if (input.notifying) rows.push({ label: 'Notifying', value: input.notifying, sans: true });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.identity.traceId) rows.push({ label: 'Trace ID', value: input.identity.traceId });
-  if (input.identity.spanId) rows.push({ label: 'Span ID', value: input.identity.spanId });
-  if (input.identity.clientIp) rows.push({ label: 'Client IP', value: input.identity.clientIp });
-  if (input.identity.fingerprint) rows.push({ label: 'Fingerprint', value: input.identity.fingerprint });
-  if (input.identity.extraRows && input.identity.extraRows.length > 0) rows.push(...input.identity.extraRows);
+  if (input.firingFor) escRows.push({ label: 'Firing for', value: input.firingFor, tone: 'danger' });
+  if (input.trigger) escRows.push({ label: 'Trigger', value: input.trigger, sans: true });
+  if (input.notifying) escRows.push({ label: 'Notifying', value: input.notifying, sans: true });
 
-  const body = stack([
+  // 2. TARGET & TELEMETRY
+  const targetRows: DataRow[] = [];
+  if (id.endpoint) {
+    const routeVal = id.method ? `${String(id.method).toUpperCase()} ${id.endpoint}` : id.endpoint;
+    targetRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (id.statusCode !== undefined && id.statusCode !== null) {
+    targetRows.push({ label: 'Status code', value: String(id.statusCode) });
+  }
+  if (id.duration) targetRows.push({ label: 'Time taken', value: id.duration });
+  if (id.service) targetRows.push({ label: 'Service', value: id.service, sans: true });
+  if (input.projectName) targetRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) targetRows.push({ label: 'Environment', value: input.environment });
+  if (id.traceId) targetRows.push({ label: 'Trace ID', value: id.traceId });
+  if (id.fingerprint) targetRows.push({ label: 'Fingerprint', value: id.fingerprint });
+
+  // 3. ACTIONS
+  const actions = developerAlertActions({
+    primary: input.acknowledgeUrl ? { url: input.acknowledgeUrl, label: 'Take Ownership', tone: 'danger' } : undefined,
+    secondary: input.alertUrl ? { url: input.alertUrl, label: 'View Alert' } : undefined,
+    viewAlertUrl: input.alertUrl,
+    acknowledgeUrl: input.acknowledgeUrl,
+    silenceUrl: input.silenceUrl,
+  });
+
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(
-      `This alert has not been acknowledged, so ${esc(input.policyName)} advanced to ${esc(step.toLowerCase())} and widened the notification.`,
+      `This alert has not been acknowledged, so <strong>${esc(input.policyName)}</strong> advanced to <strong>${esc(step.toLowerCase())}</strong> and widened the notification.`,
     ),
-    dataTable(rows),
-    alertActions(input, 'Take ownership', { url: input.acknowledgeUrl, label: 'Acknowledge' }, 'danger'),
+    pill(step, 'danger'),
+    sectionHeader('ESCALATION STATUS'),
+    dataTable(escRows),
+  ];
+
+  if (targetRows.length > 0) {
+    bodyBlocks.push(sectionHeader('TELEMETRY & TARGET'), dataTable(targetRows));
+  }
+
+  if (actions.html) {
+    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
+  }
+
+  bodyBlocks.push(
     callout(
       'danger',
       'Acknowledging stops further escalation. Silencing suppresses notifications without resolving the underlying condition — prefer acknowledgement while you investigate.',
       'How to stop escalation',
     ),
-  ]);
+  );
 
   return {
-    subject: alertSubject(`escalated s${input.stepNumber}`, input.identity.severity, input.identity.ruleName, input),
+    subject: alertSubject(`escalated s${input.stepNumber}`, id.severity, id.ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `Escalated: ${input.identity.ruleName}`,
+      title: `Escalated: ${id.ruleName}`,
       eyebrowText: `Escalated · ${step.toLowerCase()}`,
       preheader: `Unacknowledged${input.firingFor ? ` for ${stripControl(input.firingFor)}` : ''} — ${stripControl(input.policyName)} escalated to ${step.toLowerCase()}.`,
       tone: 'danger',
       chip: glyph.arrowUp,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
     text: textBody(
       `ALERT ESCALATED — ${step.toUpperCase()}`,
-      `${input.identity.ruleName} was not acknowledged; ${input.policyName} advanced to ${step.toLowerCase()}.`,
-      plainRows(rows),
-      actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }),
+      `${id.ruleName} was not acknowledged; ${input.policyName} advanced to ${step.toLowerCase()}.`,
+      `\n--- ESCALATION STATUS ---`,
+      plainRows(escRows),
+      targetRows.length > 0 ? `\n--- TELEMETRY ---` : '',
+      targetRows.length > 0 ? plainRows(targetRows) : '',
+      actions.text ? `\n--- ACTIONS ---` : '',
+      actions.text,
       'Acknowledging stops further escalation.',
     ),
   };
@@ -575,38 +815,38 @@ export interface AlertSilencedInput extends AlertScope {
 
 /**
  * Silence-created notice.
- *
- * Suppression is the most dangerous action in an alerting system, so it is
- * announced rather than performed quietly: a forgotten silence is how an outage
- * goes unnoticed for a weekend.
  */
 export function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate {
-  const rows: DataRow[] = [
-    { label: 'Silenced', value: input.target, sans: true },
-    { label: 'Created by', value: input.silencedBy, sans: true },
-    { label: 'Expires', value: input.expiresAt, tone: 'warning' },
+  const silenceRows: DataRow[] = [
+    { label: 'Target', value: input.target, sans: true },
+    { label: 'Silenced by', value: input.silencedBy, sans: true },
+    { label: 'Expires at', value: input.expiresAt, tone: 'warning' },
   ];
-  if (input.duration) rows.push({ label: 'Duration', value: input.duration });
+  if (input.duration) silenceRows.push({ label: 'Duration', value: input.duration });
   if (typeof input.matchedRules === 'number') {
-    rows.push({ label: 'Rules matched', value: String(input.matchedRules), tone: 'warning' });
+    silenceRows.push({ label: 'Rules matched', value: String(input.matchedRules), tone: 'warning' });
   }
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.reason) rows.push({ label: 'Reason', value: input.reason, sans: true });
+  if (input.projectName) silenceRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) silenceRows.push({ label: 'Environment', value: input.environment });
+  if (input.reason) silenceRows.push({ label: 'Reason', value: input.reason, sans: true });
 
-  const body = stack([
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(
-      `Notifications matching ${esc(input.target)} are suppressed until ${esc(input.expiresAt)}. Rules keep evaluating and events keep recording &mdash; only the notifications stop.`,
+      `Notifications matching <strong>${esc(input.target)}</strong> are suppressed until ${esc(input.expiresAt)}. Rules keep evaluating and events keep recording &mdash; only the notifications stop.`,
     ),
     pill('Silenced', 'warning'),
-    dataTable(rows),
-    input.silenceUrl ? button(input.silenceUrl, 'Manage silence', { tone: 'warning' }) : '',
+    sectionHeader('SILENCE DETAILS'),
+    dataTable(silenceRows),
     callout(
       'warning',
       'Anything this matcher covers will not page anyone while the silence is active. Remove it as soon as the maintenance or noisy deploy that justified it is over.',
-      'Coverage gap',
+      'Coverage gap warning',
     ),
-  ]);
+  ];
+
+  if (input.silenceUrl) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.silenceUrl, 'Manage Silence', { tone: 'warning' }));
+  }
 
   return {
     subject: alertSubject('silenced', null, input.target, input),
@@ -617,7 +857,7 @@ export function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate 
       preheader: `${stripControl(input.target)} will not notify anyone until ${stripControl(input.expiresAt)}.`,
       tone: 'warning',
       chip: glyph.pause,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -625,7 +865,7 @@ export function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate 
     text: textBody(
       'ALERTS SILENCED',
       `Notifications matching ${input.target} are suppressed until ${input.expiresAt}.`,
-      plainRows(rows),
+      plainRows(silenceRows),
       input.silenceUrl ? `Manage silence: ${safeUrlText(input.silenceUrl)}` : '',
       'Rules keep evaluating; only notifications stop.',
     ),
@@ -762,40 +1002,56 @@ export interface AnomalyDetectedInput extends AlertScope {
  * claim instead of taking it on trust.
  */
 export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTemplate {
-  const rows: DataRow[] = [];
-  if (input.metric) rows.push({ label: 'Metric', value: input.metric, sans: true });
-  if (input.baseline) rows.push({ label: 'Baseline', value: input.baseline });
-  if (input.deviation) rows.push({ label: 'Deviation', value: input.deviation, tone: 'ai' });
-  if (input.window) rows.push({ label: 'Window', value: input.window });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.detectedAt) rows.push({ label: 'Detected', value: input.detectedAt });
+  const statRows: DataRow[] = [];
+  if (input.metric) statRows.push({ label: 'Metric', value: input.metric, sans: true });
+  if (input.baseline) statRows.push({ label: 'Baseline', value: input.baseline });
+  if (input.observed) statRows.push({ label: 'Observed', value: input.observed });
+  if (input.deviation) statRows.push({ label: 'Deviation', value: input.deviation, tone: 'ai' });
+  if (input.window) statRows.push({ label: 'Window', value: input.window });
+  if (input.projectName) statRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) statRows.push({ label: 'Environment', value: input.environment });
+  if (input.detectedAt) statRows.push({ label: 'Detected', value: input.detectedAt });
 
   const insightInput: AlertInsight =
     typeof input.confidence === 'number'
       ? { text: input.explanation, confidence: input.confidence }
       : { text: input.explanation };
 
-  const body = stack([
-    input.observed && input.baseline
-      ? metricCompare({
-          label: input.metric ? `${input.metric} observed` : 'Observed',
-          value: input.observed,
-          threshold: input.baseline,
-          thresholdLabel: 'Baseline',
-          tone: 'ai',
-        })
-      : '',
-    aiInsight(insightInput),
-    dataTable(rows),
-    input.alertUrl ? button(input.alertUrl, 'Investigate', { tone: 'ai' }) : '',
-    input.suggestedAction ? callout('ai', esc(input.suggestedAction), 'Suggested next step') : '',
+  const bodyBlocks: (string | null | undefined | false)[] = [];
+
+  if (input.observed && input.baseline) {
+    bodyBlocks.push(
+      metricCompare({
+        label: input.metric ? `${input.metric} observed` : 'Observed',
+        value: input.observed,
+        threshold: input.baseline,
+        thresholdLabel: 'Baseline',
+        tone: 'ai',
+      }),
+    );
+  }
+
+  bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(insightInput));
+
+  if (statRows.length > 0) {
+    bodyBlocks.push(sectionHeader('STATISTICAL CONTEXT'), dataTable(statRows));
+  }
+
+  if (input.suggestedAction) {
+    bodyBlocks.push(callout('ai', esc(input.suggestedAction), 'Suggested next step'));
+  }
+
+  if (input.alertUrl) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.alertUrl, 'Investigate Anomaly', { tone: 'ai' }));
+  }
+
+  bodyBlocks.push(
     callout(
       'neutral',
       'This is a statistical detection, not a threshold breach — no rule fired. Treat it as a lead to investigate rather than a confirmed fault.',
       'How to read this',
     ),
-  ]);
+  );
 
   return {
     subject: `[ANOMALY] ${stripControl(input.title)}${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
@@ -808,7 +1064,7 @@ export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTempl
         : `A model flagged unusual behaviour${scopeSuffix(input)}.`,
       tone: 'ai',
       chip: glyph.spark,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -818,11 +1074,10 @@ export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTempl
       input.title,
       input.explanation,
       typeof input.confidence === 'number' ? `Confidence: ${Math.round(input.confidence)}%` : '',
-      input.observed ? `Observed: ${input.observed}${input.baseline ? ` (baseline ${input.baseline})` : ''}` : '',
-      rows.length > 0 ? plainRows(rows) : '',
+      statRows.length > 0 ? `\n--- STATISTICAL CONTEXT ---` : '',
+      statRows.length > 0 ? plainRows(statRows) : '',
       input.suggestedAction ? `Suggested next step: ${input.suggestedAction}` : '',
       input.alertUrl ? `Investigate: ${safeUrlText(input.alertUrl)}` : '',
-      'This is a statistical detection, not a threshold breach.',
     ),
   };
 }
@@ -832,29 +1087,43 @@ export function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTempl
    ════════════════════════════════════════════════════════════════════════ */
 
 export interface LatencyAlertInput extends AlertScope {
-  /** Percentile being watched, e.g. "p95". */
+  /** Percentile being watched, e.g. "p95" or "P95". */
   percentile: string;
-  /** Observed latency, pre-formatted with units. */
+  /** Observed latency, pre-formatted with units, e.g. "1,450 ms" or "1.45s". */
   observed: string;
-  /** Configured threshold, pre-formatted with units. */
+  /** Configured threshold, pre-formatted with units, e.g. "500 ms". */
   threshold: string;
-  /** Evaluation window. */
+  /** Difference above threshold, e.g. "+950 ms (+190%)". */
+  aboveThreshold?: string | undefined;
+  /** Evaluation window, e.g. "5 min". */
   window?: string | undefined;
-  /** Route or service that is slow. */
+  /** Route or service that is slow, e.g. "/api/v1/orders". */
   endpoint?: string | undefined;
   /** HTTP method, e.g. "POST". */
   method?: string | undefined;
   /** HTTP status code, e.g. 504. */
   statusCode?: string | number | undefined;
+  /** Duration taken, e.g. "1,450 ms" or "1.45s". */
+  duration?: string | undefined;
   /** Distributed trace ID. */
   traceId?: string | undefined;
+  /** Public trace ID, e.g. "TRC-000000052". */
+  tracePublicId?: string | undefined;
   /** Distributed span ID. */
   spanId?: string | undefined;
+  /** Public span ID, e.g. "SPN-000001293". */
+  spanPublicId?: string | undefined;
+  /** Request ID, e.g. "REQ-000000123". */
+  requestId?: string | undefined;
   /** Client IP address. */
   clientIp?: string | undefined;
-  /** Service name. */
+  /** Service name, e.g. "checkout-api". */
   service?: string | undefined;
-  /** Sample size behind the percentile — a p95 over 4 requests is noise. */
+  /** Release, e.g. "1.0.0". */
+  release?: string | undefined;
+  /** Rule name as configured. */
+  ruleName?: string | undefined;
+  /** Sample size behind the percentile. */
   sampleSize?: number | undefined;
   /** Slowest contributing operations. */
   topContributors?: string[] | undefined;
@@ -862,83 +1131,388 @@ export interface LatencyAlertInput extends AlertScope {
   startedAt?: string | undefined;
   insight?: AlertInsight | undefined;
   extraRows?: DataRow[] | undefined;
+  traceUrl?: string | undefined;
+  requestUrl?: string | undefined;
 }
 
 /**
- * Latency threshold breach.
- *
- * Matches the `latency_alert` email type already used by the organization email
- * outbox. Sample size is surfaced deliberately: a percentile without its
- * denominator invites false urgency.
+ * Latency threshold breach — developer-focused performance triage.
  */
 export function latencyAlertTemplate(input: LatencyAlertInput): EmailTemplate {
   const severity = input.severity ?? 'warning';
   const tone = severityTone(severity);
-  const ruleName = `${input.percentile} latency${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
+  const ruleName = input.ruleName || `${input.percentile} latency${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
 
-  const rows: DataRow[] = [{ label: 'Percentile', value: input.percentile }];
-  if (input.endpoint) rows.push({ label: 'Route', value: input.endpoint, sans: true });
-  if (input.method) rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
-  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
-    rows.push({ label: 'Status code', value: String(input.statusCode) });
+  // 1. PERFORMANCE
+  const perfRows: DataRow[] = [
+    { label: `${input.percentile.toUpperCase()} latency`, value: input.observed },
+    { label: 'Threshold', value: input.threshold },
+  ];
+  if (input.aboveThreshold) {
+    perfRows.push({ label: 'Above threshold', value: input.aboveThreshold, tone });
   }
-  if (input.window) rows.push({ label: 'Window', value: input.window });
+  if (input.window) {
+    perfRows.push({ label: 'Evaluation window', value: input.window });
+  }
   if (typeof input.sampleSize === 'number') {
-    rows.push({ label: 'Samples', value: String(input.sampleSize) });
+    perfRows.push({ label: 'Sample count', value: String(input.sampleSize) });
   }
-  if (input.service) rows.push({ label: 'Service', value: input.service, sans: true });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.startedAt) rows.push({ label: 'Started', value: input.startedAt });
-  if (input.traceId) rows.push({ label: 'Trace ID', value: input.traceId });
-  if (input.spanId) rows.push({ label: 'Span ID', value: input.spanId });
-  if (input.clientIp) rows.push({ label: 'Client IP', value: input.clientIp });
-  if (input.extraRows && input.extraRows.length > 0) rows.push(...input.extraRows);
+
+  // 2. REQUEST
+  const reqRows: DataRow[] = [];
+  if (input.endpoint) {
+    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
+    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (input.method && !input.endpoint) {
+    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  }
+  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
+    reqRows.push({ label: 'HTTP status', value: String(input.statusCode) });
+  }
+  if (input.duration || input.observed) {
+    reqRows.push({ label: 'Duration', value: input.duration || input.observed });
+  }
+  if (input.service) {
+    reqRows.push({ label: 'Service', value: input.service, sans: true });
+  }
+  if (input.release) {
+    reqRows.push({ label: 'Release', value: input.release });
+  }
+
+  // 3. CORRELATION
+  const corrRows: DataRow[] = [];
+  if (input.requestId) {
+    corrRows.push({ label: 'Request', value: input.requestId });
+  }
+  if (input.tracePublicId || input.traceId) {
+    corrRows.push({ label: 'Trace', value: input.tracePublicId || input.traceId || '' });
+  }
+  if (input.spanPublicId || input.spanId) {
+    corrRows.push({ label: 'Span', value: input.spanPublicId || input.spanId || '' });
+  }
+  if (input.clientIp) {
+    corrRows.push({ label: 'Client IP', value: input.clientIp });
+  }
+  if (input.extraRows && input.extraRows.length > 0) {
+    corrRows.push(...input.extraRows);
+  }
+
+  // 4. METADATA
+  const metaRows: DataRow[] = [];
+  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
+  if (input.startedAt) metaRows.push({ label: 'Started', value: input.startedAt });
+
+  // 5. ACTIONS
+  const primaryAction = input.traceUrl
+    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
+    : input.requestUrl
+      ? { url: input.requestUrl, label: 'View Request', tone }
+      : input.alertUrl
+        ? { url: input.alertUrl, label: 'View Alert', tone }
+        : undefined;
+
+  const secondaryAction = input.traceUrl && input.requestUrl
+    ? { url: input.requestUrl, label: 'View Request' }
+    : input.traceUrl && input.alertUrl
+      ? { url: input.alertUrl, label: 'View Alert' }
+      : input.acknowledgeUrl
+        ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
+        : undefined;
+
+  const actions = developerAlertActions({
+    primary: primaryAction,
+    secondary: secondaryAction,
+    viewAlertUrl: input.alertUrl,
+    acknowledgeUrl: input.acknowledgeUrl,
+    silenceUrl: input.silenceUrl,
+  });
 
   const contributors =
     input.topContributors && input.topContributors.length > 0
       ? callout('neutral', input.topContributors.map((c) => esc(c)).join('<br />'), 'Slowest operations')
       : '';
 
-  const body = stack([
-    p(
-      `${esc(input.percentile)} response time is above its configured threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`,
-    ),
+  const bodyBlocks: (string | null | undefined | false)[] = [
+    p(`${esc(input.percentile.toUpperCase())} response time is above configured threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`),
     metricCompare({
-      label: input.window ? `${input.percentile} · ${input.window}` : input.percentile,
+      label: input.window ? `${input.percentile.toUpperCase()} · ${input.window}` : `${input.percentile.toUpperCase()} latency`,
       value: input.observed,
       threshold: input.threshold,
       tone,
     }),
-    dataTable(rows),
-    contributors,
-    input.insight ? aiInsight(input.insight) : '',
-    alertActions(input, 'View latency breakdown', { url: input.acknowledgeUrl, label: 'Acknowledge' }, tone),
-  ]);
+    sectionHeader('PERFORMANCE'),
+    dataTable(perfRows),
+  ];
+
+  if (reqRows.length > 0) {
+    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
+  }
+  if (corrRows.length > 0) {
+    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(corrRows));
+  }
+  if (contributors) {
+    bodyBlocks.push(contributors);
+  }
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+  if (actions.html) {
+    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
+  }
+  if (metaRows.length > 0) {
+    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    `LATENCY ALERT — ${severity.toUpperCase()}`,
+    `${input.percentile.toUpperCase()} is ${input.observed} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
+    `\n--- PERFORMANCE ---`,
+    plainRows(perfRows),
+  ];
+  if (reqRows.length > 0) {
+    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
+  }
+  if (corrRows.length > 0) {
+    textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(corrRows));
+  }
+  if (input.insight) {
+    textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (Confidence: ${input.insight.confidence}%)` : ''}`);
+  }
+  if (actions.text) {
+    textSections.push(`\n--- ACTIONS ---`, actions.text);
+  }
+  if (metaRows.length > 0) {
+    textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
+  }
 
   return {
     subject: alertSubject('firing', severity, ruleName, input),
     html: renderLayout({
       appName: input.appName,
-      title: `${input.percentile} latency above threshold`,
+      title: `${input.percentile.toUpperCase()} latency above threshold`,
       eyebrowText: `Latency · ${severity}`,
       preheader: `${stripControl(input.percentile)} is ${stripControl(input.observed)} against a ${stripControl(input.threshold)} threshold${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
       tone,
       chip: glyph.gauge,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(
-      `LATENCY ALERT — ${severity.toUpperCase()}`,
-      `${input.percentile} is ${input.observed} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
-      plainRows(rows),
-      input.topContributors && input.topContributors.length > 0
-        ? `Slowest operations:\n${input.topContributors.map((c) => `  - ${c}`).join('\n')}`
-        : '',
-      actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }),
-    ),
+    text: textBody(...textSections),
+  };
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   8b. ERROR ALERT (DEVELOPER-FOCUSED)
+   ════════════════════════════════════════════════════════════════════════ */
+
+export interface ErrorAlertInput extends AlertScope {
+  ruleName: string;
+  errorName?: string | undefined;
+  errorMessage?: string | undefined;
+  errorId?: string | undefined;
+  fingerprint?: string | undefined;
+  handled?: boolean | string | undefined;
+  mechanism?: string | undefined;
+  sourceFrame?: string | undefined;
+  sourceFunction?: string | undefined;
+  sourceContext?: string | undefined;
+  endpoint?: string | undefined;
+  method?: string | undefined;
+  statusCode?: string | number | undefined;
+  requestId?: string | undefined;
+  occurrences?: number | undefined;
+  firstSeenAt?: string | undefined;
+  lastSeenAt?: string | undefined;
+  service?: string | undefined;
+  release?: string | undefined;
+  framework?: string | undefined;
+  traceId?: string | undefined;
+  tracePublicId?: string | undefined;
+  spanId?: string | undefined;
+  spanPublicId?: string | undefined;
+  clientIp?: string | undefined;
+  severity?: AlertSeverity | undefined;
+  startedAt?: string | undefined;
+  insight?: AlertInsight | undefined;
+  extraRows?: DataRow[] | undefined;
+  traceUrl?: string | undefined;
+  errorUrl?: string | undefined;
+  eventUrl?: string | undefined;
+  requestUrl?: string | undefined;
+}
+
+/**
+ * Developer-focused error alert — identity, normalized stack frame, source excerpt, impact.
+ */
+export function errorAlertTemplate(input: ErrorAlertInput): EmailTemplate {
+  const severity = input.severity ?? 'error';
+  const tone = severityTone(severity);
+  const ruleName = input.ruleName || 'Unhandled Exception';
+  const errorTitle = input.errorName || 'Error';
+
+  // 1. ERROR
+  const errorRows: DataRow[] = [
+    { label: 'Type', value: errorTitle, tone },
+    { label: 'Message', value: input.errorMessage || 'No message provided', sans: true },
+  ];
+  if (input.errorId) errorRows.push({ label: 'Error ID', value: input.errorId });
+  if (input.fingerprint) errorRows.push({ label: 'Fingerprint', value: input.fingerprint });
+  if (input.handled !== undefined) {
+    const handledStr = typeof input.handled === 'boolean' ? (input.handled ? 'Yes' : 'No') : String(input.handled);
+    errorRows.push({ label: 'Handled', value: handledStr });
+  }
+  if (input.mechanism) errorRows.push({ label: 'Mechanism', value: input.mechanism });
+
+  // 2. SOURCE
+  const sourceRows: DataRow[] = [];
+  if (input.sourceFrame) sourceRows.push({ label: 'Location', value: input.sourceFrame });
+  if (input.sourceFunction) sourceRows.push({ label: 'Function', value: input.sourceFunction });
+
+  // 3. REQUEST
+  const reqRows: DataRow[] = [];
+  if (input.endpoint) {
+    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
+    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (input.method && !input.endpoint) {
+    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  }
+  if (input.statusCode !== undefined && input.statusCode !== null && String(input.statusCode).trim() !== '') {
+    reqRows.push({ label: 'HTTP status', value: String(input.statusCode) });
+  }
+  if (input.requestId) reqRows.push({ label: 'Request ID', value: input.requestId });
+
+  // 4. IMPACT
+  const impactRows: DataRow[] = [];
+  if (typeof input.occurrences === 'number') {
+    impactRows.push({ label: 'Occurrences', value: String(input.occurrences) });
+  }
+  if (input.firstSeenAt) impactRows.push({ label: 'First seen', value: input.firstSeenAt });
+  if (input.lastSeenAt) impactRows.push({ label: 'Last seen', value: input.lastSeenAt });
+
+  // 5. RUNTIME
+  const runtimeRows: DataRow[] = [];
+  if (input.service) runtimeRows.push({ label: 'Service', value: input.service, sans: true });
+  if (input.environment) runtimeRows.push({ label: 'Environment', value: input.environment });
+  if (input.release) runtimeRows.push({ label: 'Release', value: input.release });
+  if (input.framework) runtimeRows.push({ label: 'Framework', value: input.framework });
+
+  // 6. TRACE
+  const traceRows: DataRow[] = [];
+  if (input.tracePublicId || input.traceId) {
+    traceRows.push({ label: 'Trace', value: input.tracePublicId || input.traceId || '' });
+  }
+  if (input.spanPublicId || input.spanId) {
+    traceRows.push({ label: 'Span', value: input.spanPublicId || input.spanId || '' });
+  }
+  if (input.clientIp) traceRows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) traceRows.push(...input.extraRows);
+
+  // 7. ACTIONS
+  const primaryAction = input.traceUrl
+    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
+    : (input.errorUrl || input.eventUrl)
+      ? { url: (input.errorUrl || input.eventUrl)!, label: 'View Error', tone }
+      : input.alertUrl
+        ? { url: input.alertUrl, label: 'View Alert', tone }
+        : undefined;
+
+  const secondaryAction = input.traceUrl && (input.errorUrl || input.eventUrl)
+    ? { url: (input.errorUrl || input.eventUrl)!, label: 'View Error' }
+    : input.traceUrl && input.alertUrl
+      ? { url: input.alertUrl, label: 'View Alert' }
+      : input.acknowledgeUrl
+        ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
+        : undefined;
+
+  const actions = developerAlertActions({
+    primary: primaryAction,
+    secondary: secondaryAction,
+    viewAlertUrl: input.alertUrl,
+    acknowledgeUrl: input.acknowledgeUrl,
+    silenceUrl: input.silenceUrl,
+  });
+
+  const bodyBlocks: (string | null | undefined | false)[] = [
+    p(`An error event triggered alert rule <strong>${esc(ruleName)}</strong>${input.endpoint ? ` on <strong>${esc(input.endpoint)}</strong>` : ''}.`),
+    sectionHeader('ERROR'),
+    dataTable(errorRows),
+  ];
+
+  if (sourceRows.length > 0 || input.sourceContext) {
+    bodyBlocks.push(sectionHeader('SOURCE'));
+    if (sourceRows.length > 0) bodyBlocks.push(dataTable(sourceRows));
+    if (input.sourceContext) bodyBlocks.push(codeBlock(input.sourceContext));
+  }
+
+  if (reqRows.length > 0) {
+    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
+  }
+  if (impactRows.length > 0) {
+    bodyBlocks.push(sectionHeader('IMPACT'), dataTable(impactRows));
+  }
+  if (runtimeRows.length > 0) {
+    bodyBlocks.push(sectionHeader('RUNTIME'), dataTable(runtimeRows));
+  }
+  if (traceRows.length > 0) {
+    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(traceRows));
+  }
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+  if (actions.html) {
+    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    `ERROR ALERT — ${severity.toUpperCase()}`,
+    `${ruleName}: ${input.errorMessage || errorTitle}`,
+    `\n--- ERROR ---`,
+    plainRows(errorRows),
+  ];
+  if (sourceRows.length > 0 || input.sourceContext) {
+    textSections.push(`\n--- SOURCE ---`);
+    if (sourceRows.length > 0) textSections.push(plainRows(sourceRows));
+    if (input.sourceContext) textSections.push(input.sourceContext);
+  }
+  if (reqRows.length > 0) {
+    textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
+  }
+  if (impactRows.length > 0) {
+    textSections.push(`\n--- IMPACT ---`, plainRows(impactRows));
+  }
+  if (runtimeRows.length > 0) {
+    textSections.push(`\n--- RUNTIME ---`, plainRows(runtimeRows));
+  }
+  if (traceRows.length > 0) {
+    textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(traceRows));
+  }
+  if (input.insight) {
+    textSections.push(`\n--- DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (Confidence: ${input.insight.confidence}%)` : ''}`);
+  }
+  if (actions.text) {
+    textSections.push(`\n--- ACTIONS ---`, actions.text);
+  }
+
+  return {
+    subject: alertSubject('firing', severity, errorTitle !== 'Error' ? errorTitle : ruleName, input),
+    html: renderLayout({
+      appName: input.appName,
+      title: errorTitle !== 'Error' ? `${errorTitle} detected` : 'Error detected',
+      eyebrowText: `Error · ${severity}`,
+      preheader: `${stripControl(errorTitle)}: ${stripControl(input.errorMessage || ruleName)}${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
+      tone,
+      chip: glyph.cross,
+      body: stack(bodyBlocks),
+      footer: 'alert',
+      footerLink: footerLinkFor(input),
+      closing: null,
+    }),
+    text: textBody(...textSections),
   };
 }
 
@@ -975,56 +1549,126 @@ export interface ErrorSpikeInput extends AlertScope {
   startedAt?: string | undefined;
   insight?: AlertInsight | undefined;
   extraRows?: DataRow[] | undefined;
+  traceUrl?: string | undefined;
+  requestUrl?: string | undefined;
 }
 
 /**
  * Error-rate spike.
- *
- * Rate and absolute count are both shown: 50% of two requests and 50% of two
- * million demand very different responses, and a rate alone hides which one
- * you are looking at.
+ * Rate and absolute count are both shown with full developer context.
  */
 export function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate {
   const severity = input.severity ?? 'error';
   const tone = severityTone(severity);
   const ruleName = `Error rate${input.endpoint ? ` · ${stripControl(input.endpoint)}` : ''}`;
 
-  const rows: DataRow[] = [];
+  // 1. TARGET & ROUTE
+  const reqRows: DataRow[] = [];
+  if (input.endpoint) {
+    const routeVal = input.method ? `${String(input.method).toUpperCase()} ${input.endpoint}` : input.endpoint;
+    reqRows.push({ label: 'Route', value: routeVal, sans: true });
+  }
+  if (input.method && !input.endpoint) {
+    reqRows.push({ label: 'Method', value: String(input.method).toUpperCase() });
+  }
+  if (input.topStatusCode) {
+    reqRows.push({ label: 'Top status', value: input.topStatusCode, tone });
+  }
+  if (input.service) {
+    reqRows.push({ label: 'Service', value: input.service, sans: true });
+  }
+
+  // 2. IMPACT & VOLUME
+  const impactRows: DataRow[] = [];
   if (typeof input.errorCount === 'number' && typeof input.totalRequests === 'number') {
-    rows.push({
+    impactRows.push({
       label: 'Failed / total',
       value: `${input.errorCount.toLocaleString('en-US')} / ${input.totalRequests.toLocaleString('en-US')}`,
       tone,
     });
   } else if (typeof input.errorCount === 'number') {
-    rows.push({ label: 'Failed requests', value: input.errorCount.toLocaleString('en-US'), tone });
+    impactRows.push({ label: 'Failed requests', value: input.errorCount.toLocaleString('en-US'), tone });
   }
-  if (input.topStatusCode) rows.push({ label: 'Top status', value: input.topStatusCode, tone });
-  if (input.topError) rows.push({ label: 'Top error', value: input.topError, sans: true });
-  if (input.endpoint) rows.push({ label: 'Route', value: input.endpoint, sans: true });
-  if (input.method) rows.push({ label: 'Method', value: String(input.method).toUpperCase() });
-  if (input.service) rows.push({ label: 'Service', value: input.service, sans: true });
-  if (input.window) rows.push({ label: 'Window', value: input.window });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.startedAt) rows.push({ label: 'Started', value: input.startedAt });
-  if (input.traceId) rows.push({ label: 'Trace ID', value: input.traceId });
-  if (input.spanId) rows.push({ label: 'Span ID', value: input.spanId });
-  if (input.clientIp) rows.push({ label: 'Client IP', value: input.clientIp });
-  if (input.extraRows && input.extraRows.length > 0) rows.push(...input.extraRows);
+  if (input.topError) impactRows.push({ label: 'Top error', value: input.topError, sans: true });
+  if (input.window) impactRows.push({ label: 'Window', value: input.window });
 
-  const body = stack([
-    p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on ${esc(input.endpoint)}` : ''}.`),
+  // 3. TRACE & NETWORK
+  const traceRows: DataRow[] = [];
+  if (input.traceId) traceRows.push({ label: 'Trace ID', value: input.traceId });
+  if (input.spanId) traceRows.push({ label: 'Span ID', value: input.spanId });
+  if (input.clientIp) traceRows.push({ label: 'Client IP', value: input.clientIp });
+  if (input.extraRows && input.extraRows.length > 0) traceRows.push(...input.extraRows);
+
+  // 4. INCIDENT SCOPE
+  const metaRows: DataRow[] = [
+    { label: 'Severity', value: severity.toUpperCase(), tone },
+  ];
+  if (input.projectName) metaRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) metaRows.push({ label: 'Environment', value: input.environment });
+  if (input.startedAt) metaRows.push({ label: 'Started', value: input.startedAt });
+
+  // 5. ACTIONS
+  const primaryAction = input.traceUrl
+    ? { url: input.traceUrl, label: 'Analyze Trace', tone }
+    : input.requestUrl
+      ? { url: input.requestUrl, label: 'View Requests', tone }
+      : input.alertUrl
+        ? { url: input.alertUrl, label: 'View Alert', tone }
+        : undefined;
+
+  const secondaryAction = input.traceUrl && input.alertUrl
+    ? { url: input.alertUrl, label: 'View Alert' }
+    : input.acknowledgeUrl
+      ? { url: input.acknowledgeUrl, label: 'Acknowledge' }
+      : undefined;
+
+  const actions = developerAlertActions({
+    primary: primaryAction,
+    secondary: secondaryAction,
+    viewAlertUrl: input.alertUrl,
+    acknowledgeUrl: input.acknowledgeUrl,
+    silenceUrl: input.silenceUrl,
+  });
+
+  const bodyBlocks: (string | null | undefined | false)[] = [
+    p(`Requests are failing above the configured error-rate threshold${input.endpoint ? ` on <strong>${esc(input.endpoint)}</strong>` : ''}.`),
     metricCompare({
       label: input.window ? `Error rate · ${input.window}` : 'Error rate',
       value: input.errorRate,
       threshold: input.threshold,
       tone,
     }),
-    dataTable(rows),
-    input.insight ? aiInsight(input.insight) : '',
-    alertActions(input, 'View failing requests', { url: input.acknowledgeUrl, label: 'Acknowledge' }, tone),
-  ]);
+  ];
+
+  if (reqRows.length > 0) {
+    bodyBlocks.push(sectionHeader('TARGET & ROUTE'), dataTable(reqRows));
+  }
+  if (impactRows.length > 0) {
+    bodyBlocks.push(sectionHeader('IMPACT & VOLUME'), dataTable(impactRows));
+  }
+  if (traceRows.length > 0) {
+    bodyBlocks.push(sectionHeader('DISTRIBUTED TRACE & NETWORK'), dataTable(traceRows));
+  }
+  if (metaRows.length > 0) {
+    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(metaRows));
+  }
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+  if (actions.html) {
+    bodyBlocks.push(sectionHeader('TRIAGE & ACTIONS'), actions.html);
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    `ERROR SPIKE — ${severity.toUpperCase()}`,
+    `Error rate is ${input.errorRate} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
+  ];
+  if (reqRows.length > 0) textSections.push(`\n--- TARGET & ROUTE ---`, plainRows(reqRows));
+  if (impactRows.length > 0) textSections.push(`\n--- IMPACT & VOLUME ---`, plainRows(impactRows));
+  if (traceRows.length > 0) textSections.push(`\n--- DISTRIBUTED TRACE ---`, plainRows(traceRows));
+  if (metaRows.length > 0) textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(metaRows));
+  if (input.insight) textSections.push(`\n--- AI DIAGNOSIS ---`, `AI Insight: ${input.insight.text}${input.insight.confidence ? ` (${Math.round(input.insight.confidence)}% confidence)` : ''}`);
+  if (actions.text) textSections.push(`\n--- ACTIONS ---`, actions.text);
 
   return {
     subject: alertSubject('firing', severity, ruleName, input),
@@ -1035,17 +1679,12 @@ export function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate {
       preheader: `Error rate is ${stripControl(input.errorRate)} against a ${stripControl(input.threshold)} threshold${input.endpoint ? ` on ${stripControl(input.endpoint)}` : ''}.`,
       tone,
       chip: glyph.cross,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(
-      `ERROR SPIKE — ${severity.toUpperCase()}`,
-      `Error rate is ${input.errorRate} (threshold ${input.threshold})${input.window ? ` over ${input.window}` : ''}.`,
-      rows.length > 0 ? plainRows(rows) : '',
-      actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }),
-    ),
+    text: textBody(...textSections),
   };
 }
 
@@ -1085,48 +1724,79 @@ const HEALTH_META: Record<
 
 /**
  * Availability transition — a service went down, degraded, or came back.
- *
- * All three states share one template so the recovery notice is guaranteed to
- * match the outage notice it closes. Divergent "up" and "down" templates are
- * how recovery mails end up missing fields the outage mail promised.
  */
 export function serviceHealthTemplate(input: ServiceHealthInput): EmailTemplate {
   const meta = HEALTH_META[input.status];
 
-  const rows: DataRow[] = [
+  // 1. HEALTH & AVAILABILITY
+  const healthRows: DataRow[] = [
     { label: 'Service', value: input.serviceName, sans: true },
     { label: 'Status', value: meta.label.toUpperCase(), tone: meta.tone },
   ];
-  if (input.detail) rows.push({ label: 'Observation', value: input.detail, sans: true });
-  if (input.checkUrl) rows.push({ label: 'Check', value: input.checkUrl });
-  if (input.region) rows.push({ label: 'Probe region', value: input.region });
   if (typeof input.failedChecks === 'number') {
-    rows.push({ label: 'Failed checks', value: String(input.failedChecks), tone: meta.tone });
+    healthRows.push({ label: 'Failed checks', value: String(input.failedChecks), tone: meta.tone });
   }
-  if (input.downtime) rows.push({ label: 'Downtime', value: input.downtime, tone: 'warning' });
-  if (input.availability) rows.push({ label: 'Availability', value: input.availability });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.environment) rows.push({ label: 'Environment', value: input.environment });
-  if (input.observedAt) rows.push({ label: 'Observed', value: input.observedAt });
+  if (input.downtime) healthRows.push({ label: 'Downtime', value: input.downtime, tone: 'warning' });
+  if (input.availability) healthRows.push({ label: 'Availability', value: input.availability });
+  if (input.region) healthRows.push({ label: 'Probe region', value: input.region });
+  if (input.checkUrl) healthRows.push({ label: 'Check endpoint', value: input.checkUrl });
+
+  // 2. INCIDENT SCOPE
+  const ctxRows: DataRow[] = [];
+  if (input.projectName) ctxRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.environment) ctxRows.push({ label: 'Environment', value: input.environment });
+  if (input.observedAt) ctxRows.push({ label: 'Observed at', value: input.observedAt });
 
   const lead =
     input.status === 'recovered'
       ? `${esc(input.serviceName)} is responding normally again${input.downtime ? ` after ${esc(input.downtime)} of downtime` : ''}.`
       : input.status === 'degraded'
-        ? `${esc(input.serviceName)} is responding, but outside its healthy envelope.`
-        : `${esc(input.serviceName)} is not responding to health checks.`;
+        ? `${esc(input.serviceName)} is responding, but outside its healthy operating envelope.`
+        : `${esc(input.serviceName)} is not responding to automated health checks.`;
 
-  const body = stack([
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(lead),
     pill(meta.label, meta.tone),
-    dataTable(rows),
-    input.insight ? aiInsight(input.insight) : '',
-    input.status === 'recovered'
-      ? input.alertUrl
-        ? button(input.alertUrl, 'View incident timeline')
-        : ''
-      : alertActions(input, 'View service', { url: input.acknowledgeUrl, label: 'Acknowledge' }, meta.tone),
-  ]);
+    sectionHeader('HEALTH & AVAILABILITY'),
+    dataTable(healthRows),
+  ];
+
+  if (ctxRows.length > 0) {
+    bodyBlocks.push(sectionHeader('INCIDENT SCOPE'), dataTable(ctxRows));
+  }
+
+  if (input.detail) {
+    bodyBlocks.push(callout(meta.tone, esc(input.detail), 'Observation detail'));
+  }
+
+  if (input.insight) {
+    bodyBlocks.push(sectionHeader('AI DIAGNOSIS'), aiInsight(input.insight));
+  }
+
+  if (input.status === 'recovered') {
+    if (input.alertUrl) {
+      bodyBlocks.push(sectionHeader('TIMELINE'), button(input.alertUrl, 'View Incident Timeline'));
+    }
+  } else {
+    bodyBlocks.push(
+      sectionHeader('ACTIONS'),
+      alertActions(input, 'View Service', { url: input.acknowledgeUrl, label: 'Acknowledge' }, meta.tone),
+    );
+  }
+
+  const textSections: (string | null | undefined | false)[] = [
+    `SERVICE ${meta.label.toUpperCase()}`,
+    lead,
+    `\n--- HEALTH & AVAILABILITY ---`,
+    plainRows(healthRows),
+  ];
+  if (ctxRows.length > 0) textSections.push(`\n--- INCIDENT SCOPE ---`, plainRows(ctxRows));
+  if (input.detail) textSections.push(`\nObservation: ${input.detail}`);
+  if (input.status === 'recovered') {
+    if (input.alertUrl) textSections.push(`\nView timeline: ${safeUrlText(input.alertUrl)}`);
+  } else {
+    textSections.push(actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }));
+  }
 
   return {
     subject: alertSubject(
@@ -1148,25 +1818,12 @@ export function serviceHealthTemplate(input: ServiceHealthInput): EmailTemplate 
           : `${stripControl(input.serviceName)} is ${meta.state}${input.detail ? ` — ${stripControl(input.detail)}` : ''}.`,
       tone: meta.tone,
       chip: meta.chip,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
     }),
-    text: textBody(
-      `SERVICE ${meta.label.toUpperCase()}`,
-      input.status === 'recovered'
-        ? `${input.serviceName} is responding normally again${input.downtime ? ` after ${input.downtime}` : ''}.`
-        : `${input.serviceName} is ${meta.state}.`,
-      plainRows(rows),
-      // A recovered service has nothing to acknowledge — offering the link
-      // would contradict the message.
-      input.status === 'recovered'
-        ? input.alertUrl
-          ? `View timeline: ${safeUrlText(input.alertUrl)}`
-          : ''
-        : actionsText(input, { label: 'Acknowledge:  ', url: input.acknowledgeUrl }),
-    ),
+    text: textBody(...textSections),
   };
 }
 
@@ -1193,13 +1850,6 @@ export interface QuotaAlertInput extends AlertScope {
   usageUrl?: string | undefined;
 }
 
-/**
- * Quota CTAs.
- *
- * Upgrading is the resolution, so it takes the primary slot; the usage
- * breakdown is the "why", so it takes the secondary. With only one link
- * available that link becomes the sole button rather than half an empty pair.
- */
 function quotaActions(input: QuotaAlertInput, tone: Tone): string {
   if (input.upgradeUrl && input.usageUrl) {
     return buttonRow(
@@ -1214,10 +1864,6 @@ function quotaActions(input: QuotaAlertInput, tone: Tone): string {
 
 /**
  * Usage-quota warning.
- *
- * Tone follows consumption rather than a fixed severity, because the same
- * message is very different news at 80% and at 100%: over limit is red,
- * approaching is amber, informational is neutral.
  */
 export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
   const pct = Math.round(input.percentUsed);
@@ -1225,21 +1871,21 @@ export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
   const tone: Tone = exceeded ? 'danger' : pct >= 80 ? 'warning' : 'info';
   const state = exceeded ? 'exceeded' : 'approaching limit';
 
-  const rows: DataRow[] = [
+  const quotaRows: DataRow[] = [
     { label: 'Resource', value: input.resource, sans: true },
-    { label: 'Used', value: `${input.used} of ${input.limit}`, tone },
-    { label: 'Consumed', value: `${pct}%`, tone },
+    { label: 'Consumed', value: `${input.used} of ${input.limit}`, tone },
+    { label: 'Utilization', value: `${pct}%`, tone },
   ];
-  if (input.planName) rows.push({ label: 'Plan', value: input.planName, sans: true });
-  if (input.resetsAt) rows.push({ label: 'Resets', value: input.resetsAt });
-  if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.orgName) rows.push({ label: 'Organization', value: input.orgName, sans: true });
+  if (input.planName) quotaRows.push({ label: 'Current plan', value: input.planName, sans: true });
+  if (input.resetsAt) quotaRows.push({ label: 'Billing resets', value: input.resetsAt });
+  if (input.projectName) quotaRows.push({ label: 'Project', value: input.projectName, sans: true });
+  if (input.orgName) quotaRows.push({ label: 'Organization', value: input.orgName, sans: true });
 
-  const body = stack([
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(
       exceeded
-        ? `Your ${esc(input.resource.toLowerCase())} quota is fully consumed for this billing period.`
-        : `Your ${esc(input.resource.toLowerCase())} quota is ${pct}% consumed for this billing period.`,
+        ? `Your <strong>${esc(input.resource.toLowerCase())}</strong> quota is fully consumed for this billing period.`
+        : `Your <strong>${esc(input.resource.toLowerCase())}</strong> quota is <strong>${pct}%</strong> consumed for this billing period.`,
     ),
     metricCompare({
       label: input.resource,
@@ -1248,12 +1894,20 @@ export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
       thresholdLabel: 'Plan limit',
       tone,
     }),
-    dataTable(rows),
-    input.overagePolicy
-      ? callout(exceeded ? 'danger' : 'warning', esc(input.overagePolicy), exceeded ? 'In effect now' : 'What happens at 100%')
-      : '',
-    quotaActions(input, tone),
-  ]);
+    sectionHeader('RESOURCE UTILIZATION'),
+    dataTable(quotaRows),
+  ];
+
+  if (input.overagePolicy) {
+    bodyBlocks.push(
+      callout(exceeded ? 'danger' : 'warning', esc(input.overagePolicy), exceeded ? 'In effect now' : 'What happens at 100%'),
+    );
+  }
+
+  const actHtml = quotaActions(input, tone);
+  if (actHtml) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), actHtml);
+  }
 
   return {
     subject: `[QUOTA${exceeded ? ' · EXCEEDED' : ''}] ${stripControl(input.resource)} at ${pct}%${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
@@ -1264,7 +1918,7 @@ export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
       preheader: `${stripControl(input.used)} of ${stripControl(input.limit)} ${stripControl(input.resource.toLowerCase())} used${input.resetsAt ? ` — resets ${stripControl(input.resetsAt)}` : ''}.`,
       tone,
       chip: exceeded ? glyph.bang : glyph.arrowUp,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -1272,8 +1926,9 @@ export function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate {
     text: textBody(
       `USAGE QUOTA ${exceeded ? 'EXCEEDED' : `AT ${pct}%`}`,
       `${input.resource}: ${input.used} of ${input.limit} used (${pct}%).`,
-      plainRows(rows),
-      input.overagePolicy ?? '',
+      `\n--- RESOURCE UTILIZATION ---`,
+      plainRows(quotaRows),
+      input.overagePolicy ? `\nPolicy: ${input.overagePolicy}` : '',
       input.upgradeUrl ? `Increase limit: ${safeUrlText(input.upgradeUrl)}` : '',
       input.usageUrl ? `View usage:     ${safeUrlText(input.usageUrl)}` : '',
     ),
@@ -1306,56 +1961,53 @@ export interface DeliveryFailureInput extends AlertScope {
 
 /**
  * Meta-alert: the alerting system itself could not deliver.
- *
- * The most important alert in the product, because it is the one that reveals
- * silent failure. A broken Slack webhook means every other alert is being
- * generated correctly and going nowhere, and nobody finds out by waiting.
- * Deliberately routed over email — the channel that is failing cannot be
- * trusted to report its own failure.
  */
 export function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTemplate {
   const rows: DataRow[] = [
     { label: 'Connector', value: input.connectorName, sans: true },
   ];
-  if (input.connectorType) rows.push({ label: 'Type', value: input.connectorType });
-  rows.push({ label: 'Failed', value: `${input.failedCount} notification${input.failedCount === 1 ? '' : 's'}`, tone: 'danger' });
+  if (input.connectorType) rows.push({ label: 'Channel type', value: input.connectorType });
+  rows.push({ label: 'Failed deliveries', value: `${input.failedCount} notification${input.failedCount === 1 ? '' : 's'}`, tone: 'danger' });
   if (typeof input.attempts === 'number') rows.push({ label: 'Attempts', value: String(input.attempts) });
   if (typeof input.statusCode === 'number') {
-    rows.push({ label: 'Last status', value: String(input.statusCode), tone: 'danger' });
+    rows.push({ label: 'Last HTTP status', value: String(input.statusCode), tone: 'danger' });
   }
-  if (input.lastError) rows.push({ label: 'Last error', value: input.lastError, sans: true });
   if (input.firstFailedAt) rows.push({ label: 'First failure', value: input.firstFailedAt });
   if (input.lastFailedAt) rows.push({ label: 'Last failure', value: input.lastFailedAt });
   if (input.deadLettered !== undefined) {
     rows.push({
       label: 'Dead-lettered',
-      value: input.deadLettered ? 'Yes — retained for retry' : 'No',
+      value: input.deadLettered ? 'Yes — retained for replay' : 'No',
       tone: input.deadLettered ? 'warning' : 'neutral',
       sans: true,
     });
   }
   if (input.orgName) rows.push({ label: 'Organization', value: input.orgName, sans: true });
 
-  const body = stack([
+  const bodyBlocks: (string | null | undefined | false)[] = [
     p(
-      `${esc(input.appName)} could not deliver ${input.failedCount} alert notification${input.failedCount === 1 ? '' : 's'} through ${esc(input.connectorName)}. Those alerts fired correctly &mdash; they simply never arrived.`,
+      `${esc(input.appName)} could not deliver <strong>${input.failedCount}</strong> alert notification${input.failedCount === 1 ? '' : 's'} through <strong>${esc(input.connectorName)}</strong>. Those alerts fired correctly &mdash; but notifications failed to dispatch.`,
     ),
     pill('Delivery failing', 'danger'),
+    sectionHeader('CONNECTOR FAILURE DETAILS'),
     dataTable(rows),
-    input.connectorUrl ? button(input.connectorUrl, 'Fix connector', { tone: 'danger' }) : '',
+  ];
+
+  if (input.lastError) {
+    bodyBlocks.push(callout('danger', esc(input.lastError), 'Connector error response'));
+  }
+
+  bodyBlocks.push(
     callout(
       'danger',
-      'Until this connector is repaired, alerts routed through it are invisible to whoever depends on it. Verify the credential or webhook URL, then send a test notification to confirm delivery.',
+      'Until this connector is repaired, alerts routed through it are invisible to whoever depends on it. Verify the webhook URL or credential and send a test notification to confirm delivery.',
       'Silent-failure risk',
     ),
-    input.deadLettered
-      ? callout(
-          'neutral',
-          'Failed payloads were moved to the dead-letter queue rather than dropped, so they can be replayed once delivery is restored.',
-          'Nothing was lost',
-        )
-      : '',
-  ]);
+  );
+
+  if (input.connectorUrl) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.connectorUrl, 'Manage Connector Settings', { tone: 'danger' }));
+  }
 
   return {
     subject: `[DELIVERY FAILED] ${stripControl(input.connectorName)} — ${input.failedCount} notification${input.failedCount === 1 ? '' : 's'}`,
@@ -1366,7 +2018,7 @@ export function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTempl
       preheader: `${input.failedCount} notification${input.failedCount === 1 ? '' : 's'} could not be delivered through ${stripControl(input.connectorName)}.`,
       tone: 'danger',
       chip: glyph.bang,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -1374,9 +2026,10 @@ export function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTempl
     text: textBody(
       'ALERT DELIVERY FAILING',
       `${input.appName} could not deliver ${input.failedCount} alert notification${input.failedCount === 1 ? '' : 's'} through ${input.connectorName}.`,
+      `\n--- FAILURE DETAILS ---`,
       plainRows(rows),
-      input.connectorUrl ? `Fix connector: ${safeUrlText(input.connectorUrl)}` : '',
-      'Until this is repaired, alerts routed through this connector are invisible.',
+      input.lastError ? `\nLast error: ${input.lastError}` : '',
+      input.connectorUrl ? `Manage connector: ${safeUrlText(input.connectorUrl)}` : '',
     ),
   };
 }
@@ -1404,50 +2057,51 @@ const RULE_ACTION_META: Record<RuleChangedInput['action'], { tone: Tone; chip: s
 
 /**
  * Alert-rule audit notice.
- *
- * Changing a threshold silently changes what the team will and will not be told
- * about. Disabling a rule is functionally an outage in your own observability,
- * so it is announced to the org rather than left in an audit log nobody reads.
  */
 export function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate {
   const meta = RULE_ACTION_META[input.action];
 
   const rows: DataRow[] = [
-    { label: 'Rule', value: input.ruleName, sans: true },
-    { label: 'Action', value: meta.verb.toUpperCase(), tone: meta.tone },
-    { label: 'Changed by', value: input.changedBy, sans: true },
+    { label: 'Rule name', value: input.ruleName, sans: true },
+    { label: 'Audit action', value: meta.verb.toUpperCase(), tone: meta.tone },
+    { label: 'Modified by', value: input.changedBy, sans: true },
   ];
-  if (input.changedAt) rows.push({ label: 'When', value: input.changedAt });
+  if (input.changedAt) rows.push({ label: 'Timestamp', value: input.changedAt });
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
   if (input.environment) rows.push({ label: 'Environment', value: input.environment });
 
-  const changeList =
-    input.changes && input.changes.length > 0
-      ? callout('neutral', input.changes.map((c) => esc(c)).join('<br />'), 'What changed')
-      : '';
-
-  const risk =
-    input.action === 'disabled'
-      ? callout(
-          'warning',
-          'While this rule is disabled nothing it watches will alert anyone. That is a gap in coverage, not a reduction in noise — re-enable it when the reason for disabling it has passed.',
-          'Coverage gap',
-        )
-      : input.action === 'deleted'
-        ? callout(
-            'danger',
-            'This rule no longer exists. Whatever condition it watched will not be detected again unless an equivalent rule is created.',
-            'Coverage removed',
-          )
-        : '';
-
-  const body = stack([
-    p(`${esc(input.changedBy)} ${esc(meta.verb)} the alert rule ${esc(input.ruleName)}.`),
+  const bodyBlocks: (string | null | undefined | false)[] = [
+    p(`<strong>${esc(input.changedBy)}</strong> ${esc(meta.verb)} the alert rule <strong>${esc(input.ruleName)}</strong>.`),
+    pill(meta.verb, meta.tone),
+    sectionHeader('AUDIT TRAIL'),
     dataTable(rows),
-    changeList,
-    risk,
-    input.ruleUrl ? button(input.ruleUrl, 'View rule') : '',
-  ]);
+  ];
+
+  if (input.changes && input.changes.length > 0) {
+    bodyBlocks.push(callout('neutral', input.changes.map((c) => esc(c)).join('<br />'), 'Modified parameters'));
+  }
+
+  if (input.action === 'disabled') {
+    bodyBlocks.push(
+      callout(
+        'warning',
+        'While this rule is disabled, nothing it watches will alert anyone. That is a gap in coverage, not a reduction in noise — re-enable it when the reason for disabling it has passed.',
+        'Coverage gap warning',
+      ),
+    );
+  } else if (input.action === 'deleted') {
+    bodyBlocks.push(
+      callout(
+        'danger',
+        'This rule no longer exists. Whatever condition it watched will not be detected again unless an equivalent rule is created.',
+        'Coverage removed',
+      ),
+    );
+  }
+
+  if (input.ruleUrl) {
+    bodyBlocks.push(sectionHeader('ACTIONS'), button(input.ruleUrl, 'View Rule Configuration'));
+  }
 
   return {
     subject: `[RULE ${meta.verb.toUpperCase()}] ${stripControl(input.ruleName)}${scopeLabel(input) ? ` — ${scopeLabel(input)}` : ''}`,
@@ -1458,7 +2112,7 @@ export function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate {
       preheader: `${stripControl(input.changedBy)} ${meta.verb} ${stripControl(input.ruleName)}.`,
       tone: meta.tone,
       chip: meta.chip,
-      body,
+      body: stack(bodyBlocks),
       footer: 'alert',
       footerLink: footerLinkFor(input),
       closing: null,
@@ -1466,9 +2120,10 @@ export function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate {
     text: textBody(
       `ALERT RULE ${meta.verb.toUpperCase()}`,
       `${input.changedBy} ${meta.verb} the alert rule "${input.ruleName}".`,
+      `\n--- AUDIT TRAIL ---`,
       plainRows(rows),
       input.changes && input.changes.length > 0
-        ? `What changed:\n${input.changes.map((c) => `  - ${c}`).join('\n')}`
+        ? `Modified parameters:\n${input.changes.map((c) => `  - ${c}`).join('\n')}`
         : '',
       input.ruleUrl ? `View rule: ${safeUrlText(input.ruleUrl)}` : '',
     ),

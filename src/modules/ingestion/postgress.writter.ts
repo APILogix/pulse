@@ -14,7 +14,10 @@ import { extractApiKeyPrefix, hashApiKey, constantTimeEqualHex } from '../projec
 
 export interface ProjectAuthResult {
   projectId: string;
+  projectSlug?: string | undefined;
   orgId: string;
+  orgName?: string | undefined;
+  orgSlug?: string | undefined;
   projectName: string;
   projectStatus: string;
   environmentId: string;
@@ -81,9 +84,12 @@ export class PostgresWriter {
       `
       SELECT
         p.id as project_id,
+        p.slug as project_slug,
         p.org_id,
         p.name as project_name,
         p.status as project_status,
+        o.name as org_name,
+        o.slug as org_slug,
         k.id as key_id,
         k.name as api_key_name,
         k.environment_id,
@@ -95,6 +101,7 @@ export class PostgresWriter {
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
+      LEFT JOIN organizations o ON o.id = p.org_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
@@ -131,7 +138,10 @@ export class PostgresWriter {
 
       return {
         projectId: row.project_id as string,
+        projectSlug: (row.project_slug as string | undefined) ?? undefined,
         orgId: row.org_id as string,
+        orgName: (row.org_name as string | undefined) ?? undefined,
+        orgSlug: (row.org_slug as string | undefined) ?? undefined,
         projectName: row.project_name as string,
         projectStatus: row.project_status as string,
         environmentId: row.environment_id as string,

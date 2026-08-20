@@ -121,7 +121,7 @@ export interface IngestJobMetadata {
   /** Gateway batch id (one per HTTP request). */
   batchId: string;
   apiKeyId: string;
-  apiKeyName?: string;
+  apiKeyName?: string | undefined;
   planTier: PlanTier;
   /** ISO timestamp when the gateway accepted the batch (e2e latency anchor). */
   receivedAt: string;
@@ -130,7 +130,11 @@ export interface IngestJobMetadata {
   /** Fairness defer counter (worker-side). */
   deferCount: number;
   /** True when produced by a DLQ/ops replay instead of live traffic. */
-  replay?: boolean;
+  replay?: boolean | undefined;
+  projectSlug?: string | undefined;
+  projectName?: string | undefined;
+  orgSlug?: string | undefined;
+  orgName?: string | undefined;
 }
 
 export interface IngestJobPayload {

@@ -1,0 +1,19 @@
+ALERT RULE UPDATED
+
+Grace Hopper updated the alert rule "Checkout p95 latency above 800 ms".
+
+--- AUDIT TRAIL ---
+
+RULE NAME     Checkout p95 latency above 800 ms
+AUDIT ACTION  UPDATED
+MODIFIED BY   Grace Hopper
+TIMESTAMP     1 Aug 2026, 00:58 UTC
+PROJECT       checkout-api
+ENVIRONMENT   production
+
+Modified parameters:
+  - Threshold: 800 ms → 1500 ms
+  - Evaluation window: 5 min → 10 min
+  - Severity: critical → error
+
+View rule: https://app.pulsiv.io/alerts/rules/rul_01JQ8Z

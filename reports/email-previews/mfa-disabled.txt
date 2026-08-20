@@ -1,0 +1,12 @@
+Hi Ada,
+
+Multi-factor authentication was disabled on your Pulsiv account.
+
+Request details
+------------------------------------------------------
+REQUESTED   1 Aug 2026, 01:12 UTC
+DEVICE      Chrome 141 on macOS
+IP ADDRESS  203.0.113.42
+LOCATION    Bengaluru, IN
+
+If this was not you, re-enable MFA and change your password immediately.

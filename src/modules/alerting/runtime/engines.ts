@@ -998,6 +998,10 @@ function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayl
     },
     evidence: {
       projectId: scoped.projectId,
+      projectSlug: (scoped as ScopedEvent).projectSlug,
+      projectName: (scoped as ScopedEvent).projectName,
+      orgSlug: (scoped as ScopedEvent).orgSlug,
+      orgName: (scoped as ScopedEvent).orgName,
       environment: scoped.environment,
       eventType: event.type,
       event,

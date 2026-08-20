@@ -125,7 +125,11 @@ interface ServiceConfig {
 
 interface ResolvedProject {
   id: string;
+  projectSlug?: string | undefined;
+  projectName?: string | undefined;
   orgId: string;
+  orgName?: string | undefined;
+  orgSlug?: string | undefined;
   environmentId: string;
   environmentName: string;
   environmentSlug: string;
@@ -246,7 +250,11 @@ export class IngestionService {
     if (cached) {
       return {
         id: cached.id,
+        projectSlug: cached.slug,
+        projectName: cached.name,
         orgId: cached.orgId,
+        orgName: cached.orgName,
+        orgSlug: cached.orgSlug,
         environmentId: cached.environmentId,
         environmentName: cached.environmentName ?? cached.environment,
         environmentSlug: cached.environment,
@@ -279,7 +287,11 @@ export class IngestionService {
 
     const resolved: ResolvedProject = {
       id: auth.projectId,
+      projectSlug: auth.projectSlug,
+      projectName: auth.projectName,
       orgId: auth.orgId,
+      orgName: auth.orgName,
+      orgSlug: auth.orgSlug,
       environmentId: auth.environmentId,
       environmentName: auth.environmentName,
       environmentSlug: auth.environmentSlug,
@@ -308,8 +320,11 @@ export class IngestionService {
 
     apiKeyCache.set(keyHash, {
       id: resolved.id,
+      slug: resolved.projectSlug,
       orgId: resolved.orgId,
       name: auth.projectName,
+      orgName: resolved.orgName,
+      orgSlug: resolved.orgSlug,
       environment: resolved.environmentSlug,
       environmentId: resolved.environmentId,
       environmentName: resolved.environmentName,
@@ -608,6 +623,10 @@ export class IngestionService {
       const jobs = this.buildJobs({
         organizationId: project.orgId,
         projectId: project.id,
+        projectSlug: project.projectSlug,
+        projectName: project.projectName,
+        orgSlug: project.orgSlug,
+        orgName: project.orgName,
         apiKeyId: project.apiKeyId,
         apiKeyName: project.apiKeyName,
         planTier: project.planTier,
@@ -718,8 +737,12 @@ export class IngestionService {
     environment: string;
     batchId: string;
     receivedAt: string;
-    replay?: boolean;
+    replay?: boolean | undefined;
     byType: Map<SdkEventType, unknown[]>;
+    projectSlug?: string | undefined;
+    projectName?: string | undefined;
+    orgSlug?: string | undefined;
+    orgName?: string | undefined;
   }): Array<{ queue: string; payload: IngestJobPayload; priority: number }> {
     const jobs: Array<{ queue: string; payload: IngestJobPayload; priority: number }> = [];
     for (const [type, list] of params.byType) {
@@ -732,6 +755,10 @@ export class IngestionService {
           receivedAt: params.receivedAt,
           environment: params.environment,
           deferCount: 0,
+          projectSlug: params.projectSlug,
+          projectName: params.projectName,
+          orgSlug: params.orgSlug,
+          orgName: params.orgName,
           ...(params.replay ? { replay: true } : {}),
         };
         jobs.push({

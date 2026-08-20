@@ -1,0 +1,209 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="supported-color-schemes" content="dark" />
+  <meta name="format-detection" content="telephone=no,address=no,email=no,date=no" />
+  <title>Escalated: Checkout p95 latency above 800 ms</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <!--[if !mso]><!--><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet" /><!--<![endif]-->
+<style type="text/css">
+    :root { color-scheme: dark; supported-color-schemes: dark; }
+    body, table, td, a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; }
+    img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; }
+    a { text-decoration:none; }
+    a[x-apple-data-detectors] { color:inherit !important; text-decoration:none !important; font-size:inherit !important; font-family:inherit !important; font-weight:inherit !important; line-height:inherit !important; }
+    .pl-card { animation:pl-rise 420ms cubic-bezier(0.16,1,0.3,1) both; }
+    @keyframes pl-rise { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+    @media (prefers-reduced-motion:reduce) { .pl-card { animation:none !important; } }
+
+    /* Outlook.com dark mode — re-assert the palette it tries to rewrite. */
+    [data-ogsc] .dm-bg, [data-ogsb] .dm-bg { background-color:#111113 !important; }
+    [data-ogsc] .dm-bg-deep, [data-ogsb] .dm-bg-deep { background-color:#09090b !important; }
+    [data-ogsc] .dm-text { color:#fafafa !important; }
+    [data-ogsc] .dm-text2 { color:#a1a1aa !important; }
+
+    @media only screen and (max-width:620px) {
+      .sm-full { width:100% !important; max-width:100% !important; }
+      .sm-pad { padding-left:22px !important; padding-right:22px !important; }
+      .sm-title { font-size:20px !important; line-height:27px !important; }
+      .sm-otp { font-size:26px !important; letter-spacing:0.18em !important; }
+      .sm-stack { display:block !important; width:100% !important; box-sizing:border-box !important; }
+      .sm-stack-top { padding:10px 0 0 0 !important; }
+      .sm-divider { border-left:0 !important; }
+      .sm-hide { display:none !important; }
+    }
+  </style>
+</head>
+<body class="dm-bg-deep" style="margin:0;padding:0;width:100%;background-color:#09090b;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#a1a1aa;">
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;color:#09090b;">Unacknowledged for 17 minutes — Payments on-call escalated to step 2 of 3.&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="dm-bg-deep" bgcolor="#09090b" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;background-color:#09090b;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+        <!--[if mso]><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="620"><tr><td><![endif]-->
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" class="pl-card sm-full dm-bg" bgcolor="#111113" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;max-width:620px;background-color:#111113;border:1px solid #26262a;border-radius:10px;box-shadow:0 24px 60px rgba(0,0,0,0.7);">
+
+          <tr><td height="3" bgcolor="#ef4444" style="height:3px;background-color:#ef4444;line-height:3px;font-size:0;">&nbsp;</td></tr>
+
+          <tr>
+            <td class="sm-pad" style="padding:26px 32px 22px;border-bottom:1px solid #26262a;">
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td width="30" height="30" align="center" valign="middle" bgcolor="#fafafa" style="width:30px;height:30px;background-color:#fafafa;background-image:linear-gradient(135deg,#fafafa 0%,#22d3ee 100%);border-radius:7px;text-align:center;vertical-align:middle;font-family:'Space Grotesk','Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:17px;font-weight:700;line-height:30px;mso-line-height-rule:exactly;color:#09090b;">P</td>
+    <td style="padding-left:11px;vertical-align:middle;font-family:'Space Grotesk','Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:18px;font-weight:600;letter-spacing:-0.02em;line-height:30px;mso-line-height-rule:exactly;color:#fafafa;">Pulsiv</td>
+  </tr>
+</table>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+                <tr><td height="22" style="height:22px;line-height:22px;font-size:0;">&nbsp;</td></tr>
+              </table>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+                <tr>
+                  <td width="7" height="7" bgcolor="#ef4444" style="width:7px;height:7px;background-color:#ef4444;border-radius:50%;font-size:0;line-height:7px;">&nbsp;</td>
+                  <td style="padding-left:9px;"><div style="font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:14px;mso-line-height-rule:exactly;letter-spacing:0.1em;text-transform:uppercase;color:#ef4444;">Escalated · step 2 of 3</div></td>
+                </tr>
+              </table>
+              <h1 class="sm-title dm-text" style="margin:11px 0 0;padding:0;font-family:'Space Grotesk','Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:24px;font-weight:600;letter-spacing:-0.02em;line-height:31px;mso-line-height-rule:exactly;color:#fafafa;">Escalated: Checkout p95 latency above 800 ms</h1>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="sm-pad dm-text2" style="padding:28px 32px 30px;">
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 18px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td width="40" height="40" align="center" valign="middle" bgcolor="#1e1517" style="width:40px;height:40px;background-color:#1e1517;border:1px solid #3f2124;border-radius:10px;text-align:center;vertical-align:middle;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:15px;font-weight:500;line-height:38px;mso-line-height-rule:exactly;color:#ef4444;">&#8593;</td>
+  </tr>
+</table></td></tr>
+</table><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><p style="margin:0 0 0px;padding:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:22px;mso-line-height-rule:exactly;color:#a1a1aa;">This alert has not been acknowledged, so <strong>Payments on-call</strong> advanced to <strong>step 2 of 3</strong> and widened the notification.</p></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td bgcolor="#1e1517" style="background-color:#1e1517;border:1px solid #3f2124;border-radius:100px;padding:5px 13px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:10px;font-weight:500;line-height:13px;mso-line-height-rule:exactly;letter-spacing:0.09em;text-transform:uppercase;color:#ef4444;white-space:nowrap;">Step 2 of 3</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;margin-top:4px;">
+  <tr>
+    <td style="padding:0 0 8px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;font-weight:600;line-height:15px;mso-line-height-rule:exactly;letter-spacing:0.1em;text-transform:uppercase;color:#8a8a94;">ESCALATION STATUS</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#18181b" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;background-color:#18181b;border:1px solid #26262a;border-radius:10px;">
+  <tr>
+    <td width="36%" valign="top" style="padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Rule</td>
+    <td valign="top" style="padding:11px 16px 11px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">Checkout p95 latency above 800 ms</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Severity</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#ef4444;word-break:break-word;font-variant-numeric:tabular-nums;">CRITICAL</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Escalation policy</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">Payments on-call</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Current step</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#ef4444;word-break:break-word;font-variant-numeric:tabular-nums;">Step 2 of 3</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Firing for</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#ef4444;word-break:break-word;font-variant-numeric:tabular-nums;">17 minutes</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Trigger</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">No acknowledgement within 15 minutes</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Notifying</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">Platform leads, secondary on-call</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;margin-top:4px;">
+  <tr>
+    <td style="padding:0 0 8px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;font-weight:600;line-height:15px;mso-line-height-rule:exactly;letter-spacing:0.1em;text-transform:uppercase;color:#8a8a94;">TELEMETRY &amp; TARGET</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" bgcolor="#18181b" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;background-color:#18181b;border:1px solid #26262a;border-radius:10px;">
+  <tr>
+    <td width="36%" valign="top" style="padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Project</td>
+    <td valign="top" style="padding:11px 16px 11px 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">checkout-api</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Environment</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">production</td>
+  </tr>
+  <tr>
+    <td width="36%" valign="top" style="border-top:1px solid #26262a;padding:11px 12px 11px 16px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;line-height:18px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Fingerprint</td>
+    <td valign="top" style="border-top:1px solid #26262a;padding:11px 16px 11px 0;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;font-weight:500;line-height:18px;mso-line-height-rule:exactly;color:#fafafa;word-break:break-word;font-variant-numeric:tabular-nums;">a91f0c4e7b2d8815</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;margin-top:4px;">
+  <tr>
+    <td style="padding:0 0 8px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:11px;font-weight:600;line-height:15px;mso-line-height-rule:exactly;letter-spacing:0.1em;text-transform:uppercase;color:#8a8a94;">TRIAGE &amp; ACTIONS</td>
+  </tr>
+</table></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr><td style="padding:0 0 20px;"><div style="margin-top:8px;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td class="sm-stack" valign="top" style="padding:0 10px 0 0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td align="center" bgcolor="#ef4444" style="background-color:#ef4444;border:1px solid #ef4444;border-radius:6px;">
+      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack" style="height:44px;v-text-anchor:middle;width:162px;" arcsize="14%" stroke="f" fillcolor="#ef4444"><w:anchorlock/><center style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">Take Ownership</center></v:roundrect><![endif]-->
+      <!--[if !mso]><!--><a href="https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack" style="display:inline-block;padding:13px 26px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;line-height:18px;mso-line-height-rule:exactly;color:#ffffff;text-decoration:none;border-radius:6px;">Take Ownership</a><!--<![endif]-->
+    </td>
+  </tr>
+</table></td>
+    <td class="sm-stack sm-stack-top" valign="top" style="padding:0;"><table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;">
+  <tr>
+    <td align="center" bgcolor="#18181b" style="background-color:#18181b;border:1px solid #26262a;border-radius:6px;">
+      <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R" style="height:44px;v-text-anchor:middle;width:150px;" arcsize="14%" stroke="f" fillcolor="#18181b"><w:anchorlock/><center style="color:#a1a1aa;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">View Alert</center></v:roundrect><![endif]-->
+      <!--[if !mso]><!--><a href="https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R" style="display:inline-block;padding:13px 26px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;line-height:18px;mso-line-height-rule:exactly;color:#a1a1aa;text-decoration:none;border-radius:6px;">View Alert</a><!--<![endif]-->
+    </td>
+  </tr>
+</table></td>
+  </tr>
+</table><div style="margin-top:12px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:12px;color:#8a8a94;"><a href="https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack" style="color:#a1a1aa;text-decoration:underline;">Acknowledge</a> &nbsp;·&nbsp; <a href="https://app.pulsiv.io/alerts/silences/new?fingerprint=a91f0c" style="color:#a1a1aa;text-decoration:underline;">Silence</a></div></div></td></tr>
+</table>
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+  <tr>
+    <td width="3" bgcolor="#ef4444" style="width:3px;background-color:#ef4444;font-size:0;line-height:0;">&nbsp;</td>
+    <td bgcolor="#1e1517" style="background-color:#1e1517;padding:13px 16px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:20px;mso-line-height-rule:exactly;color:#a1a1aa;"><div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:600;line-height:18px;mso-line-height-rule:exactly;color:#ef4444;padding-bottom:5px;">How to stop escalation</div>Acknowledging stops further escalation. Silencing suppresses notifications without resolving the underlying condition — prefer acknowledgement while you investigate.</td>
+  </tr>
+</table>
+            </td>
+          </tr>
+
+<tr>
+  <td class="sm-pad dm-bg-deep" bgcolor="#09090b" style="background-color:#09090b;border-top:1px solid #26262a;padding:22px 32px;">
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;">
+      <tr><td align="center" style="text-align:center;padding:0 0 12px;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:10px;line-height:17px;mso-line-height-rule:exactly;letter-spacing:0.07em;text-transform:uppercase;color:#8a8a94;">Automated alert &nbsp;&middot;&nbsp; Deduplicated &nbsp;&middot;&nbsp; Audit logged</td></tr>
+      <tr><td align="center" style="text-align:center;font-family:'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:10px;line-height:16px;mso-line-height-rule:exactly;color:#8a8a94;">Automated notification from Pulsiv. Replies are not monitored.</td></tr>
+      <tr><td align="center" style="text-align:center;padding:12px 0 0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:10px;line-height:16px;mso-line-height-rule:exactly;color:#8a8a94;"><a href="https://app.pulsiv.io/settings/notifications" style="color:#a1a1aa;text-decoration:underline;">Manage alert notifications</a></td></tr>
+    </table>
+  </td>
+</tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

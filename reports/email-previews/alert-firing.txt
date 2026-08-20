@@ -1,0 +1,31 @@
+ALERT FIRING — CRITICAL
+
+Checkout latency has been above its threshold for six consecutive evaluation windows. Payment confirmations are queueing behind the slowdown.
+
+p95 latency: 1,842 ms (threshold 800 ms, last 5 minutes)
+
+--- TRACE & CORRELATION ---
+
+FINGERPRINT  a91f0c4e7b2d8815
+EVENT ID     evt_01JQ8Z3K5R
+
+--- INCIDENT SCOPE ---
+
+SEVERITY     CRITICAL
+PROJECT      checkout-api
+ENVIRONMENT  production
+SOURCE       telemetry
+STARTED      1 Aug 2026, 01:08 UTC
+OCCURRENCES  14 in this window
+
+--- AI DIAGNOSIS ---
+
+AI Insight: Latency began climbing four minutes after deploy 4f21a8c. The p99 curve matches the pattern of connection-pool exhaustion rather than a downstream provider slowdown. (87% confidence)
+
+First response: Check the payment-gateway connection pool first — saturation there has caused this signature twice before.
+
+--- ACTIONS ---
+
+View Alert: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R
+Acknowledge: https://app.pulsiv.io/alerts/evt_01JQ8Z3K5R/ack
+Silence: https://app.pulsiv.io/alerts/silences/new?fingerprint=a91f0c

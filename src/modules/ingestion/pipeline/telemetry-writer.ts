@@ -44,8 +44,12 @@ import { computeErrorFingerprint, ERROR_FINGERPRINT_VERSION } from '../../errors
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
   projectId: string;
+  projectSlug?: string | undefined;
+  projectName?: string | undefined;
   /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
   orgId: string | null;
+  orgSlug?: string | undefined;
+  orgName?: string | undefined;
   apiKeyName?: string | undefined;
   /** Normalized string supplied by the SDK envelope; never an environment UUID. */
   environment: string;
@@ -567,31 +571,55 @@ export class TelemetryWriter {
       .filter((event) => event.orgId !== null)
       .map((event) => {
         const record = rec(event.event);
-          const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
-          return [
-            event.orgId,
-            event.projectId,
-            event.environment,
-            event.event.type,
-            this.eventId(event.event),
-            outboxSeverity(event.event),
-            isFastPathSignal(event),
-            JSON.stringify({
-              eventType: event.event.type,
-              message: str(record.message, 4096),
-              service: str(record.service, 100),
-              requestId: str(record.requestId, 64),
-              monitorSlug: str(record.monitorSlug, 255),
-              statusCode: record.statusCode ?? record.status_code,
-              latency: latencyVal,
-              latencyMs: latencyVal,
-              durationMs: latencyVal,
-              method: record.method,
-              route: record.route ?? record.endpoint,
-            }),
-            iso(resolveTimestamp(event.event)),
-          ];
-        });
+        const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
+        const errName = errorNameOf(event.event);
+        const fingerprint = errorFingerprint(event.event, errName);
+        const rawEvent = event.event as Record<string, unknown>;
+        return [
+          event.orgId,
+          event.projectId,
+          event.environment,
+          event.event.type,
+          this.eventId(event.event),
+          outboxSeverity(event.event),
+          isFastPathSignal(event),
+          JSON.stringify({
+            eventType: event.event.type,
+            message: str(record.message, 4096),
+            service: str(record.service, 100),
+            requestId: str(record.requestId ?? record.request_id ?? rawEvent.requestId ?? rawEvent.request_id, 64),
+            traceId: str(record.traceId ?? record.trace_id ?? rawEvent.traceId ?? rawEvent.trace_id, 128),
+            spanId: str(record.spanId ?? record.span_id ?? rawEvent.spanId ?? rawEvent.span_id, 64),
+            monitorSlug: str(record.monitorSlug, 255),
+            statusCode: record.statusCode ?? record.status_code,
+            latency: latencyVal,
+            latencyMs: latencyVal,
+            durationMs: latencyVal,
+            method: record.method,
+            route: record.route ?? record.endpoint ?? record.url,
+            url: record.url,
+            responseSize: record.responseSize ?? record.response_size,
+            release: str(record.release ?? rawEvent.release, 100),
+            applicationName: str(record.applicationName ?? record.application_name, 100),
+            environment: event.environment,
+            projectSlug: event.projectSlug,
+            projectName: event.projectName,
+            orgSlug: event.orgSlug,
+            orgName: event.orgName,
+            ...(event.event.type === 'error' ? {
+              errorName: errName,
+              name: errName,
+              fingerprint,
+              stack: record.stack ?? rawEvent.stack,
+              stackFrames: record.stackFrames ?? record.stack_frames ?? record.frames ?? rawEvent.stack_frames,
+              handled: record.handled ?? rawEvent.handled,
+              mechanism: record.mechanism ?? rawEvent.mechanism,
+              severity: outboxSeverity(event.event) ?? 'error',
+            } : {}),
+          }),
+          iso(resolveTimestamp(event.event)),
+        ];
+      });
     if (rows.length === 0) return 0;
 
     const result = await db.query(
@@ -1477,7 +1505,7 @@ function isFastPathSignal(scoped: ScopedEvent): boolean {
   if (event.type === 'request') {
     const status = Number(record.statusCode ?? record.status_code);
     const duration = Number(record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration);
-    return status === 401 || status === 403 || status >= 500 || (Number.isFinite(duration) && duration >= 1000);
+    return status === 401 || status === 403 || status >= 400 || (Number.isFinite(duration) && duration > 0);
   }
   return false;
 }
