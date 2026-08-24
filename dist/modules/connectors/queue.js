@@ -119,6 +119,7 @@ function renderManagedAlertEmail(jobData, targetEmail) {
 }
 async function processManagedEmailJob(jobData, jobId, runtimeRepository, notificationEntitlement, owners, log) {
     const startedAt = Date.now();
+    console.log(`\n[ALERT_EMAIL] 📨 Processing managed email job: ${jobId} | NotificationJob: ${jobData.notificationJobId} | Rule: ${jobData.ruleId ?? 'N/A'} | Severity: ${jobData.severity} | Org: ${jobData.organizationId}`);
     const capability = await notificationEntitlement.resolve(jobData.organizationId);
     if (!capability.alertingEnabled && !capability.managedEmailEnabled) {
         await runtimeRepository.recordNotificationDelivery({
@@ -131,6 +132,7 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.entitlement_blocked');
+        console.log(`[ALERT_EMAIL] 🚫 Managed email blocked by entitlement for Org: ${jobData.organizationId}`);
         log.warn({ jobId, orgId: jobData.organizationId }, 'Managed email blocked by entitlement');
         return;
     }
@@ -139,6 +141,7 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
         const owner = await owners.findActiveVerifiedOwner(jobData.organizationId, jobData.projectId);
         if (owner) {
             targetEmail = owner.email;
+            console.log(`[ALERT_EMAIL] 👤 Target email resolved from Project Owner: "${targetEmail}" (User: ${owner.userId})`);
         }
         else {
             const fallback = owners.findActiveVerifiedFallbackRecipient
@@ -146,6 +149,7 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
                 : null;
             if (fallback) {
                 targetEmail = fallback.email;
+                console.log(`[ALERT_EMAIL] 👤 Target email resolved from Org Fallback (Admin/Owner): "${targetEmail}" (User: ${fallback.userId})`);
             }
             else {
                 await runtimeRepository.recordNotificationDelivery({
@@ -158,14 +162,23 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
                     latencyMs: Date.now() - startedAt,
                 });
                 recordNotificationDelivery('notification.delivery.owner_unavailable');
+                console.log(`[ALERT_EMAIL] ❌ Managed email delivery failed: Neither project owner nor fallback email is available for Project: ${jobData.projectId}`);
                 log.warn({ jobId, projectId: jobData.projectId }, 'Managed email delivery failed: owner email unavailable');
                 return;
             }
         }
     }
     const template = renderManagedAlertEmail(jobData, targetEmail);
-    console.log(`[ALERT_EMAIL] 📨 Preparing managed email for: "${targetEmail}" | Subject: "${template.subject}" | Project: "${jobData.projectId ?? 'org'}" | DeliveryMode: "${jobData.deliveryMode}"`);
+    console.log(`[ALERT_EMAIL] 📝 Rendered Alert Email Template:`);
+    console.log(`[ALERT_EMAIL]   📌 To: "${targetEmail}"`);
+    console.log(`[ALERT_EMAIL]   📌 Subject: "${template.subject}"`);
+    console.log(`[ALERT_EMAIL]   📌 Rule ID: ${jobData.ruleId ?? 'N/A'}`);
+    console.log(`[ALERT_EMAIL]   📌 Alert Key: ${jobData.alertKey ?? 'N/A'}`);
+    console.log(`[ALERT_EMAIL]   📌 Severity: ${jobData.severity.toUpperCase()}`);
+    console.log(`[ALERT_EMAIL]   📌 Delivery Mode: ${jobData.deliveryMode}`);
+    console.log(`[ALERT_EMAIL] 📄 Email Body Preview (Plain Text):\n--------------------------------------------------\n${template.text}\n--------------------------------------------------`);
     try {
+        console.log(`[ALERT_EMAIL] 🚀 Sending email via SMTP to "${targetEmail}"...`);
         await sendEmail({
             to: targetEmail,
             subject: template.subject,
@@ -180,7 +193,7 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.sent');
-        console.log(`[ALERT_EMAIL] ✅ Managed email alert delivered successfully to "${targetEmail}" | NotificationJob: ${jobData.notificationJobId}`);
+        console.log(`[ALERT_EMAIL] ✅ Managed email alert delivered successfully to "${targetEmail}" | NotificationJob: ${jobData.notificationJobId} | Latency: ${Date.now() - startedAt}ms`);
         log.info({ jobId, targetEmail, notificationJobId: jobData.notificationJobId }, 'Managed email alert delivered successfully');
     }
     catch (err) {

@@ -2,11 +2,13 @@
  * Enterprise Alert Notification Formatter.
  *
  * Extracts and normalizes rich diagnostic context (Route, Latency, Threshold,
- * Timestamp, Trace ID, Status Code, Client IP, Environment, Project) and
- * renders Sentinel Mono enterprise emails for alert delivery.
+ * Difference, Percentile, Stack frames, Trace ID, Public IDs, Environment, Project)
+ * and builds structured NotificationPayload and Sentinel Mono emails for alert delivery.
  */
 import { env } from '../../../config/env.js';
-import { latencyAlertTemplate, errorSpikeTemplate, alertFiringTemplate, alertResolvedTemplate, alertEscalatedTemplate, } from '../../../shared/email/index.js';
+import { logger } from '../../../config/logger.js';
+import { latencyAlertTemplate, errorAlertTemplate, errorSpikeTemplate, alertFiringTemplate, alertResolvedTemplate, alertEscalatedTemplate, } from '../../../shared/email/index.js';
+const formatterLogger = logger.child({ component: 'alert-notification-formatter' });
 /** Format milliseconds or numbers cleanly. */
 export function formatDuration(ms) {
     if (ms === null || ms === undefined || Number.isNaN(ms))
@@ -48,292 +50,615 @@ export function getAppBaseUrl() {
     const base = env.FRONTEND_URL || env.APP_URL || 'http://localhost:5173';
     return base.replace(/\/+$/, '');
 }
-/** Extract all diagnostic fields from raw objects (candidate, evidence, event, payload). */
+/** Normalize local / server file paths into application-relative paths. */
+export function normalizeFilePath(filepath) {
+    if (typeof filepath !== 'string' || !filepath.trim())
+        return '';
+    let p = filepath.replace(/\\/g, '/').trim();
+    // If path contains /src/ or starts with src/, extract from src/
+    const srcIdx = p.indexOf('/src/');
+    if (srcIdx !== -1) {
+        p = p.slice(srcIdx + 1);
+    }
+    else {
+        const libIdx = p.indexOf('/lib/');
+        if (libIdx !== -1) {
+            p = p.slice(libIdx + 1);
+        }
+        else {
+            p = p.replace(/^[a-zA-Z]:\/(?:Users|home|root|var|app|workspace|runner|actions-runner)\/[^/]+\/[^/]+\//i, '');
+            p = p.replace(/^[a-zA-Z]:\/[^/]+\//i, '');
+            p = p.replace(/^\/(?:Users|home|root|var|app|workspace|runner)\/[^/]+\/[^/]+\//i, '');
+        }
+    }
+    p = p.replace(/^webpack:\/\/[^/]*\//i, '');
+    p = p.replace(/^(?:\.\/|\/)+/, '');
+    p = p.replace(/^node_modules\//i, '');
+    return p;
+}
+/** Select the most relevant in-app stack frame and excerpt. */
+export function extractPrimarySourceFrame(stackRaw, framesRaw) {
+    // 1. Try structured frames
+    if (Array.isArray(framesRaw) && framesRaw.length > 0) {
+        const validFrames = framesRaw.filter((f) => f && typeof f === 'object');
+        const inAppFrame = validFrames.find((f) => {
+            const isInternal = /node_modules|node:internal|@sentry|@fastify|fastify\/lib|express\/lib/i.test(String(f.filename || f.file || f.module || ''));
+            return !isInternal && (f.inApp === true || f.in_app === true || f.inApp === undefined);
+        }) || validFrames[0];
+        if (inAppFrame) {
+            const file = normalizeFilePath(inAppFrame.filename || inAppFrame.file || inAppFrame.module);
+            const line = inAppFrame.lineno ?? inAppFrame.lineNumber ?? inAppFrame.line;
+            const col = inAppFrame.colno ?? inAppFrame.column;
+            const fn = inAppFrame.function || inAppFrame.functionName || inAppFrame.fn;
+            const location = file ? `${file}${line ? `:${line}` : ''}${col ? `:${col}` : ''}` : '';
+            let sourceContext;
+            const pre = Array.isArray(inAppFrame.preContext ?? inAppFrame.pre_context)
+                ? (inAppFrame.preContext ?? inAppFrame.pre_context)
+                : [];
+            const curr = inAppFrame.contextLine ?? inAppFrame.context_line;
+            const post = Array.isArray(inAppFrame.postContext ?? inAppFrame.post_context)
+                ? (inAppFrame.postContext ?? inAppFrame.post_context)
+                : [];
+            if (curr || pre.length > 0 || post.length > 0) {
+                const lines = [];
+                pre.forEach((l) => lines.push(`  ${l}`));
+                if (curr)
+                    lines.push(`> ${curr}`);
+                post.forEach((l) => lines.push(`  ${l}`));
+                sourceContext = lines.join('\n');
+            }
+            if (location) {
+                return {
+                    location,
+                    functionName: typeof fn === 'string' && fn.trim() ? fn.trim() : undefined,
+                    sourceContext,
+                };
+            }
+        }
+    }
+    // 2. Try parsing stack string
+    if (typeof stackRaw === 'string' && stackRaw.trim()) {
+        const lines = stackRaw.split('\n');
+        for (const rawLine of lines) {
+            const trimmed = rawLine.trim();
+            if (!trimmed.startsWith('at ') && !trimmed.startsWith('File "'))
+                continue;
+            if (/node_modules|node:internal|@sentry|@fastify|fastify\/lib|express\/lib/i.test(trimmed))
+                continue;
+            const match = trimmed.match(/^at\s+(?:(async\s+)?([^\s(]+)\s+\((.+)\)|(.+))$/);
+            if (match) {
+                const fn = match[2] || undefined;
+                const loc = match[3] || match[4] || '';
+                const locParts = loc.match(/^(.*?)(?::(\d+))?(?::(\d+))?$/);
+                if (locParts) {
+                    const file = normalizeFilePath(locParts[1]);
+                    const line = locParts[2];
+                    const col = locParts[3];
+                    if (file) {
+                        return {
+                            location: `${file}${line ? `:${line}` : ''}${col ? `:${col}` : ''}`,
+                            functionName: fn && fn !== 'Object.<anonymous>' && fn !== '<anonymous>' ? fn : undefined,
+                        };
+                    }
+                }
+            }
+        }
+    }
+    return undefined;
+}
+/** Extract all diagnostic fields from candidate, evidence, event, payload. */
 export function extractAlertContext(input) {
-    const candidate = input.candidate ?? {};
-    const payload = input.payload ?? {};
-    const evidence = (candidate.evidence ?? payload.evidence ?? {});
-    const values = (evidence.values ?? payload.values ?? {});
-    const labels = (evidence.labels ?? candidate.labels ?? payload.labels ?? {});
-    const event = (evidence.event ?? {});
-    const record = (event.record ?? event.data ?? event);
-    const policy = (candidate.policy ?? payload.policy ?? {});
-    const annotations = (candidate.annotations ?? payload.annotations ?? {});
-    const organizationId = String(candidate.organizationId || payload.organizationId || input.organizationId || '');
-    const projectId = candidate.projectId ?? payload.projectId ?? input.projectId ?? null;
-    const environment = candidate.environment ?? payload.environment ?? labels.environment ?? record.environment ?? input.environment ?? null;
-    const service = candidate.service ?? payload.service ?? labels.service ?? record.service ?? null;
-    const rawSeverity = String(candidate.policy?.severity || payload.severity || candidate.severity || input.severity || 'error').toLowerCase();
-    const severity = rawSeverity === 'critical' || rawSeverity === 'fatal'
-        ? 'critical'
-        : rawSeverity === 'warning'
-            ? 'warning'
-            : rawSeverity === 'info' || rawSeverity === 'debug'
-                ? 'info'
-                : 'error';
-    const kind = (candidate.kind ?? payload.kind) === 'recovered' ? 'recovered' : 'fired';
-    const ruleId = String(candidate.policy?.ruleId || payload.ruleId || input.ruleId || '');
-    const ruleName = String(candidate.policy?.ruleName || payload.ruleName || annotations.title || policy.name || policy.ruleName || (ruleId ? `Rule ${ruleId.slice(0, 8)}` : 'Alert Rule')).replace(/^(Alert|Recovered):\s*/i, '').trim();
-    // Extract Route / Endpoint
-    const endpoint = String(candidate.endpoint
-        || payload.endpoint
-        || record.route
-        || record.url
-        || record.path
-        || event.route
-        || event.path
-        || labels.route
-        || labels.endpoint
-        || values.route
-        || '').trim() || undefined;
-    // Extract HTTP Method
-    const method = String(record.method
-        || record.httpMethod
-        || event.method
-        || record.req?.method
-        || labels.method
-        || '').trim() || undefined;
-    // Extract HTTP Status Code
-    const rawStatus = values.requests?.status_code
-        ?? record.statusCode
-        ?? record.status_code
-        ?? event.statusCode
-        ?? event.status_code
-        ?? values.status_code;
-    const statusCode = rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim() !== ''
-        ? Number(rawStatus) || String(rawStatus)
-        : undefined;
-    // Extract Latency / Duration
-    const rawObserved = candidate.observedValue
-        ?? (typeof payload.observedValue === 'number' ? payload.observedValue : null)
-        ?? values.latency_ms
-        ?? values.duration_ms
-        ?? record.latencyMs
-        ?? record.durationMs
-        ?? record.latency
-        ?? record.duration;
-    const observedValue = typeof rawObserved === 'number' && Number.isFinite(rawObserved) ? rawObserved : null;
-    const rawThreshold = candidate.thresholdValue
-        ?? (typeof payload.thresholdValue === 'number' ? payload.thresholdValue : null);
-    const thresholdValue = typeof rawThreshold === 'number' && Number.isFinite(rawThreshold) ? rawThreshold : null;
-    // Category and condition checks
-    const conditionPaths = candidate.conditionFieldPaths
-        ?? (Array.isArray(policy.conditions) ? policy.conditions.map((c) => c.field_path) : []);
-    const category = candidate.category
-        || payload.category
-        || (conditionPaths.some((p) => String(p).includes('latency') || String(p).includes('duration')) ? 'performance' : 'all');
-    const isLatency = category === 'performance'
-        || /latency|duration|response_time|p95|p99/i.test(ruleName)
-        || conditionPaths.some((p) => /latency|duration|response_time/i.test(String(p)));
-    const isError = category === 'errors'
-        || category === 'error'
-        || /error|5xx|exception|fail|crash|unhandled/i.test(ruleName)
-        || conditionPaths.some((p) => /error|5xx|unhandled|fatal/i.test(String(p)));
-    // Formatted observed & threshold
-    const fieldHint = conditionPaths[0] || (isLatency ? 'latency_ms' : '');
-    const observedFormatted = payload.observedFormatted
-        || (observedValue !== null ? formatMetricValue(observedValue, fieldHint) : undefined);
-    const thresholdFormatted = payload.thresholdFormatted
-        || (thresholdValue !== null ? formatMetricValue(thresholdValue, fieldHint) : undefined);
-    const durationMs = observedValue ?? (typeof payload.durationMs === 'number' ? payload.durationMs : undefined);
-    const timeTakenFormatted = payload.timeTakenFormatted
-        || (durationMs !== undefined ? formatDuration(durationMs) : undefined);
-    // Extract Trace ID & Span ID
-    const traceId = String(payload.traceId
-        || payload.metadata?.traceId
-        || event.traceId
-        || event.trace_id
-        || record.traceId
-        || record.trace_id
-        || event.tags?.trace_id
-        || record.tags?.trace_id
-        || event.metadata?.traceId
-        || '').trim() || undefined;
-    const spanId = String(payload.spanId
-        || payload.metadata?.spanId
-        || event.spanId
-        || event.span_id
-        || record.spanId
-        || record.span_id
-        || '').trim() || undefined;
-    // Extract Client IP & User Agent
-    const clientIp = String(payload.clientIp
-        || payload.metadata?.clientIp
-        || record.ip
-        || record.clientIp
-        || record.client_ip
-        || event.ip
-        || record.req?.ip
-        || record.remoteAddress
-        || '').trim() || undefined;
-    const userAgent = String(payload.userAgent
-        || payload.metadata?.userAgent
-        || record.userAgent
-        || record.user_agent
-        || event.userAgent
-        || record.req?.headers?.['user-agent']
-        || '').trim() || undefined;
-    // Extract Error Message
-    const rawErrorMessage = values.errors?.message
-        || values.logs?.message
-        || record.message
-        || record.error
-        || record.exception
-        || event.message
-        || '';
-    const errorMessage = typeof rawErrorMessage === 'string' && rawErrorMessage.trim() ? rawErrorMessage.trim() : undefined;
-    const errorType = typeof record.errorType === 'string' ? record.errorType : typeof record.name === 'string' ? record.name : undefined;
-    const stackSnippet = typeof record.stack === 'string' ? record.stack.slice(0, 500) : undefined;
-    // Timestamp
-    const rawObservedAt = candidate.observedAt || payload.occurredAt || event.timestamp || record.timestamp || new Date();
-    const occurredAt = rawObservedAt instanceof Date ? rawObservedAt : new Date(rawObservedAt);
-    const occurredAtFormatted = formatTimestamp(occurredAt);
-    const alertKey = input.alertKey || candidate.alertKey || payload.alertKey || 'default';
-    const alertEventId = input.alertEventId || payload.alertEventId || undefined;
-    const projectName = candidate.projectName || payload.projectName || (projectId ? `Project ${projectId.slice(0, 8)}` : null);
-    const orgName = candidate.orgName || payload.orgName || null;
-    const source = candidate.source || payload.source || 'telemetry';
-    // URLs
-    const baseUrl = getAppBaseUrl();
-    const alertUrl = projectId
-        ? `${baseUrl}/projects/${projectId}/alerts/${alertKey}`
-        : `${baseUrl}/alerts/${alertKey}`;
-    const traceUrl = projectId && traceId
-        ? `${baseUrl}/projects/${projectId}/traces/${traceId}`
-        : undefined;
-    const acknowledgeUrl = `${alertUrl}?action=ack`;
-    const silenceUrl = `${alertUrl}?action=silence`;
-    const preferencesUrl = `${baseUrl}/settings/notifications`;
-    // Scope label for subject
-    const scopeParts = [];
-    if (projectName)
-        scopeParts.push(projectName);
-    if (environment)
-        scopeParts.push(`(${environment})`);
-    const scopeStr = scopeParts.length > 0 ? scopeParts.join(' ') : (orgName || '');
-    const escalationStep = input.escalationStep || payload.escalationStep || undefined;
-    // Subject line computation
-    let subject;
-    if (kind === 'recovered') {
-        subject = `[RESOLVED] ${ruleName}${endpoint ? ` · ${endpoint}` : ''}${scopeStr ? ` — ${scopeStr}` : ''}`;
+    const startedTime = Date.now();
+    try {
+        const candidate = input.candidate ?? {};
+        const payload = input.payload ?? {};
+        const evidence = (candidate.evidence ?? payload.evidence ?? {});
+        const values = (evidence.values ?? payload.values ?? {});
+        const labels = (evidence.labels ?? candidate.labels ?? payload.labels ?? {});
+        const event = (evidence.event ?? {});
+        const record = (event.record ?? event.data ?? event);
+        const policy = (candidate.policy ?? payload.policy ?? {});
+        const annotations = (candidate.annotations ?? payload.annotations ?? {});
+        const metadata = (payload.metadata ?? {});
+        const organizationId = String(candidate.organizationId || payload.organizationId || input.organizationId || '');
+        const projectId = candidate.projectId ?? payload.projectId ?? input.projectId ?? null;
+        const environment = candidate.environment
+            ?? payload.environment
+            ?? labels.environment
+            ?? record.environment
+            ?? metadata.environment
+            ?? input.environment
+            ?? null;
+        const service = candidate.service
+            ?? payload.service
+            ?? labels.service
+            ?? record.service
+            ?? metadata.service
+            ?? null;
+        const release = record.release
+            ?? event.release
+            ?? payload.release
+            ?? metadata.release;
+        const rawSeverity = String(candidate.policy?.severity || payload.severity || candidate.severity || input.severity || 'error').toLowerCase();
+        const severity = rawSeverity === 'critical' || rawSeverity === 'fatal'
+            ? 'critical'
+            : rawSeverity === 'warning'
+                ? 'warning'
+                : rawSeverity === 'info' || rawSeverity === 'debug'
+                    ? 'info'
+                    : 'error';
+        const kind = (candidate.kind ?? payload.kind) === 'recovered' ? 'recovered' : 'fired';
+        const ruleId = String(candidate.policy?.ruleId || payload.ruleId || input.ruleId || '');
+        const ruleName = String(candidate.policy?.ruleName
+            || payload.ruleName
+            || annotations.title
+            || policy.name
+            || policy.ruleName
+            || (ruleId ? `Rule ${ruleId.slice(0, 8)}` : 'Alert Rule')).replace(/^(Alert|Recovered):\s*/i, '').trim();
+        // Extract Route / Endpoint
+        const endpoint = String(candidate.endpoint
+            || payload.endpoint
+            || record.route
+            || record.endpoint
+            || record.url
+            || record.path
+            || event.route
+            || event.endpoint
+            || event.path
+            || labels.route
+            || labels.endpoint
+            || values.route
+            || metadata.endpoint
+            || '').trim() || undefined;
+        // Extract HTTP Method
+        const method = String(record.method
+            || record.httpMethod
+            || event.method
+            || record.req?.method
+            || labels.method
+            || metadata.method
+            || '').trim() || undefined;
+        // Extract HTTP Status Code
+        const rawStatus = values.requests?.status_code
+            ?? record.statusCode
+            ?? record.status_code
+            ?? event.statusCode
+            ?? event.status_code
+            ?? values.status_code
+            ?? metadata.statusCode;
+        const statusCode = rawStatus !== undefined && rawStatus !== null && String(rawStatus).trim() !== ''
+            ? Number(rawStatus) || String(rawStatus)
+            : undefined;
+        // Extract Latency / Duration
+        const rawObserved = candidate.observedValue
+            ?? (typeof payload.observedValue === 'number' ? payload.observedValue : null)
+            ?? (typeof metadata.observedValue === 'number' ? metadata.observedValue : null)
+            ?? values.latency_ms
+            ?? values.duration_ms
+            ?? record.latencyMs
+            ?? record.durationMs
+            ?? record.latency
+            ?? record.duration;
+        const observedValue = typeof rawObserved === 'number' && Number.isFinite(rawObserved) ? rawObserved : null;
+        const rawThreshold = candidate.thresholdValue
+            ?? (typeof payload.thresholdValue === 'number' ? payload.thresholdValue : null)
+            ?? (typeof metadata.thresholdValue === 'number' ? metadata.thresholdValue : null);
+        const thresholdValue = typeof rawThreshold === 'number' && Number.isFinite(rawThreshold) ? rawThreshold : null;
+        // Category and condition checks
+        const conditionPaths = candidate.conditionFieldPaths
+            ?? (Array.isArray(policy.conditions) ? policy.conditions.map((c) => c.field_path) : []);
+        const category = candidate.category
+            || payload.category
+            || (conditionPaths.some((p) => String(p).includes('latency') || String(p).includes('duration')) ? 'performance' : 'all');
+        const isLatency = category === 'performance'
+            || /latency|duration|response_time|p95|p99/i.test(ruleName)
+            || conditionPaths.some((p) => /latency|duration|response_time/i.test(String(p)));
+        const isErrorRate = conditionPaths.some((p) => /error_rate|error-rate/i.test(String(p)));
+        const isError = !isLatency && (category === 'errors'
+            || category === 'error'
+            || event.type === 'error'
+            || /error|5xx|exception|fail|crash|unhandled/i.test(ruleName)
+            || conditionPaths.some((p) => /error|5xx|unhandled|fatal/i.test(String(p))));
+        // Formatted observed & threshold
+        const fieldHint = conditionPaths[0] || (isLatency ? 'requests.latency_ms' : isErrorRate ? 'error_rate' : '');
+        const observedFormatted = payload.observedFormatted
+            || metadata.observedFormatted
+            || (observedValue !== null ? formatMetricValue(observedValue, fieldHint) : undefined);
+        const thresholdFormatted = payload.thresholdFormatted
+            || metadata.thresholdFormatted
+            || (thresholdValue !== null ? formatMetricValue(thresholdValue, fieldHint) : undefined);
+        const durationMs = observedValue ?? (typeof payload.durationMs === 'number' ? payload.durationMs : undefined);
+        const timeTakenFormatted = payload.timeTakenFormatted
+            || metadata.timeTakenFormatted
+            || (durationMs !== undefined ? formatDuration(durationMs) : undefined);
+        // Latency Difference & Percentage
+        let differenceMs;
+        let differencePercent;
+        let differenceFormatted;
+        let aboveThresholdFormatted;
+        if (observedValue !== null && thresholdValue !== null && thresholdValue > 0) {
+            differenceMs = Math.round((observedValue - thresholdValue) * 100) / 100;
+            differencePercent = Math.round(((observedValue - thresholdValue) / thresholdValue) * 100);
+            const diffSign = differenceMs >= 0 ? '+' : '';
+            const pctSign = differencePercent >= 0 ? '+' : '';
+            differenceFormatted = `${diffSign}${formatDuration(Math.abs(differenceMs))}`;
+            aboveThresholdFormatted = `${diffSign}${formatDuration(Math.abs(differenceMs))} (${pctSign}${differencePercent}%)`;
+        }
+        // Evaluation Window
+        const evaluationWindow = (policy.evaluationIntervalSeconds ? `${Math.round(Number(policy.evaluationIntervalSeconds) / 60)} min` : undefined)
+            || payload.window
+            || metadata.window;
+        // Extract Identifiers & Correlations
+        const traceId = String(payload.traceId
+            || metadata.traceId
+            || event.traceId
+            || event.trace_id
+            || record.traceId
+            || record.trace_id
+            || event.tags?.trace_id
+            || record.tags?.trace_id
+            || '').trim() || undefined;
+        const tracePublicId = String(payload.correlation?.tracePublicId
+            || payload.tracePublicId
+            || metadata.tracePublicId
+            || event.tracePublicId
+            || record.tracePublicId
+            || '').trim() || undefined;
+        const spanId = String(payload.spanId
+            || metadata.spanId
+            || event.spanId
+            || event.span_id
+            || record.spanId
+            || record.span_id
+            || '').trim() || undefined;
+        const spanPublicId = String(payload.correlation?.spanPublicId
+            || payload.spanPublicId
+            || metadata.spanPublicId
+            || event.spanPublicId
+            || record.spanPublicId
+            || '').trim() || undefined;
+        const requestId = String(payload.requestId
+            || metadata.requestId
+            || record.requestId
+            || record.request_id
+            || event.requestId
+            || event.request_id
+            || '').trim() || undefined;
+        const eventPublicId = String(payload.event?.publicId
+            || payload.eventPublicId
+            || metadata.eventPublicId
+            || event.publicId
+            || record.publicId
+            || '').trim() || undefined;
+        const eventId = String(payload.event?.eventId
+            || payload.eventId
+            || event.eventId
+            || event.id
+            || '').trim() || undefined;
+        const fingerprint = String(payload.diagnostic?.fingerprint
+            || payload.fingerprint
+            || metadata.fingerprint
+            || record.fingerprint
+            || event.fingerprint
+            || '').trim() || undefined;
+        const clientIp = String(payload.clientIp
+            || metadata.clientIp
+            || record.ip
+            || record.clientIp
+            || record.client_ip
+            || event.ip
+            || record.req?.ip
+            || record.remoteAddress
+            || '').trim() || undefined;
+        const userAgent = String(payload.userAgent
+            || metadata.userAgent
+            || record.userAgent
+            || record.user_agent
+            || event.userAgent
+            || record.req?.headers?.['user-agent']
+            || '').trim() || undefined;
+        // Extract Error Details & Stack Normalization
+        const rawErrorMessage = values.errors?.message
+            ?? evidence.event?.message
+            ?? evidence.record?.message
+            ?? values.logs?.message
+            ?? evidence.error?.message
+            ?? evidence.error
+            ?? evidence.top_error
+            ?? evidence.error_message
+            ?? evidence.errorMessage
+            ?? evidence.message
+            ?? payload.body
+            ?? record.message
+            ?? record.error
+            ?? record.exception
+            ?? event.message
+            ?? metadata.errorMessage
+            ?? '';
+        const errorMessage = typeof rawErrorMessage === 'string' && rawErrorMessage.trim() ? rawErrorMessage.trim() : undefined;
+        const errorType = (typeof record.errorType === 'string' ? record.errorType : typeof record.name === 'string' ? record.name : metadata.errorType)
+            || (typeof evidence.event?.name === 'string' ? evidence.event.name : undefined)
+            || (typeof evidence.record?.name === 'string' ? evidence.record.name : undefined)
+            || (isError && errorMessage ? 'Error' : undefined);
+        const handled = typeof record.handled === 'boolean'
+            ? record.handled
+            : typeof event.handled === 'boolean'
+                ? event.handled
+                : undefined;
+        const mechanism = typeof record.mechanism === 'string' ? record.mechanism : typeof event.mechanism === 'string' ? event.mechanism : undefined;
+        const primarySource = extractPrimarySourceFrame(record.stack ?? event.stack ?? metadata.stack, record.stackFrames ?? record.stack_frames ?? record.frames ?? event.stack_frames);
+        const sourceFrame = primarySource?.location;
+        const sourceFunction = primarySource?.functionName;
+        const sourceContext = primarySource?.sourceContext;
+        const stackSnippet = typeof record.stack === 'string' ? record.stack.slice(0, 500) : undefined;
+        const occurrences = typeof record.occurrences === 'number' ? record.occurrences : typeof payload.occurrences === 'number' ? payload.occurrences : undefined;
+        const firstSeenAt = typeof record.firstSeenAt === 'string' ? record.firstSeenAt : typeof payload.firstSeenAt === 'string' ? payload.firstSeenAt : undefined;
+        const lastSeenAt = typeof record.lastSeenAt === 'string' ? record.lastSeenAt : typeof payload.lastSeenAt === 'string' ? payload.lastSeenAt : undefined;
+        const framework = typeof record.framework === 'string' ? record.framework : undefined;
+        // Timestamp
+        const rawObservedAt = candidate.observedAt || payload.occurredAt || event.timestamp || record.timestamp || new Date();
+        const occurredAt = rawObservedAt instanceof Date ? rawObservedAt : new Date(rawObservedAt);
+        const occurredAtFormatted = formatTimestamp(occurredAt);
+        const alertKey = input.alertKey || candidate.alertKey || payload.alertKey || metadata.alertKey || 'default';
+        const alertEventId = input.alertEventId || payload.alertEventId || metadata.alertEventId || undefined;
+        // Extract Organization & Project Identity (Clean single name or slug resolution)
+        const candidateAny = candidate;
+        const rawOrgName = candidateAny.orgName || evidence.orgName || payload.orgName || metadata.orgName;
+        const rawOrgSlug = candidateAny.orgSlug || evidence.orgSlug || payload.orgSlug || metadata.orgSlug;
+        const orgName = rawOrgName && rawOrgName.trim() ? rawOrgName.trim() : undefined;
+        const orgSlug = rawOrgSlug && rawOrgSlug.trim() ? rawOrgSlug.trim() : undefined;
+        const resolvedOrgDisplay = orgName || orgSlug || (organizationId ? `Org ${organizationId.slice(0, 8)}` : '');
+        const rawProjectName = candidateAny.projectName || evidence.projectName || payload.projectName || metadata.projectName;
+        const rawProjectSlug = candidateAny.projectSlug || evidence.projectSlug || payload.projectSlug || metadata.projectSlug;
+        const projectName = rawProjectName && rawProjectName.trim() ? rawProjectName.trim() : undefined;
+        const projectSlug = rawProjectSlug && rawProjectSlug.trim() ? rawProjectSlug.trim() : undefined;
+        const resolvedProjectDisplay = projectName || projectSlug || (projectId ? `Project ${projectId.slice(0, 8)}` : '');
+        const source = candidate.source || payload.source || 'telemetry';
+        // Deep Links (Trace URL validated only when valid identifier exists)
+        const baseUrl = getAppBaseUrl();
+        const validTraceIdent = (tracePublicId || traceId || '').trim();
+        const hasValidTrace = validTraceIdent && validTraceIdent !== 'undefined' && validTraceIdent !== 'null';
+        const traceUrl = projectId && hasValidTrace
+            ? `${baseUrl}/projects/${encodeURIComponent(projectId)}/traces/${encodeURIComponent(validTraceIdent)}`
+            : undefined;
+        if (hasValidTrace) {
+            formatterLogger.debug({ traceId: validTraceIdent, traceUrl }, 'trace_link_generation_success');
+        }
+        const requestUrl = projectId && (requestId || eventPublicId || eventId)
+            ? `${baseUrl}/projects/${encodeURIComponent(projectId)}/requests/${encodeURIComponent(eventPublicId || requestId || eventId || '')}`
+            : undefined;
+        const errorUrl = projectId && (fingerprint || eventPublicId || eventId)
+            ? `${baseUrl}/projects/${encodeURIComponent(projectId)}/errors/${encodeURIComponent(fingerprint || eventPublicId || eventId || '')}`
+            : undefined;
+        const eventUrl = requestUrl || errorUrl;
+        const alertUrl = projectId
+            ? `${baseUrl}/projects/${encodeURIComponent(projectId)}/alerts/${encodeURIComponent(alertKey)}`
+            : `${baseUrl}/alerts/${encodeURIComponent(alertKey)}`;
+        const acknowledgeUrl = `${alertUrl}?action=ack`;
+        const silenceUrl = `${alertUrl}?action=silence`;
+        const preferencesUrl = `${baseUrl}/settings/notifications`;
+        // Scope string for subjects
+        const scopeParts = [];
+        if (resolvedProjectDisplay)
+            scopeParts.push(resolvedProjectDisplay);
+        if (environment)
+            scopeParts.push(`(${environment})`);
+        const scopeStr = scopeParts.length > 0 ? scopeParts.join(' ') : (resolvedOrgDisplay || '');
+        const escalationStep = input.escalationStep || payload.escalationStep || undefined;
+        // Subject line construction conforming to Section 8
+        let subject;
+        if (kind === 'recovered') {
+            subject = `[RESOLVED] ${ruleName}${scopeStr ? ` — ${scopeStr}` : ''}`;
+        }
+        else if (escalationStep) {
+            subject = `[ESCALATED S${escalationStep} · ${severity.toUpperCase()}] ${ruleName}${scopeStr ? ` — ${scopeStr}` : ''}`;
+        }
+        else if (isLatency) {
+            subject = `[FIRING · ${severity.toUpperCase()}] ${ruleName}${scopeStr ? ` — ${scopeStr}` : ''}`;
+        }
+        else if (isError) {
+            const errorSubjectTitle = errorType && errorType !== 'Error' ? errorType : ruleName;
+            subject = `[FIRING · ${severity.toUpperCase()}] ${errorSubjectTitle}${scopeStr ? ` — ${scopeStr}` : ''}`;
+        }
+        else {
+            subject = `[FIRING · ${severity.toUpperCase()}] ${ruleName}${scopeStr ? ` — ${scopeStr}` : ''}`;
+        }
+        // Summary computation
+        let summary;
+        if (kind === 'recovered') {
+            summary = `${ruleName} has recovered and is no longer breaching threshold${endpoint ? ` on ${endpoint}` : ''}.`;
+        }
+        else if (isLatency && endpoint && observedFormatted && thresholdFormatted) {
+            summary = `High latency detected on ${method ? `${method} ` : ''}${endpoint}. Measured response time reached ${observedFormatted}, exceeding configured threshold of ${thresholdFormatted}.`;
+        }
+        else if (isLatency && observedFormatted) {
+            summary = `Response time reached ${observedFormatted}${thresholdFormatted ? ` (threshold ${thresholdFormatted})` : ''}${endpoint ? ` on ${endpoint}` : ''}.`;
+        }
+        else if (isError && errorMessage) {
+            summary = `Error occurred${endpoint ? ` on ${endpoint}` : ''}: ${errorMessage}`;
+        }
+        else if (observedFormatted && thresholdFormatted) {
+            summary = `${ruleName} breached threshold: measured ${observedFormatted} vs threshold of ${thresholdFormatted}.`;
+        }
+        else {
+            summary = `${ruleName} triggered an alert notification${endpoint ? ` on ${endpoint}` : ''}.`;
+        }
+        // Structured fields for connectors
+        const fields = [];
+        fields.push({ label: 'Rule', value: ruleName, short: true });
+        fields.push({ label: 'Severity', value: severity.toUpperCase(), short: true });
+        if (endpoint)
+            fields.push({ label: 'Route', value: endpoint, short: true });
+        if (method)
+            fields.push({ label: 'Method', value: method.toUpperCase(), short: true });
+        if (statusCode !== undefined)
+            fields.push({ label: 'Status Code', value: String(statusCode), short: true });
+        if (timeTakenFormatted)
+            fields.push({ label: 'Time Taken', value: timeTakenFormatted, short: true });
+        if (thresholdFormatted)
+            fields.push({ label: 'Threshold', value: thresholdFormatted, short: true });
+        if (aboveThresholdFormatted)
+            fields.push({ label: 'Above Threshold', value: aboveThresholdFormatted, short: true });
+        if (resolvedProjectDisplay)
+            fields.push({ label: 'Project', value: resolvedProjectDisplay, short: true });
+        if (environment)
+            fields.push({ label: 'Environment', value: environment, short: true });
+        fields.push({ label: 'Occurred At', value: occurredAtFormatted, short: false });
+        if (tracePublicId || traceId)
+            fields.push({ label: 'Trace ID', value: tracePublicId || traceId || '', short: false });
+        if (spanPublicId || spanId)
+            fields.push({ label: 'Span ID', value: spanPublicId || spanId || '', short: true });
+        if (clientIp)
+            fields.push({ label: 'Client IP', value: clientIp, short: true });
+        if (errorMessage)
+            fields.push({ label: 'Error Message', value: errorMessage, short: false });
+        // AI Insight
+        const rawAiInsight = candidate.aiInsight
+            || evidence.aiInsight
+            || payload.aiInsight
+            || metadata.aiInsight;
+        const aiInsight = rawAiInsight && typeof rawAiInsight.text === 'string'
+            ? { text: rawAiInsight.text, confidence: typeof rawAiInsight.confidence === 'number' ? rawAiInsight.confidence : undefined }
+            : undefined;
+        formatterLogger.debug({ durationMs: Date.now() - startedTime }, 'alert_context_extraction_success');
+        return {
+            ruleName,
+            ruleId,
+            severity,
+            category,
+            alertKey,
+            alertEventId,
+            kind,
+            isLatency,
+            isError,
+            isErrorRate,
+            observedValue,
+            thresholdValue,
+            observedFormatted,
+            thresholdFormatted,
+            differenceMs,
+            differencePercent,
+            differenceFormatted,
+            aboveThresholdFormatted,
+            evaluationWindow,
+            endpoint,
+            method,
+            statusCode,
+            durationMs,
+            timeTakenFormatted,
+            occurredAt,
+            occurredAtFormatted,
+            traceId,
+            tracePublicId,
+            spanId,
+            spanPublicId,
+            requestId,
+            eventPublicId,
+            eventId,
+            clientIp,
+            userAgent,
+            errorMessage,
+            errorType,
+            fingerprint,
+            handled,
+            mechanism,
+            sourceFrame,
+            sourceFunction,
+            sourceContext,
+            occurrences,
+            firstSeenAt,
+            lastSeenAt,
+            release,
+            framework,
+            stackSnippet,
+            projectId,
+            projectSlug,
+            projectName,
+            environment,
+            service,
+            organizationId,
+            orgSlug,
+            orgName,
+            source,
+            summary,
+            subject,
+            fields,
+            alertUrl,
+            traceUrl,
+            requestUrl,
+            errorUrl,
+            eventUrl,
+            acknowledgeUrl,
+            silenceUrl,
+            preferencesUrl,
+            escalationStep,
+            policyName: policy.name || payload.policyName,
+            aiInsight,
+            rawEvidence: evidence,
+            rawPolicy: policy,
+        };
     }
-    else if (escalationStep) {
-        subject = `[ESCALATED S${escalationStep} · ${severity.toUpperCase()}] ${ruleName}${endpoint ? `: ${endpoint}` : ''}${scopeStr ? ` — ${scopeStr}` : ''}`;
+    catch (err) {
+        formatterLogger.error({ err }, 'alert_context_extraction_failure');
+        throw err;
     }
-    else if (isLatency) {
-        const metricSummary = observedFormatted && thresholdFormatted ? ` (${observedFormatted} > ${thresholdFormatted})` : observedFormatted ? ` (${observedFormatted})` : '';
-        subject = `[FIRING · ${severity.toUpperCase()}] ${ruleName}${endpoint ? `: ${endpoint}` : ''}${metricSummary}${scopeStr ? ` — ${scopeStr}` : ''}`;
-    }
-    else if (isError) {
-        const errorDetail = endpoint ? `: ${endpoint}` : '';
-        const metricSummary = observedFormatted && thresholdFormatted ? ` (${observedFormatted} > ${thresholdFormatted})` : '';
-        subject = `[FIRING · ${severity.toUpperCase()}] ${ruleName}${errorDetail}${metricSummary}${scopeStr ? ` — ${scopeStr}` : ''}`;
-    }
-    else {
-        const metricSummary = observedFormatted && thresholdFormatted ? ` (${observedFormatted} > ${thresholdFormatted})` : '';
-        subject = `[FIRING · ${severity.toUpperCase()}] ${ruleName}${endpoint ? ` · ${endpoint}` : ''}${metricSummary}${scopeStr ? ` — ${scopeStr}` : ''}`;
-    }
-    // Summary computation
-    let summary;
-    if (kind === 'recovered') {
-        summary = `${ruleName} has recovered and is no longer breaching threshold${endpoint ? ` on ${endpoint}` : ''}.`;
-    }
-    else if (isLatency && endpoint && observedFormatted && thresholdFormatted) {
-        summary = `High latency detected on ${method ? `${method} ` : ''}${endpoint}. Measured response time reached ${observedFormatted}, exceeding the configured threshold of ${thresholdFormatted}.`;
-    }
-    else if (isLatency && observedFormatted) {
-        summary = `Response time reached ${observedFormatted}${thresholdFormatted ? ` (threshold ${thresholdFormatted})` : ''}${endpoint ? ` on ${endpoint}` : ''}.`;
-    }
-    else if (isError && errorMessage) {
-        summary = `Error occurred${endpoint ? ` on ${endpoint}` : ''}: ${errorMessage}`;
-    }
-    else if (observedFormatted && thresholdFormatted) {
-        summary = `${ruleName} breached threshold: measured ${observedFormatted} vs threshold of ${thresholdFormatted}.`;
-    }
-    else {
-        summary = `${ruleName} triggered an alert notification${endpoint ? ` on ${endpoint}` : ''}.`;
-    }
-    // Structured Fields for Connectors / Tables
-    const fields = [];
-    fields.push({ label: 'Rule', value: ruleName, short: true });
-    fields.push({ label: 'Severity', value: severity.toUpperCase(), short: true });
-    if (endpoint)
-        fields.push({ label: 'Route', value: endpoint, short: true });
-    if (method)
-        fields.push({ label: 'Method', value: method.toUpperCase(), short: true });
-    if (statusCode !== undefined)
-        fields.push({ label: 'Status Code', value: String(statusCode), short: true });
-    if (timeTakenFormatted)
-        fields.push({ label: 'Time Taken', value: timeTakenFormatted, short: true });
-    if (thresholdFormatted)
-        fields.push({ label: 'Threshold', value: thresholdFormatted, short: true });
-    if (projectName)
-        fields.push({ label: 'Project', value: projectName, short: true });
-    if (environment)
-        fields.push({ label: 'Environment', value: environment, short: true });
-    fields.push({ label: 'Occurred At', value: occurredAtFormatted, short: false });
-    if (traceId)
-        fields.push({ label: 'Trace ID', value: traceId, short: false });
-    if (spanId)
-        fields.push({ label: 'Span ID', value: spanId, short: true });
-    if (clientIp)
-        fields.push({ label: 'Client IP', value: clientIp, short: true });
-    if (errorMessage)
-        fields.push({ label: 'Error Message', value: errorMessage, short: false });
-    return {
-        ruleName,
-        ruleId,
-        severity,
-        category,
-        alertKey,
-        alertEventId,
-        kind,
-        isLatency,
-        isError,
-        observedValue,
-        thresholdValue,
-        observedFormatted,
-        thresholdFormatted,
-        endpoint,
-        method,
-        statusCode,
-        durationMs,
-        timeTakenFormatted,
-        occurredAt,
-        occurredAtFormatted,
-        traceId,
-        spanId,
-        clientIp,
-        userAgent,
-        errorMessage,
-        errorType,
-        stackSnippet,
-        projectId,
-        projectName,
-        environment,
-        service,
-        organizationId,
-        orgName,
-        source,
-        summary,
-        subject,
-        fields,
-        alertUrl,
-        traceUrl,
-        acknowledgeUrl,
-        silenceUrl,
-        preferencesUrl,
-        escalationStep,
-        policyName: policy.name || payload.policyName,
-        rawEvidence: evidence,
-        rawPolicy: policy,
-    };
 }
 /**
- * Build rich, structured NotificationPayload for alerting jobs.
+ * Build rich, structured NotificationPayload for alerting jobs conforming to Section 11.
  */
 export function buildAlertNotificationPayload(candidate, routingDecisionHash) {
     const ctx = extractAlertContext({ candidate });
+    let diagnostic;
+    if (ctx.isLatency) {
+        diagnostic = {
+            kind: 'latency',
+            percentile: ctx.ruleName.toLowerCase().includes('p99') ? 'p99' : ctx.ruleName.toLowerCase().includes('p90') ? 'p90' : 'p95',
+            observedValue: ctx.observedValue ?? 0,
+            observedFormatted: ctx.observedFormatted ?? 'n/a',
+            thresholdValue: ctx.thresholdValue ?? 0,
+            thresholdFormatted: ctx.thresholdFormatted ?? 'n/a',
+            unit: 'ms',
+            differenceMs: ctx.differenceMs,
+            differenceFormatted: ctx.differenceFormatted,
+            differencePercent: ctx.differencePercent,
+            aboveThresholdFormatted: ctx.aboveThresholdFormatted,
+            evaluationWindow: ctx.evaluationWindow,
+            method: ctx.method,
+            route: ctx.endpoint,
+            statusCode: ctx.statusCode,
+            durationMs: ctx.durationMs,
+            aiInsight: ctx.aiInsight,
+        };
+    }
+    else if (ctx.isError) {
+        diagnostic = {
+            kind: 'error',
+            exceptionType: ctx.errorType,
+            message: ctx.errorMessage || 'Error occurred',
+            fingerprint: ctx.fingerprint,
+            handled: ctx.handled,
+            mechanism: ctx.mechanism,
+            method: ctx.method,
+            route: ctx.endpoint,
+            statusCode: ctx.statusCode,
+            durationMs: ctx.durationMs,
+            primaryFrame: ctx.sourceFrame ? { file: ctx.sourceFrame, function: ctx.sourceFunction } : undefined,
+            sourceContext: ctx.sourceContext,
+            occurrences: ctx.occurrences,
+            firstSeenAt: ctx.firstSeenAt,
+            lastSeenAt: ctx.lastSeenAt,
+            framework: ctx.framework,
+            aiInsight: ctx.aiInsight,
+        };
+    }
+    else {
+        diagnostic = {
+            observedValue: ctx.observedValue,
+            thresholdValue: ctx.thresholdValue,
+            observedFormatted: ctx.observedFormatted,
+            thresholdFormatted: ctx.thresholdFormatted,
+        };
+    }
     const payload = {
         notificationType: ctx.kind === 'recovered' ? 'alert.recovered' : 'alert',
         severity: ctx.severity,
@@ -355,23 +680,40 @@ export function buildAlertNotificationPayload(candidate, routingDecisionHash) {
             thresholdValue: ctx.thresholdValue,
             observedFormatted: ctx.observedFormatted,
             thresholdFormatted: ctx.thresholdFormatted,
+            aboveThresholdFormatted: ctx.aboveThresholdFormatted,
             durationMs: ctx.durationMs,
             timeTakenFormatted: ctx.timeTakenFormatted,
             traceId: ctx.traceId,
+            tracePublicId: ctx.tracePublicId,
             spanId: ctx.spanId,
+            spanPublicId: ctx.spanPublicId,
+            requestId: ctx.requestId,
+            eventPublicId: ctx.eventPublicId,
+            eventId: ctx.eventId,
             clientIp: ctx.clientIp,
             userAgent: ctx.userAgent,
             errorMessage: ctx.errorMessage,
+            errorType: ctx.errorType,
+            fingerprint: ctx.fingerprint,
+            sourceFrame: ctx.sourceFrame,
+            sourceFunction: ctx.sourceFunction,
+            sourceContext: ctx.sourceContext,
             occurredAt: ctx.occurredAt.toISOString(),
             occurredAtFormatted: ctx.occurredAtFormatted,
             projectId: ctx.projectId,
+            projectSlug: ctx.projectSlug,
             projectName: ctx.projectName,
             environment: ctx.environment,
             service: ctx.service,
             organizationId: ctx.organizationId,
+            orgSlug: ctx.orgSlug,
+            orgName: ctx.orgName,
             subject: ctx.subject,
             summary: ctx.summary,
             traceUrl: ctx.traceUrl,
+            requestUrl: ctx.requestUrl,
+            errorUrl: ctx.errorUrl,
+            eventUrl: ctx.eventUrl,
             acknowledgeUrl: ctx.acknowledgeUrl,
             silenceUrl: ctx.silenceUrl,
             preferencesUrl: ctx.preferencesUrl,
@@ -379,8 +721,55 @@ export function buildAlertNotificationPayload(candidate, routingDecisionHash) {
             evidence: candidate.evidence ?? {},
             annotations: candidate.annotations ?? {},
             routingDecisionHash: routingDecisionHash ?? null,
+            diagnostic,
         },
-        // Top-level aliases for consumers reading directly from payload
+        // Top-level contract fields (Section 11)
+        type: ctx.kind === 'recovered' ? 'alert.resolved' : ctx.escalationStep ? 'alert.escalated' : 'alert.firing',
+        alert: {
+            id: ctx.alertEventId || ctx.alertKey,
+            publicId: ctx.alertEventId,
+            ruleId: ctx.ruleId,
+            ruleName: ctx.ruleName,
+            severity: ctx.severity,
+            status: ctx.kind === 'recovered' ? 'resolved' : 'firing',
+            startedAt: ctx.occurredAt.toISOString(),
+        },
+        project: {
+            organizationId: ctx.organizationId,
+            organizationSlug: ctx.orgSlug || '',
+            organizationName: ctx.orgName || '',
+            projectId: ctx.projectId || '',
+            projectSlug: ctx.projectSlug || '',
+            projectName: ctx.projectName || '',
+            environment: ctx.environment || 'production',
+            serviceName: ctx.service || undefined,
+            release: ctx.release || undefined,
+        },
+        event: {
+            type: candidate.evidence?.eventType || (ctx.isLatency ? 'request' : 'error'),
+            publicId: ctx.eventPublicId,
+            eventId: ctx.eventId,
+            occurredAt: ctx.occurredAt.toISOString(),
+        },
+        correlation: {
+            requestId: ctx.requestId,
+            traceId: ctx.traceId,
+            tracePublicId: ctx.tracePublicId,
+            spanId: ctx.spanId,
+            spanPublicId: ctx.spanPublicId,
+        },
+        diagnostic,
+        actions: {
+            viewAlert: ctx.alertUrl || '',
+            viewEvent: ctx.eventUrl,
+            viewRequest: ctx.requestUrl,
+            viewError: ctx.errorUrl,
+            viewTrace: ctx.traceUrl,
+            acknowledge: ctx.acknowledgeUrl,
+            silence: ctx.silenceUrl,
+            preferences: ctx.preferencesUrl,
+        },
+        // Backwards-compatible aliases
         subject: ctx.subject,
         summary: ctx.summary,
         endpoint: ctx.endpoint,
@@ -403,12 +792,15 @@ export function buildAlertNotificationPayload(candidate, routingDecisionHash) {
     if (ctx.alertUrl) {
         payload.url = ctx.alertUrl;
     }
+    const payloadSize = JSON.stringify(payload).length;
+    formatterLogger.debug({ payloadSize }, 'notification_payload_size');
     return payload;
 }
 /**
  * Render Sentinel Mono enterprise email for any alert job data.
  */
 export function renderEnterpriseAlertEmail(jobData) {
+    const startedRender = Date.now();
     const payload = jobData.payload ?? {};
     const metadata = (payload.metadata ?? {});
     const ctx = extractAlertContext({
@@ -423,8 +815,8 @@ export function renderEnterpriseAlertEmail(jobData) {
     const appName = 'Pulsiv';
     const scope = {
         appName,
-        orgName: ctx.orgName ?? undefined,
-        projectName: ctx.projectName ?? undefined,
+        orgName: ctx.orgName || ctx.orgSlug || undefined,
+        projectName: ctx.projectName || ctx.projectSlug || undefined,
         environment: ctx.environment ?? undefined,
         alertUrl: ctx.alertUrl,
         acknowledgeUrl: ctx.acknowledgeUrl,
@@ -467,8 +859,8 @@ export function renderEnterpriseAlertEmail(jobData) {
                 statusCode: ctx.statusCode,
                 duration: ctx.timeTakenFormatted,
                 startedAt: ctx.occurredAtFormatted,
-                traceId: ctx.traceId,
-                spanId: ctx.spanId,
+                traceId: ctx.tracePublicId || ctx.traceId,
+                spanId: ctx.spanPublicId || ctx.spanId,
                 clientIp: ctx.clientIp,
                 fingerprint: ctx.alertKey,
                 eventId: ctx.alertEventId,
@@ -478,27 +870,77 @@ export function renderEnterpriseAlertEmail(jobData) {
             stepNumber: ctx.escalationStep,
         });
     }
-    else if (ctx.isLatency && (ctx.observedFormatted || ctx.thresholdFormatted || ctx.endpoint)) {
-        // 3. High Latency Alert
+    else if (ctx.isLatency && (ctx.observedFormatted || ctx.thresholdFormatted || ctx.endpoint || ctx.timeTakenFormatted)) {
+        // 3. High Latency Alert (Section 9)
         template = latencyAlertTemplate({
             ...scope,
-            percentile: ctx.ruleName.includes('p99') ? 'p99' : ctx.ruleName.includes('p90') ? 'p90' : 'p95',
+            percentile: ctx.ruleName.toLowerCase().includes('p99') ? 'p99' : ctx.ruleName.toLowerCase().includes('p90') ? 'p90' : 'p95',
             observed: ctx.observedFormatted || ctx.timeTakenFormatted || 'Breached',
             threshold: ctx.thresholdFormatted || 'Configured limit',
+            aboveThreshold: ctx.aboveThresholdFormatted,
+            window: ctx.evaluationWindow,
             endpoint: ctx.endpoint,
             method: ctx.method,
             statusCode: ctx.statusCode,
+            duration: ctx.timeTakenFormatted,
             traceId: ctx.traceId,
+            tracePublicId: ctx.tracePublicId,
             spanId: ctx.spanId,
+            spanPublicId: ctx.spanPublicId,
+            requestId: ctx.requestId,
             clientIp: ctx.clientIp,
             service: ctx.service ?? undefined,
+            release: ctx.release ?? undefined,
+            ruleName: ctx.ruleName,
             severity: ctx.severity,
             startedAt: ctx.occurredAtFormatted,
+            insight: ctx.aiInsight,
+            traceUrl: ctx.traceUrl,
+            requestUrl: ctx.requestUrl,
             extraRows: extraRows.length > 0 ? extraRows : undefined,
         });
     }
-    else if (ctx.isError && ctx.observedFormatted && ctx.thresholdFormatted) {
-        // 4. Error Rate Spike
+    else if (ctx.isError && (ctx.errorMessage || ctx.errorType || ctx.sourceFrame || !ctx.thresholdValue)) {
+        // 4. Developer-Focused Error Alert (Section 10)
+        template = errorAlertTemplate({
+            ...scope,
+            ruleName: ctx.ruleName,
+            errorName: ctx.errorType,
+            errorMessage: ctx.errorMessage,
+            errorId: ctx.eventPublicId || ctx.alertEventId,
+            fingerprint: ctx.fingerprint || ctx.alertKey,
+            handled: ctx.handled,
+            mechanism: ctx.mechanism,
+            sourceFrame: ctx.sourceFrame,
+            sourceFunction: ctx.sourceFunction,
+            sourceContext: ctx.sourceContext,
+            endpoint: ctx.endpoint,
+            method: ctx.method,
+            statusCode: ctx.statusCode,
+            requestId: ctx.requestId,
+            occurrences: ctx.occurrences,
+            firstSeenAt: ctx.firstSeenAt,
+            lastSeenAt: ctx.lastSeenAt,
+            service: ctx.service ?? undefined,
+            release: ctx.release ?? undefined,
+            framework: ctx.framework,
+            traceId: ctx.traceId,
+            tracePublicId: ctx.tracePublicId,
+            spanId: ctx.spanId,
+            spanPublicId: ctx.spanPublicId,
+            clientIp: ctx.clientIp,
+            severity: ctx.severity,
+            startedAt: ctx.occurredAtFormatted,
+            insight: ctx.aiInsight,
+            traceUrl: ctx.traceUrl,
+            errorUrl: ctx.errorUrl,
+            eventUrl: ctx.eventUrl,
+            requestUrl: ctx.requestUrl,
+            extraRows: extraRows.length > 0 ? extraRows : undefined,
+        });
+    }
+    else if (ctx.isErrorRate && ctx.observedFormatted && ctx.thresholdFormatted) {
+        // 5. Error Rate Spike
         template = errorSpikeTemplate({
             ...scope,
             errorRate: ctx.observedFormatted,
@@ -507,8 +949,8 @@ export function renderEnterpriseAlertEmail(jobData) {
             method: ctx.method,
             topStatusCode: ctx.statusCode ? String(ctx.statusCode) : undefined,
             topError: ctx.errorMessage,
-            traceId: ctx.traceId,
-            spanId: ctx.spanId,
+            traceId: ctx.tracePublicId || ctx.traceId,
+            spanId: ctx.spanPublicId || ctx.spanId,
             clientIp: ctx.clientIp,
             service: ctx.service ?? undefined,
             severity: ctx.severity,
@@ -517,7 +959,7 @@ export function renderEnterpriseAlertEmail(jobData) {
         });
     }
     else {
-        // 5. Standard Alert Firing
+        // 6. Standard Alert Firing
         template = alertFiringTemplate({
             ...scope,
             identity: {
@@ -529,8 +971,8 @@ export function renderEnterpriseAlertEmail(jobData) {
                 duration: ctx.timeTakenFormatted,
                 service: ctx.service ?? undefined,
                 startedAt: ctx.occurredAtFormatted,
-                traceId: ctx.traceId,
-                spanId: ctx.spanId,
+                traceId: ctx.tracePublicId || ctx.traceId,
+                spanId: ctx.spanPublicId || ctx.spanId,
                 clientIp: ctx.clientIp,
                 fingerprint: ctx.alertKey,
                 eventId: ctx.alertEventId,
@@ -547,6 +989,7 @@ export function renderEnterpriseAlertEmail(jobData) {
             summary: ctx.summary,
         });
     }
+    formatterLogger.debug({ durationMs: Date.now() - startedRender }, 'email_render_duration');
     return {
         ...template,
         subject: ctx.subject,

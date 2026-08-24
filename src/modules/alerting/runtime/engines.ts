@@ -936,21 +936,46 @@ function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayl
 
   if (event.type === 'error') {
     const severity = typeof record.severity === 'string' ? record.severity.toLowerCase() : 'error';
+    const classification = (record.classification ?? {}) as Record<string, unknown>;
+    const mechanism = String(record.mechanism ?? '');
+    const message = String(record.message ?? '');
+    const isUnhandled = classification.unhandled === true || record.handled === false || mechanism === 'uncaughtException' || mechanism === 'unhandledRejection' || record.mechanism !== 'handled';
+    const isFatal = severity === 'fatal' || severity === 'critical' || classification.fatal === true;
+    const isCrash = classification.crash === true || record.crashed === true || mechanism === 'uncaughtException';
+    const isRejection = mechanism === 'unhandledRejection';
+    const isDeadlock = /deadlock detected|Lock wait timeout/i.test(message);
+    const isConnectorFailure = /CircuitBreakerOpen/i.test(message);
+
     values.errors = {
-      unhandled: record.mechanism !== 'handled',
-      fatal: severity === 'fatal' || severity === 'critical',
-      crash: record.crashed === true || record.event === 'crash',
-      message: record.message,
+      unhandled: isUnhandled,
+      fatal: isFatal,
+      crash: isCrash,
+      rejection: isRejection,
+      message,
       severity,
     };
+    if (isDeadlock) {
+      values.db = { deadlock: true };
+    }
+    if (isConnectorFailure) {
+      values.connector = { failure: true };
+    }
   } else if (event.type === 'log') {
     const message = typeof record.message === 'string' ? record.message : '';
+    const isOom = /out of memory|heap out of memory|oom/i.test(message);
+    const isSecurity = hasSecuritySignal(record);
+    const isDeadlock = /deadlock detected|Lock wait timeout/i.test(message);
     values.logs = {
-      oom: /out of memory|heap out of memory|oom/i.test(message),
-      security: hasSecuritySignal(record),
+      oom: isOom,
+      security: isSecurity,
+      deadlock: isDeadlock,
+      matches: message,
       message,
       level: record.level,
     };
+    if (isDeadlock) {
+      values.db = { deadlock: true };
+    }
   } else if (event.type === 'cron_checkin') {
     values.cron = {
       failed: record.status === 'error',
@@ -961,8 +986,11 @@ function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayl
     const rawLatency = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration ?? record.responseTime ?? record.response_time;
     const duration = numberOrNull(rawLatency);
     const statusCode = numberOrNull(record.statusCode ?? record.status_code);
+    const isSlow = duration !== null && duration >= 10000;
+    const isAuthFailure = statusCode === 401 || statusCode === 403;
+    const isError = statusCode !== null && statusCode >= 500;
     values.requests = {
-      auth_failure: statusCode === 401 || statusCode === 403,
+      auth_failure: isAuthFailure,
       status_code: statusCode,
       latency_ms: duration,
       latency: {
@@ -975,6 +1003,8 @@ function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayl
       latency_p99: duration,
       duration_ms: duration,
       duration: duration,
+      slow: isSlow,
+      error: isError,
     };
     values.latency = {
       p95: duration,
@@ -985,6 +1015,35 @@ function fastPayload(scoped: ScopedEvent | Record<string, unknown>): RuntimePayl
     values.latency_ms = duration;
     values.duration = duration;
     values.duration_ms = duration;
+  } else if (event.type === 'span') {
+    const rawDuration = record.duration ?? record.durationMs ?? (record.endTime && record.startTime ? Number(record.endTime) - Number(record.startTime) : null);
+    const duration = numberOrNull(rawDuration);
+    const attrs = (record.attributes ?? {}) as Record<string, unknown>;
+    const events = (record.events ?? []) as Array<{ name?: string }>;
+    const isTimeout = attrs['pulse.timeout'] === true || events.some((e) => e.name === 'pulse.span.timeout');
+    const isSlowDb = attrs['db.system'] != null && duration !== null && duration >= 1000;
+    const statusCode = numberOrNull(attrs['http.status_code']);
+    const isUpstreamOutage = record.kind === 'client' && statusCode !== null && [502, 503, 504].includes(statusCode);
+    values.span = {
+      duration,
+      timeout: isTimeout,
+      slow_db: isSlowDb,
+      upstream_outage: isUpstreamOutage,
+      status: record.status,
+    };
+  } else if (event.type === 'metric') {
+    const metricName = String(record.metricName ?? record.name ?? '');
+    const metricVal = numberOrNull(record.value);
+    values.metrics = {
+      name: metricName,
+      value: metricVal,
+    };
+    if (metricName.includes('eventloop.lag') || metricName.includes('event_loop')) {
+      values.eventloop = { lag: metricVal };
+    }
+    if (metricName === 'pulse.sdk.drops' || metricName.includes('telemetry.drop')) {
+      values.telemetry = { drops: metricVal };
+    }
   }
 
   return {

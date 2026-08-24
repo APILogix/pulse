@@ -26,9 +26,12 @@ export class PostgresWriter {
         const result = await this.pool.query(`
       SELECT
         p.id as project_id,
+        p.slug as project_slug,
         p.org_id,
         p.name as project_name,
         p.status as project_status,
+        o.name as org_name,
+        o.slug as org_slug,
         k.id as key_id,
         k.name as api_key_name,
         k.environment_id,
@@ -40,6 +43,7 @@ export class PostgresWriter {
         pl.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
+      LEFT JOIN organizations o ON o.id = p.org_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
       LEFT JOIN organization_subscriptions s
         ON s.organization_id = p.org_id
@@ -74,7 +78,10 @@ export class PostgresWriter {
                 return null;
             return {
                 projectId: row.project_id,
+                projectSlug: row.project_slug ?? undefined,
                 orgId: row.org_id,
+                orgName: row.org_name ?? undefined,
+                orgSlug: row.org_slug ?? undefined,
                 projectName: row.project_name,
                 projectStatus: row.project_status,
                 environmentId: row.environment_id,

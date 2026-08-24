@@ -82,6 +82,14 @@ export declare function eyebrow(text: string, color?: string): string;
 /** Section heading inside the body — Inter 600 (§4 card/panel title). */
 export declare function heading(text: string): string;
 /**
+ * Developer section header — crisp uppercase mono with tracking and optional count badge.
+ */
+export declare function sectionHeader(title: string, count?: string | number | undefined): string;
+/**
+ * Route / Endpoint badge showing HTTP method and path cleanly formatted.
+ */
+export declare function routeBadge(method?: string | undefined, path?: string | undefined, statusCode?: string | number | undefined): string;
+/**
  * Marks restricted to characters present in the websafe core fonts, so they
  * render in Outlook 2016 and Gmail alike. Emoji are deliberately excluded:
  * they render full-colour and destroy the mono register.
@@ -162,7 +170,7 @@ export declare function linkFallback(url: string, label?: string): string;
  */
 export declare function callout(tone: Tone, html: string, title?: string | undefined): string;
 /** Monospace code / token block. */
-export declare function codeBlock(value: string): string;
+export declare function codeBlock(value: string, title?: string | undefined): string;
 /**
  * One-time-code display. Mono, wide tracking, tabular figures — the same
  * treatment metric values get in the product.

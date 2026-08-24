@@ -639,7 +639,16 @@ export function extractAlertContext(input: {
 
     // Extract Error Details & Stack Normalization
     const rawErrorMessage = (values.errors as Record<string, unknown> | undefined)?.message
+      ?? (evidence.event as Record<string, unknown> | undefined)?.message
+      ?? (evidence.record as Record<string, unknown> | undefined)?.message
       ?? (values.logs as Record<string, unknown> | undefined)?.message
+      ?? (evidence.error as Record<string, unknown> | undefined)?.message
+      ?? (evidence.error as string | undefined)
+      ?? (evidence.top_error as string | undefined)
+      ?? (evidence.error_message as string | undefined)
+      ?? (evidence.errorMessage as string | undefined)
+      ?? (evidence.message as string | undefined)
+      ?? (payload.body as string | undefined)
       ?? record.message
       ?? record.error
       ?? record.exception
@@ -648,6 +657,8 @@ export function extractAlertContext(input: {
       ?? '';
     const errorMessage = typeof rawErrorMessage === 'string' && rawErrorMessage.trim() ? rawErrorMessage.trim() : undefined;
     const errorType = (typeof record.errorType === 'string' ? record.errorType : typeof record.name === 'string' ? record.name : (metadata.errorType as string | undefined))
+      || (typeof (evidence.event as Record<string, unknown> | undefined)?.name === 'string' ? ((evidence.event as Record<string, unknown>).name as string) : undefined)
+      || (typeof (evidence.record as Record<string, unknown> | undefined)?.name === 'string' ? ((evidence.record as Record<string, unknown>).name as string) : undefined)
       || (isError && errorMessage ? 'Error' : undefined);
 
     const handled = typeof record.handled === 'boolean'

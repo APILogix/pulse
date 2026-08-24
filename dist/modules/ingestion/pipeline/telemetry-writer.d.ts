@@ -4,8 +4,12 @@ import type { NormalizedEvent } from './event-normalizer.js';
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
     projectId: string;
+    projectSlug?: string | undefined;
+    projectName?: string | undefined;
     /** Organization id — REQUIRED for events_* (organization_id is NOT NULL). */
     orgId: string | null;
+    orgSlug?: string | undefined;
+    orgName?: string | undefined;
     apiKeyName?: string | undefined;
     /** Normalized string supplied by the SDK envelope; never an environment UUID. */
     environment: string;

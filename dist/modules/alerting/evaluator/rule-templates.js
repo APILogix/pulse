@@ -2,11 +2,11 @@ import { DEFAULT_ALERT_PRESETS } from './presets.js';
 function presetToTemplate(preset) {
     return {
         key: preset.presetKey,
-        name: preset.name.replace(' (default)', ''),
+        name: preset.name,
         description: preset.description,
         category: preset.presetKey.startsWith('ai_') ? 'ai' : 'default',
         rule: {
-            name: preset.name.replace(' (default)', ''),
+            name: preset.name,
             description: preset.description,
             severity: preset.severity,
             enabled: false,

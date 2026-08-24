@@ -219,6 +219,10 @@ export async function ingestionRoutes(fastify: FastifyInstance): Promise<void> {
     "/v1/init",
     controller.init.bind(controller),
   );
+  fastify.post(
+    "/v1/sdk-config",
+    controller.init.bind(controller),
+  );
 
   // Per-signal typed write endpoints — the PRIMARY SDK transport. Registration
   // is DATA-DRIVEN from TYPED_INGEST_ROUTES so there is exactly one dedicated

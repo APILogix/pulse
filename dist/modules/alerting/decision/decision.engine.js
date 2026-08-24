@@ -44,6 +44,7 @@ export class AlertDecisionEngine {
         const kind = candidate.kind ?? 'fired';
         const alertKey = alertFingerprint(candidate);
         const idempotencyKey = hash(`${alertKey}:${kind}:${candidate.observedAt.toISOString()}`);
+        console.log(`\n[ALERT_DECISION] ⚙️ Processing alert decision | Rule: "${candidate.policy.ruleId}" | Kind: ${kind.toUpperCase()} | Severity: ${candidate.policy.severity} | Org: ${candidate.organizationId} | Project: ${candidate.projectId ?? 'all'} | AlertKey: ${alertKey}`);
         const result = await this.runtime.withTransaction(async (client) => {
             const previous = await this.runtime.lockState(client, alertKey);
             const event = await this.runtime.appendEvent({
@@ -74,6 +75,7 @@ export class AlertDecisionEngine {
             }, client);
             if (!event) {
                 const duplicateState = await this.runtime.incrementDuplicate(alertKey, candidate.observedAt, client);
+                console.log(`[ALERT_DECISION] 🔁 Duplicate alert suppressed (AlertKey: ${alertKey}, DedupKey: ${alertKey}:${kind})`);
                 return {
                     alertKey,
                     duplicate: true,
@@ -103,6 +105,18 @@ export class AlertDecisionEngine {
             const previousState = (previous?.state ?? 'healthy');
             const transition = kind === 'recovered' ? 'recover' : 'trigger';
             const nextState = transitionAlert(previousState, transition, 'worker');
+            console.log(`[ALERT_DECISION] 🔄 State Machine: "${previousState}" ➡️ "${nextState}" (Transition: "${transition}", Actor: worker) | AlertKey: ${alertKey}`);
+            if (routingDecision) {
+                if (routingDecision.suppressed) {
+                    console.log(`[ALERT_ROUTING] 🚫 Notification routing suppressed: ${routingDecision.suppressionReason} (Mode: ${routingDecision.deliveryMode})`);
+                }
+                else {
+                    console.log(`[ALERT_ROUTING] 🎯 Resolved ${routingDecision.targets.length} notification target(s) for Org: ${candidate.organizationId} (Mode: ${routingDecision.deliveryMode})`);
+                    for (const target of routingDecision.targets) {
+                        console.log(`[ALERT_ROUTING]   👉 Target: Provider=${target.provider} | ChannelKind=${target.channelKind} | Mode=${target.deliveryMode} | RecipientType=${target.recipientType} | Recipient=${target.recipientRef ?? target.recipientUserId ?? 'N/A'}`);
+                    }
+                }
+            }
             const state = await this.runtime.upsertState({
                 alertKey,
                 organizationId: candidate.organizationId,
@@ -190,6 +204,10 @@ export class AlertDecisionEngine {
                 recipientUserId: job.recipient_user_id,
                 notificationJobId: job.id,
             })), client);
+            console.log(`[ALERT_DECISION] 📋 Created ${jobs.length} notification job(s) for Event ID: ${event.id}:`);
+            for (const job of jobs) {
+                console.log(`[ALERT_DECISION]   📌 Job ID: ${job.id} | Channel: ${job.channel_kind} | Status: ${job.status} | Recipient User: ${job.recipient_user_id ?? 'N/A'}`);
+            }
             return { alertKey, duplicate: false, suppressed: false, state: state.state, event, notificationJobs: jobs };
         });
         this.log.debug({ alertKey, duplicate: result.duplicate, jobs: result.notificationJobs.length }, 'Alert decision persisted');

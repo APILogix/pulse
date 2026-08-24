@@ -21,5 +21,5 @@ export { aiInsight, block, button, buttonRow, callout, codeBlock, dataTable, dig
 /* ── Transactional templates: auth, account, organization ── */
 export { accountDeletionConfirmTemplate, accountUnlockTemplate, apiKeyCreatedTemplate, emailVerificationTemplate, mfaCodeTemplate, mfaDisableConfirmTemplate, mfaStatusTemplate, newSignInTemplate, orgInvitationTemplate, passwordChangedTemplate, passwordResetTemplate, standardNotificationTemplate, } from './templates.js';
 /* ── Alert & monitoring templates ── */
-export { alertAcknowledgedTemplate, alertDigestTemplate, alertEscalatedTemplate, alertFiringTemplate, alertResolvedTemplate, alertSilencedTemplate, anomalyDetectedTemplate, deliveryFailureTemplate, errorSpikeTemplate, latencyAlertTemplate, quotaAlertTemplate, ruleChangedTemplate, serviceHealthTemplate, } from './alert-templates.js';
+export { alertAcknowledgedTemplate, alertDigestTemplate, alertEscalatedTemplate, alertFiringTemplate, alertResolvedTemplate, alertSilencedTemplate, anomalyDetectedTemplate, deliveryFailureTemplate, errorAlertTemplate, errorSpikeTemplate, latencyAlertTemplate, quotaAlertTemplate, ruleChangedTemplate, serviceHealthTemplate, } from './alert-templates.js';
 //# sourceMappingURL=index.js.map

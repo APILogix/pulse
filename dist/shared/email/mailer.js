@@ -24,6 +24,10 @@ function getTransporter() {
 export async function sendEmail(message) {
     const from = `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`;
     console.log(`[EMAIL] 📧 Sending email | To: "${message.to}" | From: "${from}" | Subject: "${message.subject}" | SMTP Host: "${env.SMTP_HOST}:${env.SMTP_PORT}"`);
+    if (message.text) {
+        const preview = message.text.length > 300 ? `${message.text.slice(0, 300)}...` : message.text;
+        console.log(`[EMAIL] 📄 Preview:\n${preview}`);
+    }
     try {
         const info = await getTransporter().sendMail({
             from,

@@ -102,9 +102,9 @@ export const tintBorder = {
  */
 export const font = {
   /** Space Grotesk — display only: titles, big human-facing numbers. */
-  display: "'Space Grotesk','Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+  display: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace",
   /** Inter — all UI text, body copy, buttons, labels. */
-  sans: "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+  sans: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace",
   /** JetBrains Mono — IDs, metrics, timestamps, eyebrows, status badges. */
   mono: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace",
 } as const;

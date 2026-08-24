@@ -11,17 +11,17 @@ export class InvalidAlertTransitionError extends Error {
     }
 }
 const TRANSITIONS = {
-    healthy: { evaluate_breach: 'pending', trigger: 'triggered', suppress: 'suppressed' },
+    healthy: { evaluate_breach: 'pending', trigger: 'triggered', suppress: 'suppressed', recover: 'healthy' },
     pending: { trigger: 'triggered', recover: 'healthy', suppress: 'suppressed', expire: 'expired' },
-    triggered: { evaluate_breach: 'triggered', acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
+    triggered: { trigger: 'triggered', evaluate_breach: 'triggered', acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
     firing: { trigger: 'firing', evaluate_breach: 'firing', acknowledge: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', suppress: 'suppressed', expire: 'expired' },
-    acknowledged: { evaluate_breach: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', expire: 'expired' },
-    escalated: { evaluate_breach: 'escalated', acknowledge: 'acknowledged', mute: 'silenced', recover: 'resolved', expire: 'expired' },
-    silenced: { unsuppress: 'firing', recover: 'resolved', expire: 'expired' },
-    suppressed: { unsuppress: 'pending', recover: 'resolved', expire: 'expired' },
-    resolved: { trigger: 'triggered', close: 'closed' },
-    expired: { trigger: 'triggered', close: 'closed' },
-    closed: { trigger: 'triggered' },
+    acknowledged: { trigger: 'acknowledged', evaluate_breach: 'acknowledged', escalate: 'escalated', mute: 'silenced', recover: 'resolved', expire: 'expired', close: 'closed' },
+    escalated: { trigger: 'escalated', evaluate_breach: 'escalated', acknowledge: 'acknowledged', mute: 'silenced', recover: 'resolved', expire: 'expired', close: 'closed' },
+    silenced: { trigger: 'silenced', evaluate_breach: 'silenced', unsuppress: 'firing', recover: 'resolved', expire: 'expired', close: 'closed' },
+    suppressed: { trigger: 'suppressed', evaluate_breach: 'suppressed', unsuppress: 'pending', recover: 'resolved', expire: 'expired', close: 'closed' },
+    resolved: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
+    expired: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
+    closed: { trigger: 'triggered', recover: 'closed' },
     error: { trigger: 'triggered', recover: 'resolved', close: 'closed' },
 };
 const USER_TRANSITIONS = new Set([

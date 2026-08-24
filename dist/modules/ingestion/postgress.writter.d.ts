@@ -6,7 +6,10 @@ import { type Pool } from 'pg';
 import type { EnrichedEvent, ErrorEventListResult, ErrorEventRecord, NormalizedErrorEventListQuery } from './types.js';
 export interface ProjectAuthResult {
     projectId: string;
+    projectSlug?: string | undefined;
     orgId: string;
+    orgName?: string | undefined;
+    orgSlug?: string | undefined;
     projectName: string;
     projectStatus: string;
     environmentId: string;

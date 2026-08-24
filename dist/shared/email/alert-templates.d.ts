@@ -106,9 +106,12 @@ export interface AlertFiringInput extends AlertScope {
     runbook?: string | undefined;
     /** Model output — the only cyan in the email. */
     insight?: AlertInsight | undefined;
+    traceUrl?: string | undefined;
+    requestUrl?: string | undefined;
 }
 /**
  * The core alert notification: a rule crossed its threshold and is firing.
+ * Enhanced with developer triage sections: Metric Compare, Route context, Trace correlation, and Actions.
  */
 export declare function alertFiringTemplate(input: AlertFiringInput): EmailTemplate;
 export interface AlertResolvedInput extends AlertScope {
@@ -126,8 +129,7 @@ export interface AlertResolvedInput extends AlertScope {
     insight?: AlertInsight | undefined;
 }
 /**
- * Recovery notice. Always sent when a firing alert clears — an unresolved
- * "firing" email with no counterpart teaches recipients to distrust the channel.
+ * Recovery notice. Always sent when a firing alert clears.
  * Green here is the truth channel doing its job: a verdict, not decoration.
  */
 export declare function alertResolvedTemplate(input: AlertResolvedInput): EmailTemplate;
@@ -142,9 +144,7 @@ export interface AlertAcknowledgedInput extends AlertScope {
     expiresAt?: string | undefined;
 }
 /**
- * Acknowledgement notice — tells the rest of the rotation the alert is owned,
- * which is the single most effective way to stop three people debugging the
- * same incident in parallel.
+ * Acknowledgement notice — tells the rest of the rotation the alert is owned.
  */
 export declare function alertAcknowledgedTemplate(input: AlertAcknowledgedInput): EmailTemplate;
 export interface AlertEscalatedInput extends AlertScope {
@@ -163,10 +163,6 @@ export interface AlertEscalatedInput extends AlertScope {
 }
 /**
  * Escalation notice — an alert went unanswered and the policy advanced.
- *
- * Always rendered in the danger tone regardless of the rule's own severity:
- * escalation means the process failed, and that is a more urgent fact than the
- * original threshold.
  */
 export declare function alertEscalatedTemplate(input: AlertEscalatedInput): EmailTemplate;
 export interface AlertSilencedInput extends AlertScope {
@@ -183,10 +179,6 @@ export interface AlertSilencedInput extends AlertScope {
 }
 /**
  * Silence-created notice.
- *
- * Suppression is the most dangerous action in an alerting system, so it is
- * announced rather than performed quietly: a forgotten silence is how an outage
- * goes unnoticed for a weekend.
  */
 export declare function alertSilencedTemplate(input: AlertSilencedInput): EmailTemplate;
 export interface DigestAlertEntry {
@@ -250,29 +242,43 @@ export interface AnomalyDetectedInput extends AlertScope {
  */
 export declare function anomalyDetectedTemplate(input: AnomalyDetectedInput): EmailTemplate;
 export interface LatencyAlertInput extends AlertScope {
-    /** Percentile being watched, e.g. "p95". */
+    /** Percentile being watched, e.g. "p95" or "P95". */
     percentile: string;
-    /** Observed latency, pre-formatted with units. */
+    /** Observed latency, pre-formatted with units, e.g. "1,450 ms" or "1.45s". */
     observed: string;
-    /** Configured threshold, pre-formatted with units. */
+    /** Configured threshold, pre-formatted with units, e.g. "500 ms". */
     threshold: string;
-    /** Evaluation window. */
+    /** Difference above threshold, e.g. "+950 ms (+190%)". */
+    aboveThreshold?: string | undefined;
+    /** Evaluation window, e.g. "5 min". */
     window?: string | undefined;
-    /** Route or service that is slow. */
+    /** Route or service that is slow, e.g. "/api/v1/orders". */
     endpoint?: string | undefined;
     /** HTTP method, e.g. "POST". */
     method?: string | undefined;
     /** HTTP status code, e.g. 504. */
     statusCode?: string | number | undefined;
+    /** Duration taken, e.g. "1,450 ms" or "1.45s". */
+    duration?: string | undefined;
     /** Distributed trace ID. */
     traceId?: string | undefined;
+    /** Public trace ID, e.g. "TRC-000000052". */
+    tracePublicId?: string | undefined;
     /** Distributed span ID. */
     spanId?: string | undefined;
+    /** Public span ID, e.g. "SPN-000001293". */
+    spanPublicId?: string | undefined;
+    /** Request ID, e.g. "REQ-000000123". */
+    requestId?: string | undefined;
     /** Client IP address. */
     clientIp?: string | undefined;
-    /** Service name. */
+    /** Service name, e.g. "checkout-api". */
     service?: string | undefined;
-    /** Sample size behind the percentile — a p95 over 4 requests is noise. */
+    /** Release, e.g. "1.0.0". */
+    release?: string | undefined;
+    /** Rule name as configured. */
+    ruleName?: string | undefined;
+    /** Sample size behind the percentile. */
     sampleSize?: number | undefined;
     /** Slowest contributing operations. */
     topContributors?: string[] | undefined;
@@ -280,15 +286,52 @@ export interface LatencyAlertInput extends AlertScope {
     startedAt?: string | undefined;
     insight?: AlertInsight | undefined;
     extraRows?: DataRow[] | undefined;
+    traceUrl?: string | undefined;
+    requestUrl?: string | undefined;
 }
 /**
- * Latency threshold breach.
- *
- * Matches the `latency_alert` email type already used by the organization email
- * outbox. Sample size is surfaced deliberately: a percentile without its
- * denominator invites false urgency.
+ * Latency threshold breach — developer-focused performance triage.
  */
 export declare function latencyAlertTemplate(input: LatencyAlertInput): EmailTemplate;
+export interface ErrorAlertInput extends AlertScope {
+    ruleName: string;
+    errorName?: string | undefined;
+    errorMessage?: string | undefined;
+    errorId?: string | undefined;
+    fingerprint?: string | undefined;
+    handled?: boolean | string | undefined;
+    mechanism?: string | undefined;
+    sourceFrame?: string | undefined;
+    sourceFunction?: string | undefined;
+    sourceContext?: string | undefined;
+    endpoint?: string | undefined;
+    method?: string | undefined;
+    statusCode?: string | number | undefined;
+    requestId?: string | undefined;
+    occurrences?: number | undefined;
+    firstSeenAt?: string | undefined;
+    lastSeenAt?: string | undefined;
+    service?: string | undefined;
+    release?: string | undefined;
+    framework?: string | undefined;
+    traceId?: string | undefined;
+    tracePublicId?: string | undefined;
+    spanId?: string | undefined;
+    spanPublicId?: string | undefined;
+    clientIp?: string | undefined;
+    severity?: AlertSeverity | undefined;
+    startedAt?: string | undefined;
+    insight?: AlertInsight | undefined;
+    extraRows?: DataRow[] | undefined;
+    traceUrl?: string | undefined;
+    errorUrl?: string | undefined;
+    eventUrl?: string | undefined;
+    requestUrl?: string | undefined;
+}
+/**
+ * Developer-focused error alert — identity, normalized stack frame, source excerpt, impact.
+ */
+export declare function errorAlertTemplate(input: ErrorAlertInput): EmailTemplate;
 export interface ErrorSpikeInput extends AlertScope {
     /** Observed error rate, pre-formatted, e.g. "12.4%". */
     errorRate: string;
@@ -318,13 +361,12 @@ export interface ErrorSpikeInput extends AlertScope {
     startedAt?: string | undefined;
     insight?: AlertInsight | undefined;
     extraRows?: DataRow[] | undefined;
+    traceUrl?: string | undefined;
+    requestUrl?: string | undefined;
 }
 /**
  * Error-rate spike.
- *
- * Rate and absolute count are both shown: 50% of two requests and 50% of two
- * million demand very different responses, and a rate alone hides which one
- * you are looking at.
+ * Rate and absolute count are both shown with full developer context.
  */
 export declare function errorSpikeTemplate(input: ErrorSpikeInput): EmailTemplate;
 export type ServiceHealthStatus = 'down' | 'degraded' | 'recovered';
@@ -348,10 +390,6 @@ export interface ServiceHealthInput extends AlertScope {
 }
 /**
  * Availability transition — a service went down, degraded, or came back.
- *
- * All three states share one template so the recovery notice is guaranteed to
- * match the outage notice it closes. Divergent "up" and "down" templates are
- * how recovery mails end up missing fields the outage mail promised.
  */
 export declare function serviceHealthTemplate(input: ServiceHealthInput): EmailTemplate;
 export interface QuotaAlertInput extends AlertScope {
@@ -374,10 +412,6 @@ export interface QuotaAlertInput extends AlertScope {
 }
 /**
  * Usage-quota warning.
- *
- * Tone follows consumption rather than a fixed severity, because the same
- * message is very different news at 80% and at 100%: over limit is red,
- * approaching is amber, informational is neutral.
  */
 export declare function quotaAlertTemplate(input: QuotaAlertInput): EmailTemplate;
 export interface DeliveryFailureInput extends AlertScope {
@@ -401,12 +435,6 @@ export interface DeliveryFailureInput extends AlertScope {
 }
 /**
  * Meta-alert: the alerting system itself could not deliver.
- *
- * The most important alert in the product, because it is the one that reveals
- * silent failure. A broken Slack webhook means every other alert is being
- * generated correctly and going nowhere, and nobody finds out by waiting.
- * Deliberately routed over email — the channel that is failing cannot be
- * trusted to report its own failure.
  */
 export declare function deliveryFailureTemplate(input: DeliveryFailureInput): EmailTemplate;
 export interface RuleChangedInput extends AlertScope {
@@ -420,10 +448,6 @@ export interface RuleChangedInput extends AlertScope {
 }
 /**
  * Alert-rule audit notice.
- *
- * Changing a threshold silently changes what the team will and will not be told
- * about. Disabling a rule is functionally an outage in your own observability,
- * so it is announced to the org rather than left in an audit log nobody reads.
  */
 export declare function ruleChangedTemplate(input: RuleChangedInput): EmailTemplate;
 //# sourceMappingURL=alert-templates.d.ts.map

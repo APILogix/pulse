@@ -102,7 +102,36 @@ export class IngestionController {
       reply.header('ETag', result.etag);
       reply.header('X-Config-Revision', String(result.revisionNo));
       reply.header('Cache-Control', 'private, no-cache');
-      return reply.send(result.config);
+
+      const config = result.config;
+      const ingestEndpoint = config.transport.routes.events?.url
+        || config.transport.routes.requests?.url
+        || (config.transport.routes.errors?.url ? `${config.transport.routes.errors.url.replace(/\/errors$/, '')}/events` : "");
+
+      const responsePayload = {
+        ...config,
+        success: true,
+        projectId: config.sdk.projectId,
+        organizationId: result.organizationId,
+        environmentId: result.environmentId,
+        environment: config.sdk.environment,
+        release: config.sdk.release,
+        configRevision: result.revisionNo,
+        configHash: config.meta.configHash,
+        plan: "enterprise",
+        config,
+        data: config,
+        remoteConfig: config,
+        ingestion: {
+          endpoint: ingestEndpoint,
+          batchSize: config.transport.routes.events.batchSize,
+          flushInterval: config.transport.routes.events.flushIntervalMs,
+          maxQueueSize: config.limits.maxQueueSize,
+        },
+        requestId: (request.id as string) || "req_sdk_init",
+      };
+
+      return reply.send(responsePayload);
     } catch (err) {
       return this.handleError(err, request, reply);
     }

@@ -4,6 +4,9 @@ export interface CachedProjectConfig {
     id: string;
     orgId: string;
     name: string;
+    slug?: string | undefined;
+    orgName?: string | undefined;
+    orgSlug?: string | undefined;
     /** Environment slug — kept for ingestion compatibility and SDK config resolution. */
     environment: string;
     /** Environment UUID from project_environments. */
