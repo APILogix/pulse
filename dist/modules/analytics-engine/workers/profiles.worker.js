@@ -109,7 +109,7 @@ function hotFunctionStatement(params, topK) {
            line_number,
            hit_count_sum,
            profile_count,
-           ROUND(hit_count_sum * 100.0 / NULLIF(bucket_hits, 0), 3),
+           ROUND((hit_count_sum * 100.0 / NULLIF(bucket_hits, 0))::numeric, 3),
            hit_count_sum
       FROM topk
      WHERE rank <= ${topK}

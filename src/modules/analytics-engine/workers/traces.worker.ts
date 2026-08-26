@@ -149,7 +149,7 @@ export function createTracesWorker(
             bounds AS (SELECT MIN(bucket) AS lo, MAX(bucket) AS hi FROM touched),
             scoped AS (
               SELECT s.organization_id, s.project_id, s.environment, s.trace_id,
-                     s.span_id, s.parent_span_id, s.service, s.status, s.duration_ms,
+                     s.span_id, s.parent_span_id, s.service, s.span_status, s.duration_ms,
                      date_trunc('hour', s.occurred_at) AS bucket
                 FROM ${SPAN_SOURCE} s
                 JOIN touched t ON date_trunc('hour', s.occurred_at) = t.bucket
@@ -165,7 +165,7 @@ export function createTracesWorker(
                      child.bucket,
                      COALESCE(parent.service, 'unknown') AS source_service,
                      COALESCE(child.service, 'unknown')  AS target_service,
-                     child.status,
+                     child.span_status,
                      child.duration_ms
                 FROM scoped child
                 JOIN scoped parent
@@ -184,7 +184,7 @@ export function createTracesWorker(
                    source_service,
                    target_service,
                    COUNT(*)::bigint,
-                   COUNT(*) FILTER (WHERE status = 'error')::bigint,
+                   COUNT(*) FILTER (WHERE span_status = 'error')::bigint,
                    COALESCE(SUM(duration_ms), 0),
                    MAX(duration_ms),
                    PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms),

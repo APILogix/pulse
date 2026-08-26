@@ -75,6 +75,14 @@ export declare function provisionIngestQueues(): Promise<void>;
 export interface EnqueueResult {
     jobIds: string[];
     enqueuedEvents: number;
+    queues: Array<{
+        queue: string;
+        jobs: number;
+        events: number;
+        bulk: boolean;
+        fallback: boolean;
+        durationMs: number;
+    }>;
 }
 /**
  * Enqueue a tenant-scoped batch as one pg-boss job per (type, chunk). Uses the
@@ -91,13 +99,28 @@ export declare function enqueueIngestJobs(jobs: Array<{
 export interface IngestQueueDepthSnapshot {
     /** Jobs waiting to be picked up (created + retry) across all ingest queues. */
     pending: number;
+    /** Pending/retry jobs that are runnable now (start_after <= now). */
+    ready: number;
+    /** Pending/retry jobs delayed by retry/fairness scheduling (start_after > now). */
+    deferred: number;
     /** Jobs currently being processed. */
     active: number;
     /** Failed jobs (pre-dead-letter). */
     failed: number;
+    /** Persisted, unreplayed DLQ rows across all ingest queues. */
+    deadLettered: number;
+    /** Age of the oldest pending/retry job across all ingest queues. */
+    oldestPendingAgeMs: number | null;
     perQueue: Array<{
         queue: string;
         state: string;
+        count: number;
+        ready: number;
+        deferred: number;
+        oldestPendingAgeMs: number | null;
+    }>;
+    dlqPerQueue: Array<{
+        queue: string;
         count: number;
     }>;
 }
@@ -111,6 +134,12 @@ export declare function ingestQueueDepth(pool: {
         rows: Array<{
             name: string;
             state: string;
+            n: number;
+            ready: number;
+            deferred: number;
+            oldest_pending_age_ms: number | string | null;
+        } | {
+            queue: string;
             n: number;
         }>;
     }>;

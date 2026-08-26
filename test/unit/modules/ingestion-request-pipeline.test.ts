@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeEvent } from '../../../src/modules/ingestion/pipeline/event-normalizer.js';
+import { RequestEnricher } from '../../../src/modules/ingestion/pipeline/request-enrichment.js';
 import { TelemetryWriter, type ScopedEvent } from '../../../src/modules/ingestion/pipeline/telemetry-writer.js';
 
 describe('Request Event Ingestion Pipeline End-to-End Audit', () => {
@@ -135,7 +136,7 @@ describe('Request Event Ingestion Pipeline End-to-End Audit', () => {
       'referer', 'geo_country_code', 'geo_region', 'geo_asn', 'browser_family',
       'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
       'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name',
-      'sdk_version', 'severity', 'attributes', 'metadata', 'payload', 'timestamp',
+      'sdk_version', 'severity', 'attributes', 'metadata', 'payload', 'occurred_at',
     ];
 
     for (const col of expectedCols) {
@@ -175,5 +176,51 @@ describe('Request Event Ingestion Pipeline End-to-End Audit', () => {
     expect(vals[39]).toBe('@vikasbaplawat1/pulse-sdk');                     // sdk_name
     expect(vals[40]).toBe('3.0.0');                                         // sdk_version
     expect(vals[41]).toBe('info');                                          // severity
+    expect(JSON.parse(vals[43] as string)).toMatchObject({                  // metadata
+      environment: 'production',
+      applicationName: 'consumer-app',
+      sdkName: '@vikasbaplawat1/pulse-sdk',
+    });
+    expect(vals[46]).toBe(new Date(1785611353001).toISOString());            // occurred_at
+  });
+
+  it('does not block request inserts on optional GeoIP reader initialization', async () => {
+    const initSpy = vi
+      .spyOn(RequestEnricher.get(), 'init')
+      .mockReturnValue(new Promise<void>(() => undefined));
+    const mockDb = {
+      query: vi.fn(async () => ({ rowCount: 1, rows: [] })),
+    };
+    const writer = new TelemetryWriter(mockDb as never);
+
+    const scopedRequest: ScopedEvent = {
+      orgId: 'org_11111',
+      projectId: 'proj_22222',
+      apiKeyName: 'pk_live_testkey',
+      environment: 'production',
+      event: {
+        type: 'request',
+        eventId: 'request-event-1',
+        requestId: 'request-1',
+        method: 'GET',
+        url: '/health',
+        statusCode: 200,
+        latency: 12,
+        timestamp: 1785611353001,
+        clientIp: '203.0.113.20',
+        userAgent: 'Mozilla/5.0 Chrome/120.0.0.0',
+      } as any,
+    };
+
+    await expect(writer.writeBatchDetailed([scopedRequest])).resolves.toMatchObject({
+      totalInserted: 1,
+    });
+    expect(initSpy).toHaveBeenCalledOnce();
+    expect(mockDb.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO events_requests'),
+      expect.any(Array),
+    );
+
+    initSpy.mockRestore();
   });
 });

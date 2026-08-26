@@ -17,6 +17,8 @@ export declare class RequestEnricher {
     private geoReady;
     private initPromise;
     private readonly salt;
+    private readonly ipCache;
+    private readonly uaCache;
     private constructor();
     /** Process-wide singleton (GeoIP readers are expensive to open). */
     static get(): RequestEnricher;
@@ -27,6 +29,8 @@ export declare class RequestEnricher {
     init(): Promise<void>;
     /** Enrich a single request. Synchronous; call init() once beforehand. */
     enrich(clientIp: unknown, userAgent: unknown): EnrichedRequestFields;
+    private enrichIp;
+    private enrichUserAgent;
     private resolveGeo;
     private parseUserAgent;
 }

@@ -53,19 +53,32 @@ const QUOTA_CACHE_MAX_ENTRIES = 10_000;
 // idempotent, so the first request (or service construction) provisions every
 // ingest.* queue exactly once per process; races across processes are harmless.
 let provisioningPromise = null;
+let queuesProvisioned = false;
 function ensureIngestQueuesProvisioned() {
     if (!provisioningPromise) {
-        provisioningPromise = provisionIngestQueues().catch((err) => {
+        provisioningPromise = provisionIngestQueues()
+            .then(() => {
+            queuesProvisioned = true;
+        })
+            .catch((err) => {
+            queuesProvisioned = false;
             provisioningPromise = null; // allow retry on the next request
             svcLogger.error({ err }, 'ingest queue provisioning failed');
+            throw err;
         });
     }
     return provisioningPromise;
+}
+function warmIngestQueuesProvisioned() {
+    ensureIngestQueuesProvisioned().catch(() => undefined);
 }
 const DEFAULT_BACKPRESSURE = {
     highWater: env.INGESTION_BACKPRESSURE_HIGH_WATER,
     criticalWater: env.INGESTION_BACKPRESSURE_CRITICAL_WATER,
 };
+function elapsedSince(start) {
+    return Date.now() - start;
+}
 export class IngestionService {
     pool;
     writer;
@@ -77,19 +90,28 @@ export class IngestionService {
     replayMaxEvents;
     maxBatchSize;
     jobChunkSize;
+    jobMaxBytes;
     defaultRatePerSecond;
     defaultRatePerMinute;
-    // Cached queue-depth probe so request-path backpressure stays O(1): the
-    // grouped scan on pgboss.job runs at most once per second per process.
+    // Cached queue-depth probe so request-path backpressure stays O(1). The
+    // grouped scan on pgboss.job refreshes in the background; ingestion never
+    // waits on this advisory signal.
     cachedDepth = {
         pending: 0,
+        ready: 0,
+        deferred: 0,
         active: 0,
         failed: 0,
+        deadLettered: 0,
+        oldestPendingAgeMs: null,
         perQueue: [],
+        dlqPerQueue: [],
     };
     cachedDepthAt = 0;
+    depthRefreshPromise = null;
     // Cached org quota reads (organization_usage_current_period), fail-open.
     quotaCache = new Map();
+    quotaRefreshes = new Map();
     quotaCacheTtlMs = env.INGESTION_QUOTA_CACHE_TTL_MS;
     constructor(pool, writer, config, sdkConfigService) {
         this.pool = pool;
@@ -101,6 +123,7 @@ export class IngestionService {
         this.backpressure = config.backpressure ?? DEFAULT_BACKPRESSURE;
         this.replayMaxEvents = config.replayMaxEvents ?? env.INGESTION_REPLAY_MAX_EVENTS;
         this.jobChunkSize = config.jobChunkSize ?? env.INGESTION_JOB_CHUNK_SIZE;
+        this.jobMaxBytes = Math.max(MAX_EVENT_BYTES, config.jobMaxBytes ?? env.INGESTION_JOB_MAX_BYTES);
         this.rateLimiter = new IngestionRateLimiter({
             ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
             sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
@@ -119,8 +142,9 @@ export class IngestionService {
         });
         this.usage.start();
         // Warm provisioning at boot (pgboss.start() precedes module registration
-        // in main.ts); the request path also awaits the same promise lazily.
-        void ensureIngestQueuesProvisioned();
+        // in main.ts). The request path enqueues optimistically and only waits for
+        // provisioning if the enqueue proves queues are unavailable.
+        warmIngestQueuesProvisioned();
         // Register with central entitlements invalidation event bus
         entitlementsService.onOrgInvalidate((orgId) => this.invalidateOrgQuotaCache(orgId));
     }
@@ -230,16 +254,26 @@ export class IngestionService {
             .catch((err) => svcLogger.debug({ err }, 'updateApiKeyLastUsed failed'));
         return resolved;
     }
-    /** Cached queue-depth probe (refreshed at most every 1s). */
+    refreshQueueDepth() {
+        if (this.depthRefreshPromise)
+            return;
+        this.depthRefreshPromise = ingestQueueDepth(this.pool)
+            .then((depth) => {
+            this.cachedDepth = depth;
+            this.cachedDepthAt = Date.now();
+        })
+            .catch((err) => {
+            svcLogger.debug({ err }, 'ingest queue depth refresh failed; keeping stale backpressure snapshot');
+        })
+            .finally(() => {
+            this.depthRefreshPromise = null;
+        });
+    }
+    /** Cached queue-depth probe (background refreshed at most every 1s). */
     async queueDepth() {
         const now = Date.now();
         if (now - this.cachedDepthAt > 1000) {
-            // ingestQueueDepth swallows probe errors and reports zeros; that is the
-            // desired fail-open behaviour for a transient DB error (never shed on a
-            // probe failure — keep the last good value only when the probe itself
-            // throws, which today it does not).
-            this.cachedDepth = await ingestQueueDepth(this.pool);
-            this.cachedDepthAt = now;
+            this.refreshQueueDepth();
         }
         return this.cachedDepth;
     }
@@ -261,37 +295,50 @@ export class IngestionService {
     }
     /**
      * Cached quota pre-check against the canonical monthly_events entitlement.
-     * Fail-open by design: a missing row or a DB error allows the batch
-     * (authoritative enforcement happens worker-side / in billing rollups).
+     * Fail-open by design: a missing/stale row or a DB error allows the batch
+     * while a background refresh updates the cache. A cached hard-limit/throttle
+     * violation still blocks immediately.
      */
-    async assertQuotaAvailable(orgId) {
-        const now = Date.now();
-        let entry = this.quotaCache.get(orgId);
-        if (!entry || now - entry.at > this.quotaCacheTtlMs) {
+    refreshQuotaCache(orgId) {
+        if (this.quotaRefreshes.has(orgId))
+            return;
+        const refresh = (async () => {
             try {
                 const [eventLimit, usageResult] = await Promise.all([
                     entitlementsService.getEffectiveIntegerFeature(orgId, 'quota.monthly_events'),
                     this.pool.query(`SELECT events_used FROM organization_usage_current_period WHERE organization_id = $1`, [orgId]),
                 ]);
                 const eventsUsed = Number(usageResult.rows[0]?.events_used) || 0;
-                entry = {
-                    eventsUsed,
-                    eventLimit,
-                    usageBehavior: 'hard_limit',
-                    at: now,
-                };
                 if (this.quotaCache.size >= QUOTA_CACHE_MAX_ENTRIES) {
-                    // Map iterates in insertion order: drop the oldest entry first.
                     const oldest = this.quotaCache.keys().next();
                     if (!oldest.done)
                         this.quotaCache.delete(oldest.value);
                 }
-                this.quotaCache.set(orgId, entry);
+                this.quotaCache.set(orgId, {
+                    eventsUsed,
+                    eventLimit,
+                    usageBehavior: 'hard_limit',
+                    at: Date.now(),
+                });
             }
             catch (err) {
-                svcLogger.warn({ err, orgId }, 'Ingestion quota pre-check failed to resolve billing state; allowing batch under fail-open policy');
-                return;
+                svcLogger.warn({ err, orgId }, 'Ingestion quota pre-check failed to refresh billing state; allowing batches under fail-open policy');
             }
+            finally {
+                this.quotaRefreshes.delete(orgId);
+            }
+        })();
+        this.quotaRefreshes.set(orgId, refresh);
+    }
+    assertQuotaAvailable(orgId) {
+        const now = Date.now();
+        const entry = this.quotaCache.get(orgId);
+        if (!entry) {
+            this.refreshQuotaCache(orgId);
+            return;
+        }
+        if (now - entry.at > this.quotaCacheTtlMs) {
+            this.refreshQuotaCache(orgId);
         }
         if (entry.eventLimit >= 0
             && entry.eventsUsed >= entry.eventLimit
@@ -366,7 +413,10 @@ export class IngestionService {
      * set) enforces a typed route: every event must match it or be rejected.
      */
     async processIngest(req, expectedType, apiKey) {
+        const startedAt = Date.now();
+        const timings = {};
         // 1. Envelope checks.
+        const envelopeStartedAt = Date.now();
         if (!req || typeof req !== 'object')
             throw new Error('INVALID_REQUEST');
         const { events } = req;
@@ -377,33 +427,52 @@ export class IngestionService {
             throw new Error('EMPTY_BATCH');
         if (events.length > this.maxBatchSize)
             throw new Error('BATCH_TOO_LARGE');
+        timings.envelopeMs = elapsedSince(envelopeStartedAt);
         // 2. Project resolution (+ plan tier, org rate limits).
+        const projectLookupStartedAt = Date.now();
         const project = await this.resolveProject(apiKey);
+        timings.projectLookupMs = elapsedSince(projectLookupStartedAt);
         if (!project)
             throw new Error('INVALID_API_KEY');
         if (!project.isActive)
             throw new Error('PROJECT_INACTIVE');
+        const normalizationStartedAt = Date.now();
         const suppliedEnvironment = req.metadata?.environment;
         const environment = suppliedEnvironment === undefined || suppliedEnvironment === null
             ? normalizeSdkEnvironment(project.environmentSlug)
             : normalizeSdkEnvironment(suppliedEnvironment);
         if (!environment)
             throw new Error('INVALID_ENVIRONMENT');
+        timings.normalizationMs = elapsedSince(normalizationStartedAt);
         // 3. Key permissions.
+        const authzStartedAt = Date.now();
         this.assertKeyCanUseEndpoint(project, expectedType);
+        timings.authzMs = elapsedSince(authzStartedAt);
         // 4. Rate limits: project-scoped AND org-wide (noisy-neighbor guard).
+        const rateLimitStartedAt = Date.now();
         const decision = this.rateLimiter.tryConsume(project.id, project.rateLimitPerSecond, project.rateLimitPerMinute, events.length);
         if (!decision.allowed)
             throw new Error('RATE_LIMIT_EXCEEDED');
         const orgDecision = this.orgRateLimiter.tryConsume(project.orgId, project.orgRateLimitPerSecond, project.orgRateLimitPerMinute, events.length);
         if (!orgDecision.allowed)
             throw new Error('RATE_LIMIT_EXCEEDED');
+        timings.rateLimitMs = elapsedSince(rateLimitStartedAt);
         // 5. Quota pre-check (cached, fail-open).
-        await this.assertQuotaAvailable(project.orgId);
-        // Queues must exist before the first insert; no-op after first success.
-        await ensureIngestQueuesProvisioned();
+        const quotaStartedAt = Date.now();
+        this.assertQuotaAvailable(project.orgId);
+        timings.quotaMs = elapsedSince(quotaStartedAt);
+        // Queue provisioning is warmed in the background. Avoid putting createQueue
+        // work on the normal request path; enqueue below will provision-and-retry
+        // once if queues are actually unavailable.
+        const queueProvisionStartedAt = Date.now();
+        if (!queuesProvisioned && !provisioningPromise) {
+            warmIngestQueuesProvisioned();
+        }
+        timings.queueProvisionMs = elapsedSince(queueProvisionStartedAt);
         // 6. Backpressure snapshot (cached at 1s granularity).
+        const queueDepthStartedAt = Date.now();
         const depth = await this.queueDepth();
+        timings.queueDepthMs = elapsedSince(queueDepthStartedAt);
         const batchId = randomUUID();
         const receivedAt = new Date().toISOString();
         const errors = [];
@@ -412,6 +481,7 @@ export class IngestionService {
         let shed = 0;
         // 7. Per-event BASIC validation only. Full Zod normalization runs in the
         // workers; the gateway must stay cheap enough to absorb floods.
+        const validationStartedAt = Date.now();
         for (const raw of events) {
             const eventId = this.extractEventId(raw);
             if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -441,7 +511,8 @@ export class IngestionService {
                 errors.push({ eventId, reason: 'event_not_serializable' });
                 continue;
             }
-            if (Buffer.byteLength(serialized) > MAX_EVENT_BYTES) {
+            const eventBytes = Buffer.byteLength(serialized);
+            if (eventBytes > MAX_EVENT_BYTES) {
                 errors.push({ eventId, reason: 'event_too_large' });
                 continue;
             }
@@ -455,13 +526,17 @@ export class IngestionService {
                 continue;
             }
             const list = acceptedByType.get(eventType) ?? [];
-            list.push(raw);
-            acceptedBytes += Buffer.byteLength(serialized);
+            list.push({ raw, bytes: eventBytes });
+            acceptedBytes += eventBytes;
             acceptedByType.set(eventType, list);
         }
+        timings.validationMs = elapsedSince(validationStartedAt);
         // 8. Chunk per type and enqueue one pg-boss job per (type, chunk).
         let accepted = 0;
+        let jobsBuilt = 0;
+        let enqueueQueues = [];
         if (acceptedByType.size > 0) {
+            const jobBuildStartedAt = Date.now();
             const jobs = this.buildJobs({
                 organizationId: project.orgId,
                 projectId: project.id,
@@ -477,6 +552,8 @@ export class IngestionService {
                 receivedAt,
                 byType: acceptedByType,
             });
+            jobsBuilt = jobs.length;
+            timings.jobBuildMs = elapsedSince(jobBuildStartedAt);
             const submittedEvents = jobs.reduce((n, job) => n + job.payload.events.length, 0);
             svcLogger.debug({
                 batchId,
@@ -486,10 +563,25 @@ export class IngestionService {
                     queue: job.queue,
                     eventType: job.payload.eventType,
                     events: job.payload.events.length,
+                    bytes: job.payload.events.reduce((sum, event) => sum + this.eventBytes(event), 0),
                 })),
                 submittedEvents,
             }, 'ingestion events queued for workers');
-            const result = await enqueueIngestJobs(jobs);
+            const enqueueStartedAt = Date.now();
+            let result;
+            try {
+                result = await enqueueIngestJobs(jobs);
+            }
+            catch (err) {
+                if (queuesProvisioned)
+                    throw err;
+                const provisionRetryStartedAt = Date.now();
+                await ensureIngestQueuesProvisioned();
+                timings.queueProvisionRetryMs = elapsedSince(provisionRetryStartedAt);
+                result = await enqueueIngestJobs(jobs);
+            }
+            timings.enqueueMs = elapsedSince(enqueueStartedAt);
+            enqueueQueues = result.queues;
             accepted = result.enqueuedEvents;
             svcLogger.info({
                 phase: '1_received',
@@ -519,6 +611,7 @@ export class IngestionService {
         // Canonical usage accounting: the gateway records requests/errors/rate
         // limits, while the persistence worker records accepted events exactly
         // once after idempotent storage.
+        const usageStartedAt = Date.now();
         const usageDimensions = {
             apiKeyId: project.apiKeyId,
             eventType: 'all',
@@ -533,6 +626,24 @@ export class IngestionService {
         if (shed > 0) {
             this.usage.increment(project.id, project.orgId, 'rate_limited', shed, usageDimensions);
         }
+        timings.usageAccountingMs = elapsedSince(usageStartedAt);
+        timings.totalAdmissionMs = elapsedSince(startedAt);
+        svcLogger.info({
+            phase: 'ingestion_admission_profile',
+            batchId,
+            eventType: expectedType ?? 'mixed',
+            projectId: project.id,
+            environment,
+            received: events.length,
+            accepted,
+            rejected: errors.length,
+            shed,
+            acceptedBytes,
+            queueDepthPending: depth.pending,
+            jobsBuilt,
+            enqueueQueues,
+            ...timings,
+        }, 'ingestion admission profile');
         const nextMinuteMs = (Math.floor(Date.now() / 60_000) + 1) * 60_000;
         const response = {
             success: true,
@@ -549,41 +660,64 @@ export class IngestionService {
         return response;
     }
     /**
-     * Build one pg-boss job per (event type, chunk of <= jobChunkSize events).
-     * Events are carried RAW (un-normalized) — normalization is worker-side.
+     * Build one pg-boss job per event type, bounded by event count and
+     * approximate serialized event bytes. Events are carried RAW (un-normalized)
+     * — normalization is worker-side.
      */
     buildJobs(params) {
         const jobs = [];
         for (const [type, list] of params.byType) {
-            for (let i = 0; i < list.length; i += this.jobChunkSize) {
-                const metadata = {
-                    batchId: params.batchId,
-                    apiKeyId: params.apiKeyId,
-                    apiKeyName: params.apiKeyName,
-                    planTier: params.planTier,
-                    receivedAt: params.receivedAt,
-                    environment: params.environment,
-                    deferCount: 0,
-                    projectSlug: params.projectSlug,
-                    projectName: params.projectName,
-                    orgSlug: params.orgSlug,
-                    orgName: params.orgName,
-                    ...(params.replay ? { replay: true } : {}),
-                };
-                jobs.push({
-                    queue: ingestQueueFor(type),
-                    payload: {
-                        organizationId: params.organizationId,
-                        projectId: params.projectId,
-                        eventType: type,
-                        events: list.slice(i, i + this.jobChunkSize),
-                        metadata,
-                    },
-                    priority: jobPriority(params.planTier, type),
-                });
+            let chunk = [];
+            let chunkBytes = 0;
+            for (const item of list) {
+                if (chunk.length > 0 && (chunk.length >= this.jobChunkSize || chunkBytes + item.bytes > this.jobMaxBytes)) {
+                    jobs.push(this.buildJob(params, type, chunk));
+                    chunk = [];
+                    chunkBytes = 0;
+                }
+                chunk.push(item.raw);
+                chunkBytes += item.bytes;
+            }
+            if (chunk.length > 0) {
+                jobs.push(this.buildJob(params, type, chunk));
             }
         }
         return jobs;
+    }
+    buildJob(params, type, events) {
+        const metadata = {
+            batchId: params.batchId,
+            apiKeyId: params.apiKeyId,
+            apiKeyName: params.apiKeyName,
+            planTier: params.planTier,
+            receivedAt: params.receivedAt,
+            environment: params.environment,
+            deferCount: 0,
+            projectSlug: params.projectSlug,
+            projectName: params.projectName,
+            orgSlug: params.orgSlug,
+            orgName: params.orgName,
+            ...(params.replay ? { replay: true } : {}),
+        };
+        return {
+            queue: ingestQueueFor(type),
+            payload: {
+                organizationId: params.organizationId,
+                projectId: params.projectId,
+                eventType: type,
+                events,
+                metadata,
+            },
+            priority: jobPriority(params.planTier, type),
+        };
+    }
+    eventBytes(event) {
+        try {
+            return Buffer.byteLength(JSON.stringify(event));
+        }
+        catch {
+            return 0;
+        }
     }
     /** Best-effort stable id for a single event in a batch. */
     extractEventId(raw) {
@@ -874,7 +1008,7 @@ export class IngestionService {
             const type = e.type;
             const byType = byEnvironment.get(environment) ?? new Map();
             const list = byType.get(type) ?? [];
-            list.push(e.payload);
+            list.push({ raw: e.payload, bytes: this.eventBytes(e.payload) });
             byType.set(type, list);
             byEnvironment.set(environment, byType);
         }

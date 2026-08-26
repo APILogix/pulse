@@ -100,7 +100,7 @@ import {
   type VerifyEmailInput,
 } from '../../domain/types.js';
 import { ABSOLUTE_SESSION_TTL_SECONDS, ACCESS_TOKEN_TTL_SECONDS, buildPasswordHistory, EMAIL_VERIFICATION_TTL_SECONDS, MFA_DISABLE_TOKEN_TTL_SECONDS, MFA_LOGIN_CHALLENGE_TTL_SECONDS, normalizeEmail, PASSWORD_RESET_TTL_SECONDS, REFRESH_GRACE_WINDOW_MS, REFRESH_TOKEN_TTL_SECONDS, REMEMBER_ME_REFRESH_TTL_SECONDS, STEP_UP_CHALLENGE_TTL_SECONDS } from '../../domain/constants.js';
-import { buildDeviceFingerprint, generateEmailFlowToken, hashEmailFlowToken, hashToken as hashAuthToken, timingSafeFakePasswordCompare } from '../../infrastructure/crypto/hash.js';
+import { buildDeviceFingerprint, generateEmailFlowToken, hashEmailFlowToken, hashToken as hashAuthToken, timingSafeFakePasswordCompare, validateSessionDevice } from '../../infrastructure/crypto/hash.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../infrastructure/crypto/jwt.js';
 import { SESSION_CONFIG, getSessionDeviceName, markAllUserTokensRevoked } from './shared-helpers.js';
 
@@ -352,10 +352,6 @@ export async function refreshAccessToken(
     decoded.jti,
     decoded.sub,
   );
-// All three paths return the same error message so an attacker cannot
-    // distinguish "session not found" from "session revoked due to token reuse".
-    // The matchedPrevious flag is available in the evidence for SIEM without
-    // leaking to the client.
   if (!lookup) {
     throw new AuthError(
       'Session expired. Please sign in again.',
@@ -372,6 +368,28 @@ export async function refreshAccessToken(
       rotatedAt &&
       Date.now() - new Date(rotatedAt).getTime() <= REFRESH_GRACE_WINDOW_MS
     ) {
+      // H1 & M4 FIX: Validate IP and device fingerprint in the grace window too.
+      // Replaying a token from a different device/IP must not grant an access token.
+      const isGraceDeviceValid = validateSessionDevice(
+        session.device_fingerprint,
+        session.user_agent,
+        session.ip_address,
+        ipAddress,
+        userAgent,
+      );
+      if (!isGraceDeviceValid) {
+        await repository.revokeSession(session.id, session.user_id, 'Device fingerprint mismatch during refresh grace window');
+        logger.warn(
+          { userId: session.user_id, sessionId: session.id, ipAddress, userAgent },
+          'Refresh token presented from different device during grace window; session revoked',
+        );
+        throw new AuthError(
+          'Session invalidated. Please sign in again.',
+          AuthErrorCodes.SESSION_INVALID,
+          401,
+        );
+      }
+
       // Treat as idempotent retry: do not rotate again. Re-issue an access
       // token for the existing (already-rotated) refresh hash. The client
       // must use the refresh token it received from the FIRST call going
@@ -395,18 +413,9 @@ export async function refreshAccessToken(
         session.id,
         mfaVerified,
       );
-      // We must return SOME refresh token in the response shape. The client
-      // already has the new one from the first call; return it again is not
-      // possible (we never saw the plaintext). Convention: return the SAME
-      // token they presented; their first-call refresh is what is current
-      // server-side. This is safe because the token is only valid until
-      // their next successful refresh.
       return {
         accessToken,
         refreshToken,
-        // Never re-send the previously presented token as a Set-Cookie. A
-        // concurrent refresh may already have rotated it; overwriting that
-        // newer cookie would turn the next refresh into a replay.
         refreshTokenRotated: false,
         expiresAt: new Date(session.expires_at),
         sessionId: session.id,
@@ -459,8 +468,6 @@ export async function refreshAccessToken(
         session_status: session.status,
       },
     });
-    // BUG-013 FIX: Use SESSION_TOKEN_REUSE so the error code specifically
-    // indicates token-reuse (not just generic SESSION_INVALID).
     throw new AuthError(
       'Session expired. Please sign in again.',
       AuthErrorCodes.SESSION_TOKEN_REUSE,
@@ -478,11 +485,17 @@ export async function refreshAccessToken(
     throw new AuthError('Session expired', AuthErrorCodes.SESSION_EXPIRED, 401);
   }
 
-  // BUG-009/010 FIX: Validate IP and device fingerprint on refresh.
-  // If the request comes from a different IP or device fingerprint,
-  // treat it as a potential token theft and revoke the session.
-  const currentFingerprint = buildDeviceFingerprint(ipAddress, userAgent);
-  if (session.device_fingerprint && session.device_fingerprint !== currentFingerprint) {
+  // BUG-009/010 & M4 FIX: Validate IP and device fingerprint on refresh.
+  // If the request comes from an incompatible device fingerprint / hijacked context,
+  // treat it as potential token theft and revoke the session.
+  const isDeviceValid = validateSessionDevice(
+    session.device_fingerprint,
+    session.user_agent,
+    session.ip_address,
+    ipAddress,
+    userAgent,
+  );
+  if (!isDeviceValid) {
     await repository.revokeSession(session.id, session.user_id, 'Device fingerprint mismatch on refresh');
     logger.warn(
       { userId: session.user_id, sessionId: session.id, ipAddress, userAgent },
@@ -567,11 +580,9 @@ export async function logout(
 ): Promise<{ saml_logout_url: string | null }> {
   const session = await repository.findSessionById(sessionId, userId);
 
-// Always revoke local session immediately; SAML IdP logout is best-effort.
+  // Always revoke local session immediately; SAML IdP logout is best-effort.
   if (session) {
     await repository.revokeSession(session.id, userId, 'User logout');
-  } else {
-    await repository.revokeSession(sessionId, userId, 'User logout');
   }
   blacklistAccessToken(sessionId);
 

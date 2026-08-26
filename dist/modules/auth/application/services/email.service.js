@@ -153,7 +153,7 @@ export async function generateEmailMfaOtp() {
     }
 }
 export function hashEmailMfaOtp(code) {
-    return createHash('sha256').update(`email_mfa_otp:${code}`).digest('hex');
+    return hashAuthToken(`email_mfa_otp:${code}`);
 }
 /**
  * Persist an email MFA OTP. Any prior unconsumed OTP for the same device is
@@ -166,8 +166,15 @@ export async function createEmailMfaOtp(userId, deviceId, codeHash) {
  * Atomically consume an email MFA OTP. Returns true if the code matched and
  * was not yet used/expired.
  */
-export async function consumeEmailMfaOtp(deviceId, codeHash) {
-    return repository.consumeEmailMfaOtp(deviceId, codeHash);
+export async function consumeEmailMfaOtp(deviceId, codeHash, rawCode) {
+    const consumed = await repository.consumeEmailMfaOtp(deviceId, codeHash);
+    if (consumed)
+        return true;
+    if (rawCode) {
+        const legacyHash = createHash('sha256').update(`email_mfa_otp:${rawCode}`).digest('hex');
+        return repository.consumeEmailMfaOtp(deviceId, legacyHash);
+    }
+    return false;
 }
 export async function sendEmailMfaOtpEmail(user, code, deviceName, purpose) {
     try {

@@ -29,5 +29,9 @@ CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_tenant_time
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_old_key
   ON project_api_key_rotations(old_key_id,initiated_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_grace_lookup
+  ON project_api_key_rotations(old_key_id,grace_ends_at DESC)
+  WHERE state = 'grace_period' AND grace_ends_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_new_key
   ON project_api_key_rotations(new_key_id) WHERE new_key_id IS NOT NULL;

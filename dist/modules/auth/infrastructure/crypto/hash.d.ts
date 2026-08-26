@@ -9,4 +9,6 @@ export declare function generateEmailFlowToken(): string;
 export declare const FAKE_BCRYPT_HASH: string;
 export declare function timingSafeFakePasswordCompare(candidate: string): Promise<void>;
 export declare function buildDeviceFingerprint(ip: string, userAgent: string): string;
+export declare function getIpSubnet(ip: string): string;
+export declare function validateSessionDevice(sessionFingerprint: string | null | undefined, sessionUa: string | null | undefined, sessionIp: string | null | undefined, currentIp: string, currentUa: string): boolean;
 //# sourceMappingURL=hash.d.ts.map

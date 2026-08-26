@@ -73,6 +73,8 @@ export interface LoginMFAChallenge {
   ipAddress: string;
   userAgent: string;
   attempts: number;
+  switchAttempts?: number;
+  lastSwitchedAt?: number;
   /** Mirrors login `remember_me` so MFA completion issues the same session TTL. */
   rememberMe: boolean;
   /** Mirrors login `trust_device`; applied only after MFA has succeeded. */

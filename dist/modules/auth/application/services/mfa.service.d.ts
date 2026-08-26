@@ -12,7 +12,7 @@ export declare function createMFAChallenge(userId: string): Promise<MFAChallenge
  * caller's session in the LRU. Sensitive routes (`requireStepUp`) check that
  * stamp.
  */
-export declare function verifyMFAChallenge(challengeId: string, input: MFAVerifyInput, sessionId: string, ipAddress: string): Promise<{
+export declare function verifyMFAChallenge(challengeId: string, input: MFAVerifyInput, sessionId: string, ipAddress: string, userId?: string): Promise<{
     userId: string;
     deviceId: string;
 }>;

@@ -74,9 +74,9 @@ export const requestsResource = {
         'traceId', 'tracePublicId', 'requestId', 'isSlow', 'hasError',
     ],
     preferredIndexes: [
-        'idx_events_requests_tenant_env_time',
-        'idx_events_requests_endpoint_time',
-        'idx_events_requests_user_time',
+        'idx_events_requests_tenant_time',
+        'idx_events_requests_occurred_brin',
+        'idx_events_requests_pubid',
     ],
     errorPredicate: 'is_error',
     summary: {

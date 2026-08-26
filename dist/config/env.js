@@ -20,6 +20,9 @@ const envSchema = z.object({
     APP_URL: z.string().url().default('http://localhost:5173'),
     BACKEND_URL: z.string().url().default('http://localhost:5000/api'),
     API_PUBLIC_URL: z.string().url().optional(),
+    TRUST_PROXY: z
+        .string()
+        .default('127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'),
     // Primary Database (PostgreSQL)
     DATABASE_URL: z.string(),
     DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
@@ -232,6 +235,13 @@ const envSchema = z.object({
     INGESTION_DB_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(8),
     INGESTION_DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
     INGESTION_DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30_000),
+    INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: z
+        .enum(['on', 'off', 'local', 'remote_write', 'remote_apply'])
+        .default('on'),
+    INGESTION_LOG_DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(0).default(2_000),
+    INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
+    INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.coerce.number().min(0).default(1000),
     MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
     MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
     GAUGE_UPDATE_INTERVAL_BATCHES: z.coerce.number().int().min(1).default(1),
@@ -254,6 +264,10 @@ const envSchema = z.object({
     // Events per pg-boss job. Chunks bound job payload size and worker unit of
     // work; smaller = fairer scheduling, larger = fewer round trips.
     INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(200),
+    // Approximate serialized event bytes per pg-boss job. Count-based chunking
+    // remains authoritative, but this keeps large payload batches from creating
+    // oversized worker transactions.
+    INGESTION_JOB_MAX_BYTES: z.coerce.number().int().min(256 * 1024).default(1024 * 1024),
     INGESTION_JOB_EXPIRE_SECONDS: z.coerce.number().int().min(30).default(300),
     INGESTION_JOB_RETRY_LIMIT: z.coerce.number().int().min(0).max(10).default(3),
     INGESTION_JOB_RETRY_DELAY_SECONDS: z.coerce.number().int().min(1).default(5),

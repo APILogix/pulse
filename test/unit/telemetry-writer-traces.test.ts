@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  normalizeEvent,
+  normalizeTimestampToEpochMs,
   parseSafeEpochMs,
   resolveTimestamp,
 } from '../../src/modules/ingestion/pipeline/event-normalizer.js';
@@ -33,6 +35,65 @@ describe('Timestamp Normalization & Parsing', () => {
     const expectedMs = Date.parse(isoString);
     expect(parseSafeEpochMs(isoString)).toBe(expectedMs);
     expect(parseSafeIsoTimestamp(isoString)).toBe(isoString);
+  });
+
+  it('normalizes supported SDK timestamp formats at validation', () => {
+    const isoString = '2026-08-17T10:45:00.000Z';
+    const normalizedIso = normalizeEvent({
+      type: 'log',
+      level: 'info',
+      message: 'ok',
+      timestamp: isoString,
+    });
+
+    expect(normalizedIso.ok).toBe(true);
+    if (normalizedIso.ok) {
+      expect(normalizedIso.event.timestamp).toBe(Date.parse(isoString));
+    }
+
+    const normalizedSeconds = normalizeEvent({
+      type: 'error',
+      message: 'boom',
+      timestamp: '1786963046',
+    });
+
+    expect(normalizedSeconds.ok).toBe(true);
+    if (normalizedSeconds.ok) {
+      expect(normalizedSeconds.event.timestamp).toBe(1786963046000);
+    }
+  });
+
+  it('rejects malformed explicit timestamps instead of silently defaulting', () => {
+    const normalized = normalizeEvent({
+      type: 'log',
+      level: 'info',
+      message: 'bad timestamp',
+      timestamp: 'not-a-timestamp',
+    });
+
+    expect(normalized.ok).toBe(false);
+    if (!normalized.ok) {
+      expect(normalized.reason).toBe('validation_failed');
+      expect(normalized.detail).toContain('timestamp');
+    }
+  });
+
+  it('allows missing timestamps and clamps far-future timestamps to now', () => {
+    const now = Date.parse('2026-08-24T00:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      const missing = normalizeEvent({
+        type: 'log',
+        level: 'info',
+        message: 'no timestamp',
+      });
+      expect(missing.ok).toBe(true);
+
+      expect(normalizeTimestampToEpochMs('2035-01-01T00:00:00.000Z')).toBe(now);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('parses seconds, microseconds, and nanoseconds to milliseconds', () => {
@@ -127,6 +188,26 @@ describe('Trace resolveTimestamp', () => {
 
     const resolved = resolveTimestamp(traceEvent);
     expect(resolved).toBe(1786963046966);
+  });
+
+  it('normalizes trace root span timestamps before storage resolution', () => {
+    const isoString = '2026-08-17T10:45:00.000Z';
+    const normalized = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-abc-123',
+      spanCount: 1,
+      rootSpan: {
+        id: 'span-root-1',
+        startTime: isoString,
+      },
+    });
+
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      const rootSpan = normalized.event.rootSpan as Record<string, unknown>;
+      expect(rootSpan.startTime).toBe(Date.parse(isoString));
+      expect(resolveTimestamp(normalized.event)).toBe(Date.parse(isoString));
+    }
   });
 });
 

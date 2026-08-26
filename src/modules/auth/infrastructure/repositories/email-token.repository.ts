@@ -141,6 +141,24 @@ export async function findEmailVerificationByTokenHash(
   return result.rows[0] || null;
 }
 
+export async function findRecentEmailVerification(
+  userId: string,
+  email: string,
+  purpose: EmailTokenPurpose,
+  client?: PoolClient,
+): Promise<EmailVerificationRecord | null> {
+  const db = client || pool;
+  const result = await db.query<EmailVerificationRecord>(
+    `SELECT id, user_id, email, token_hash, purpose, expires_at, verified_at, created_at
+     FROM email_verifications
+     WHERE user_id = $1 AND email = $2 AND purpose = $3 AND verified_at IS NULL AND expires_at > NOW()
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId, email, purpose],
+  );
+  return result.rows[0] || null;
+}
+
 export async function invalidateAllUserTokens(
   userId: string,
   client?: PoolClient,

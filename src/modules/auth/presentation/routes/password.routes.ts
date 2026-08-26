@@ -63,7 +63,12 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
-
+import {
+  forgotPasswordRateLimit,
+  resetPasswordRateLimit,
+  resendVerificationRateLimit,
+  verifyEmailRateLimit,
+} from '../middleware/rate-limits.js';
 import {
   getRefreshCookieNames,
   getRefreshCookieOptions,
@@ -89,7 +94,6 @@ function clearRefreshCookies(reply: FastifyReply): void {
   }
 }
 
-
 // ============================================================================
 // ERROR HANDLER
 // ============================================================================
@@ -109,13 +113,22 @@ export function handleAuthError(
     });
   }
 
-  const err = error as { name?: string; issues?: unknown };
+  const err = error as { name?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> };
   if (err?.name === 'ZodError') {
+    const fields: Record<string, string> = {};
+    if (Array.isArray(err.issues)) {
+      for (const issue of err.issues) {
+        const path = issue.path ? issue.path.join('.') : 'root';
+        if (!fields[path]) {
+          fields[path] = issue.message || 'Invalid value';
+        }
+      }
+    }
     return reply.status(400).send({
       error: {
         code: AuthErrorCodes.VALIDATION_ERROR,
         message: 'Invalid request payload',
-        details: { issues: err.issues },
+        details: { fields },
       },
     });
   }
@@ -129,6 +142,11 @@ export function handleAuthError(
   });
 }
 
+function preventSensitiveResponseCaching(reply: FastifyReply): void {
+  reply.header('Cache-Control', 'no-store, max-age=0');
+  reply.header('Pragma', 'no-cache');
+}
+
 async function sendAuthSession(
   reply: FastifyReply,
   payload: {
@@ -140,6 +158,9 @@ async function sendAuthSession(
     user_id?: string;
   },
 ): Promise<FastifyReply> {
+  // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+  preventSensitiveResponseCaching(reply);
+
   const maxAgeSeconds = Math.max(
     0,
     Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000),
@@ -183,12 +204,6 @@ async function sendAuthSession(
   });
 }
 
-function preventSensitiveResponseCaching(reply: FastifyReply): void {
-  reply.header('Cache-Control', 'no-store, max-age=0');
-  reply.header('Pragma', 'no-cache');
-}
-
-
 // ============================================================================
 // PASSWORD / EMAIL ROUTES
 // ============================================================================
@@ -199,6 +214,7 @@ export async function passwordRoutes(fastify: FastifyInstance) {
     reply: FastifyReply,
   ) => {
     try {
+      preventSensitiveResponseCaching(reply);
       const body = ForgotPasswordSchema.parse(request.body);
       const ci = getClientInfo(request);
       const result = await service.requestPasswordReset(
@@ -217,6 +233,7 @@ export async function passwordRoutes(fastify: FastifyInstance) {
     reply: FastifyReply,
   ) => {
     try {
+      preventSensitiveResponseCaching(reply);
       const body = ResetPasswordSchema.parse(request.body);
       const ci = getClientInfo(request);
       await service.resetPasswordWithToken(body, ci.ip, request.id);
@@ -226,54 +243,65 @@ export async function passwordRoutes(fastify: FastifyInstance) {
     }
   };
 
-  fastify.post('/forgot-password', forgotPassword);
-  fastify.post('/password/forgot', forgotPassword);
-  fastify.post('/reset-password', resetPassword);
-  fastify.post('/password/reset', resetPassword);
+  fastify.post('/forgot-password', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
+  fastify.post('/password/forgot', { preHandler: [forgotPasswordRateLimit] }, forgotPassword);
+  fastify.post('/reset-password', { preHandler: [resetPasswordRateLimit] }, resetPassword);
+  fastify.post('/password/reset', { preHandler: [resetPasswordRateLimit] }, resetPassword);
 
   // POST /auth/resend-verification
-  fastify.post('/resend-verification', async (request, reply) => {
-    try {
-      const body = ResendVerificationSchema.parse(request.body);
-      const ci = getClientInfo(request);
-      const result = await service.resendVerification(
-        body,
-        ci.ip,
-        request.id,
-      );
-      return reply.send({ data: result });
-    } catch (error: any) {
-      return handleAuthError(error, reply, request);
-    }
-  });
+  fastify.post(
+    '/resend-verification',
+    { preHandler: [resendVerificationRateLimit] },
+    async (request, reply) => {
+      try {
+        preventSensitiveResponseCaching(reply);
+        const body = ResendVerificationSchema.parse(request.body);
+        const ci = getClientInfo(request);
+        const result = await service.resendVerification(
+          body,
+          ci.ip,
+          request.id,
+        );
+        return reply.send({ data: result });
+      } catch (error: any) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
 
   // GET /auth/verify-email
-  fastify.get('/verify-email', async (request, reply) => {
-    try {
-      preventSensitiveResponseCaching(reply);
-      const query = VerifyEmailQuerySchema.parse(request.query);
-      const ci = getClientInfo(request);
-      const result = await service.verifyEmail(query, ci.ip, request.id);
-      return reply.send({ data: result });
-    } catch (error: any) {
-      return handleAuthError(error, reply, request);
-    }
-  });
+  fastify.get(
+    '/verify-email',
+    { preHandler: [verifyEmailRateLimit] },
+    async (request, reply) => {
+      try {
+        preventSensitiveResponseCaching(reply);
+        const query = VerifyEmailQuerySchema.parse(request.query);
+        const ci = getClientInfo(request);
+        const result = await service.verifyEmail(query, ci.ip, request.id);
+        return reply.send({ data: result });
+      } catch (error: any) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
 
   // POST /auth/verify-email/confirm
-  // Safer SPA flow: read the token client-side and POST it, instead of relying
-  // on a GET confirmation endpoint as the only supported redemption path.
-  fastify.post('/verify-email/confirm', async (request, reply) => {
-    try {
-      preventSensitiveResponseCaching(reply);
-      const body = VerifyEmailConfirmSchema.parse(request.body);
-      const ci = getClientInfo(request);
-      const result = await service.verifyEmail(body, ci.ip, request.id);
-      return reply.send({ data: result });
-    } catch (error: any) {
-      return handleAuthError(error, reply, request);
-    }
-  });
+  fastify.post(
+    '/verify-email/confirm',
+    { preHandler: [verifyEmailRateLimit] },
+    async (request, reply) => {
+      try {
+        preventSensitiveResponseCaching(reply);
+        const body = VerifyEmailConfirmSchema.parse(request.body);
+        const ci = getClientInfo(request);
+        const result = await service.verifyEmail(body, ci.ip, request.id);
+        return reply.send({ data: result });
+      } catch (error: any) {
+        return handleAuthError(error, reply, request);
+      }
+    },
+  );
 
   // POST /auth/password/change
   // Requires: authenticated session AND fresh step-up MFA challenge.
@@ -295,7 +323,7 @@ export async function passwordRoutes(fastify: FastifyInstance) {
           ci.ip,
           ci.userAgent,
           r.id,
-          );
+        );
         return await sendAuthSession(reply, {
           ...session,
           token_type: 'Bearer',

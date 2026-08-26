@@ -26,7 +26,7 @@
  *      (now − metadata.receivedAt).
  */
 import { createHash, randomUUID } from 'crypto';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
 import { env } from '../../../config/env.js';
 import { pgboss } from '../../../lib/pgboss.js';
@@ -38,8 +38,11 @@ import {
 } from '../pipeline/event-normalizer.js';
 import {
   TelemetryWriter,
+  applyIngestionTransactionSettings,
   errorFingerprint,
   errorNameOf,
+  type DetailedWriteResult,
+  type PerTypeWriteStats,
   type ScopedEvent,
 } from '../pipeline/telemetry-writer.js';
 import { UsageCounter } from '../usage/usage-counter.js';
@@ -90,6 +93,88 @@ function str(v: unknown, max = 255): string | null {
   return typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null;
 }
 
+function elapsedSince(start: number): number {
+  return Date.now() - start;
+}
+
+type QueryCallback = (...args: unknown[]) => void;
+
+function instrumentClientQueries(client: PoolClient, onQueryComplete: (durationMs: number) => void): () => void {
+  const originalQuery = client.query;
+  client.query = ((...args: unknown[]) => {
+    const queryStartedAt = Date.now();
+    const record = (): void => onQueryComplete(elapsedSince(queryStartedAt));
+    const lastArg = args[args.length - 1];
+
+    if (typeof lastArg === 'function') {
+      const callback = lastArg as QueryCallback;
+      args[args.length - 1] = (...callbackArgs: unknown[]) => {
+        record();
+        return callback(...callbackArgs);
+      };
+      try {
+        return (originalQuery as (...queryArgs: unknown[]) => unknown).apply(client, args);
+      } catch (err) {
+        record();
+        throw err;
+      }
+    }
+
+    try {
+      const result = (originalQuery as (...queryArgs: unknown[]) => unknown).apply(client, args);
+      if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+        return (result as PromiseLike<unknown>).then(
+          (value) => {
+            record();
+            return value;
+          },
+          (err) => {
+            record();
+            throw err;
+          },
+        );
+      }
+      record();
+      return result;
+    } catch (err) {
+      record();
+      throw err;
+    }
+  }) as PoolClient['query'];
+  return () => {
+    client.query = originalQuery;
+  };
+}
+
+function serializedBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return 0;
+  }
+}
+
+function errorCode(err: unknown): string | null {
+  if (!err || typeof err !== 'object') return null;
+  const value = (err as { code?: unknown }).code;
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function ingestionFailureClass(err: unknown): string {
+  const code = errorCode(err);
+  if (code === '55P03') return 'db_lock_timeout';
+  if (code === '57014') return 'db_statement_timeout';
+  if (code === '53300' || code === '08000' || code === '08003' || code === '08006') return 'db_connection';
+  if (code && code.startsWith('23')) return 'idempotency';
+
+  const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  if (message.includes('lock timeout') || message.includes('canceling statement due to lock timeout')) return 'db_lock_timeout';
+  if (message.includes('statement timeout') || message.includes('canceling statement due to statement timeout')) return 'db_statement_timeout';
+  if (message.includes('timeout') || message.includes('connection') || message.includes('econn') || message.includes('terminating connection')) return 'db_connection';
+  if (message.includes('duplicate') || message.includes('conflict')) return 'idempotency';
+  return 'unknown';
+}
+
 export class EventProcessor {
   private readonly writer: TelemetryWriter;
   private readonly usage: UsageCounter;
@@ -125,7 +210,7 @@ export class EventProcessor {
   }
 
   /** Process one ingest job payload. Throws to fail the job (pg-boss retry). */
-  async process(payload: IngestJobPayload, queue: string): Promise<void> {
+  async process(payload: IngestJobPayload, queue: string): Promise<EventProcessorResult> {
     const startedAt = Date.now();
     const type = payload?.eventType;
     const projectId = payload?.projectId ?? '';
@@ -134,6 +219,12 @@ export class EventProcessor {
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
+    const receivedAt = Date.parse(payload?.metadata?.receivedAt ?? '');
+    const queueWaitMs = Number.isFinite(receivedAt) ? Math.max(0, startedAt - receivedAt) : null;
+    const timings: Record<string, number> = {};
+    const serializationStartedAt = Date.now();
+    const batchBytes = serializedBytes(rawEvents);
+    timings.serializationMs = elapsedSince(serializationStartedAt);
     this.log.debug(
       {
         queue,
@@ -145,10 +236,14 @@ export class EventProcessor {
     );
 
     // 1) Validate + 2) assign deterministic identity.
+    const validationStartedAt = Date.now();
+    let normalizationMs = 0;
     const scoped: ScopedEvent[] = [];
     const rejected: Array<{ event: unknown; detail: string }> = [];
     for (const raw of rawEvents) {
+      const normalizationStartedAt = Date.now();
       const r = normalizeEvent(raw);
+      normalizationMs += elapsedSince(normalizationStartedAt);
       if (!r.ok) {
         rejected.push({ event: raw, detail: `${r.reason}: ${r.detail}` });
         continue;
@@ -175,10 +270,13 @@ export class EventProcessor {
         event,
       });
     }
+    timings.normalizationMs = normalizationMs;
+    timings.validationMs = elapsedSince(validationStartedAt);
 
     // Route validation rejects to the DLQ intake queue (one message per job).
     // If this send throws, the job fails and retries — rejects are never lost.
     if (rejected.length > 0) {
+      const dlqStartedAt = Date.now();
       const dlq: DlqIntakePayload = {
         sourceQueue: queue,
         organizationId: orgId,
@@ -190,18 +288,39 @@ export class EventProcessor {
         error: `validation_failed: ${rejected.length} event(s) rejected; first: ${rejected[0]?.detail ?? 'unknown'}`,
       };
       await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {} as never);
+      timings.dlqEnqueueMs = elapsedSince(dlqStartedAt);
     }
 
     // 3) Persist all writes for this job through one checked-out client and one transaction.
-    let result = { totalInserted: 0, totalReceived: rawEvents.length, insertedErrors: [] as any[] };
+    let result: DetailedWriteResult = {
+      totalInserted: 0,
+      totalReceived: rawEvents.length,
+      perType: {},
+      insertedErrors: [],
+      outboxInserted: 0,
+    };
     let errorDomainEvents: Parameters<ErrorIngestionService['publishBatchDomainEvents']>[0] = [];
+    let dbQueries = 0;
+    let dbQueryMs = 0;
 
     if (scoped.length > 0) {
+      const dbConnectionStartedAt = Date.now();
       const client = await this.pool.connect();
+      timings.dbConnectionWaitMs = elapsedSince(dbConnectionStartedAt);
+      const restoreQuery = instrumentClientQueries(client, (durationMs) => {
+        dbQueries += 1;
+        dbQueryMs += durationMs;
+        this.metrics.recordDbQueryDuration(type ?? 'unknown', durationMs);
+      });
       try {
+        const transactionStartedAt = Date.now();
+        const beginStartedAt = Date.now();
         await client.query('BEGIN');
+        await applyIngestionTransactionSettings(client);
+        timings.beginMs = elapsedSince(beginStartedAt);
 
         if (type === 'error') {
+          const errorPrepareStartedAt = Date.now();
           const errorBatch = scoped.map(s => {
             const e = s.event as any;
             const errorName = errorNameOf(s.event);
@@ -268,27 +387,76 @@ export class EventProcessor {
               }
             };
           });
+          timings.errorPrepareMs = elapsedSince(errorPrepareStartedAt);
 
+          const insertStartedAt = Date.now();
           const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
+          timings.insertMs = elapsedSince(insertStartedAt);
           result.totalInserted = errorResult.inserted;
           result.totalReceived = errorBatch.length;
+          result.perType = {
+            error: {
+              received: errorBatch.length,
+              inserted: errorResult.inserted,
+              durationMs: timings.insertMs,
+            },
+          };
           errorDomainEvents = errorResult.domainEvents;
           if (result.totalInserted > 0) {
-            await this.writer.appendTelemetryOutbox(scoped, client);
+            const outboxStartedAt = Date.now();
+            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
+            timings.outboxMs = elapsedSince(outboxStartedAt);
           }
         } else {
-          result = await this.writer.writeBatchDetailedWithOutbox(client, scoped);
+          const insertStartedAt = Date.now();
+          result = await this.writer.writeBatchDetailedInTransaction(client, scoped);
+          timings.insertMs = elapsedSince(insertStartedAt);
+          if (result.totalInserted > 0) {
+            const outboxStartedAt = Date.now();
+            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
+            timings.outboxMs = elapsedSince(outboxStartedAt);
+          }
         }
 
+        const commitStartedAt = Date.now();
         await client.query('COMMIT');
+        timings.commitMs = elapsedSince(commitStartedAt);
+        timings.transactionMs = elapsedSince(transactionStartedAt);
         if (errorDomainEvents.length > 0) {
+          const domainEventStartedAt = Date.now();
           this.errorIngestionService.publishBatchDomainEvents(errorDomainEvents);
+          timings.domainEventMs = elapsedSince(domainEventStartedAt);
         }
       } catch (err) {
+        const rollbackStartedAt = Date.now();
         await client.query('ROLLBACK').catch(() => undefined);
-        this.log.error({ err, queue, batchId: payload?.metadata?.batchId }, 'ingestion batch transaction failed');
+        timings.rollbackMs = elapsedSince(rollbackStartedAt);
+        timings.totalProcessingMs = elapsedSince(startedAt);
+        this.log.error(
+          {
+            err,
+            phase: 'ingestion_profile_failed',
+            failureClass: ingestionFailureClass(err),
+            sqlState: errorCode(err),
+            queue,
+            eventType: type ?? 'unknown',
+            batchId: payload?.metadata?.batchId,
+            projectId,
+            environment,
+            received: rawEvents.length,
+            batchBytes,
+            validated: scoped.length,
+            rejected: rejected.length,
+            dbQueries,
+            dbQueryMs,
+            queueWaitMs,
+            ...timings,
+          },
+          'ingestion batch transaction failed',
+        );
         throw err;
       } finally {
+        restoreQuery();
         client.release();
       }
     }
@@ -313,16 +481,29 @@ export class EventProcessor {
 
     // 5) Usage accounting (inserted rows only — duplicates are never billed).
     if (result.totalInserted > 0 && orgId && projectId) {
+      const usageStartedAt = Date.now();
       this.usage.increment(projectId, orgId, `billing:events:${type}`, result.totalInserted);
       this.usage.increment(projectId, orgId, 'events', result.totalInserted, {
         apiKeyId: payload.metadata.apiKeyId || null,
         eventType: type ?? 'all',
       });
+      timings.usageAccountingMs = elapsedSince(usageStartedAt);
     }
 
     // 6) Metrics.
-    const receivedAt = Date.parse(payload?.metadata?.receivedAt ?? '');
+    const duplicateCount = Math.max(0, result.totalReceived - result.totalInserted);
     const e2eMs = Number.isFinite(receivedAt) ? Math.max(0, Date.now() - receivedAt) : null;
+    timings.totalProcessingMs = elapsedSince(startedAt);
+    if (queueWaitMs != null) this.metrics.recordStage('queue_wait', type ?? 'unknown', queueWaitMs);
+    for (const [stage, ms] of Object.entries(timings)) {
+      this.metrics.recordStage(stage, type ?? 'unknown', ms);
+    }
+    for (const [eventType, stats] of Object.entries(result.perType)) {
+      this.metrics.recordStage(`perType.${eventType}.durationMs`, eventType, stats.durationMs);
+    }
+    this.metrics.recordDbQueries(type ?? 'unknown', dbQueries);
+    this.metrics.recordBatchShape(type ?? 'unknown', rawEvents.length, batchBytes);
+    this.metrics.recordDuplicates(queue, type ?? 'unknown', duplicateCount);
     this.metrics.recordProcessed(
       queue,
       type ?? 'unknown',
@@ -331,15 +512,66 @@ export class EventProcessor {
       rejected.length,
       Date.now() - startedAt,
       e2eMs,
+      batchBytes,
+    );
+    this.log.info(
+      {
+        phase: 'ingestion_profile',
+        queue,
+        eventType: type ?? 'unknown',
+        batchId: payload?.metadata?.batchId,
+        projectId,
+        environment,
+        received: rawEvents.length,
+        batchBytes,
+        validated: scoped.length,
+        rejected: rejected.length,
+        inserted: result.totalInserted,
+        duplicates: duplicateCount,
+        outboxInserted: result.outboxInserted ?? 0,
+        dbQueries,
+        dbQueryMs,
+        queueWaitMs,
+        perType: result.perType,
+        ...timings,
+      },
+      'ingestion batch profile',
     );
     if (rejected.length > 0 || result.totalInserted !== result.totalReceived) {
       this.log.debug(
         {
           queue, type, received: rawEvents.length, inserted: result.totalInserted,
-          rejected: rejected.length, duplicates: result.totalReceived - result.totalInserted,
+          rejected: rejected.length, duplicates: duplicateCount,
         },
         'ingest job processed with drops',
       );
     }
+    return {
+      received: rawEvents.length,
+      validated: scoped.length,
+      rejected: rejected.length,
+      inserted: result.totalInserted,
+      duplicates: duplicateCount,
+      outboxInserted: result.outboxInserted ?? 0,
+      perType: result.perType,
+      dbQueries,
+      dbQueryMs,
+      queueWaitMs,
+      timings,
+    };
   }
+}
+
+export interface EventProcessorResult {
+  received: number;
+  validated: number;
+  rejected: number;
+  inserted: number;
+  duplicates: number;
+  outboxInserted: number;
+  perType: Record<string, PerTypeWriteStats>;
+  dbQueries: number;
+  dbQueryMs: number;
+  queueWaitMs: number | null;
+  timings: Record<string, number>;
 }

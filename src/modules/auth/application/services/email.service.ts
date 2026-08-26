@@ -244,7 +244,7 @@ export async function generateEmailMfaOtp(): Promise<string> {
 }
 
 export function hashEmailMfaOtp(code: string): string {
-  return createHash('sha256').update(`email_mfa_otp:${code}`).digest('hex');
+  return hashAuthToken(`email_mfa_otp:${code}`);
 }
 
 /**
@@ -266,8 +266,15 @@ export async function createEmailMfaOtp(
 export async function consumeEmailMfaOtp(
   deviceId: string,
   codeHash: string,
+  rawCode?: string,
 ): Promise<boolean> {
-  return repository.consumeEmailMfaOtp(deviceId, codeHash);
+  const consumed = await repository.consumeEmailMfaOtp(deviceId, codeHash);
+  if (consumed) return true;
+  if (rawCode) {
+    const legacyHash = createHash('sha256').update(`email_mfa_otp:${rawCode}`).digest('hex');
+    return repository.consumeEmailMfaOtp(deviceId, legacyHash);
+  }
+  return false;
 }
 
 export async function sendEmailMfaOtpEmail(

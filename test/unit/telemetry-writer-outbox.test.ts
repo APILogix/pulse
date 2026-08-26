@@ -16,6 +16,24 @@ function errorEvent(): ScopedEvent {
   };
 }
 
+function requestEvent(overrides: Record<string, unknown>): ScopedEvent {
+  return {
+    orgId: '11111111-1111-4111-8111-111111111111',
+    projectId: '22222222-2222-4222-8222-222222222222',
+    environment: 'production',
+    event: {
+      type: 'request',
+      eventId: String(overrides.eventId ?? 'req_1'),
+      timestamp: 1_700_000_000_000,
+      method: 'GET',
+      url: '/unit',
+      statusCode: 200,
+      latency: 12,
+      ...overrides,
+    },
+  } as ScopedEvent;
+}
+
 describe('TelemetryWriter transactional outbox', () => {
   it('persists HTTP error status fields when supplied and omits them for background errors', async () => {
     const queries: Array<{ sql: string; values?: unknown[] }> = [];
@@ -120,5 +138,41 @@ describe('TelemetryWriter transactional outbox', () => {
     expect(calls).toContain('ROLLBACK');
     expect(calls).not.toContain('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('does not write ignored non-fast request rows to telemetry_outbox', async () => {
+    const db = {
+      query: vi.fn(async () => ({ rowCount: 0, rows: [{ count: 0 }] })),
+    };
+
+    const inserted = await new TelemetryWriter({ query: vi.fn() } as never).appendTelemetryOutbox(
+      [requestEvent({ eventId: 'normal-request', statusCode: 200, latency: 24 })],
+      db as never,
+    );
+
+    expect(inserted).toBe(0);
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it('writes only request errors and slow requests as fast-path outbox rows', async () => {
+    const db = {
+      query: vi.fn(async () => ({ rowCount: 1, rows: [{ count: 2 }] })),
+    };
+
+    const inserted = await new TelemetryWriter({ query: vi.fn() } as never).appendTelemetryOutbox(
+      [
+        requestEvent({ eventId: 'normal-request', statusCode: 200, latency: 24 }),
+        requestEvent({ eventId: 'slow-request', statusCode: 200, latency: 1500 }),
+        requestEvent({ eventId: 'error-request', statusCode: 500, latency: 24 }),
+      ],
+      db as never,
+    );
+
+    expect(inserted).toBe(2);
+    expect(db.query).toHaveBeenCalledOnce();
+    const calls = db.query.mock.calls as unknown as Array<[string, unknown[]]>;
+    const values = calls[0]?.[1];
+    expect(values?.[4]).toEqual(['slow-request', 'error-request']);
+    expect(values?.[6]).toEqual([true, true]);
   });
 });

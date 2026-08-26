@@ -18,7 +18,7 @@ export declare function loginWithEmailPassword(input: LoginInput, ipAddress: str
     session_id: string;
     user_id: string;
 }>;
-export declare function switchLoginMfaMethod(challengeId: string, deviceId: string): Promise<{
+export declare function switchLoginMfaMethod(challengeId: string, deviceId: string, ipAddress?: string, userAgent?: string): Promise<{
     message: string;
 }>;
 export declare function verifyLoginMFAChallenge(input: LoginMFAVerifyInput, ipAddress: string, userAgent: string, clientDeviceType: string, requestId: string): Promise<{

@@ -14,13 +14,20 @@ describe('ErrorIngestionService', () => {
     let client;
     let grouping;
     let errors;
+    let metrics;
     beforeEach(() => {
         vi.clearAllMocks();
         client = { query: vi.fn().mockResolvedValue({ rows: [] }), release: vi.fn() };
         pool = { connect: vi.fn().mockResolvedValue(client) };
         grouping = { handleGroup: vi.fn() };
-        errors = { insertIfNew: vi.fn(), attachGroup: vi.fn() };
-        service = new ErrorIngestionService(pool, grouping, errors);
+        errors = { insertIfNew: vi.fn(), insertManyIfNew: vi.fn(), attachGroup: vi.fn(), attachGroups: vi.fn() };
+        metrics = {
+            recordStage: vi.fn(),
+            recordErrorDuplicate: vi.fn(),
+            recordErrorLatencies: vi.fn(),
+            recordErrorGroup: vi.fn(),
+        };
+        service = new ErrorIngestionService(pool, grouping, errors, metrics);
         vi.spyOn(domainEventBus, 'publish').mockImplementation(() => { });
     });
     it('inserts the event before grouping and commits the group association', async () => {
@@ -32,6 +39,10 @@ describe('ErrorIngestionService', () => {
         expect(errors.attachGroup).toHaveBeenCalledWith(client, 'org-1', 'evt-1', expect.any(Date), 'group-id');
         expect(client.query).toHaveBeenCalledWith('COMMIT');
         expect(domainEventBus.publish).toHaveBeenCalledWith('ErrorGroupCreated', expect.any(Object));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_insert_row', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_group_upsert', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_group_attach', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_event_total', 'error', expect.any(Number));
     });
     it('does not mutate grouping or publish events for duplicate retries', async () => {
         errors.insertIfNew.mockResolvedValue({ inserted: false, id: null });
@@ -40,6 +51,9 @@ describe('ErrorIngestionService', () => {
         expect(errors.attachGroup).not.toHaveBeenCalled();
         expect(client.query).toHaveBeenCalledWith('COMMIT');
         expect(domainEventBus.publish).not.toHaveBeenCalled();
+        expect(metrics.recordErrorDuplicate).toHaveBeenCalled();
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_insert_row', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_event_total', 'error', expect.any(Number));
     });
     it('rolls back when grouping fails after a new event insert', async () => {
         errors.insertIfNew.mockResolvedValue({ inserted: true, id: 'event-row' });
@@ -47,6 +61,85 @@ describe('ErrorIngestionService', () => {
         await expect(service.ingestError({ organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' }, event())).rejects.toThrow('DB Error');
         expect(client.query).toHaveBeenCalledWith('ROLLBACK');
         expect(client.release).toHaveBeenCalled();
+    });
+    it('bulk inserts error batches before grouping inserted rows', async () => {
+        const first = event();
+        const second = { ...event(), id: '2', event_id: 'evt-2' };
+        errors.insertManyIfNew.mockResolvedValue([
+            {
+                id: 'event-row-1',
+                organizationId: first.organization_id,
+                eventId: first.event_id,
+                occurredAt: first.occurred_at,
+            },
+            {
+                id: 'event-row-2',
+                organizationId: second.organization_id,
+                eventId: second.event_id,
+                occurredAt: second.occurred_at,
+            },
+        ]);
+        grouping.handleGroup.mockResolvedValue({ id: 'group-id', isNew: false, isRegression: false, status: 'OPEN', regressionCount: 0 });
+        const result = await service.ingestBatch(client, [
+            {
+                groupParams: { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+                eventRecord: first,
+            },
+            {
+                groupParams: { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash-2', eventId: 'evt-2', severity: 'error' },
+                eventRecord: second,
+            },
+        ]);
+        expect(result.inserted).toBe(2);
+        expect(errors.insertManyIfNew).toHaveBeenCalledTimes(1);
+        expect(errors.insertIfNew).not.toHaveBeenCalled();
+        expect(grouping.handleGroup).toHaveBeenCalledTimes(2);
+        expect(errors.attachGroup).not.toHaveBeenCalled();
+        expect(errors.attachGroups).toHaveBeenCalledWith(client, [
+            {
+                organizationId: first.organization_id,
+                eventId: first.event_id,
+                occurredAt: first.occurred_at,
+                groupId: 'group-id',
+            },
+            {
+                organizationId: second.organization_id,
+                eventId: second.event_id,
+                occurredAt: second.occurred_at,
+                groupId: 'group-id',
+            },
+        ]);
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_bulk_insert', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_batch_loop', 'error', expect.any(Number));
+        expect(metrics.recordStage).toHaveBeenCalledWith('error_group_attach', 'error', expect.any(Number));
+    });
+    it('does not group duplicate rows skipped by the bulk insert', async () => {
+        const first = event();
+        const duplicate = { ...event(), id: '2' };
+        errors.insertManyIfNew.mockResolvedValue([
+            {
+                id: 'event-row-1',
+                organizationId: first.organization_id,
+                eventId: first.event_id,
+                occurredAt: first.occurred_at,
+            },
+        ]);
+        grouping.handleGroup.mockResolvedValue({ id: 'group-id', isNew: false, isRegression: false, status: 'OPEN', regressionCount: 0 });
+        const result = await service.ingestBatch(client, [
+            {
+                groupParams: { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+                eventRecord: first,
+            },
+            {
+                groupParams: { organizationId: 'org-1', projectId: 'proj-1', fingerprint: 'hash', eventId: 'evt-1', severity: 'error' },
+                eventRecord: duplicate,
+            },
+        ]);
+        expect(result.inserted).toBe(1);
+        expect(grouping.handleGroup).toHaveBeenCalledTimes(1);
+        expect(errors.attachGroup).not.toHaveBeenCalled();
+        expect(errors.attachGroups).toHaveBeenCalledTimes(1);
+        expect(metrics.recordErrorDuplicate).toHaveBeenCalledTimes(1);
     });
 });
 //# sourceMappingURL=error-ingestion.service.test.js.map

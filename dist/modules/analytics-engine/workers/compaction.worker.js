@@ -98,7 +98,8 @@ async function describeTable(pool, table) {
  * selected by the same bounds, so re-running is idempotent.
  */
 export async function compactTier(pool, params) {
-    const sourceWindow = WINDOW_SOURCE[params.target];
+    const targetIdx = params.windows.indexOf(params.target);
+    const sourceWindow = targetIdx > 0 ? params.windows[targetIdx - 1] : WINDOW_SOURCE[params.target];
     const sourceTable = `${params.base}_${sourceWindow}`;
     const targetTable = `${params.base}_${params.target}`;
     const columns = await describeTable(pool, targetTable);
@@ -269,6 +270,7 @@ export async function runCompaction(pool, logger, target, now = new Date()) {
             results.push(await compactTier(pool, {
                 base: entry.base,
                 shape: entry.shape,
+                windows: entry.windows,
                 target,
                 from,
                 // Include the in-progress bucket so dashboards see partial data early.

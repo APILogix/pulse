@@ -9,6 +9,7 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
+import { refreshSessionRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -31,11 +32,20 @@ export function handleAuthError(error, reply, request) {
     }
     const err = error;
     if (err?.name === 'ZodError') {
+        const fields = {};
+        if (Array.isArray(err.issues)) {
+            for (const issue of err.issues) {
+                const path = issue.path ? issue.path.join('.') : 'root';
+                if (!fields[path]) {
+                    fields[path] = issue.message || 'Invalid value';
+                }
+            }
+        }
         return reply.status(400).send({
             error: {
                 code: AuthErrorCodes.VALIDATION_ERROR,
                 message: 'Invalid request payload',
-                details: { issues: err.issues },
+                details: { fields },
             },
         });
     }
@@ -47,7 +57,13 @@ export function handleAuthError(error, reply, request) {
         },
     });
 }
+function preventSensitiveResponseCaching(reply) {
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+}
 async function sendAuthSession(reply, payload) {
+    // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+    preventSensitiveResponseCaching(reply);
     const maxAgeSeconds = Math.max(0, Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000));
     reply.setCookie(REFRESH_COOKIE_NAME, payload.refresh_token, getRefreshCookieOptions(maxAgeSeconds));
     if (payload.user_id) {
@@ -79,10 +95,6 @@ async function sendAuthSession(reply, payload) {
             user_id: payload.user_id,
         },
     });
-}
-function preventSensitiveResponseCaching(reply) {
-    reply.header('Cache-Control', 'no-store, max-age=0');
-    reply.header('Pragma', 'no-cache');
 }
 // ============================================================================
 // SESSION ROUTES
@@ -151,8 +163,9 @@ export async function sessionRoutes(fastify) {
         }
     });
     // POST /auth/sessions/refresh — rotate refresh token.
-    fastify.post('/sessions/refresh', async (request, reply) => {
+    fastify.post('/sessions/refresh', { preHandler: [refreshSessionRateLimit] }, async (request, reply) => {
         try {
+            preventSensitiveResponseCaching(reply);
             // The refresh credential is cookie-backed. Require a non-simple header
             // so another site cannot silently rotate a user's session with a form
             // submission; CORS enforces that only trusted SPAs can send it.

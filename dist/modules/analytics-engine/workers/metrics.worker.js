@@ -52,7 +52,7 @@ export function createMetricsWorker(watermarks) {
         description: 'Per custom metric series: point count, sum/min/max, last value, percentiles (SDK-supplied when present) and tag cardinality.',
         aggregates: () => [
             'MIN(e.metric_type)',
-            'MIN(COALESCE(e.metric_unit, e.unit))',
+            'MIN(e.metric_unit)',
             'MIN(e.service)',
             AGG.count(),
             AGG.sum('e.value'),

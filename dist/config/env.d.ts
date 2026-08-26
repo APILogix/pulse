@@ -19,6 +19,7 @@ declare const envSchema: z.ZodObject<{
     APP_URL: z.ZodDefault<z.ZodString>;
     BACKEND_URL: z.ZodDefault<z.ZodString>;
     API_PUBLIC_URL: z.ZodOptional<z.ZodString>;
+    TRUST_PROXY: z.ZodDefault<z.ZodString>;
     DATABASE_URL: z.ZodString;
     DB_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_POOL_MIN: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -145,6 +146,17 @@ declare const envSchema: z.ZodObject<{
     INGESTION_DB_POOL_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_DB_IDLE_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_DB_CONNECTION_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: z.ZodDefault<z.ZodEnum<{
+        on: "on";
+        off: "off";
+        local: "local";
+        remote_write: "remote_write";
+        remote_apply: "remote_apply";
+    }>>;
+    INGESTION_LOG_DB_LOCK_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     MAX_QUEUE_DEPTH: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     MAX_GAUGE_AGE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     GAUGE_UPDATE_INTERVAL_BATCHES: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -160,6 +172,7 @@ declare const envSchema: z.ZodObject<{
     INGESTION_ADMIN_LOG_BUFFER_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_ADMIN_LOG_FLUSH_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_JOB_CHUNK_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_JOB_MAX_BYTES: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_JOB_EXPIRE_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_JOB_RETRY_LIMIT: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_JOB_RETRY_DELAY_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -216,6 +229,7 @@ export declare const env: {
     APP_NAME: string;
     APP_URL: string;
     BACKEND_URL: string;
+    TRUST_PROXY: string;
     DATABASE_URL: string;
     DB_POOL_MAX: number;
     DB_POOL_MIN: number;
@@ -316,6 +330,11 @@ export declare const env: {
     INGESTION_DB_POOL_SIZE: number;
     INGESTION_DB_IDLE_TIMEOUT_MS: number;
     INGESTION_DB_CONNECTION_TIMEOUT_MS: number;
+    INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: "on" | "off" | "local" | "remote_write" | "remote_apply";
+    INGESTION_LOG_DB_LOCK_TIMEOUT_MS: number;
+    INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: number;
+    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: number;
+    INGESTION_FAST_REQUEST_MIN_DURATION_MS: number;
     MAX_QUEUE_DEPTH: number;
     MAX_GAUGE_AGE_MS: number;
     GAUGE_UPDATE_INTERVAL_BATCHES: number;
@@ -330,6 +349,7 @@ export declare const env: {
     INGESTION_ADMIN_LOG_BUFFER_SIZE: number;
     INGESTION_ADMIN_LOG_FLUSH_MS: number;
     INGESTION_JOB_CHUNK_SIZE: number;
+    INGESTION_JOB_MAX_BYTES: number;
     INGESTION_JOB_EXPIRE_SECONDS: number;
     INGESTION_JOB_RETRY_LIMIT: number;
     INGESTION_JOB_RETRY_DELAY_SECONDS: number;

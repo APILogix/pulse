@@ -131,13 +131,15 @@ export async function compactTier(
   params: {
     base: string;
     shape: 'A' | 'B';
+    windows: readonly WindowSize[];
     target: Exclude<WindowSize, '1m'>;
     from: Date;
     to: Date;
     logger: Logger;
   },
 ): Promise<CompactionResult> {
-  const sourceWindow = WINDOW_SOURCE[params.target];
+  const targetIdx = params.windows.indexOf(params.target);
+  const sourceWindow = targetIdx > 0 ? params.windows[targetIdx - 1] : WINDOW_SOURCE[params.target];
   const sourceTable = `${params.base}_${sourceWindow}`;
   const targetTable = `${params.base}_${params.target}`;
 
@@ -359,6 +361,7 @@ export async function runCompaction(
         await compactTier(pool, {
           base: entry.base,
           shape: entry.shape,
+          windows: entry.windows,
           target,
           from,
           // Include the in-progress bucket so dashboards see partial data early.

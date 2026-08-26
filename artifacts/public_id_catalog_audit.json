@@ -1,0 +1,1152 @@
+{
+  "tablesWithPublicId": [
+    {
+      "table_schema": "public",
+      "table_name": "analytics_user_sessions",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('SES-'::text || lpad((nextval('seq_pubid_sessions'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "analytics_user_sessions_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('SES-'::text || lpad((nextval('seq_pubid_sessions'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "error_groups",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('ISS-'::text || lpad((nextval('seq_pubid_error_groups'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_cron_checkins",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('CRN-'::text || lpad((nextval('seq_pubid_cron_checkins'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_cron_checkins_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('CRN-'::text || lpad((nextval('seq_pubid_cron_checkins'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_errors",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('ERR-'::text || lpad((nextval('seq_pubid_errors'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_errors_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('ERR-'::text || lpad((nextval('seq_pubid_errors'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_logs",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('LOG-'::text || lpad((nextval('seq_pubid_logs'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_logs_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('LOG-'::text || lpad((nextval('seq_pubid_logs'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_messages",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('MSG-'::text || lpad((nextval('seq_pubid_messages'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_messages_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('MSG-'::text || lpad((nextval('seq_pubid_messages'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_metrics",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('MTR-'::text || lpad((nextval('seq_pubid_metrics'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_metrics_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('MTR-'::text || lpad((nextval('seq_pubid_metrics'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_profiles",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('PRF-'::text || lpad((nextval('seq_pubid_profiles'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_profiles_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('PRF-'::text || lpad((nextval('seq_pubid_profiles'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_replays",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('RPL-'::text || lpad((nextval('seq_pubid_replays'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_replays_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('RPL-'::text || lpad((nextval('seq_pubid_replays'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_requests",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('REQ-'::text || lpad((nextval('seq_pubid_requests'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_requests_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('REQ-'::text || lpad((nextval('seq_pubid_requests'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_spans",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('SPN-'::text || lpad((nextval('seq_pubid_spans'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_spans_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('SPN-'::text || lpad((nextval('seq_pubid_spans'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_traces",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('TRC-'::text || lpad((nextval('seq_pubid_traces'::regclass))::text, 9, '0'::text))",
+      "relkind": "p",
+      "table_classification": "partitioned table"
+    },
+    {
+      "table_schema": "public",
+      "table_name": "events_traces_default",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": "('TRC-'::text || lpad((nextval('seq_pubid_traces'::regclass))::text, 9, '0'::text))",
+      "relkind": "r",
+      "table_classification": "regular table"
+    }
+  ],
+  "columnDefaults": [
+    {
+      "schema_name": "public",
+      "table_name": "analytics_user_sessions",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('SES-'::text || lpad((nextval('seq_pubid_sessions'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "analytics_user_sessions_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('SES-'::text || lpad((nextval('seq_pubid_sessions'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "analytics_user_sessions_default_organization_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "error_groups",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('ISS-'::text || lpad((nextval('seq_pubid_error_groups'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_cron_checkins",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('CRN-'::text || lpad((nextval('seq_pubid_cron_checkins'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_cron_checkins_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('CRN-'::text || lpad((nextval('seq_pubid_cron_checkins'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_cron_checkins_default_organization_id_project_id_pub_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_errors",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('ERR-'::text || lpad((nextval('seq_pubid_errors'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_errors_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('ERR-'::text || lpad((nextval('seq_pubid_errors'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_errors_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_logs",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('LOG-'::text || lpad((nextval('seq_pubid_logs'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_logs_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('LOG-'::text || lpad((nextval('seq_pubid_logs'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_logs_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_messages",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('MSG-'::text || lpad((nextval('seq_pubid_messages'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_messages_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('MSG-'::text || lpad((nextval('seq_pubid_messages'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_messages_default_organization_id_project_id_public_i_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_metrics",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('MTR-'::text || lpad((nextval('seq_pubid_metrics'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_metrics_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('MTR-'::text || lpad((nextval('seq_pubid_metrics'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_metrics_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_profiles",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('PRF-'::text || lpad((nextval('seq_pubid_profiles'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_profiles_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('PRF-'::text || lpad((nextval('seq_pubid_profiles'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_profiles_default_organization_id_project_id_public_i_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_replays",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('RPL-'::text || lpad((nextval('seq_pubid_replays'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_replays_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('RPL-'::text || lpad((nextval('seq_pubid_replays'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_replays_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_requests",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('REQ-'::text || lpad((nextval('seq_pubid_requests'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_requests_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('REQ-'::text || lpad((nextval('seq_pubid_requests'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_requests_default_organization_id_project_id_public_i_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_spans",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('SPN-'::text || lpad((nextval('seq_pubid_spans'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_spans_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('SPN-'::text || lpad((nextval('seq_pubid_spans'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_spans_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_traces",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('TRC-'::text || lpad((nextval('seq_pubid_traces'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_traces_default",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": true,
+      "default_expression": "('TRC-'::text || lpad((nextval('seq_pubid_traces'::regclass))::text, 9, '0'::text))"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_traces_default_organization_id_project_id_public_id_idx",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_analytics_sessions_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_error_groups_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_cron_checkins_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_errors_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_logs_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_messages_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_metrics_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_profiles_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_replays_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_requests_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_spans_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    },
+    {
+      "schema_name": "public",
+      "table_name": "idx_events_traces_pubid",
+      "column_name": "public_id",
+      "column_type": "text",
+      "is_not_null": false,
+      "default_expression": null
+    }
+  ],
+  "sequences": [
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_cron_checkins",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "4"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_error_groups",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "788"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_errors",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "1369"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_logs",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "7023"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_messages",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "589"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_metrics",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "21"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_profiles",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "5"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_replays",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "5"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_requests",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "2756"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_sessions",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": null
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_spans",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "56610"
+    },
+    {
+      "schemaname": "public",
+      "sequencename": "seq_pubid_traces",
+      "sequenceowner": "neondb_owner",
+      "data_type": "bigint",
+      "start_value": "1",
+      "min_value": "1",
+      "max_value": "9223372036854775807",
+      "increment_by": "1",
+      "cycle": false,
+      "last_value": "14932"
+    }
+  ],
+  "triggers": [
+    {
+      "schema_name": "public",
+      "table_name": "error_groups",
+      "trigger_name": "trg_sync_error_groups_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_error_groups_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_error_groups_contract BEFORE INSERT OR UPDATE ON public.error_groups FOR EACH ROW EXECUTE FUNCTION logdb_sync_error_groups_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_cron_checkins",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_cron_checkins FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_cron_checkins_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_cron_checkins_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_errors",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_errors FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_errors_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_errors_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_logs",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_logs FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_logs_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_logs_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_messages",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_messages FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_messages_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_messages_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_metrics",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_metrics FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_metrics_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_metrics_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_profiles",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_profiles FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_profiles_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_profiles_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_replays",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_replays FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_replays_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_replays_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_requests",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_requests FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_requests_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_requests_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_spans",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_spans FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_spans_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_spans_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_traces",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_traces FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    },
+    {
+      "schema_name": "public",
+      "table_name": "events_traces_default",
+      "trigger_name": "trg_sync_typed_event_contract",
+      "trigger_status": "enabled",
+      "trigger_timing": "BEFORE",
+      "trigger_events": "INSERT OR UPDATE",
+      "trigger_level": "ROW",
+      "function_name": "logdb_sync_typed_event_contract",
+      "trigger_definition": "CREATE TRIGGER trg_sync_typed_event_contract BEFORE INSERT OR UPDATE ON public.events_traces_default FOR EACH ROW EXECUTE FUNCTION logdb_sync_typed_event_contract()"
+    }
+  ],
+  "triggerFunctions": [
+    {
+      "schema_name": "public",
+      "function_name": "logdb_sync_error_groups_contract",
+      "function_definition": "CREATE OR REPLACE FUNCTION public.logdb_sync_error_groups_contract()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n  IF NEW.public_id IS NULL OR NEW.public_id = '' THEN\n    NEW.public_id := 'ISS-' || lpad(nextval('seq_pubid_error_groups')::text, 9, '0');\n  END IF;\n  RETURN NEW;\nEND;\n$function$\n"
+    },
+    {
+      "schema_name": "public",
+      "function_name": "logdb_sync_typed_event_contract",
+      "function_definition": "CREATE OR REPLACE FUNCTION public.logdb_sync_typed_event_contract()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n  -- Timestamp columns are already supplied by the writer/defaults on the hot\n  -- path. These COALESCE checks preserve legacy/direct insert safety without\n  -- changing valid writer-provided values.\n  NEW.occurred_at := COALESCE(NEW.occurred_at, NOW());\n  NEW.created_at := COALESCE(NEW.created_at, NEW.ingested_at, NOW());\n  NEW.ingested_at := COALESCE(NEW.ingested_at, NEW.created_at);\n\n  -- Avoid jsonb_set() and a full JSONB rewrite when metadata.environment is\n  -- already correct.\n  IF NEW.metadata IS NULL OR jsonb_typeof(NEW.metadata) <> 'object' THEN\n    NEW.metadata := jsonb_build_object('environment', NEW.environment);\n  ELSIF NEW.metadata->>'environment' IS DISTINCT FROM NEW.environment THEN\n    NEW.metadata := jsonb_set(NEW.metadata, '{environment}', to_jsonb(NEW.environment), true);\n  END IF;\n\n  IF NEW.public_id IS NULL OR NEW.public_id = '' THEN\n    IF TG_TABLE_NAME LIKE 'events_requests%' THEN\n      NEW.public_id := 'REQ-' || lpad(nextval('seq_pubid_requests')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_errors%' THEN\n      NEW.public_id := 'ERR-' || lpad(nextval('seq_pubid_errors')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_traces%' THEN\n      NEW.public_id := 'TRC-' || lpad(nextval('seq_pubid_traces')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_spans%' THEN\n      NEW.public_id := 'SPN-' || lpad(nextval('seq_pubid_spans')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_logs%' THEN\n      NEW.public_id := 'LOG-' || lpad(nextval('seq_pubid_logs')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_metrics%' THEN\n      NEW.public_id := 'MTR-' || lpad(nextval('seq_pubid_metrics')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_messages%' THEN\n      NEW.public_id := 'MSG-' || lpad(nextval('seq_pubid_messages')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_replays%' THEN\n      NEW.public_id := 'RPL-' || lpad(nextval('seq_pubid_replays')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_profiles%' THEN\n      NEW.public_id := 'PRF-' || lpad(nextval('seq_pubid_profiles')::text, 9, '0');\n    ELSIF TG_TABLE_NAME LIKE 'events_cron_checkins%' THEN\n      NEW.public_id := 'CRN-' || lpad(nextval('seq_pubid_cron_checkins')::text, 9, '0');\n    END IF;\n  END IF;\n\n  -- The ingestion writer supplies payload. Keep fallback only for direct SQL\n  -- inserts and older callers.\n  IF NEW.payload IS NULL OR NEW.payload = '{}'::jsonb THEN\n    NEW.payload := to_jsonb(NEW) - 'payload' - 'attributes' - 'metadata' - 'ai_response';\n  END IF;\n\n  RETURN NEW;\nEND;\n$function$\n"
+    },
+    {
+      "schema_name": "public",
+      "function_name": "logdb_sync_user_sessions_contract",
+      "function_definition": "CREATE OR REPLACE FUNCTION public.logdb_sync_user_sessions_contract()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\r\nBEGIN\r\n  IF NEW.public_id IS NULL OR NEW.public_id = '' THEN\r\n    NEW.public_id := 'SES-' || lpad(nextval('seq_pubid_sessions')::text, 9, '0');\r\n  END IF;\r\n  RETURN NEW;\r\nEND;\r\n$function$\n"
+    }
+  ],
+  "indexes": [
+    {
+      "schemaname": "public",
+      "tablename": "analytics_user_sessions",
+      "indexname": "idx_analytics_sessions_pubid",
+      "indexdef": "CREATE INDEX idx_analytics_sessions_pubid ON ONLY public.analytics_user_sessions USING btree (organization_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "analytics_user_sessions_default",
+      "indexname": "analytics_user_sessions_default_organization_id_public_id_idx",
+      "indexdef": "CREATE INDEX analytics_user_sessions_default_organization_id_public_id_idx ON public.analytics_user_sessions_default USING btree (organization_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "error_groups",
+      "indexname": "idx_error_groups_pubid",
+      "indexdef": "CREATE INDEX idx_error_groups_pubid ON public.error_groups USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_cron_checkins",
+      "indexname": "idx_events_cron_checkins_pubid",
+      "indexdef": "CREATE INDEX idx_events_cron_checkins_pubid ON ONLY public.events_cron_checkins USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_cron_checkins_default",
+      "indexname": "events_cron_checkins_default_organization_id_project_id_pub_idx",
+      "indexdef": "CREATE INDEX events_cron_checkins_default_organization_id_project_id_pub_idx ON public.events_cron_checkins_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_errors",
+      "indexname": "idx_events_errors_pubid",
+      "indexdef": "CREATE INDEX idx_events_errors_pubid ON ONLY public.events_errors USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_errors_default",
+      "indexname": "events_errors_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_errors_default_organization_id_project_id_public_id_idx ON public.events_errors_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_logs",
+      "indexname": "idx_events_logs_pubid",
+      "indexdef": "CREATE INDEX idx_events_logs_pubid ON ONLY public.events_logs USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_logs_default",
+      "indexname": "events_logs_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_logs_default_organization_id_project_id_public_id_idx ON public.events_logs_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_messages",
+      "indexname": "idx_events_messages_pubid",
+      "indexdef": "CREATE INDEX idx_events_messages_pubid ON ONLY public.events_messages USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_messages_default",
+      "indexname": "events_messages_default_organization_id_project_id_public_i_idx",
+      "indexdef": "CREATE INDEX events_messages_default_organization_id_project_id_public_i_idx ON public.events_messages_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_metrics",
+      "indexname": "idx_events_metrics_pubid",
+      "indexdef": "CREATE INDEX idx_events_metrics_pubid ON ONLY public.events_metrics USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_metrics_default",
+      "indexname": "events_metrics_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_metrics_default_organization_id_project_id_public_id_idx ON public.events_metrics_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_profiles",
+      "indexname": "idx_events_profiles_pubid",
+      "indexdef": "CREATE INDEX idx_events_profiles_pubid ON ONLY public.events_profiles USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_profiles_default",
+      "indexname": "events_profiles_default_organization_id_project_id_public_i_idx",
+      "indexdef": "CREATE INDEX events_profiles_default_organization_id_project_id_public_i_idx ON public.events_profiles_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_replays",
+      "indexname": "idx_events_replays_pubid",
+      "indexdef": "CREATE INDEX idx_events_replays_pubid ON ONLY public.events_replays USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_replays_default",
+      "indexname": "events_replays_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_replays_default_organization_id_project_id_public_id_idx ON public.events_replays_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_requests",
+      "indexname": "idx_events_requests_pubid",
+      "indexdef": "CREATE INDEX idx_events_requests_pubid ON ONLY public.events_requests USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_requests_default",
+      "indexname": "events_requests_default_organization_id_project_id_public_i_idx",
+      "indexdef": "CREATE INDEX events_requests_default_organization_id_project_id_public_i_idx ON public.events_requests_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_spans",
+      "indexname": "idx_events_spans_pubid",
+      "indexdef": "CREATE INDEX idx_events_spans_pubid ON ONLY public.events_spans USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_spans_default",
+      "indexname": "events_spans_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_spans_default_organization_id_project_id_public_id_idx ON public.events_spans_default USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_traces",
+      "indexname": "idx_events_traces_pubid",
+      "indexdef": "CREATE INDEX idx_events_traces_pubid ON ONLY public.events_traces USING btree (organization_id, project_id, public_id)"
+    },
+    {
+      "schemaname": "public",
+      "tablename": "events_traces_default",
+      "indexname": "events_traces_default_organization_id_project_id_public_id_idx",
+      "indexdef": "CREATE INDEX events_traces_default_organization_id_project_id_public_id_idx ON public.events_traces_default USING btree (organization_id, project_id, public_id)"
+    }
+  ],
+  "primaryTablesWithPublicId": [
+    {
+      "table_schema": "public",
+      "table_name": "projects",
+      "column_name": "public_id",
+      "data_type": "text",
+      "is_nullable": "NO",
+      "column_default": null
+    }
+  ],
+  "primarySequences": [],
+  "primaryTriggers": []
+}

@@ -64,6 +64,9 @@ import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
 import {
+  refreshSessionRateLimit,
+} from '../middleware/rate-limits.js';
+import {
   getRefreshCookieNames,
   getRefreshCookieOptions,
   getRefreshCookieValue,
@@ -88,7 +91,6 @@ function clearRefreshCookies(reply: FastifyReply): void {
   }
 }
 
-
 // ============================================================================
 // ERROR HANDLER
 // ============================================================================
@@ -108,13 +110,22 @@ export function handleAuthError(
     });
   }
 
-  const err = error as { name?: string; issues?: unknown };
+  const err = error as { name?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> };
   if (err?.name === 'ZodError') {
+    const fields: Record<string, string> = {};
+    if (Array.isArray(err.issues)) {
+      for (const issue of err.issues) {
+        const path = issue.path ? issue.path.join('.') : 'root';
+        if (!fields[path]) {
+          fields[path] = issue.message || 'Invalid value';
+        }
+      }
+    }
     return reply.status(400).send({
       error: {
         code: AuthErrorCodes.VALIDATION_ERROR,
         message: 'Invalid request payload',
-        details: { issues: err.issues },
+        details: { fields },
       },
     });
   }
@@ -128,6 +139,11 @@ export function handleAuthError(
   });
 }
 
+function preventSensitiveResponseCaching(reply: FastifyReply): void {
+  reply.header('Cache-Control', 'no-store, max-age=0');
+  reply.header('Pragma', 'no-cache');
+}
+
 async function sendAuthSession(
   reply: FastifyReply,
   payload: {
@@ -139,6 +155,9 @@ async function sendAuthSession(
     user_id?: string;
   },
 ): Promise<FastifyReply> {
+  // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+  preventSensitiveResponseCaching(reply);
+
   const maxAgeSeconds = Math.max(
     0,
     Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000),
@@ -182,10 +201,7 @@ async function sendAuthSession(
   });
 }
 
-function preventSensitiveResponseCaching(reply: FastifyReply): void {
-  reply.header('Cache-Control', 'no-store, max-age=0');
-  reply.header('Pragma', 'no-cache');
-}
+
 
 
 // ============================================================================
@@ -289,85 +305,90 @@ export async function sessionRoutes(fastify: FastifyInstance) {
   );
 
   // POST /auth/sessions/refresh — rotate refresh token.
-  fastify.post('/sessions/refresh', async (request, reply) => {
-    try {
-      // The refresh credential is cookie-backed. Require a non-simple header
-      // so another site cannot silently rotate a user's session with a form
-      // submission; CORS enforces that only trusted SPAs can send it.
-      if (request.headers['x-csrf-request'] !== '1') {
-return reply.status(403).send({
-          error: { code: 'CSRF_VALIDATION_FAILED', message: 'Request not permitted. Please refresh the page and try again.' },
-        });
-      }
-      const ci = getClientInfo(request);
+  fastify.post(
+    '/sessions/refresh',
+    { preHandler: [refreshSessionRateLimit] },
+    async (request, reply) => {
+      try {
+        preventSensitiveResponseCaching(reply);
+        // The refresh credential is cookie-backed. Require a non-simple header
+        // so another site cannot silently rotate a user's session with a form
+        // submission; CORS enforces that only trusted SPAs can send it.
+        if (request.headers['x-csrf-request'] !== '1') {
+          return reply.status(403).send({
+            error: { code: 'CSRF_VALIDATION_FAILED', message: 'Request not permitted. Please refresh the page and try again.' },
+          });
+        }
+        const ci = getClientInfo(request);
 
-      const raw = getRefreshCookieValue(request.cookies);
-      if (!raw) {
-        return reply.status(401).send({
-          error: {
-            code: 'MISSING_REFRESH_TOKEN',
-            message: 'Session expired. Please sign in again.',
-          },
-        });
-      }
-      const unsigned = request.unsignCookie(raw);
-      if (!unsigned.valid || !unsigned.value) {
-        clearRefreshCookies(reply);
-        return reply.status(401).send({
-          error: {
-            code: 'INVALID_REFRESH_TOKEN',
-            message: 'Session expired. Please sign in again.',
-          },
-        });
-      }
+        const raw = getRefreshCookieValue(request.cookies);
+        if (!raw) {
+          return reply.status(401).send({
+            error: {
+              code: 'MISSING_REFRESH_TOKEN',
+              message: 'Session expired. Please sign in again.',
+            },
+          });
+        }
+        const unsigned = request.unsignCookie(raw);
+        if (!unsigned.valid || !unsigned.value) {
+          clearRefreshCookies(reply);
+          return reply.status(401).send({
+            error: {
+              code: 'INVALID_REFRESH_TOKEN',
+              message: 'Session expired. Please sign in again.',
+            },
+          });
+        }
 
-      const result = await service.refreshAccessToken(
-        unsigned.value,
-        ci.ip,
-        ci.userAgent,
-        request.id,
-      );
-
-      const refreshMaxAgeSeconds = Math.max(
-        0,
-        Math.ceil((result.expiresAt.getTime() - Date.now()) / 1000),
-      );
-      if (result.refreshTokenRotated) {
-        reply.setCookie(
-          REFRESH_COOKIE_NAME,
-          result.refreshToken,
-          getRefreshCookieOptions(refreshMaxAgeSeconds),
+        const result = await service.refreshAccessToken(
+          unsigned.value,
+          ci.ip,
+          ci.userAgent,
+          request.id,
         );
+
+        const refreshMaxAgeSeconds = Math.max(
+          0,
+          Math.ceil((result.expiresAt.getTime() - Date.now()) / 1000),
+        );
+        if (result.refreshTokenRotated) {
+          reply.setCookie(
+            REFRESH_COOKIE_NAME,
+            result.refreshToken,
+            getRefreshCookieOptions(refreshMaxAgeSeconds),
+          );
+        }
+        const orgRepo = new OrganizationRepository();
+        const orgContext = await orgRepo.getUserContextForLogin(result.userId);
+        const defaultOrgId = orgContext.organizations.find(
+          (org) => org.slug === orgContext.default_org_slug,
+        )?.id ?? null;
+        return reply.send({
+          data: {
+            access_token: result.accessToken,
+            expires_at: result.expiresAt,
+            session_id: result.sessionId,
+            token_type: 'Bearer',
+            current_org_id: result.currentOrgId ?? defaultOrgId,
+            default_org_id: defaultOrgId,
+            default_org_slug: orgContext.default_org_slug,
+            organizations: orgContext.organizations,
+          },
+        });
+      } catch (error: any) {
+        if (
+          error instanceof AuthError &&
+          (error.code === AuthErrorCodes.REFRESH_TOKEN_REUSED ||
+            error.code === AuthErrorCodes.SESSION_EXPIRED ||
+            error.code === AuthErrorCodes.SESSION_INVALID)
+        ) {
+          clearRefreshCookies(reply);
+        }
+        return handleAuthError(error, reply, request);
       }
-      const orgRepo = new OrganizationRepository();
-      const orgContext = await orgRepo.getUserContextForLogin(result.userId);
-      const defaultOrgId = orgContext.organizations.find(
-        (org) => org.slug === orgContext.default_org_slug,
-      )?.id ?? null;
-      return reply.send({
-        data: {
-          access_token: result.accessToken,
-          expires_at: result.expiresAt,
-          session_id: result.sessionId,
-          token_type: 'Bearer',
-          current_org_id: result.currentOrgId ?? defaultOrgId,
-          default_org_id: defaultOrgId,
-          default_org_slug: orgContext.default_org_slug,
-          organizations: orgContext.organizations,
-        },
-      });
-    } catch (error: any) {
-      if (
-        error instanceof AuthError &&
-        (error.code === AuthErrorCodes.REFRESH_TOKEN_REUSED ||
-          error.code === AuthErrorCodes.SESSION_EXPIRED ||
-          error.code === AuthErrorCodes.SESSION_INVALID)
-      ) {
-        clearRefreshCookies(reply);
-      }
-      return handleAuthError(error, reply, request);
-    }
-  });
+    },
+  );
 
   // POST /auth/logout
   fastify.post(

@@ -12,12 +12,16 @@ function useSecureRefreshCookiePrefix() {
 }
 export const REFRESH_COOKIE_NAME = useSecureRefreshCookiePrefix() ? SECURE_REFRESH_COOKIE_NAME : DEV_REFRESH_COOKIE_NAME;
 export function getRefreshCookieNames() {
+    if (useSecureRefreshCookiePrefix()) {
+        return [SECURE_REFRESH_COOKIE_NAME];
+    }
     return LEGACY_REFRESH_COOKIE_NAMES;
 }
 export function getRefreshCookieValue(cookies) {
     if (!cookies)
         return undefined;
-    for (const name of LEGACY_REFRESH_COOKIE_NAMES) {
+    const names = getRefreshCookieNames();
+    for (const name of names) {
         const value = cookies[name];
         if (value)
             return value;

@@ -38,7 +38,7 @@ export async function applySketchPass(client, options, params) {
     assertIdentifier(options.targetTable, 'target table');
     assertIdentifier(options.targetColumn, 'target column');
     assertIdentifier(options.subjectColumn, 'subject column');
-    const timeColumn = options.timeColumn ?? 'timestamp';
+    const timeColumn = options.timeColumn ?? 'occurred_at';
     const ingestColumn = options.ingestColumn ?? 'ingested_at';
     const bucket = bucketExpression(`e.${timeColumn}`, options.window);
     const entityExpr = options.shape === 'B' ? (options.entityKeyExpr ?? null) : null;

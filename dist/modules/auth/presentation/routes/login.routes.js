@@ -3,6 +3,7 @@ import * as service from '../../application/services/index.js';
 import { AuthError, AuthErrorCodes, BackupCodeLoginSchema, LoginMFAVerifySchema, LoginSchema, } from '../../domain/types.js';
 import { OrganizationRepository } from '../../../organization/repository.js';
 import * as authRepo from '../../infrastructure/repositories/index.js';
+import { loginRateLimit, loginMfaRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -25,11 +26,20 @@ export function handleAuthError(error, reply, request) {
     }
     const err = error;
     if (err?.name === 'ZodError') {
+        const fields = {};
+        if (Array.isArray(err.issues)) {
+            for (const issue of err.issues) {
+                const path = issue.path ? issue.path.join('.') : 'root';
+                if (!fields[path]) {
+                    fields[path] = issue.message || 'Invalid value';
+                }
+            }
+        }
         return reply.status(400).send({
             error: {
                 code: AuthErrorCodes.VALIDATION_ERROR,
                 message: 'Invalid request payload',
-                details: { issues: err.issues },
+                details: { fields },
             },
         });
     }
@@ -41,7 +51,13 @@ export function handleAuthError(error, reply, request) {
         },
     });
 }
+function preventSensitiveResponseCaching(reply) {
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+}
 async function sendAuthSession(reply, payload) {
+    // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+    preventSensitiveResponseCaching(reply);
     const maxAgeSeconds = Math.max(0, Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000));
     reply.setCookie(REFRESH_COOKIE_NAME, payload.refresh_token, getRefreshCookieOptions(maxAgeSeconds));
     if (payload.user_id) {
@@ -77,21 +93,18 @@ async function sendAuthSession(reply, payload) {
         },
     });
 }
-function preventSensitiveResponseCaching(reply) {
-    reply.header('Cache-Control', 'no-store, max-age=0');
-    reply.header('Pragma', 'no-cache');
-}
 // ============================================================================
 // CREDENTIAL ROUTES
 // ============================================================================
 export async function credentialRoutes(fastify) {
     // POST /auth/login
-    fastify.post('/login', async (request, reply) => {
+    fastify.post('/login', { preHandler: [loginRateLimit] }, async (request, reply) => {
         try {
             const body = LoginSchema.parse(request.body);
             const ci = getClientInfo(request);
             const result = await service.loginWithEmailPassword(body, ci.ip, ci.userAgent, ci.device.type, request.id);
             if (result.mfa_required) {
+                preventSensitiveResponseCaching(reply);
                 return reply.status(202).send({
                     data: {
                         mfa_required: true,
@@ -109,7 +122,7 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/mfa
-    fastify.post('/login/mfa', async (request, reply) => {
+    fastify.post('/login/mfa', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
         try {
             const body = LoginMFAVerifySchema.parse(request.body);
             const ci = getClientInfo(request);
@@ -121,14 +134,15 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/mfa/switch
-    fastify.post('/login/mfa/switch', async (request, reply) => {
+    fastify.post('/login/mfa/switch', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
         try {
             const { z } = await import('zod');
             const body = z.object({
                 challenge_id: z.string().min(1),
-                device_id: z.string().min(1)
+                device_id: z.string().min(1),
             }).parse(request.body);
-            const result = await service.switchLoginMfaMethod(body.challenge_id, body.device_id);
+            const ci = getClientInfo(request);
+            const result = await service.switchLoginMfaMethod(body.challenge_id, body.device_id, ci.ip, ci.userAgent);
             return reply.send({ data: result });
         }
         catch (error) {
@@ -136,7 +150,7 @@ export async function credentialRoutes(fastify) {
         }
     });
     // POST /auth/login/backup-code
-    fastify.post('/login/backup-code', async (request, reply) => {
+    fastify.post('/login/backup-code', { preHandler: [loginMfaRateLimit] }, async (request, reply) => {
         try {
             const body = BackupCodeLoginSchema.parse(request.body);
             const ci = getClientInfo(request);

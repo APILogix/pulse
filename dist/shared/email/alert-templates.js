@@ -59,10 +59,16 @@ function scopeSuffix(scope) {
  * previews can classify the message from its first eight characters.
  */
 function alertSubject(state, severity, ruleName, scope) {
-    const tag = severity ? `[${state.toUpperCase()} · ${severity.toUpperCase()}]` : `[${state.toUpperCase()}]`;
-    const where = scopeLabel(scope);
+    let tagText = state.toUpperCase();
+    if (state === 'firing') {
+        tagText = severity ? severity.toUpperCase() : '';
+    }
+    else {
+        tagText = severity ? `${state.toUpperCase()} · ${severity.toUpperCase()}` : state.toUpperCase();
+    }
+    const tag = tagText ? `[${tagText}]` : '';
     const rule = stripControl(ruleName).trim() || 'Alert';
-    return where ? `${tag} ${rule} — ${where}` : `${tag} ${rule}`;
+    return tag ? `${tag} ${rule}` : rule;
 }
 /** Rows describing the alert itself. Empty fields are dropped, never shown blank. */
 function identityRows(identity, scope) {
@@ -345,7 +351,7 @@ export function alertFiringTemplate(input) {
         subject: alertSubject('firing', severity, id.ruleName, input),
         html: renderLayout({
             appName: input.appName,
-            title: id.ruleName,
+            title: input.summary || id.ruleName,
             eyebrowText: `Firing · ${severity}`,
             preheader: input.measurement
                 ? `${stripControl(input.measurement.label)} ${stripControl(input.measurement.value)} exceeded ${stripControl(input.measurement.threshold)}${scopeSuffix(input)}.`

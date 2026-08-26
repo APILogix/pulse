@@ -23,7 +23,7 @@ export declare function createEmailMfaOtp(userId: string, deviceId: string, code
  * Atomically consume an email MFA OTP. Returns true if the code matched and
  * was not yet used/expired.
  */
-export declare function consumeEmailMfaOtp(deviceId: string, codeHash: string): Promise<boolean>;
+export declare function consumeEmailMfaOtp(deviceId: string, codeHash: string, rawCode?: string): Promise<boolean>;
 export declare function sendEmailMfaOtpEmail(user: Pick<User, 'email' | 'full_name'>, code: string, deviceName: string, purpose: 'setup' | 'login' | 'challenge'): Promise<void>;
 export declare function resendVerification(input: ResendVerificationInput, ipAddress: string, requestId: string): Promise<{
     message: string;

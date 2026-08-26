@@ -15,7 +15,7 @@ import { AGG, defineSimpleRollupWorker } from './base.js';
 import { applySketchPass } from './sketches.js';
 const TABLE = 'endpoint_metrics_1m';
 const SOURCE = 'events_requests';
-const ENDPOINT_LABEL = "COALESCE(e.method, 'UNKNOWN') || ' ' || COALESCE(e.route, e.url, '/')";
+const ENDPOINT_LABEL = "COALESCE(e.method, 'UNKNOWN') || ' ' || COALESCE(e.endpoint, '/')";
 const ENTITY_KEY = `md5(${ENDPOINT_LABEL})`;
 const COLUMNS = [
     'organization_id',
@@ -58,21 +58,21 @@ export function createEndpointsWorker(watermarks) {
         description: 'Per endpoint (method + route) volume, error split, latency percentiles + histogram, bytes out and distinct users.',
         aggregates: () => [
             `MIN(COALESCE(e.method, 'UNKNOWN'))`,
-            'MIN(COALESCE(e.route, e.url))',
+            'MIN(e.endpoint)',
             'MIN(e.service)',
             AGG.count(),
             AGG.filterCount('e.status_code >= 500'),
             AGG.filterCount('e.status_code BETWEEN 400 AND 499'),
-            AGG.filterCount('COALESCE(e.latency_ms, 0) >= 1000'),
+            AGG.filterCount('COALESCE(e.duration_ms, 0) >= 1000'),
             AGG.sum('e.response_size'),
-            AGG.sum('e.latency_ms'),
-            AGG.max('e.latency_ms'),
-            AGG.percentile('e.latency_ms', 0.5),
-            AGG.percentile('e.latency_ms', 0.75),
-            AGG.percentile('e.latency_ms', 0.9),
-            AGG.percentile('e.latency_ms', 0.95),
-            AGG.percentile('e.latency_ms', 0.99),
-            histogramSql('e.latency_ms'),
+            AGG.sum('e.duration_ms'),
+            AGG.max('e.duration_ms'),
+            AGG.percentile('e.duration_ms', 0.5),
+            AGG.percentile('e.duration_ms', 0.75),
+            AGG.percentile('e.duration_ms', 0.9),
+            AGG.percentile('e.duration_ms', 0.95),
+            AGG.percentile('e.duration_ms', 0.99),
+            histogramSql('e.duration_ms'),
             AGG.distinct('e.user_id'),
             AGG.count(),
         ],

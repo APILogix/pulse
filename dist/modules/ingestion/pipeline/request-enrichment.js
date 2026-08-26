@@ -37,6 +37,26 @@ const EMPTY = {
     deviceType: null,
     isBot: null,
 };
+const CACHE_MAX = 4096;
+function cacheGet(cache, key) {
+    const value = cache.get(key);
+    if (value === undefined)
+        return undefined;
+    cache.delete(key);
+    cache.set(key, value);
+    return value;
+}
+function cacheSet(cache, key, value) {
+    if (cache.size >= CACHE_MAX) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined)
+            cache.delete(oldest);
+    }
+    cache.set(key, value);
+}
+function cloneFields(fields) {
+    return { ...fields };
+}
 export class RequestEnricher {
     static shared = null;
     cityReader = null;
@@ -44,6 +64,8 @@ export class RequestEnricher {
     geoReady = false;
     initPromise = null;
     salt;
+    ipCache = new Map();
+    uaCache = new Map();
     constructor() {
         this.salt = process.env.PULSE_IP_HASH_SALT ?? 'pulse-dev-ip-salt';
     }
@@ -93,11 +115,41 @@ export class RequestEnricher {
         const ua = typeof userAgent === 'string' && userAgent.length > 0 ? userAgent : null;
         const out = { ...EMPTY };
         if (ip) {
-            out.clientIpHash = createHash('sha256').update(this.salt).update(ip).digest('hex');
-            this.resolveGeo(ip, out);
+            const ipFields = this.enrichIp(ip);
+            out.clientIpHash = ipFields.clientIpHash;
+            out.geoCountryCode = ipFields.geoCountryCode;
+            out.geoRegion = ipFields.geoRegion;
+            out.geoAsn = ipFields.geoAsn;
         }
-        if (ua)
-            this.parseUserAgent(ua, out);
+        if (ua) {
+            const uaFields = this.enrichUserAgent(ua);
+            out.browserFamily = uaFields.browserFamily;
+            out.browserVersionMajor = uaFields.browserVersionMajor;
+            out.osName = uaFields.osName;
+            out.osVersionMajor = uaFields.osVersionMajor;
+            out.deviceType = uaFields.deviceType;
+            out.isBot = uaFields.isBot;
+        }
+        return out;
+    }
+    enrichIp(ip) {
+        const cached = cacheGet(this.ipCache, ip);
+        if (cached)
+            return cloneFields(cached);
+        const out = { ...EMPTY };
+        out.clientIpHash = createHash('sha256').update(this.salt).update(ip).digest('hex');
+        this.resolveGeo(ip, out);
+        cacheSet(this.ipCache, ip, cloneFields(out));
+        return out;
+    }
+    enrichUserAgent(ua) {
+        const key = ua.slice(0, 1024);
+        const cached = cacheGet(this.uaCache, key);
+        if (cached)
+            return cloneFields(cached);
+        const out = { ...EMPTY };
+        this.parseUserAgent(key, out);
+        cacheSet(this.uaCache, key, cloneFields(out));
         return out;
     }
     // ── GeoIP ──────────────────────────────────────────────────────────────────

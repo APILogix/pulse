@@ -66,7 +66,7 @@ function deviceStatement(orgParams) {
     scoped AS (
       SELECT e.organization_id, e.project_id, e.environment,
              date_trunc('hour', e.occurred_at) AS bucket,
-             e.user_id, e.latency_ms, e.status_code,
+             e.user_id, e.duration_ms, e.status_code,
              e.browser_family, e.os_name, e.device_type
         FROM ${SOURCE} e
         JOIN touched t ON date_trunc('hour', e.occurred_at) = t.bucket
@@ -76,13 +76,13 @@ function deviceStatement(orgParams) {
          AND e.occurred_at <  (SELECT hi FROM bounds) + INTERVAL '1 hour'
     ),
     unfolded AS (
-      SELECT organization_id, project_id, environment, bucket, user_id, latency_ms, status_code,
+      SELECT organization_id, project_id, environment, bucket, user_id, duration_ms, status_code,
              'browser' AS dimension, COALESCE(browser_family, 'unknown') AS dimension_value FROM scoped
       UNION ALL
-      SELECT organization_id, project_id, environment, bucket, user_id, latency_ms, status_code,
+      SELECT organization_id, project_id, environment, bucket, user_id, duration_ms, status_code,
              'os', COALESCE(os_name, 'unknown') FROM scoped
       UNION ALL
-      SELECT organization_id, project_id, environment, bucket, user_id, latency_ms, status_code,
+      SELECT organization_id, project_id, environment, bucket, user_id, duration_ms, status_code,
              'device_type', COALESCE(device_type, 'unknown') FROM scoped
     )
     SELECT organization_id,
@@ -95,14 +95,14 @@ function deviceStatement(orgParams) {
            dimension_value,
            COUNT(*)::bigint,
            COUNT(*) FILTER (WHERE status_code >= 500)::bigint,
-           COALESCE(SUM(latency_ms), 0),
-           MAX(latency_ms),
-           PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY latency_ms),
-           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY latency_ms),
-           PERCENTILE_CONT(0.9)  WITHIN GROUP (ORDER BY latency_ms),
-           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms),
-           PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latency_ms),
-           ${histogramSql('latency_ms')},
+           COALESCE(SUM(duration_ms), 0),
+           MAX(duration_ms),
+           PERCENTILE_CONT(0.5)  WITHIN GROUP (ORDER BY duration_ms),
+           PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY duration_ms),
+           PERCENTILE_CONT(0.9)  WITHIN GROUP (ORDER BY duration_ms),
+           PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms),
+           PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms),
+           ${histogramSql('duration_ms')},
            COUNT(DISTINCT user_id)::bigint,
            COUNT(*)::bigint
       FROM unfolded
@@ -147,14 +147,14 @@ export function createGeoWorker(watermarks) {
             AGG.count(),
             AGG.filterCount('e.status_code >= 500'),
             'COUNT(DISTINCT e.geo_asn)::int',
-            AGG.sum('e.latency_ms'),
-            AGG.max('e.latency_ms'),
-            AGG.percentile('e.latency_ms', 0.5),
-            AGG.percentile('e.latency_ms', 0.75),
-            AGG.percentile('e.latency_ms', 0.9),
-            AGG.percentile('e.latency_ms', 0.95),
-            AGG.percentile('e.latency_ms', 0.99),
-            histogramSql('e.latency_ms'),
+            AGG.sum('e.duration_ms'),
+            AGG.max('e.duration_ms'),
+            AGG.percentile('e.duration_ms', 0.5),
+            AGG.percentile('e.duration_ms', 0.75),
+            AGG.percentile('e.duration_ms', 0.9),
+            AGG.percentile('e.duration_ms', 0.95),
+            AGG.percentile('e.duration_ms', 0.99),
+            histogramSql('e.duration_ms'),
             AGG.distinct('e.user_id'),
             AGG.count(),
         ],

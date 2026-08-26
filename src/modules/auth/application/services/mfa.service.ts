@@ -339,6 +339,7 @@ export async function verifyMFAChallenge(
   input: MFAVerifyInput,
   sessionId: string,
   ipAddress: string,
+  userId?: string,
 ): Promise<{ userId: string; deviceId: string }> {
   const challenge = stepUpChallengeCache.get(challengeId);
   if (!challenge) {
@@ -348,6 +349,21 @@ export async function verifyMFAChallenge(
       400,
     );
   }
+
+  // H4 FIX: Ensure the step-up challenge belongs to the requesting authenticated user
+  if (userId && challenge.userId !== userId) {
+    stepUpChallengeCache.delete(challengeId);
+    logger.warn(
+      { challengeId, challengeUserId: challenge.userId, requestUserId: userId, sessionId },
+      'Step-up challenge ownership mismatch; challenge invalidated',
+    );
+    throw new AuthError(
+      'Challenge expired or invalid',
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+      400,
+    );
+  }
+
   if (challenge.attempts >= 3) {
     stepUpChallengeCache.delete(challengeId);
     throw new AuthError(

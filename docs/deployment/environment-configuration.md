@@ -30,6 +30,10 @@ This document provides a comprehensive reference for all environment variables, 
 | `DB_POOL_MIN` | Minimum warm connections. | `0` (for serverless poolers) |
 | `DB_STATEMENT_TIMEOUT_MS` | Max SQL execution time before cancellation. | `15000` (15s) |
 | `INGESTION_DB_POOL_SIZE` | Dedicated connection pool for Ingestion Worker. | `20` |
+| `INGESTION_LOG_DB_LOCK_TIMEOUT_MS` | Transaction-local Log DB lock wait bound for ingestion writes; lock stalls fail fast and retry through pg-boss instead of hiding as long `insertMs`. | `2000` |
+| `INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS` | Optional transaction-local Log DB statement timeout for ingestion writes; `0` leaves statement execution unbounded for large benchmark batches. | `0` |
+| `INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS` | Transaction-local idle-in-transaction guard for ingestion writes. | `30000` |
+| `INGESTION_LOG_DB_SYNCHRONOUS_COMMIT` | Transaction-local commit durability mode for ingestion writes. Keep `on` unless durability trade-offs are explicitly accepted. | `on` |
 | `ANALYTICS_DB_POOL_MAX` | Dedicated connection pool for Analytics Worker. | `10` |
 
 ---
@@ -42,5 +46,6 @@ This document provides a comprehensive reference for all environment variables, 
 | `PRESSURE_MAX_HEAP_MB` | `450` | Maximum heap allocation threshold before shedding. |
 | `PRESSURE_MAX_RSS_MB` | `800` | Maximum RSS process memory threshold. |
 | `INGESTION_MAX_BATCH_SIZE` | `500` | Max events allowed in a single HTTP batch request. |
+| `INGESTION_JOB_MAX_BYTES` | `1048576` | Approximate serialized event bytes per pg-boss ingestion job. |
 | `INGESTION_DEFAULT_RATE_PER_SECOND` | `500` | Default project burst rate limit. |
 | `INGESTION_DEFAULT_RATE_PER_MINUTE` | `10000` | Default project minute rate limit. |

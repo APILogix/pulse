@@ -45,9 +45,6 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'analytics_error_groups') THEN
     DROP TRIGGER IF EXISTS trg_sync_error_groups_contract ON analytics_error_groups;
-    CREATE TRIGGER trg_sync_error_groups_contract
-      BEFORE INSERT OR UPDATE ON analytics_error_groups
-      FOR EACH ROW EXECUTE FUNCTION logdb_sync_error_groups_contract();
   END IF;
 END $$;
 

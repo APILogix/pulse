@@ -83,9 +83,9 @@ export declare const tintBorder: {
  */
 export declare const font: {
     /** Space Grotesk — display only: titles, big human-facing numbers. */
-    readonly display: "'Space Grotesk','Inter',-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+    readonly display: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace";
     /** Inter — all UI text, body copy, buttons, labels. */
-    readonly sans: "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+    readonly sans: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace";
     /** JetBrains Mono — IDs, metrics, timestamps, eyebrows, status badges. */
     readonly mono: "'JetBrains Mono','SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace";
 };

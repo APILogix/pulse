@@ -51,8 +51,12 @@ export function normalizeSdkEnvironment(value) {
 }
 // Bounded primitives reused across schemas.
 const boundedStr = (max = LIMITS.maxStringLen) => z.string().max(max);
-const epochMs = z.number().nonnegative();
 const idStr = z.string().max(64);
+const MAX_FUTURE_SKEW_MS = 60_000;
+const timestampMs = z.preprocess((value) => {
+    const ms = normalizeTimestampToEpochMs(value);
+    return ms ?? value;
+}, z.number().int().nonnegative());
 // A bounded JSON object: caps key count to prevent cardinality bombs.
 function boundedRecord(maxKeys) {
     return z.record(z.string().max(256), z.unknown()).refine((o) => Object.keys(o).length <= maxKeys, { message: `too many keys (max ${maxKeys})` });
@@ -63,7 +67,7 @@ function boundedRecord(maxKeys) {
 // storage; we do not echo them.
 const baseFields = {
     eventId: idStr.optional(),
-    timestamp: epochMs.optional(),
+    timestamp: timestampMs.optional(),
     requestId: idStr.optional(),
     traceId: idStr.optional(),
     spanId: idStr.optional(),
@@ -142,8 +146,8 @@ const spanSchema = z.object({
     parentSpanId: idStr.optional(),
     name: boundedStr(),
     kind: z.string().max(16).optional(),
-    startTime: epochMs,
-    endTime: epochMs.optional(),
+    startTime: timestampMs,
+    endTime: timestampMs.optional(),
     duration: z.number().min(0).optional(),
     exclusiveDuration: z.number().optional(),
     status: z.string().max(16).optional(),
@@ -203,8 +207,8 @@ const profileSchema = z.object({
     type: z.literal('profile'),
     ...baseFields,
     profileType: z.enum(['cpu', 'heap']),
-    startTime: epochMs.optional(),
-    endTime: epochMs.optional(),
+    startTime: timestampMs.optional(),
+    endTime: timestampMs.optional(),
     duration: z.number().min(0).optional(),
     profile: z.unknown(),
 }).passthrough();
@@ -219,8 +223,8 @@ const cronSchema = z.object({
     // Correlation / multi-tenancy
     tenantId: idStr.optional(),
     // Execution timeline
-    startedAt: epochMs.optional(),
-    finishedAt: epochMs.optional(),
+    startedAt: timestampMs.optional(),
+    finishedAt: timestampMs.optional(),
     // Classification (auto-derived if not supplied)
     checkinType: z.enum(['heartbeat', 'scheduled', 'manual', 'retry', 'unknown']).optional(),
     scheduleType: z.string().max(64).optional(),
@@ -268,7 +272,38 @@ export function normalizeEvent(raw) {
             detail: parsed.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
         };
     }
-    return { ok: true, event: parsed.data };
+    const event = parsed.data.type === 'trace'
+        ? { ...parsed.data, rootSpan: normalizeTraceSpanTimestamps(parsed.data.rootSpan) }
+        : parsed.data;
+    return { ok: true, event };
+}
+/** Normalize a supported SDK timestamp shape into canonical epoch milliseconds. */
+export function normalizeTimestampToEpochMs(raw) {
+    const ms = parseSafeEpochMs(raw);
+    if (ms === null)
+        return null;
+    const now = Date.now();
+    return Math.round(ms > now + MAX_FUTURE_SKEW_MS ? now : ms);
+}
+const TRACE_SPAN_TIMESTAMP_KEYS = new Set(['timestamp', 'startTime', 'start_time', 'endTime', 'end_time', 'time', 'start', 'end']);
+function normalizeTraceSpanTimestamps(span, remaining = LIMITS.maxTraceSpanCount) {
+    if (remaining <= 0 || span === null || typeof span !== 'object' || Array.isArray(span)) {
+        return span;
+    }
+    const source = span;
+    const normalized = { ...source };
+    for (const key of TRACE_SPAN_TIMESTAMP_KEYS) {
+        if (key in source) {
+            const ms = normalizeTimestampToEpochMs(source[key]);
+            if (ms !== null)
+                normalized[key] = ms;
+        }
+    }
+    const children = source.children;
+    if (Array.isArray(children)) {
+        normalized.children = children.map((child, index) => normalizeTraceSpanTimestamps(child, remaining - index - 1));
+    }
+    return normalized;
 }
 /** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
 export function parseSafeEpochMs(raw) {
@@ -335,11 +370,9 @@ export function resolveTimestamp(ev) {
         ?? root?.start_time
         ?? root?.timestamp;
     if (raw != null) {
-        const ms = parseSafeEpochMs(raw);
+        const ms = normalizeTimestampToEpochMs(raw);
         if (ms != null && ms > 0) {
-            // Clamp future timestamps to now + 1m (defends partition-key abuse).
-            const max = Date.now() + 60_000;
-            return Math.round(ms > max ? Date.now() : ms);
+            return ms;
         }
     }
     return Date.now();

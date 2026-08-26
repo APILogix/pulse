@@ -16,6 +16,7 @@ interface ServiceConfig {
     backpressure?: BackpressureConfig;
     replayMaxEvents?: number;
     jobChunkSize?: number;
+    jobMaxBytes?: number;
 }
 export declare class IngestionService {
     private readonly pool;
@@ -28,16 +29,20 @@ export declare class IngestionService {
     private readonly replayMaxEvents;
     private readonly maxBatchSize;
     private readonly jobChunkSize;
+    private readonly jobMaxBytes;
     private readonly defaultRatePerSecond;
     private readonly defaultRatePerMinute;
     private cachedDepth;
     private cachedDepthAt;
+    private depthRefreshPromise;
     private readonly quotaCache;
+    private readonly quotaRefreshes;
     private readonly quotaCacheTtlMs;
     constructor(pool: Pool, writer: PostgresWriter, config: ServiceConfig, sdkConfigService?: RemoteSdkConfigService | undefined);
     invalidateOrgQuotaCache(orgId: string): void;
     private resolveProject;
-    /** Cached queue-depth probe (refreshed at most every 1s). */
+    private refreshQueueDepth;
+    /** Cached queue-depth probe (background refreshed at most every 1s). */
     private queueDepth;
     /**
      * Plan-aware shedding. At high water we shed anything below the business
@@ -48,9 +53,11 @@ export declare class IngestionService {
     private shouldShed;
     /**
      * Cached quota pre-check against the canonical monthly_events entitlement.
-     * Fail-open by design: a missing row or a DB error allows the batch
-     * (authoritative enforcement happens worker-side / in billing rollups).
+     * Fail-open by design: a missing/stale row or a DB error allows the batch
+     * while a background refresh updates the cache. A cached hard-limit/throttle
+     * violation still blocks immediately.
      */
+    private refreshQuotaCache;
     private assertQuotaAvailable;
     initializeSdk(apiKey: string): Promise<DeliveryResult>;
     private syncInitLookupsBestEffort;
@@ -79,10 +86,13 @@ export declare class IngestionService {
      */
     private processIngest;
     /**
-     * Build one pg-boss job per (event type, chunk of <= jobChunkSize events).
-     * Events are carried RAW (un-normalized) — normalization is worker-side.
+     * Build one pg-boss job per event type, bounded by event count and
+     * approximate serialized event bytes. Events are carried RAW (un-normalized)
+     * — normalization is worker-side.
      */
     private buildJobs;
+    private buildJob;
+    private eventBytes;
     /** Best-effort stable id for a single event in a batch. */
     private extractEventId;
     private assertKeyCanUseEndpoint;

@@ -52,6 +52,28 @@ const EMPTY: EnrichedRequestFields = {
   isBot: null,
 };
 
+const CACHE_MAX = 4096;
+
+function cacheGet<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function cacheSet<K, V>(cache: Map<K, V>, key: K, value: V): void {
+  if (cache.size >= CACHE_MAX) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
+function cloneFields(fields: EnrichedRequestFields): EnrichedRequestFields {
+  return { ...fields };
+}
+
 /** Minimal structural type for a MaxMind reader (avoids a hard dependency). */
 interface MmdbReader {
   get(ip: string): unknown;
@@ -65,6 +87,8 @@ export class RequestEnricher {
   private geoReady = false;
   private initPromise: Promise<void> | null = null;
   private readonly salt: string;
+  private readonly ipCache = new Map<string, EnrichedRequestFields>();
+  private readonly uaCache = new Map<string, EnrichedRequestFields>();
 
   private constructor() {
     this.salt = process.env.PULSE_IP_HASH_SALT ?? 'pulse-dev-ip-salt';
@@ -113,10 +137,43 @@ export class RequestEnricher {
 
     const out: EnrichedRequestFields = { ...EMPTY };
     if (ip) {
-      out.clientIpHash = createHash('sha256').update(this.salt).update(ip).digest('hex');
-      this.resolveGeo(ip, out);
+      const ipFields = this.enrichIp(ip);
+      out.clientIpHash = ipFields.clientIpHash;
+      out.geoCountryCode = ipFields.geoCountryCode;
+      out.geoRegion = ipFields.geoRegion;
+      out.geoAsn = ipFields.geoAsn;
     }
-    if (ua) this.parseUserAgent(ua, out);
+    if (ua) {
+      const uaFields = this.enrichUserAgent(ua);
+      out.browserFamily = uaFields.browserFamily;
+      out.browserVersionMajor = uaFields.browserVersionMajor;
+      out.osName = uaFields.osName;
+      out.osVersionMajor = uaFields.osVersionMajor;
+      out.deviceType = uaFields.deviceType;
+      out.isBot = uaFields.isBot;
+    }
+    return out;
+  }
+
+  private enrichIp(ip: string): EnrichedRequestFields {
+    const cached = cacheGet(this.ipCache, ip);
+    if (cached) return cloneFields(cached);
+
+    const out: EnrichedRequestFields = { ...EMPTY };
+    out.clientIpHash = createHash('sha256').update(this.salt).update(ip).digest('hex');
+    this.resolveGeo(ip, out);
+    cacheSet(this.ipCache, ip, cloneFields(out));
+    return out;
+  }
+
+  private enrichUserAgent(ua: string): EnrichedRequestFields {
+    const key = ua.slice(0, 1024);
+    const cached = cacheGet(this.uaCache, key);
+    if (cached) return cloneFields(cached);
+
+    const out: EnrichedRequestFields = { ...EMPTY };
+    this.parseUserAgent(key, out);
+    cacheSet(this.uaCache, key, cloneFields(out));
     return out;
   }
 

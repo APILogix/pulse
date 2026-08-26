@@ -224,9 +224,15 @@ export async function createMFAChallenge(userId) {
  * caller's session in the LRU. Sensitive routes (`requireStepUp`) check that
  * stamp.
  */
-export async function verifyMFAChallenge(challengeId, input, sessionId, ipAddress) {
+export async function verifyMFAChallenge(challengeId, input, sessionId, ipAddress, userId) {
     const challenge = stepUpChallengeCache.get(challengeId);
     if (!challenge) {
+        throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
+    }
+    // H4 FIX: Ensure the step-up challenge belongs to the requesting authenticated user
+    if (userId && challenge.userId !== userId) {
+        stepUpChallengeCache.delete(challengeId);
+        logger.warn({ challengeId, challengeUserId: challenge.userId, requestUserId: userId, sessionId }, 'Step-up challenge ownership mismatch; challenge invalidated');
         throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
     }
     if (challenge.attempts >= 3) {

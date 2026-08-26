@@ -39,6 +39,7 @@ export declare function createEmailVerification(data: {
  */
 export declare function consumeEmailVerificationToken(tokenHash: string, purpose: EmailTokenPurpose, client?: PoolClient): Promise<EmailVerificationRecord | null>;
 export declare function findEmailVerificationByTokenHash(tokenHash: string, purpose: EmailTokenPurpose, client?: PoolClient): Promise<EmailVerificationRecord | null>;
+export declare function findRecentEmailVerification(userId: string, email: string, purpose: EmailTokenPurpose, client?: PoolClient): Promise<EmailVerificationRecord | null>;
 export declare function invalidateAllUserTokens(userId: string, client?: PoolClient): Promise<void>;
 export declare function markEmailAsVerified(userId: string, client?: PoolClient): Promise<void>;
 export declare function deleteExpiredEmailTokens(client?: PoolClient): Promise<number>;

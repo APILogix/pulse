@@ -39,20 +39,26 @@ export interface TypedWriteResult {
     /** Error events confirmed inserted — only set by the errors writer. */
     insertedErrors?: ScopedEvent[];
 }
+export interface PerTypeWriteStats {
+    received: number;
+    inserted: number;
+    /** Wall-clock time spent building and executing this typed table write. */
+    durationMs: number;
+}
 /** Per-batch write outcome with duplicate-aware counts. */
 export interface DetailedWriteResult {
     /** Input rows that had a resolvable organization_id. */
     totalReceived: number;
     /** Rows actually inserted across all events_* tables. */
     totalInserted: number;
-    perType: Record<string, {
-        received: number;
-        inserted: number;
-    }>;
+    perType: Record<string, PerTypeWriteStats>;
     /** Error events confirmed inserted (drives analytics_error_groups). */
     insertedErrors: ScopedEvent[];
+    /** Telemetry outbox rows inserted by writeBatchDetailedWithOutbox(). */
+    outboxInserted?: number;
 }
 type Queryable = Pool | PoolClient;
+export declare function applyIngestionTransactionSettings(client: PoolClient): Promise<void>;
 export declare class TelemetryWriter {
     private readonly pool;
     private readonly log?;
@@ -77,6 +83,7 @@ export declare class TelemetryWriter {
      */
     writeBatchDetailed(scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
     writeBatchDetailedWithOutbox(clientOrScoped: PoolClient | ScopedEvent[], scopedParam?: ScopedEvent[]): Promise<DetailedWriteResult>;
+    writeBatchDetailedInTransaction(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
     private writeBatchDetailedUsing;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;

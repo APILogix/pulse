@@ -3,6 +3,7 @@ import { SDK_EVENT_TYPES, type SdkEventType } from './pipeline/event-normalizer.
 
 /** Canonical SDK event types (10 signals). */
 export type EventType = SdkEventType;
+export type SDKTimestamp = number | string;
 
 /** SDK Request Event Payload */
 export interface SDKRequestEvent {
@@ -13,7 +14,7 @@ export interface SDKRequestEvent {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD';
   statusCode: number;
   latency: number;
-  timestamp: number;
+  timestamp: SDKTimestamp;
   headers: Record<string, string>;
   query: Record<string, any>;
   bodySize: number;
@@ -43,7 +44,7 @@ export interface SDKErrorEvent {
   method?: string;
   route?: string;
   url?: string;
-  timestamp: number;
+  timestamp: SDKTimestamp;
   context?: Record<string, any>;
   metadata?: Record<string, any>;
 }
@@ -53,7 +54,7 @@ export interface SDKLogEvent {
   type: 'log';
   level: 'debug' | 'info' | 'warn' | 'error';
   message: string;
-  timestamp: number;
+  timestamp: SDKTimestamp;
   requestId?: string;
   metadata?: Record<string, any>;
 }
@@ -91,7 +92,7 @@ export interface SDKMetricEvent {
   tenantId?: string;
   traceId?: string;
   spanId?: string;
-  timestamp: number;
+  timestamp: SDKTimestamp;
 }
 
 export type SDKEvent = SDKRequestEvent | SDKErrorEvent | SDKLogEvent | SDKMetricEvent;
@@ -228,7 +229,12 @@ export const IngestSchema: FastifySchema = {
               type: 'string',
               enum: sdkTypeEnum,
             },
-            timestamp: { type: 'number' },
+            timestamp: {
+              anyOf: [
+                { type: 'number' },
+                { type: 'string', minLength: 1, maxLength: 64 },
+              ],
+            },
             eventId: { type: 'string', maxLength: 128 },
             requestId: { type: 'string', maxLength: 128 },
             metricName: { type: 'string' },

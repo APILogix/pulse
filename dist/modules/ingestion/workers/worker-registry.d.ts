@@ -9,6 +9,7 @@ export declare class WorkerRegistry {
     private readonly metricsServer;
     /** Tenant fairness: per-org in-flight job count for THIS process. */
     private readonly inFlight;
+    private readonly workerInFlight;
     private readonly registeredQueues;
     private started;
     constructor(pool: Pool, log: Logger, telemetryPool?: Pool);

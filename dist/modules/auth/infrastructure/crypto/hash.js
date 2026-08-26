@@ -25,4 +25,40 @@ export async function timingSafeFakePasswordCompare(candidate) {
 export function buildDeviceFingerprint(ip, userAgent) {
     return createHash('sha256').update(`${ip}:${userAgent}`).digest('hex').substring(0, 32);
 }
+export function getIpSubnet(ip) {
+    if (!ip || ip === 'unknown')
+        return 'unknown';
+    if (ip.includes('.')) {
+        // IPv4: match /24 prefix (first 3 octets)
+        const parts = ip.split('.');
+        if (parts.length === 4) {
+            return `${parts[0]}.${parts[1]}.${parts[2]}`;
+        }
+    }
+    else if (ip.includes(':')) {
+        // IPv6: match /48 prefix (first 3 segments)
+        const parts = ip.split(':');
+        if (parts.length >= 3) {
+            return `${parts[0]}:${parts[1]}:${parts[2]}`;
+        }
+    }
+    return ip;
+}
+export function validateSessionDevice(sessionFingerprint, sessionUa, sessionIp, currentIp, currentUa) {
+    if (!sessionFingerprint)
+        return true;
+    const currentFingerprint = buildDeviceFingerprint(currentIp, currentUa);
+    if (sessionFingerprint === currentFingerprint)
+        return true;
+    // Mobile / CGNAT IP churn resilience:
+    // If User-Agent is identical and the IP is in the same /24 or /48 subnet (or matching user agent),
+    // allow legitimate network transitions without triggering false-positive session revocations.
+    if (sessionUa && sessionUa === currentUa) {
+        if (!sessionIp || sessionIp === currentIp)
+            return true;
+        if (getIpSubnet(sessionIp) === getIpSubnet(currentIp))
+            return true;
+    }
+    return false;
+}
 //# sourceMappingURL=hash.js.map

@@ -60,6 +60,11 @@ CREATE INDEX IF NOT EXISTS idx_org_subscriptions_org
 ON organization_subscriptions(organization_id, created_at DESC)
 WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_org_subscriptions_live_latest
+ON organization_subscriptions(organization_id, created_at DESC)
+WHERE status IN ('trialing','active','past_due')
+AND deleted_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_org_subscriptions_plan
 ON organization_subscriptions(plan_id)
 WHERE deleted_at IS NULL;

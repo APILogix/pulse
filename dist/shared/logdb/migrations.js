@@ -53,6 +53,18 @@ function hasExplicitTransaction(sql) {
     const normalized = sql.trim().toUpperCase();
     return normalized.startsWith('BEGIN;') && normalized.includes('COMMIT;');
 }
+function hasNoTransactionDirective(sql) {
+    return /^--\s*codex-logdb-migration:\s*no-transaction\b/im.test(sql);
+}
+async function executeNoTransactionMigration(client, sql) {
+    const statements = sql
+        .split(';')
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+    for (const statement of statements) {
+        await client.query(`${statement};`);
+    }
+}
 async function applyOneMigration(client, migration, dryRun) {
     if (await hasMigrationBeenApplied(client, migration.filename)) {
         return { applied: false, durationMs: 0 };
@@ -69,6 +81,9 @@ async function applyOneMigration(client, migration, dryRun) {
     const explicitTx = hasExplicitTransaction(sql);
     if (explicitTx) {
         await client.query(sql);
+    }
+    else if (hasNoTransactionDirective(sql)) {
+        await executeNoTransactionMigration(client, sql);
     }
     else {
         await client.query('BEGIN');

@@ -102,18 +102,18 @@ function comparisonStatement(orgId: string): RollupStatement {
            baseline_release,
            request_count,
            COALESCE(baseline_request_count, 0),
-           ROUND(error_count * 100.0 / NULLIF(request_count, 0), 4)                     AS error_rate_pct,
-           ROUND(baseline_error_count * 100.0 / NULLIF(baseline_request_count, 0), 4)   AS baseline_error_rate_pct,
+           ROUND((error_count * 100.0 / NULLIF(request_count, 0))::numeric, 4)                     AS error_rate_pct,
+           ROUND((baseline_error_count * 100.0 / NULLIF(baseline_request_count, 0))::numeric, 4)   AS baseline_error_rate_pct,
            ROUND(
-             (error_count * 100.0 / NULLIF(request_count, 0))
-             - (baseline_error_count * 100.0 / NULLIF(baseline_request_count, 0)), 4
+             ((error_count * 100.0 / NULLIF(request_count, 0))
+             - (baseline_error_count * 100.0 / NULLIF(baseline_request_count, 0)))::numeric, 4
            )                                                                            AS error_rate_delta_pct,
            latency_p95_ms,
            baseline_latency_p95_ms,
-           ROUND(COALESCE(latency_p95_ms, 0) - COALESCE(baseline_latency_p95_ms, 0), 3) AS p95_delta_ms,
+           ROUND((COALESCE(latency_p95_ms, 0) - COALESCE(baseline_latency_p95_ms, 0))::numeric, 3) AS p95_delta_ms,
            ROUND(
-             (request_count - COALESCE(baseline_request_count, 0)) * 100.0
-             / NULLIF(baseline_request_count, 0), 4
+             ((request_count - COALESCE(baseline_request_count, 0)) * 100.0
+             / NULLIF(baseline_request_count, 0))::numeric, 4
            )                                                                            AS throughput_delta_pct,
            0                                                                            AS new_error_groups,
            CASE
@@ -172,14 +172,14 @@ export function createReleasesWorker(
         `MIN(${ENTITY})`,
         AGG.count(),
         AGG.filterCount('e.status_code >= 500'),
-        AGG.sum('e.latency_ms'),
-        AGG.max('e.latency_ms'),
-        AGG.percentile('e.latency_ms', 0.5),
-        AGG.percentile('e.latency_ms', 0.75),
-        AGG.percentile('e.latency_ms', 0.9),
-        AGG.percentile('e.latency_ms', 0.95),
-        AGG.percentile('e.latency_ms', 0.99),
-        histogramSql('e.latency_ms'),
+        AGG.sum('e.duration_ms'),
+        AGG.max('e.duration_ms'),
+        AGG.percentile('e.duration_ms', 0.5),
+        AGG.percentile('e.duration_ms', 0.75),
+        AGG.percentile('e.duration_ms', 0.9),
+        AGG.percentile('e.duration_ms', 0.95),
+        AGG.percentile('e.duration_ms', 0.99),
+        histogramSql('e.duration_ms'),
         AGG.distinct('e.user_id'),
         AGG.count(),
       ],

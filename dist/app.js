@@ -33,23 +33,56 @@ import { registerObservabilityModule } from './modules/observability/observabili
 import { registerErrorsModule } from './modules/errors/errors.module.js';
 import { errorHandler } from './shared/middleware/error-handler.js';
 const appLogger = logger.child({ component: 'app' });
-function buildCorsOrigin() {
-    const allowed = env.ALLOWED_ORIGINS
-        ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean)
-        : [];
-    if (env.FRONTEND_URL)
-        allowed.push(env.FRONTEND_URL.replace(/\/+$/, ''));
-    if (env.APP_URL)
-        allowed.push(env.APP_URL.replace(/\/+$/, ''));
-    if (env.NODE_ENV !== 'production') {
+export function parseTrustProxy(val) {
+    if (val === 'true')
         return true;
+    if (val === 'false')
+        return false;
+    const list = val.split(',').map((s) => s.trim()).filter(Boolean);
+    return list.length > 0 ? list : true;
+}
+export function buildCorsOrigin(additionalAllowed) {
+    const allowed = new Set();
+    if (env.ALLOWED_ORIGINS) {
+        for (const o of env.ALLOWED_ORIGINS.split(',')) {
+            const trimmed = o.trim().replace(/\/+$/, '');
+            if (trimmed)
+                allowed.add(trimmed);
+        }
     }
-    return allowed.length > 0 ? allowed : false;
+    if (additionalAllowed) {
+        for (const o of additionalAllowed) {
+            const trimmed = o.trim().replace(/\/+$/, '');
+            if (trimmed)
+                allowed.add(trimmed);
+        }
+    }
+    if (env.FRONTEND_URL)
+        allowed.add(env.FRONTEND_URL.replace(/\/+$/, ''));
+    if (env.APP_URL)
+        allowed.add(env.APP_URL.replace(/\/+$/, ''));
+    return (origin, cb) => {
+        // H5 FIX: Allow requests with no Origin (curl, server-to-server, mobile native)
+        if (!origin) {
+            return cb(null, true);
+        }
+        const cleanOrigin = origin.replace(/\/+$/, '');
+        if (allowed.has(cleanOrigin)) {
+            return cb(null, true);
+        }
+        // In non-production, allow localhost and 127.0.0.1 on any port without reflecting arbitrary origins
+        if (env.NODE_ENV !== 'production') {
+            if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(cleanOrigin)) {
+                return cb(null, true);
+            }
+        }
+        return cb(null, false);
+    };
 }
 export async function buildApp() {
     const app = Fastify({
         loggerInstance: logger,
-        trustProxy: true,
+        trustProxy: parseTrustProxy(env.TRUST_PROXY),
         genReqId: (req) => req.headers['x-request-id']?.toString() || randomUUID(),
         connectionTimeout: 30000,
         keepAliveTimeout: 65000,

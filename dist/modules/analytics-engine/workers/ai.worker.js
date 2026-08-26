@@ -78,7 +78,7 @@ export function createAiWorker(watermarks) {
                             AGG.sum('e.prompt_tokens'),
                             AGG.sum('e.completion_tokens'),
                             '0::numeric(20,6)',
-                            'COALESCE(ROUND(SUM(COALESCE(e.cost_usd, 0)) * 1000000), 0)::bigint',
+                            'COALESCE(ROUND((SUM(COALESCE(e.cost_usd, 0)) * 1000000)::numeric), 0)::bigint',
                             '0::numeric(20,3)',
                             'NULL::numeric(14,3)',
                             'NULL::numeric(14,3)',

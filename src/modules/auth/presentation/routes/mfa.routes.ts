@@ -64,6 +64,9 @@ import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
 import {
+  mfaEmailResendRateLimit,
+} from '../middleware/rate-limits.js';
+import {
   getRefreshCookieNames,
   getRefreshCookieOptions,
   getRefreshCookieValue,
@@ -88,7 +91,6 @@ function clearRefreshCookies(reply: FastifyReply): void {
   }
 }
 
-
 // ============================================================================
 // ERROR HANDLER
 // ============================================================================
@@ -108,13 +110,22 @@ export function handleAuthError(
     });
   }
 
-  const err = error as { name?: string; issues?: unknown };
+  const err = error as { name?: string; issues?: Array<{ path?: Array<string | number>; message?: string }> };
   if (err?.name === 'ZodError') {
+    const fields: Record<string, string> = {};
+    if (Array.isArray(err.issues)) {
+      for (const issue of err.issues) {
+        const path = issue.path ? issue.path.join('.') : 'root';
+        if (!fields[path]) {
+          fields[path] = issue.message || 'Invalid value';
+        }
+      }
+    }
     return reply.status(400).send({
       error: {
         code: AuthErrorCodes.VALIDATION_ERROR,
         message: 'Invalid request payload',
-        details: { issues: err.issues },
+        details: { fields },
       },
     });
   }
@@ -128,6 +139,11 @@ export function handleAuthError(
   });
 }
 
+function preventSensitiveResponseCaching(reply: FastifyReply): void {
+  reply.header('Cache-Control', 'no-store, max-age=0');
+  reply.header('Pragma', 'no-cache');
+}
+
 async function sendAuthSession(
   reply: FastifyReply,
   payload: {
@@ -139,6 +155,9 @@ async function sendAuthSession(
     user_id?: string;
   },
 ): Promise<FastifyReply> {
+  // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+  preventSensitiveResponseCaching(reply);
+
   const maxAgeSeconds = Math.max(
     0,
     Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000),
@@ -182,10 +201,7 @@ async function sendAuthSession(
   });
 }
 
-function preventSensitiveResponseCaching(reply: FastifyReply): void {
-  reply.header('Cache-Control', 'no-store, max-age=0');
-  reply.header('Pragma', 'no-cache');
-}
+
 
 
 // ============================================================================
@@ -287,6 +303,7 @@ export async function mfaRoutes(fastify: FastifyInstance) {
           body,
           r.user.sessionId,
           ip,
+          r.user.id,
         );
         return reply.send({
           data: { user_id: result.userId, mfa_verified: true },
@@ -301,7 +318,7 @@ export async function mfaRoutes(fastify: FastifyInstance) {
   // Authenticated users only. Generates a fresh OTP and emails it.
   fastify.post(
     '/mfa/email/resend',
-    { preHandler: [authenticate] },
+    { preHandler: [authenticate, mfaEmailResendRateLimit] },
     async (request, reply) => {
       try {
         const r = request as RequestWithUser;

@@ -9,6 +9,7 @@ import * as authRepo from '../../infrastructure/repositories/index.js';
 import accountAdministrationRoutes from './account-administration.routes.js';
 import samlIdentityRoutes from './saml-identity.routes.js';
 import provisioningRoutes from './provisioning.routes.js';
+import { mfaEmailResendRateLimit, } from '../middleware/rate-limits.js';
 import { getRefreshCookieNames, getRefreshCookieOptions, getRefreshCookieValue, REFRESH_COOKIE_NAME, } from '../cookies.js';
 function clearRefreshCookies(reply) {
     const options = getRefreshCookieOptions();
@@ -31,11 +32,20 @@ export function handleAuthError(error, reply, request) {
     }
     const err = error;
     if (err?.name === 'ZodError') {
+        const fields = {};
+        if (Array.isArray(err.issues)) {
+            for (const issue of err.issues) {
+                const path = issue.path ? issue.path.join('.') : 'root';
+                if (!fields[path]) {
+                    fields[path] = issue.message || 'Invalid value';
+                }
+            }
+        }
         return reply.status(400).send({
             error: {
                 code: AuthErrorCodes.VALIDATION_ERROR,
                 message: 'Invalid request payload',
-                details: { issues: err.issues },
+                details: { fields },
             },
         });
     }
@@ -47,7 +57,13 @@ export function handleAuthError(error, reply, request) {
         },
     });
 }
+function preventSensitiveResponseCaching(reply) {
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+}
 async function sendAuthSession(reply, payload) {
+    // H6 FIX: Ensure sensitive token-bearing responses are never cached by intermediaries or browsers
+    preventSensitiveResponseCaching(reply);
     const maxAgeSeconds = Math.max(0, Math.ceil((payload.expires_at.getTime() - Date.now()) / 1000));
     reply.setCookie(REFRESH_COOKIE_NAME, payload.refresh_token, getRefreshCookieOptions(maxAgeSeconds));
     if (payload.user_id) {
@@ -79,10 +95,6 @@ async function sendAuthSession(reply, payload) {
             user_id: payload.user_id,
         },
     });
-}
-function preventSensitiveResponseCaching(reply) {
-    reply.header('Cache-Control', 'no-store, max-age=0');
-    reply.header('Pragma', 'no-cache');
 }
 // ============================================================================
 // MFA ROUTES
@@ -158,7 +170,7 @@ export async function mfaRoutes(fastify) {
             const r = request;
             const body = MFAVerifySchema.parse(r.body);
             const { ip } = getClientInfo(r);
-            const result = await service.verifyMFAChallenge(body.challenge_id, body, r.user.sessionId, ip);
+            const result = await service.verifyMFAChallenge(body.challenge_id, body, r.user.sessionId, ip, r.user.id);
             return reply.send({
                 data: { user_id: result.userId, mfa_verified: true },
             });
@@ -169,7 +181,7 @@ export async function mfaRoutes(fastify) {
     });
     // POST /auth/mfa/email/resend — resend email OTP for setup or step-up.
     // Authenticated users only. Generates a fresh OTP and emails it.
-    fastify.post('/mfa/email/resend', { preHandler: [authenticate] }, async (request, reply) => {
+    fastify.post('/mfa/email/resend', { preHandler: [authenticate, mfaEmailResendRateLimit] }, async (request, reply) => {
         try {
             const r = request;
             const body = EmailMfaResendSchema.parse(r.body);

@@ -50,7 +50,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     context: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     breadcrumbs: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -69,7 +69,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     context: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     breadcrumbs: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -104,7 +104,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     rootSpanStatus: z.ZodOptional<z.ZodString>;
     isPartial: z.ZodOptional<z.ZodBoolean>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
     sessionId: z.ZodOptional<z.ZodString>;
@@ -115,8 +115,8 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     parentSpanId: z.ZodOptional<z.ZodString>;
     name: z.ZodString;
     kind: z.ZodOptional<z.ZodString>;
-    startTime: z.ZodNumber;
-    endTime: z.ZodOptional<z.ZodNumber>;
+    startTime: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>;
+    endTime: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     duration: z.ZodOptional<z.ZodNumber>;
     exclusiveDuration: z.ZodOptional<z.ZodNumber>;
     status: z.ZodOptional<z.ZodString>;
@@ -125,7 +125,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     events: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     links: z.ZodOptional<z.ZodArray<z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     sessionId: z.ZodOptional<z.ZodString>;
     type: z.ZodLiteral<"span">;
@@ -136,7 +136,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     totalDuration: z.ZodOptional<z.ZodNumber>;
     isPartial: z.ZodOptional<z.ZodBoolean>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
     sessionId: z.ZodOptional<z.ZodString>;
@@ -158,7 +158,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     buckets: z.ZodOptional<z.ZodUnknown>;
     tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -208,7 +208,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     attributes: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -219,12 +219,12 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         cpu: "cpu";
         heap: "heap";
     }>;
-    startTime: z.ZodOptional<z.ZodNumber>;
-    endTime: z.ZodOptional<z.ZodNumber>;
+    startTime: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
+    endTime: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     duration: z.ZodOptional<z.ZodNumber>;
     profile: z.ZodUnknown;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -244,8 +244,8 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     duration: z.ZodOptional<z.ZodNumber>;
     environment: z.ZodOptional<z.ZodString>;
     tenantId: z.ZodOptional<z.ZodString>;
-    startedAt: z.ZodOptional<z.ZodNumber>;
-    finishedAt: z.ZodOptional<z.ZodNumber>;
+    startedAt: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
+    finishedAt: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     checkinType: z.ZodOptional<z.ZodEnum<{
         unknown: "unknown";
         scheduled: "scheduled";
@@ -257,7 +257,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     tags: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
     attributes: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -268,7 +268,7 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     segmentId: z.ZodNumber;
     events: z.ZodArray<z.ZodUnknown>;
     eventId: z.ZodOptional<z.ZodString>;
-    timestamp: z.ZodOptional<z.ZodNumber>;
+    timestamp: z.ZodOptional<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodNumber>>;
     requestId: z.ZodOptional<z.ZodString>;
     traceId: z.ZodOptional<z.ZodString>;
     spanId: z.ZodOptional<z.ZodString>;
@@ -291,6 +291,8 @@ export type NormalizeResult = NormalizeOk | NormalizeErr;
  * whole batch (partial-success ingestion).
  */
 export declare function normalizeEvent(raw: unknown): NormalizeResult;
+/** Normalize a supported SDK timestamp shape into canonical epoch milliseconds. */
+export declare function normalizeTimestampToEpochMs(raw: unknown): number | null;
 /** Parse raw timestamp input (number, string, Date) to safe epoch milliseconds. */
 export declare function parseSafeEpochMs(raw: unknown): number | null;
 /** Resolve the storage timestamp (ms epoch) for an event, defaulting to now. */

@@ -1,4 +1,7 @@
 import { domainEventBus } from '../../../shared/events/domain-event-bus.js';
+function errorRecordKey(record) {
+    return `${record.organization_id}\u0000${record.event_id}\u0000${record.occurred_at.getTime()}`;
+}
 export class ErrorIngestionService {
     pool;
     errorGroupingService;
@@ -29,20 +32,29 @@ export class ErrorIngestionService {
     }
     async ingestErrorWithClient(client, groupParams, eventRecord) {
         const startTime = Date.now();
+        const insertStart = Date.now();
         const inserted = await this.errorRepository.insertIfNew(client, {
             ...eventRecord,
             error_group_id: null,
         });
+        this.metrics?.recordStage('error_insert_row', 'error', Date.now() - insertStart);
         if (!inserted.inserted) {
             this.metrics?.recordErrorDuplicate();
+            this.metrics?.recordStage('error_event_total', 'error', Date.now() - startTime);
             return { inserted: false, groupResult: null };
         }
         const groupStart = Date.now();
         const groupResult = await this.errorGroupingService.handleGroup(client, groupParams);
-        this.metrics?.recordErrorLatencies(null, Date.now() - groupStart, null, null);
+        const groupingMs = Date.now() - groupStart;
+        this.metrics?.recordErrorLatencies(null, groupingMs, null, null);
+        this.metrics?.recordStage('error_group_upsert', 'error', groupingMs);
+        const attachStart = Date.now();
         await this.errorRepository.attachGroup(client, eventRecord.organization_id, eventRecord.event_id, eventRecord.occurred_at, groupResult.id);
+        this.metrics?.recordStage('error_group_attach', 'error', Date.now() - attachStart);
         this.metrics?.recordErrorGroup(groupResult.isNew, groupResult.isRegression);
-        this.metrics?.recordErrorLatencies(null, null, Date.now() - startTime, null);
+        const totalMs = Date.now() - startTime;
+        this.metrics?.recordErrorLatencies(null, null, totalMs, null);
+        this.metrics?.recordStage('error_event_total', 'error', totalMs);
         return { inserted: true, groupResult };
     }
     publishDomainEvents(groupResult, eventRecord) {
@@ -75,16 +87,58 @@ export class ErrorIngestionService {
         this.metrics?.recordErrorLatencies(null, null, null, Date.now() - eventStart);
     }
     async ingestBatch(client, errors) {
-        let inserted = 0;
+        const batchStart = Date.now();
         const domainEvents = [];
-        for (const error of errors) {
-            const result = await this.ingestErrorWithClient(client, error.groupParams, error.eventRecord);
-            if (!result.inserted || !result.groupResult)
-                continue;
-            inserted += 1;
-            domainEvents.push({ groupResult: result.groupResult, eventRecord: error.eventRecord });
+        if (errors.length === 0) {
+            this.metrics?.recordStage('error_batch_loop', 'error', Date.now() - batchStart);
+            return { inserted: 0, domainEvents };
         }
-        return { inserted, domainEvents };
+        const insertStart = Date.now();
+        const insertedRows = await this.errorRepository.insertManyIfNew(client, errors.map(({ eventRecord }) => ({ ...eventRecord, error_group_id: null })));
+        this.metrics?.recordStage('error_bulk_insert', 'error', Date.now() - insertStart);
+        const insertedByKey = new Map();
+        for (const row of insertedRows) {
+            const key = `${row.organizationId}\u0000${row.eventId}\u0000${row.occurredAt.getTime()}`;
+            insertedByKey.set(key, (insertedByKey.get(key) ?? 0) + 1);
+        }
+        const attachments = [];
+        for (const error of errors) {
+            const eventStart = Date.now();
+            const key = errorRecordKey(error.eventRecord);
+            const remaining = insertedByKey.get(key) ?? 0;
+            if (remaining <= 0) {
+                this.metrics?.recordErrorDuplicate();
+                this.metrics?.recordStage('error_event_total', 'error', Date.now() - eventStart);
+                continue;
+            }
+            if (remaining === 1)
+                insertedByKey.delete(key);
+            else
+                insertedByKey.set(key, remaining - 1);
+            const groupStart = Date.now();
+            const groupResult = await this.errorGroupingService.handleGroup(client, error.groupParams);
+            const groupingMs = Date.now() - groupStart;
+            this.metrics?.recordErrorLatencies(null, groupingMs, null, null);
+            this.metrics?.recordStage('error_group_upsert', 'error', groupingMs);
+            attachments.push({
+                organizationId: error.eventRecord.organization_id,
+                eventId: error.eventRecord.event_id,
+                occurredAt: error.eventRecord.occurred_at,
+                groupId: groupResult.id,
+            });
+            this.metrics?.recordErrorGroup(groupResult.isNew, groupResult.isRegression);
+            const totalMs = Date.now() - eventStart;
+            this.metrics?.recordErrorLatencies(null, null, totalMs, null);
+            this.metrics?.recordStage('error_event_total', 'error', totalMs);
+            domainEvents.push({ groupResult, eventRecord: error.eventRecord });
+        }
+        if (attachments.length > 0) {
+            const attachStart = Date.now();
+            await this.errorRepository.attachGroups(client, attachments);
+            this.metrics?.recordStage('error_group_attach', 'error', Date.now() - attachStart);
+        }
+        this.metrics?.recordStage('error_batch_loop', 'error', Date.now() - batchStart);
+        return { inserted: insertedRows.length, domainEvents };
     }
     publishBatchDomainEvents(events) {
         for (const event of events)

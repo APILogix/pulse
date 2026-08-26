@@ -101,14 +101,11 @@ import {
   type VerifyEmailInput,
 } from '../../domain/types.js';
 import { ABSOLUTE_SESSION_TTL_SECONDS, ACCESS_TOKEN_TTL_SECONDS, buildPasswordHistory, EMAIL_VERIFICATION_TTL_SECONDS, MFA_DISABLE_TOKEN_TTL_SECONDS, MFA_LOGIN_CHALLENGE_TTL_SECONDS, normalizeEmail, PASSWORD_RESET_TTL_SECONDS, REFRESH_GRACE_WINDOW_MS, REFRESH_TOKEN_TTL_SECONDS, REMEMBER_ME_REFRESH_TTL_SECONDS, STEP_UP_CHALLENGE_TTL_SECONDS } from '../../domain/constants.js';
-import { buildDeviceFingerprint, generateEmailFlowToken, hashEmailFlowToken, hashToken as hashAuthToken, timingSafeFakePasswordCompare } from '../../infrastructure/crypto/hash.js';
+import { buildDeviceFingerprint, generateEmailFlowToken, hashEmailFlowToken, hashToken as hashAuthToken, timingSafeFakePasswordCompare, validateSessionDevice } from '../../infrastructure/crypto/hash.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../infrastructure/crypto/jwt.js';
 import { issueSessionForUser, logout } from './session.service.js';
 import { sendVerificationEmail, generateEmailMfaOtp, hashEmailMfaOtp, createEmailMfaOtp, consumeEmailMfaOtp, sendEmailMfaOtpEmail } from './email.service.js';
 import { emailToHash, buildMfaDisplayHint, verifyTotpDeviceCode, consumeBackupCode } from './shared-helpers.js';
-
-
-
 
 // ============================================================================
 // LOGIN
@@ -163,6 +160,8 @@ export async function loginWithEmailPassword(
   }
 
   if (user.status === 'suspended') {
+    // M3 FIX: Equalize timing so attackers cannot enumerate suspended accounts.
+    await timingSafeFakePasswordCompare(input.password);
     throw new AuthError(
       'Account suspended. Contact support.',
       AuthErrorCodes.USER_SUSPENDED,
@@ -241,27 +240,38 @@ export async function loginWithEmailPassword(
   }
 
   // Password is correct. To avoid post-password enumeration of verification
-  // state, we do NOT distinguish unverified accounts here. Instead we
-  // silently re-issue a verification email and respond with the same
-  // INVALID_CREDENTIALS code as a wrong password. The frontend can guide
-  // the user via /auth/resend-verification (which is also enumeration-safe).
+  // state, we do NOT distinguish unverified accounts here.
+  // M1 FIX: Throttle auto-resend of verification emails to prevent email bombing
+  // and database row exhaustion on repeated login attempts.
   if (!user.email_is_verified) {
-    const verificationToken = generateEmailFlowToken();
-    await repository.createEmailVerification({
-      user_id: user.id,
-      email: normalizedEmail,
-      token_hash: hashEmailFlowToken('email_verification', verificationToken),
-      purpose: 'email_verification',
-      expires_at: new Date(Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000),
-    });
-    
-    // Fire-and-forget to equalize timing with wrong-password path.
-    sendVerificationEmail(user, verificationToken).catch((err: any) => {
-      logger.warn(
-        { err, userId: user.id },
-        'Auto-resend verification email failed during login',
-      );
-    });
+    const recent = await repository.findRecentEmailVerification(
+      user.id,
+      normalizedEmail,
+      'email_verification',
+    );
+    const RESEND_COOLDOWN_MS = 60_000;
+    const isRecent =
+      recent?.created_at &&
+      Date.now() - new Date(recent.created_at).getTime() < RESEND_COOLDOWN_MS;
+
+    if (!isRecent) {
+      const verificationToken = generateEmailFlowToken();
+      await repository.createEmailVerification({
+        user_id: user.id,
+        email: normalizedEmail,
+        token_hash: hashEmailFlowToken('email_verification', verificationToken),
+        purpose: 'email_verification',
+        expires_at: new Date(Date.now() + EMAIL_VERIFICATION_TTL_SECONDS * 1000),
+      });
+
+      // Fire-and-forget to equalize timing with wrong-password path.
+      sendVerificationEmail(user, verificationToken).catch((err: any) => {
+        logger.warn(
+          { err, userId: user.id },
+          'Auto-resend verification email failed during login',
+        );
+      });
+    }
 
     logAudit({
       user_id: user.id,
@@ -295,16 +305,9 @@ export async function loginWithEmailPassword(
         mfaVerified: true,
         rememberMe: input.remember_me === true,
       });
+
       await repository.recordLogin(user.id, ipAddress, userAgent);
-      if (input.trust_device) {
-        await trustCurrentDevice(
-          user.id,
-          ipAddress,
-          userAgent,
-          input.device_name,
-          requestId,
-        ).catch(() => undefined);
-      }
+
       logAudit({
         user_id: user.id,
         org_id: null,
@@ -316,8 +319,7 @@ export async function loginWithEmailPassword(
         request_id: requestId,
         metadata: {
           session_id: session.sessionId,
-          mfa_required: false,
-          trusted_device: true,
+          mfa_skipped_trusted_device: true,
         },
       });
       return {
@@ -442,13 +444,43 @@ export async function loginWithEmailPassword(
   };
 }
 
+function isChallengeRequesterValid(
+  challenge: LoginMFAChallenge,
+  ipAddress: string,
+  userAgent: string,
+): boolean {
+  // H3 & M4 FIX: Challenge must come from the same requester device/IP as the initial login attempt
+  return validateSessionDevice(
+    buildDeviceFingerprint(challenge.ipAddress, challenge.userAgent),
+    challenge.userAgent,
+    challenge.ipAddress,
+    ipAddress,
+    userAgent,
+  );
+}
+
 export async function switchLoginMfaMethod(
   challengeId: string,
   deviceId: string,
+  ipAddress?: string,
+  userAgent?: string,
 ): Promise<{ message: string }> {
   const challenge = loginMfaChallengeCache.get(challengeId);
   if (!challenge) {
     throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
+  }
+
+  // H3 FIX: Validate requester IP/UA
+  if (ipAddress && userAgent && !isChallengeRequesterValid(challenge, ipAddress, userAgent)) {
+    loginMfaChallengeCache.delete(challengeId);
+    throw new AuthError('Challenge expired or invalid', AuthErrorCodes.MFA_CHALLENGE_EXPIRED, 400);
+  }
+
+  // M2 FIX: Account for switch attempts and cap to 5 per challenge
+  challenge.switchAttempts = (challenge.switchAttempts || 0) + 1;
+  if (challenge.switchAttempts > 5) {
+    loginMfaChallengeCache.delete(challengeId);
+    throw new AuthError('Too many MFA method switch attempts', AuthErrorCodes.MFA_INVALID, 400);
   }
 
   const device = await repository.findMFADeviceById(deviceId);
@@ -458,6 +490,7 @@ export async function switchLoginMfaMethod(
 
   challenge.deviceId = device.id;
   challenge.deviceType = device.device_type;
+  challenge.lastSwitchedAt = Date.now();
   loginMfaChallengeCache.set(challengeId, challenge);
 
   if (device.device_type === 'email') {
@@ -489,6 +522,20 @@ export async function verifyLoginMFAChallenge(
 }> {
   const challenge = loginMfaChallengeCache.get(input.challenge_id);
   if (!challenge) {
+    throw new AuthError(
+      'Challenge expired or invalid',
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+      400,
+    );
+  }
+
+  // H3 FIX: Validate that the verifying requester is the same IP/device that initiated login
+  if (!isChallengeRequesterValid(challenge, ipAddress, userAgent)) {
+    loginMfaChallengeCache.delete(input.challenge_id);
+    logger.warn(
+      { challengeId: input.challenge_id, userId: challenge.userId, ipAddress, userAgent },
+      'Login MFA verification attempted from different device/IP; challenge invalidated',
+    );
     throw new AuthError(
       'Challenge expired or invalid',
       AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
@@ -530,7 +577,7 @@ export async function verifyLoginMFAChallenge(
   if (device.device_type === 'email') {
     // Email MFA: check the OTP stored in email_mfa_otps.
     const codeHash = hashEmailMfaOtp(input.code);
-    verified = await consumeEmailMfaOtp(device.id, codeHash);
+    verified = await consumeEmailMfaOtp(device.id, codeHash, input.code);
   } else {
     // TOTP: validate against the encrypted secret.
     verified = verifyTotpDeviceCode(device, input.code);
@@ -619,6 +666,21 @@ export async function verifyLoginBackupCode(
       400,
     );
   }
+
+  // H3 FIX: Validate that the verifying requester is the same IP/device that initiated login
+  if (!isChallengeRequesterValid(challenge, ipAddress, userAgent)) {
+    loginMfaChallengeCache.delete(input.challenge_id);
+    logger.warn(
+      { challengeId: input.challenge_id, userId: challenge.userId, ipAddress, userAgent },
+      'Login backup code verification attempted from different device/IP; challenge invalidated',
+    );
+    throw new AuthError(
+      'Challenge expired or invalid',
+      AuthErrorCodes.MFA_CHALLENGE_EXPIRED,
+      400,
+    );
+  }
+
   if (challenge.attempts >= 3) {
     loginMfaChallengeCache.delete(input.challenge_id);
     throw new AuthError(
@@ -697,4 +759,3 @@ export async function verifyLoginBackupCode(
     user_id: user.id,
   };
 }
-

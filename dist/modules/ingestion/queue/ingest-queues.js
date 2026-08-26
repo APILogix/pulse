@@ -97,6 +97,8 @@ export function jobPriority(planTier, eventType, deferCount = 0) {
 // ─── Queue provisioning ─────────────────────────────────────────────────────
 export function ingestQueueOptions() {
     return {
+        partition: true,
+        notify: true,
         retryLimit: env.INGESTION_JOB_RETRY_LIMIT,
         retryDelay: env.INGESTION_JOB_RETRY_DELAY_SECONDS,
         retryBackoff: true,
@@ -119,6 +121,8 @@ export async function provisionIngestQueues() {
         await safeCreateQueue(name, ingestQueueOptions());
     }
     await safeCreateQueue(INGEST_DLQ_INTAKE_QUEUE, {
+        partition: true,
+        notify: true,
         retryLimit: 5,
         retryDelay: 30,
         retryBackoff: true,
@@ -136,8 +140,9 @@ export async function provisionIngestQueues() {
 export async function enqueueIngestJobs(jobs) {
     const jobIds = [];
     let enqueuedEvents = 0;
+    const queues = [];
     if (jobs.length === 0)
-        return { jobIds, enqueuedEvents };
+        return { jobIds, enqueuedEvents, queues };
     const boss = pgboss;
     // Group by queue so we can use one bulk insert per queue.
     const byQueue = new Map();
@@ -147,12 +152,22 @@ export async function enqueueIngestJobs(jobs) {
         byQueue.set(job.queue, list);
     }
     for (const [queue, items] of byQueue) {
+        const queueStartedAt = Date.now();
+        const queueEvents = items.reduce((n, i) => n + i.data.events.length, 0);
         if (typeof boss.insert === 'function') {
             try {
                 const ids = await boss.insert(queue, items);
                 if (ids)
                     jobIds.push(...ids);
-                enqueuedEvents += items.reduce((n, i) => n + i.data.events.length, 0);
+                enqueuedEvents += queueEvents;
+                queues.push({
+                    queue,
+                    jobs: items.length,
+                    events: queueEvents,
+                    bulk: true,
+                    fallback: false,
+                    durationMs: Date.now() - queueStartedAt,
+                });
                 continue;
             }
             catch (err) {
@@ -166,34 +181,93 @@ export async function enqueueIngestJobs(jobs) {
                 enqueuedEvents += item.data.events.length;
             }
         }
+        queues.push({
+            queue,
+            jobs: items.length,
+            events: queueEvents,
+            bulk: false,
+            fallback: true,
+            durationMs: Date.now() - queueStartedAt,
+        });
     }
-    return { jobIds, enqueuedEvents };
+    return { jobIds, enqueuedEvents, queues };
 }
 // ─── Queue depth probe (gateway backpressure) ───────────────────────────────
 /** pg-boss v12 stores jobs in the `pgboss` schema, table `job`. */
 const DEPTH_SQL = `
-  SELECT name, state, COUNT(*)::int AS n
+  SELECT
+    name,
+    state,
+    COUNT(*)::int AS n,
+    COUNT(*) FILTER (
+      WHERE state IN ('created', 'retry') AND start_after <= NOW()
+    )::int AS ready,
+    COUNT(*) FILTER (
+      WHERE state IN ('created', 'retry') AND start_after > NOW()
+    )::int AS deferred,
+    CASE
+      WHEN state IN ('created', 'retry') THEN
+        GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(created_on))) * 1000))::bigint
+      ELSE NULL
+    END AS oldest_pending_age_ms
   FROM pgboss.job
   WHERE name LIKE 'ingest.%'
   GROUP BY name, state`;
+const DLQ_DEPTH_SQL = `
+  SELECT queue, COUNT(*)::int AS n
+  FROM ingestion_dead_letter_jobs
+  WHERE replayed_at IS NULL
+    AND queue LIKE 'ingest.%'
+  GROUP BY queue`;
 /**
  * Queue depth probe. pg-boss v12 exposes no public size API, so we read the
  * job table directly — one grouped scan. Callers (gateway) cache the result
  * at ~1s granularity so the request path stays O(1).
  */
 export async function ingestQueueDepth(pool) {
-    const snap = { pending: 0, active: 0, failed: 0, perQueue: [] };
+    const snap = {
+        pending: 0,
+        ready: 0,
+        deferred: 0,
+        active: 0,
+        failed: 0,
+        deadLettered: 0,
+        oldestPendingAgeMs: null,
+        perQueue: [],
+        dlqPerQueue: [],
+    };
     try {
         const r = await pool.query(DEPTH_SQL);
         for (const row of r.rows) {
+            if (!('name' in row))
+                continue;
             const count = Number(row.n) || 0;
-            snap.perQueue.push({ queue: row.name, state: row.state, count });
-            if (row.state === 'created' || row.state === 'retry')
+            const ready = Number(row.ready) || 0;
+            const deferred = Number(row.deferred) || 0;
+            const oldestPendingAgeMs = row.oldest_pending_age_ms == null
+                ? null
+                : Math.max(0, Number(row.oldest_pending_age_ms) || 0);
+            snap.perQueue.push({ queue: row.name, state: row.state, count, ready, deferred, oldestPendingAgeMs });
+            if (row.state === 'created' || row.state === 'retry') {
                 snap.pending += count;
+                snap.ready += ready;
+                snap.deferred += deferred;
+                if (oldestPendingAgeMs != null) {
+                    snap.oldestPendingAgeMs = Math.max(snap.oldestPendingAgeMs ?? 0, oldestPendingAgeMs);
+                }
+            }
             else if (row.state === 'active')
                 snap.active += count;
             else if (row.state === 'failed')
                 snap.failed += count;
+        }
+        const dlq = await pool.query(DLQ_DEPTH_SQL);
+        for (const row of dlq.rows) {
+            if (!('queue' in row))
+                continue;
+            const count = Number(row.n) || 0;
+            snap.deadLettered += count;
+            snap.dlqPerQueue.push({ queue: row.queue, count });
         }
     }
     catch (err) {

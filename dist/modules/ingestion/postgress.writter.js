@@ -40,18 +40,23 @@ export class PostgresWriter {
         k.status as key_status,
         k.expires_at,
         k.secret_hash,
-        pl.tier AS plan_tier
+        latest_plan.tier AS plan_tier
       FROM project_api_keys k
       INNER JOIN projects p ON p.id = k.project_id
       LEFT JOIN organizations o ON o.id = p.org_id
       LEFT JOIN project_environments e ON e.id = k.environment_id
-      LEFT JOIN organization_subscriptions s
-        ON s.organization_id = p.org_id
-       AND s.status IN ('trialing', 'active', 'past_due')
-       AND s.deleted_at IS NULL
-      LEFT JOIN plans pl
-        ON pl.id = s.plan_id
-       AND pl.deleted_at IS NULL
+      LEFT JOIN LATERAL (
+        SELECT pl.tier
+        FROM organization_subscriptions s
+        INNER JOIN plans pl
+          ON pl.id = s.plan_id
+         AND pl.deleted_at IS NULL
+        WHERE s.organization_id = p.org_id
+          AND s.status IN ('trialing', 'active', 'past_due')
+          AND s.deleted_at IS NULL
+        ORDER BY s.created_at DESC
+        LIMIT 1
+      ) latest_plan ON TRUE
       WHERE k.public_key = $1
         AND p.deleted_at IS NULL
         AND k.deleted_at IS NULL
@@ -67,9 +72,9 @@ export class PostgresWriter {
                  AND r.grace_ends_at IS NOT NULL
                  AND r.grace_ends_at > NOW()
             )
-          )
         )
-      ORDER BY s.created_at DESC NULLS LAST, k.created_at DESC
+      )
+      ORDER BY k.created_at DESC
     `, [publicKey]);
         for (const row of result.rows) {
             if (!constantTimeEqualHex(row.secret_hash, rawHash))

@@ -101,6 +101,21 @@ function hasExplicitTransaction(sql: string): boolean {
   return normalized.startsWith('BEGIN;') && normalized.includes('COMMIT;');
 }
 
+function hasNoTransactionDirective(sql: string): boolean {
+  return /^--\s*codex-logdb-migration:\s*no-transaction\b/im.test(sql);
+}
+
+async function executeNoTransactionMigration(client: PoolClient, sql: string): Promise<void> {
+  const statements = sql
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  for (const statement of statements) {
+    await client.query(`${statement};`);
+  }
+}
+
 async function applyOneMigration(
   client: PoolClient,
   migration: LogDbMigrationFile,
@@ -125,6 +140,8 @@ async function applyOneMigration(
 
   if (explicitTx) {
     await client.query(sql);
+  } else if (hasNoTransactionDirective(sql)) {
+    await executeNoTransactionMigration(client, sql);
   } else {
     await client.query('BEGIN');
     try {

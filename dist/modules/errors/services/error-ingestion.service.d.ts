@@ -8,6 +8,10 @@ export interface IngestionResult {
     inserted: boolean;
     groupResult: GroupMutationResult | null;
 }
+type ErrorBatchItem = {
+    groupParams: UpsertErrorGroupParams;
+    eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
+};
 export declare class ErrorIngestionService {
     private readonly pool;
     private readonly errorGroupingService;
@@ -17,10 +21,7 @@ export declare class ErrorIngestionService {
     ingestError(groupParams: UpsertErrorGroupParams, eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>): Promise<void>;
     private ingestErrorWithClient;
     private publishDomainEvents;
-    ingestBatch(client: PoolClient, errors: Array<{
-        groupParams: UpsertErrorGroupParams;
-        eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
-    }>): Promise<{
+    ingestBatch(client: PoolClient, errors: ErrorBatchItem[]): Promise<{
         inserted: number;
         domainEvents: Array<{
             groupResult: GroupMutationResult;
@@ -32,4 +33,5 @@ export declare class ErrorIngestionService {
         eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>;
     }>): void;
 }
+export {};
 //# sourceMappingURL=error-ingestion.service.d.ts.map

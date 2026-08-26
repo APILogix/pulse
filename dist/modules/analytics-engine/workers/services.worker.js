@@ -63,29 +63,29 @@ export function createServicesWorker(watermarks) {
             // availability = successful share; health = catalog health.score formula.
             const availability = '(COUNT(*) FILTER (WHERE e.status_code < 500 OR e.status_code IS NULL))::numeric * 100.0 / NULLIF(COUNT(*), 0)';
             const errorRate = '(COUNT(*) FILTER (WHERE e.status_code >= 500))::numeric * 100.0 / NULLIF(COUNT(*), 0)';
-            const p95 = AGG.percentile('e.latency_ms', 0.95);
+            const p95 = AGG.percentile('e.duration_ms', 0.95);
             const latencyScore = `GREATEST(0, 100 - COALESCE(${p95}, 0) / 10)`;
             return [
                 AGG.count(),
                 AGG.filterCount('e.status_code >= 500'),
                 AGG.filterCount('e.status_code BETWEEN 400 AND 499'),
-                AGG.filterCount(`e.latency_ms <= ${config.apdexThresholdMs}`),
-                AGG.filterCount(`e.latency_ms > ${config.apdexThresholdMs} AND e.latency_ms <= ${tolerating}`),
+                AGG.filterCount(`e.duration_ms <= ${config.apdexThresholdMs}`),
+                AGG.filterCount(`e.duration_ms > ${config.apdexThresholdMs} AND e.duration_ms <= ${tolerating}`),
                 // Span volume is owned by analytics.spans; kept at 0 here so the
                 // column has exactly one writer per docs/analytics/07 §4.
                 '0::bigint',
                 '0::int',
-                `ROUND(COALESCE(${availability}, 100), 4)`,
-                `ROUND(0.40 * COALESCE(${availability}, 100) + 0.35 * (100 - COALESCE(${errorRate}, 0)) + 0.25 * ${latencyScore}, 2)`,
+                `ROUND(COALESCE(${availability}, 100)::numeric, 4)`,
+                `ROUND((0.40 * COALESCE(${availability}, 100) + 0.35 * (100 - COALESCE(${errorRate}, 0)) + 0.25 * ${latencyScore})::numeric, 2)`,
                 'MIN(e.release)',
-                AGG.sum('e.latency_ms'),
-                AGG.max('e.latency_ms'),
-                AGG.percentile('e.latency_ms', 0.5),
-                AGG.percentile('e.latency_ms', 0.75),
-                AGG.percentile('e.latency_ms', 0.9),
+                AGG.sum('e.duration_ms'),
+                AGG.max('e.duration_ms'),
+                AGG.percentile('e.duration_ms', 0.5),
+                AGG.percentile('e.duration_ms', 0.75),
+                AGG.percentile('e.duration_ms', 0.9),
                 p95,
-                AGG.percentile('e.latency_ms', 0.99),
-                histogramSql('e.latency_ms'),
+                AGG.percentile('e.duration_ms', 0.99),
+                histogramSql('e.duration_ms'),
                 AGG.distinct('e.user_id'),
                 AGG.count(),
             ];

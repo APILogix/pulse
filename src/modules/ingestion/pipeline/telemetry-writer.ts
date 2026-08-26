@@ -26,8 +26,9 @@
  *     drops rows that hit the `(project_id, event_id) NULLS NOT DISTINCT`
  *     identity indexes (17_enterprise_ingestion/001), so at-least-once
  *     delivery (pg-boss retries, DLQ replays, SDK retries) never duplicates
- *     events. `RETURNING` keeps rowCount truthful: callers learn how many rows
- *     were ACTUALLY inserted (duplicates excluded).
+ *     events. PostgreSQL's command tag keeps rowCount truthful without
+ *     returning row data for non-error inserts; errors return event_id because
+ *     grouping only runs for rows confirmed inserted.
  *   - Rollups (analytics_hourly_rollup / analytics_error_groups) are owned by
  *     the event-analytics worker and the ingestion event-processor, NOT
  *     written here — this writer only persists raw events.
@@ -40,6 +41,7 @@ import type { NormalizedEvent } from './event-normalizer.js';
 import { parseSafeEpochMs, resolveTimestamp } from './event-normalizer.js';
 import { RequestEnricher } from './request-enrichment.js';
 import { computeErrorFingerprint, ERROR_FINGERPRINT_VERSION } from '../../errors/fingerprint.js';
+import { env } from '../../../config/env.js';
 
 /** An event paired with the tenant context resolved from its API key. */
 export interface ScopedEvent {
@@ -142,8 +144,7 @@ function metadataFor(ev: NormalizedEvent, environment: string): Record<string, u
   return metadata;
 }
 
-function sdkMetadataField(ev: NormalizedEvent, environment: string, key: string): unknown {
-  const metadata = metadataFor(ev, environment);
+function metadataField(metadata: Record<string, unknown>, ev: NormalizedEvent, key: string): unknown {
   return metadata[key] ?? rec(ev)[key];
 }
 
@@ -438,9 +439,10 @@ export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf
 /** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
  * (unknown→jsonb coercion handles the cast in an INSERT ... VALUES context).
  * ON CONFLICT DO NOTHING (no column target) makes the insert idempotent
- * against the (project_id, event_id) identity indexes; RETURNING keeps
- * rowCount truthful — it counts only ACTUALLY inserted rows. */
-function buildInsert(table: string, cols: string[], rows: unknown[][], returning = 'id'): { text: string; values: unknown[] } {
+ * against the (project_id, event_id) identity indexes. PostgreSQL rowCount is
+ * still the inserted-row count, so hot-path inserts avoid RETURNING unless a
+ * caller needs returned identity data. */
+function buildInsert(table: string, cols: string[], rows: unknown[][], returning?: string): { text: string; values: unknown[] } {
   const values: unknown[] = [];
   const tuples: string[] = [];
   let p = 1;
@@ -448,8 +450,9 @@ function buildInsert(table: string, cols: string[], rows: unknown[][], returning
     tuples.push(`(${row.map(() => `$${p++}`).join(', ')})`);
     values.push(...row);
   }
+  const returningClause = returning ? ` RETURNING ${returning}` : '';
   return {
-    text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING RETURNING ${returning}`,
+    text: `INSERT INTO ${table} (${cols.join(', ')}) VALUES ${tuples.join(', ')} ON CONFLICT DO NOTHING${returningClause}`,
     values,
   };
 }
@@ -462,18 +465,43 @@ export interface TypedWriteResult {
   insertedErrors?: ScopedEvent[];
 }
 
+export interface PerTypeWriteStats {
+  received: number;
+  inserted: number;
+  /** Wall-clock time spent building and executing this typed table write. */
+  durationMs: number;
+}
+
 /** Per-batch write outcome with duplicate-aware counts. */
 export interface DetailedWriteResult {
   /** Input rows that had a resolvable organization_id. */
   totalReceived: number;
   /** Rows actually inserted across all events_* tables. */
   totalInserted: number;
-  perType: Record<string, { received: number; inserted: number }>;
+  perType: Record<string, PerTypeWriteStats>;
   /** Error events confirmed inserted (drives analytics_error_groups). */
   insertedErrors: ScopedEvent[];
+  /** Telemetry outbox rows inserted by writeBatchDetailedWithOutbox(). */
+  outboxInserted?: number;
 }
 
 type Queryable = Pool | PoolClient;
+
+export async function applyIngestionTransactionSettings(client: PoolClient): Promise<void> {
+  const statements = [
+    `SET LOCAL synchronous_commit = ${env.INGESTION_LOG_DB_SYNCHRONOUS_COMMIT ?? 'on'}`,
+  ];
+  if (env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS > 0) {
+    statements.push(`SET LOCAL lock_timeout = '${env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS}ms'`);
+  }
+  if (env.INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS > 0) {
+    statements.push(`SET LOCAL statement_timeout = '${env.INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS}ms'`);
+  }
+  if (env.INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS > 0) {
+    statements.push(`SET LOCAL idle_in_transaction_session_timeout = '${env.INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS}ms'`);
+  }
+  await client.query(statements.join('; '));
+}
 
 export class TelemetryWriter {
   private readonly enricher = RequestEnricher.get();
@@ -516,9 +544,10 @@ export class TelemetryWriter {
       const client = await this.pool.connect();
       try {
         await client.query('BEGIN');
-        const result = await this.writeBatchDetailedUsing(client, scoped);
+        await applyIngestionTransactionSettings(client);
+        const result = await this.writeBatchDetailedInTransaction(client, scoped);
         if (result.totalInserted > 0) {
-          await this.appendTelemetryOutbox(scoped, client);
+          result.outboxInserted = await this.appendTelemetryOutbox(scoped, client);
         }
         await client.query('COMMIT');
         return result;
@@ -531,12 +560,16 @@ export class TelemetryWriter {
     } else {
       const client = clientOrScoped;
       const scoped = scopedParam ?? [];
-      const result = await this.writeBatchDetailedUsing(client, scoped);
+      const result = await this.writeBatchDetailedInTransaction(client, scoped);
       if (result.totalInserted > 0) {
-        await this.appendTelemetryOutbox(scoped, client);
+        result.outboxInserted = await this.appendTelemetryOutbox(scoped, client);
       }
       return result;
     }
+  }
+
+  async writeBatchDetailedInTransaction(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
+    return this.writeBatchDetailedUsing(db, scoped);
   }
 
   private async writeBatchDetailedUsing(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult> {
@@ -557,8 +590,13 @@ export class TelemetryWriter {
     }
 
     for (const [type, list] of byType) {
+      const startedAt = Date.now();
       const res = await this.writeTyped(type, list, db);
-      result.perType[type] = { received: list.length, inserted: res.inserted };
+      result.perType[type] = {
+        received: list.length,
+        inserted: res.inserted,
+        durationMs: Date.now() - startedAt,
+      };
       result.totalReceived += list.length;
       result.totalInserted += res.inserted;
       if (res.insertedErrors) result.insertedErrors.push(...res.insertedErrors);
@@ -569,6 +607,7 @@ export class TelemetryWriter {
   async appendTelemetryOutbox(scoped: ScopedEvent[], db: Queryable = this.pool): Promise<number> {
     const rows = scoped
       .filter((event) => event.orgId !== null)
+      .filter((event) => isFastPathSignal(event))
       .map((event) => {
         const record = rec(event.event);
         const latencyVal = record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration;
@@ -695,6 +734,7 @@ export class TelemetryWriter {
       const e = event as Extract<NormalizedEvent, { type: 'error' }>;
       const r = rec(event);
       const errorName = errorNameOf(event);
+      const metadata = metadataFor(event, environment);
       const fingerprint = errorFingerprint(event, errorName);
       
       const req = (e.context?.request as any) || e.context || {};
@@ -711,14 +751,14 @@ export class TelemetryWriter {
         errorName, eventSeverity(e.severity, 'error'),
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
         str(e.mechanism ?? r.mechanism, 50), str(r.service, 100),
-        environment, str(sdkMetadataField(event, environment, 'release'), 100), str(sdkMetadataField(event, environment, 'serverName'), 100),
-        str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        environment, str(metadataField(metadata, event, 'release'), 100), str(metadataField(metadata, event, 'serverName'), 100),
+        str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         JSON.stringify(e.stack ?? []), JSON.stringify(e.breadcrumbs ?? []), JSON.stringify(e.context ?? {}),
         str(e.method ?? r.method ?? req.method, 32), str(e.route ?? r.route ?? req.route ?? req.endpoint, 8192), str(e.url ?? r.url ?? req.url, 8192),
         statusCode ?? null, statusText ?? null, handled,
         str(r.userId ?? (r.user as any)?.id ?? (e.context as any)?.userId, 255),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
-        JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
+        JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadata), iso(resolveTimestamp(event)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
@@ -758,12 +798,13 @@ export class TelemetryWriter {
     const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'message' }>;
       const r = rec(event);
+      const metadata = metadataFor(event, environment);
       
       const tags = plainObject(r.tags) ?? {};
       const ctx = plainObject(e.context) ?? {};
       const attrs = plainObject(r.attributes) ?? {};
       const loggerName = str(e.loggerName ?? r.loggerName ?? r.logger, 128);
-      const sdkName = str(sdkMetadataField(event, environment, 'sdkName'), 50);
+      const sdkName = str(metadataField(metadata, event, 'sdkName'), 50);
       
       const name = str(e.name ?? r.name, 256) ?? str(e.message, 100) ?? 'Untitled';
       const tenantId = str(e.tenantId ?? r.tenantId ?? attrValue(attrs, 'tenantId') ?? (r.extra as any)?.tenantId, 255);
@@ -773,11 +814,11 @@ export class TelemetryWriter {
       return [
         orgId, projectId, apiKeyName ?? '', this.eventId(event), e.message, eventSeverity(e.severity, 'info'),
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null,
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(r.userId, 255), inet(r.userIp),
         JSON.stringify(tags), JSON.stringify(ctx), JSON.stringify(e.breadcrumbs ?? []),
-        sdkName, str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        sdkName, str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveTimestamp(event)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
         tenantId, loggerName, messageCategory, messageSource,
         str(e.endpoint ?? r.endpoint, 8192), num(e.statusCode ?? r.statusCode ?? r.status_code),
@@ -801,11 +842,14 @@ export class TelemetryWriter {
 
   // ── events_requests ─────────────────────────────────────────────────────────
   private async writeRequests(list: ScopedEvent[], db: Queryable): Promise<TypedWriteResult> {
-    // Open the GeoIP databases once (no-op after first call; never throws).
-    await this.enricher.init();
+    // Warm optional GeoIP readers without putting request inserts behind file
+    // open/dynamic import latency. Until ready, enrichment still hashes IPs and
+    // parses user agents, while geo columns remain NULL.
+    void this.enricher.init();
     const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'request' }>;
       const r = rec(event);
+      const metadata = metadataFor(event, environment);
       const endpoint = str(r.route, 500) ?? str(e.url, 8192) ?? str(r.endpoint, 8192);
       const name = endpoint ? `${e.method} ${endpoint}`.slice(0, 1024) : e.method;
       
@@ -819,7 +863,7 @@ export class TelemetryWriter {
       const userId = str((r.user as any)?.id ?? r.userId ?? r.user_id, 255);
       const tenantId = str(r.tenantId ?? (r.extra as any)?.tenantId ?? r.tenant_id, 255);
       const framework = str(r.framework ?? (r.tags as any)?.framework, 50);
-      const service = str(r.service ?? sdkMetadataField(event, environment, 'applicationName'), 100) ?? 'unknown';
+      const service = str(r.service ?? metadataField(metadata, event, 'applicationName'), 100) ?? 'unknown';
       const statusCode = httpStatus(e.statusCode ?? r.statusCode ?? r.status_code);
       const durationMs = num(e.latency ?? r.duration_ms ?? r.durationMs);
 
@@ -861,13 +905,13 @@ export class TelemetryWriter {
         service,                                                             // 35. service
         framework,                                                           // 36. framework
         environment,                                                         // 37. environment
-        str(r.release ?? sdkMetadataField(event, environment, 'release'), 100), // 38. release
-        str(r.serverName ?? sdkMetadataField(event, environment, 'serverName'), 100), // 39. server_name
-        str(sdkMetadataField(event, environment, 'sdkName'), 50),            // 40. sdk_name
-        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),         // 41. sdk_version
+        str(r.release ?? metadataField(metadata, event, 'release'), 100),    // 38. release
+        str(r.serverName ?? metadataField(metadata, event, 'serverName'), 100), // 39. server_name
+        str(metadataField(metadata, event, 'sdkName'), 50),                  // 40. sdk_name
+        str(metadataField(metadata, event, 'sdkVersion'), 50),               // 41. sdk_version
         eventSeverity(r.severity, (statusCode ?? 200) >= 500 ? 'error' : 'info'), // 42. severity
         JSON.stringify(requestAttributes(event)),                             // 43. attributes
-        JSON.stringify(metadataFor(event, environment)),                     // 44. metadata
+        JSON.stringify(metadata),                                            // 44. metadata
         payloadFor(event),                                                   // 45. payload
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
         iso(resolveTimestamp(event)),                                        // 47. occurred_at
@@ -896,6 +940,7 @@ export class TelemetryWriter {
       const e = event as Extract<NormalizedEvent, { type: 'span' }>;
       const r = rec(event);
       const attrs = plainObject(e.attributes) ?? {};
+      const metadata = metadataFor(event, environment);
       const kind = spanKind(e.kind);
       const status = spanStatus(e.status);
       const endpoint = str(attrValue(attrs, 'http.route') ?? attrValue(attrs, 'route'), 500);
@@ -930,9 +975,9 @@ export class TelemetryWriter {
         str(attrValue(attrs, 'messaging.operation') ?? r.messagingOperation, 50),
         JSON.stringify(normalizedSpanAttributes(attrs)), JSON.stringify(e.events ?? []), JSON.stringify(e.links ?? []),
         requestId, e.sessionId ?? null, str(r.userId, 255), tenantId,
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)),
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
@@ -966,6 +1011,7 @@ export class TelemetryWriter {
       const e = event as Extract<NormalizedEvent, { type: 'trace' }>;
       const r = rec(event);
       const root = plainObject(e.rootSpan) ?? {};
+      const metadata = metadataFor(event, environment);
       const rootAttrs = plainObject(root.attributes);
       const endpoint = str(attrValue(rootAttrs, 'http.route'), 500) ?? str(attrValue(rootAttrs, 'route'), 500);
       const httpMethod = str(attrValue(rootAttrs, 'http.method'), 10);
@@ -984,9 +1030,9 @@ export class TelemetryWriter {
         num(root.duration) ?? 0, num(e.totalDuration) ?? 0, responseSize, e.spanCount ?? 0, e.isPartial ?? false,
         e.rootSpan != null ? JSON.stringify(e.rootSpan) : null,
         e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255), str(r.tenantId, 255),
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadataFor(event, environment)), occurredAt,
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadata), occurredAt,
         str(rawUserAgent, 1024), str(rawClientIp, 255),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
@@ -1047,6 +1093,7 @@ export class TelemetryWriter {
     const s = plainObject(span);
     if (!s) return;
     const event = scoped.event as Extract<NormalizedEvent, { type: 'trace' }>;
+    const metadata = metadataFor(event, scoped.environment);
     const spanId = str(s.spanId ?? s.id, 64);
     if (!spanId) return;
     const attrs = plainObject(s.attributes) ?? {};
@@ -1114,10 +1161,10 @@ export class TelemetryWriter {
       str(attrValue(attrs, 'messaging.system'), 50), str(attrValue(attrs, 'messaging.destination'), 255), str(attrValue(attrs, 'messaging.operation'), 50),
       event.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255), event.sessionId ?? null, str(rec(event).userId, 255),
       str(rec(event).tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255),
-      str(rec(event).service, 100), scoped.environment, str(sdkMetadataField(event, scoped.environment, 'release'), 100),
-      str(sdkMetadataField(event, scoped.environment, 'serverName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationName'), 100), str(sdkMetadataField(event, scoped.environment, 'applicationVersion'), 50),
-      str(sdkMetadataField(event, scoped.environment, 'sdkName'), 50), str(sdkMetadataField(event, scoped.environment, 'sdkVersion'), 50),
-      JSON.stringify(metadataFor(event, scoped.environment)), payloadFor(event),
+      str(rec(event).service, 100), scoped.environment, str(metadataField(metadata, event, 'release'), 100),
+      str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+      str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
+      JSON.stringify(metadata), payloadFor(event),
     ]);
     const children = Array.isArray(s.children) ? s.children : [];
     for (const child of children) this.collectTraceSpanRows(scoped, child, spanId, depth + 1, timestamp, rows);
@@ -1128,6 +1175,7 @@ export class TelemetryWriter {
       const e = event as Extract<NormalizedEvent, { type: 'metric' }>;
       const r = rec(event);
       const tags = plainObject(e.tags) ?? {};
+      const metadata = metadataFor(event, environment);
       // Resolve metric_unit from canonical SDK field first, then legacy 'unit'
       const metricUnit = str(e.metricUnit ?? e.unit ?? r.metricUnit ?? r.unit, 50);
       // Promote HTTP context out of tags (no JSON parsing at query time)
@@ -1166,16 +1214,16 @@ export class TelemetryWriter {
         str(r.userId, 255), str(e.tenantId ?? r.tenantId, 255),
         // SDK origin
         str(r.service, 100), environment,
-        str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100),
-        str(sdkMetadataField(event, environment, 'applicationName'), 100),
-        str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50),
-        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100),
+        str(metadataField(metadata, event, 'applicationName'), 100),
+        str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50),
+        str(metadataField(metadata, event, 'sdkVersion'), 50),
         // raw tags (full JSONB), clean attributes (custom-only), debug copies
         JSON.stringify(e.tags ?? {}),
         JSON.stringify(metricAttributes(event)),
-        JSON.stringify(metadataFor(event, environment)),
+        JSON.stringify(metadata),
         iso(resolveTimestamp(event)),
         payloadFor(event),
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
@@ -1217,6 +1265,7 @@ export class TelemetryWriter {
     const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'log' }>;
       const r = rec(event);
+      const metadata = metadataFor(event, environment);
 
       const msg = e.message ?? '';
       const c = plainObject(e.context) ?? {};
@@ -1303,12 +1352,12 @@ export class TelemetryWriter {
         str(e.parentSpanId ?? r.parentSpanId, 128), str(e.tenantId ?? r.tenantId, 255),
         name, loggerName, logSource, logCategory, endpoint, httpMethod, statusCode, durationMs,
         e.requestId ?? null, e.sessionId ?? null,
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(r.userId, 255), inet(r.userIp),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
         JSON.stringify(c), JSON.stringify(e.tags ?? {}), JSON.stringify(cleanAttributes),
-        JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        JSON.stringify(metadata), iso(resolveTimestamp(event)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
@@ -1334,15 +1383,16 @@ export class TelemetryWriter {
       const e = event as Extract<NormalizedEvent, { type: 'profile' }>;
       const r = rec(event);
       const ts = resolveTimestamp(event);
+      const metadata = metadataFor(event, environment);
       return [
         orgId, projectId, apiKeyName ?? '', this.eventId(event), str(e.profileType, 20) ?? 'cpu',
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, e.sessionId ?? null, str(r.userId, 255),
         parseSafeIsoTimestamp(e.startTime, { traceId: e.traceId, spanId: e.spanId, field: 'startTime', logger: this.log }) ?? iso(ts),
         parseSafeIsoTimestamp(e.endTime, { traceId: e.traceId, spanId: e.spanId, field: 'endTime', logger: this.log }), num(e.duration),
         e.profile != null ? JSON.stringify(e.profile) : null,
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(ts),
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(ts),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
@@ -1362,6 +1412,7 @@ export class TelemetryWriter {
     const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'cron_checkin' }>;
       const r = rec(event);
+      const metadata = metadataFor(event, environment);
 
       // Derived: is_success
       const isSuccess = e.status === 'ok';
@@ -1417,16 +1468,16 @@ export class TelemetryWriter {
         str(r.userId, 255), str(e.tenantId ?? r.tenantId, 255),
         // SDK origin
         str(r.service, 100), environment,
-        str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100),
-        str(sdkMetadataField(event, environment, 'applicationName'), 100),
-        str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50),
-        str(sdkMetadataField(event, environment, 'sdkVersion'), 50),
+        str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100),
+        str(metadataField(metadata, event, 'applicationName'), 100),
+        str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50),
+        str(metadataField(metadata, event, 'sdkVersion'), 50),
         // JSONB
         JSON.stringify(e.tags ?? {}),
         JSON.stringify(cleanAttributes),
-        JSON.stringify(metadataFor(event, environment)),
+        JSON.stringify(metadata),
         iso(resolveTimestamp(event)),
         payloadFor(event),
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
@@ -1464,13 +1515,14 @@ export class TelemetryWriter {
     const rows = list.map(({ projectId, orgId, environment, apiKeyName, event }) => {
       const e = event as Extract<NormalizedEvent, { type: 'replay' }>;
       const r = rec(event);
+      const metadata = metadataFor(event, environment);
       return [
         orgId, projectId, apiKeyName ?? '', this.eventId(event), e.sessionId, e.segmentId,
         JSON.stringify(e.events ?? []),
         e.traceId ?? null, e.spanId ?? null, e.requestId ?? null, str(r.userId, 255),
-        str(r.service, 100), environment, str(sdkMetadataField(event, environment, 'release'), 100),
-        str(sdkMetadataField(event, environment, 'serverName'), 100), str(sdkMetadataField(event, environment, 'applicationName'), 100), str(sdkMetadataField(event, environment, 'applicationVersion'), 50),
-        str(sdkMetadataField(event, environment, 'sdkName'), 50), str(sdkMetadataField(event, environment, 'sdkVersion'), 50), JSON.stringify(metadataFor(event, environment)), iso(resolveTimestamp(event)),
+        str(r.service, 100), environment, str(metadataField(metadata, event, 'release'), 100),
+        str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
+        str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveTimestamp(event)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
       ];
     });
@@ -1505,7 +1557,10 @@ function isFastPathSignal(scoped: ScopedEvent): boolean {
   if (event.type === 'request') {
     const status = Number(record.statusCode ?? record.status_code);
     const duration = Number(record.latency ?? record.latencyMs ?? record.latency_ms ?? record.durationMs ?? record.duration_ms ?? record.duration);
-    return status === 401 || status === 403 || status >= 400 || (Number.isFinite(duration) && duration > 0);
+    return status === 401
+      || status === 403
+      || status >= 400
+      || (Number.isFinite(duration) && duration >= env.INGESTION_FAST_REQUEST_MIN_DURATION_MS);
   }
   return false;
 }

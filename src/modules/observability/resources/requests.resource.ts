@@ -2,9 +2,10 @@
  * Requests explorer resource (Phase 5). Backed by `events_requests`.
  *
  * Exposes the full request column set from the architecture doc plus latency
- * statistics and traffic summary. Filtering leans on the composite
- * `idx_events_requests_tenant_env_time`, `_endpoint_time`, and `_user_time`
- * indexes; the generated `is_error`/`is_slow` columns power error timelines.
+ * statistics and traffic summary. Ingestion keeps this table intentionally
+ * light on synchronous indexes; explorers should prefer tenant/time-bounded
+ * scans and rollups unless a query earns a dedicated index with EXPLAIN proof.
+ * The generated `is_error`/`is_slow` columns power error timelines.
  */
 import type { ExplorerResource, FieldDef } from '../query-engine/field-registry.js';
 import { commonFields, commonSearchAliases, makeMapRow } from './common.js';
@@ -88,9 +89,9 @@ export const requestsResource: ExplorerResource = {
     'traceId', 'tracePublicId', 'requestId', 'isSlow', 'hasError',
   ],
   preferredIndexes: [
-    'idx_events_requests_tenant_env_time',
-    'idx_events_requests_endpoint_time',
-    'idx_events_requests_user_time',
+    'idx_events_requests_tenant_time',
+    'idx_events_requests_occurred_brin',
+    'idx_events_requests_pubid',
   ],
   errorPredicate: 'is_error',
   summary: {

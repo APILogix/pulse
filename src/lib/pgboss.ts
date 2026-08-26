@@ -244,6 +244,7 @@ export const pgboss = new PgBoss({
   connectionTimeoutMillis,
   schedule: !producerOnly,
   supervise: !producerOnly,
+  useListenNotify: !producerOnly,
   db: dbAdapter,
 });
 

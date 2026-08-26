@@ -159,7 +159,7 @@ export function createCronsWorker(watermarks) {
                    l.status,
                    l.last_checkin_at,
                    l.duration_ms,
-                   NULLIF(ROUND(g.median_gap_seconds), 0)::int,
+                   NULLIF(ROUND(g.median_gap_seconds::numeric), 0)::int,
                    COALESCE(f.failure_count, 0),
                    COALESCE(f.checkin_count, 0),
                    CASE

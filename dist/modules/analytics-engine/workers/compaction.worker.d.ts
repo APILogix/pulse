@@ -46,6 +46,7 @@ export interface CompactionResult {
 export declare function compactTier(pool: Pool, params: {
     base: string;
     shape: 'A' | 'B';
+    windows: readonly WindowSize[];
     target: Exclude<WindowSize, '1m'>;
     from: Date;
     to: Date;

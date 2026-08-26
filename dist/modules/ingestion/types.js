@@ -19,7 +19,12 @@ export const IngestSchema = {
                             type: 'string',
                             enum: sdkTypeEnum,
                         },
-                        timestamp: { type: 'number' },
+                        timestamp: {
+                            anyOf: [
+                                { type: 'number' },
+                                { type: 'string', minLength: 1, maxLength: 64 },
+                            ],
+                        },
                         eventId: { type: 'string', maxLength: 128 },
                         requestId: { type: 'string', maxLength: 128 },
                         metricName: { type: 'string' },
