@@ -37,6 +37,12 @@ import { applyLogDbMigrations } from '../logdb/migrations.js';
 const log = logger.child({ component: 'ingestion-worker-main' });
 class IngestionWorkerProcess {
     pool = null;
+    /**
+     * Dedicated telemetry WRITE pool — see `createTelemetryWritePool()`.
+     * Separate from `logDB`'s shared primary pool so ingest writes have their own
+     * bounded, correctly-sized connection budget.
+     */
+    writePool = null;
     registry = null;
     shuttingDown = false;
     async start() {
@@ -71,12 +77,70 @@ class IngestionWorkerProcess {
         }
         // pg-boss must be started before any work/schedule/send call.
         await startPgBoss();
-        this.registry = new WorkerRegistry(this.pool, log, logDB.getPrimaryPool());
+        this.writePool = this.createTelemetryWritePool();
+        this.registry = new WorkerRegistry(this.pool, log, this.writePool);
         await this.registry.start();
         this.installSignalHandlers();
         // Signal readiness to a process supervisor (PM2 wait_ready), if listening.
         process.send?.('ready');
         log.info('Ingestion worker process started');
+    }
+    /**
+     * Dedicated telemetry write pool for this process.
+     *
+     * WHY NOT JUST USE `logDB.getPrimaryPool()`
+     * -----------------------------------------
+     * The shared Log DB pool is sized by `LOG_POOL_MAX`, a single global knob that
+     * has to serve two completely different workloads: dashboard/API reads in the
+     * API process and batch ingest writes here. Sizing it for one starves the
+     * other, and every ingest transaction holds its connection for the whole
+     * BEGIN..COMMIT, so a write burst could exhaust the pool that the health
+     * probe and the outbox reader also depend on.
+     *
+     * Giving the writer its own pool (`INGESTION_WRITE_POOL_SIZE`) means:
+     *   - Ingest write capacity is tunable independently of API read capacity.
+     *   - `resolveWritePermits()` in EventProcessor reads THIS pool's `max`, so
+     *     the admission semaphore is provably aligned with real capacity. Sharing
+     *     a pool would make that alignment a guess.
+     *   - `application_name` distinguishes ingest writers in `pg_stat_activity`,
+     *     which is what makes connection-level forensics possible at all.
+     *
+     * `logDB` is still used for connect-time verification, migrations and reads —
+     * this pool is exclusively the ingest write path.
+     *
+     * Deliberately NO pool-level `statement_timeout`: the bound is applied
+     * per-transaction by `applyIngestionTransactionSettings()` via `SET LOCAL`, so
+     * it can never leak onto a pooled connection and be inherited by unrelated
+     * maintenance work.
+     */
+    createTelemetryWritePool() {
+        const connectionString = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
+        const pool = new Pool({
+            connectionString,
+            ssl: resolvePostgresSslConfig(connectionString, {
+                enabled: env.LOG_DB_SSL_ENABLED,
+                rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED,
+            }),
+            max: env.INGESTION_WRITE_POOL_SIZE,
+            // Keep a warm floor: ingest is continuous, so paying TCP+TLS handshake on
+            // every batch would show up directly in dbConnectionWaitMs.
+            min: Math.min(2, env.INGESTION_WRITE_POOL_SIZE),
+            idleTimeoutMillis: env.LOG_DB_IDLE_TIMEOUT,
+            connectionTimeoutMillis: env.LOG_DB_CONNECTION_TIMEOUT,
+            application_name: `pulse_ingestion_writes_${env.NODE_ENV}`,
+            keepAlive: env.LOG_DB_KEEPALIVE_MS > 0,
+            keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
+            allowExitOnIdle: false,
+        });
+        pool.on('error', (err) => {
+            if (isExpectedServerlessDisconnect(err)) {
+                log.debug({ err: err.message }, 'Idle telemetry write pool connection closed by server (Neon/PgBouncer)');
+                return;
+            }
+            log.error({ err }, 'Telemetry write pool error');
+        });
+        log.info({ max: env.INGESTION_WRITE_POOL_SIZE, writeConcurrency: env.INGESTION_WRITE_CONCURRENCY }, 'Dedicated telemetry write pool created');
+        return pool;
     }
     installSignalHandlers() {
         const onSignal = (signal) => {
@@ -98,10 +162,15 @@ class IngestionWorkerProcess {
         this.shuttingDown = true;
         log.info({ signal }, 'Ingestion worker shutting down — draining');
         try {
+            // Order matters: registry.stop() waits for in-flight jobs (offWork
+            // { wait: true }), so the write pool must outlive it or a draining
+            // transaction would lose its connection mid-COMMIT.
             if (this.registry)
                 await this.registry.stop();
             await stopPgBoss();
             await logDB.close();
+            if (this.writePool)
+                await this.writePool.end();
             if (this.pool)
                 await this.pool.end();
         }

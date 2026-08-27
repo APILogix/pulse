@@ -40,7 +40,12 @@ export interface QueryOptions {
   maxRetries?: number;
   /** 'read' routes to the replica when available; 'write' always hits primary. */
   operation?: DbOperation;
-  /** Sets app.current_project_id for the duration of the query (RLS tenant scope). */
+  /**
+   * RLS tenant scope. Sets `app.current_project_id` for the duration of the
+   * TRANSACTION wrapping this query, then reverts automatically. Supplying it
+   * forces the query into a transaction even when no timeout is set, so the
+   * scope can never be silently dropped.
+   */
   projectId?: string | undefined;
   /**
    * Per-statement timeout in ms applied via `SET LOCAL` inside a transaction.
@@ -73,6 +78,10 @@ export interface LogEvent {
  *   maintenance are never aborted. Reads stay bounded to contain runaway
  *   analytical queries. Timeouts are applied with `SET LOCAL` inside a
  *   transaction so they can never leak onto a pooled connection.
+ * - **No session state on pooled connections.** Every per-request setting
+ *   (statement timeout, RLS tenant scope) is transaction-scoped. Nothing is
+ *   applied at checkout time, so a connection returned to the pool carries no
+ *   residue from its previous borrower. See `applyTenantScope()`.
  * - **Dual pool.** Primary handles writes/DDL; replica absorbs read traffic and
  *   transparently falls back to primary when absent or unhealthy.
  * - **TimescaleDB.** On connect (when enabled) the event tables are promoted to
@@ -244,25 +253,72 @@ class LogDatabaseManager {
    * Acquire a pooled connection from the appropriate pool.
    *
    * @param options.operation 'read' routes to the replica when available.
-   * @param options.projectId sets the RLS tenant scope for the session.
+   *
+   * NOTE: this deliberately does not accept a `projectId`. Tenant scope is a
+   * transaction-scoped concern and is applied by `applyTenantScope()` from
+   * inside a transaction — see that method for the reasoning. An option here
+   * that *looked* like it set tenant scope but could not do so safely is worse
+   * than no option at all, because it fails open.
    */
-  async getConnection(options?: {
-    operation?: DbOperation;
-    projectId?: string | undefined;
-  }): Promise<PoolClient> {
+  async getConnection(options?: { operation?: DbOperation }): Promise<PoolClient> {
     if (this.isShuttingDown) {
       throw new Error('Log database is shutting down — refusing new connections');
     }
 
     const useReplica = options?.operation === 'read' && this.replicaPool !== null;
     const pool = useReplica ? this.replicaPool! : this.primaryPool;
-    const client = await pool.connect();
+    return pool.connect();
+  }
 
-    if (options?.projectId) {
-      await client.query('SET app.current_project_id = $1', [options.projectId]);
-    }
-
-    return client;
+  /**
+   * Apply the RLS tenant scope (`app.current_project_id`) for the CURRENT
+   * TRANSACTION only.
+   *
+   * ## Why this exists (a real defect, not a style preference)
+   *
+   * This previously ran in `getConnection()` as:
+   *
+   *     SET app.current_project_id = $1
+   *
+   * before any `BEGIN`. A bare `SET` is **session**-scoped, so the value
+   * survived `COMMIT`, survived `client.release()`, and stayed attached to the
+   * connection sitting in the `pg` pool. The next caller to borrow that
+   * connection silently inherited the previous tenant's project id. Nothing
+   * ever reset it.
+   *
+   * That is a cross-tenant state leak in a multi-tenant system. It is currently
+   * NOT exploitable — a repo-wide search of `database/migrations/**` found no
+   * `CREATE POLICY`, no `ENABLE ROW LEVEL SECURITY`, and no `current_setting`
+   * reader, so no query consumes this GUC on the Log DB today. It is a loaded
+   * gun rather than a fired one: the moment anyone adds an RLS policy (which is
+   * exactly what this setting exists to feed) the leak becomes a tenant
+   * data-disclosure bug, and it would be invisible in testing because it only
+   * manifests on connection reuse under concurrency.
+   *
+   * ## Why `set_config(..., true)` rather than `SET LOCAL`
+   *
+   * `is_local = true` makes the setting transaction-scoped: PostgreSQL reverts
+   * it automatically at COMMIT or ROLLBACK, so it is leak-proof *by
+   * construction* rather than by remembering to reset it. `set_config()` is also
+   * a function call, so the value binds as a real parameter — `SET LOCAL` only
+   * accepts a literal, which would have forced string interpolation of a
+   * caller-supplied value into SQL.
+   *
+   * This matches the pattern already used correctly elsewhere in the codebase
+   * (`src/modules/analytics/repository.ts`).
+   *
+   * ## Caller contract — IMPORTANT
+   *
+   * MUST be called inside an open transaction. Outside one, `is_local = true`
+   * applies to the implicit single-statement transaction and is discarded
+   * immediately, i.e. it becomes a silent no-op that **fails open** on tenant
+   * scoping. It is private for that reason: every call site in this class
+   * issues `BEGIN` first, and that invariant is enforced structurally rather
+   * than by a runtime probe (which would cost an extra round trip per query on
+   * the hot read path).
+   */
+  private async applyTenantScope(client: PoolClient, projectId: string): Promise<void> {
+    await client.query('SELECT set_config($1, $2, true)', ['app.current_project_id', projectId]);
   }
 
   /**
@@ -286,14 +342,14 @@ class LogDatabaseManager {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const client = await this.getConnection({
-        operation,
-        ...(projectId !== undefined ? { projectId } : {}),
-      });
+      const client = await this.getConnection({ operation });
 
       try {
         const start = Date.now();
-        const result = await this.runWithTimeout<T>(client, sql, params, effectiveTimeout);
+        // projectId is threaded into runWithTimeout rather than applied at
+        // checkout, so the tenant scope lives inside the same transaction as the
+        // statement it scopes.
+        const result = await this.runWithTimeout<T>(client, sql, params, effectiveTimeout, projectId);
         const duration = Date.now() - start;
 
         if (duration > env.LOG_DB_SLOW_QUERY_MS) {
@@ -332,24 +388,41 @@ class LogDatabaseManager {
 
   /**
    * Run a single statement, optionally bounded by a transaction-scoped
-   * `SET LOCAL statement_timeout`. A timeout of 0 means "no statement timeout"
-   * and the query runs directly without transaction overhead.
+   * `SET LOCAL statement_timeout` and/or an RLS tenant scope.
+   *
+   * A transaction is opened when EITHER a bounded timeout OR a tenant scope is
+   * required, because both mechanisms are transaction-scoped. The no-transaction
+   * fast path is only taken when neither is needed.
+   *
+   * Requesting a tenant scope therefore forces a transaction even when the
+   * timeout is 0/unbounded. That is deliberate: applying the scope outside a
+   * transaction would silently discard it and leave the statement unscoped,
+   * which fails open. Correctness wins over saving a round trip.
    */
   private async runWithTimeout<T extends QueryResultRow>(
     client: PoolClient,
     sql: string,
     params: unknown[] | undefined,
     timeout: number,
+    projectId?: string | undefined,
   ): Promise<QueryResult<T>> {
-    if (!timeout || timeout <= 0) {
+    const hasBoundedTimeout = typeof timeout === 'number' && timeout > 0;
+    const needsTenantScope = typeof projectId === 'string' && projectId.length > 0;
+
+    if (!hasBoundedTimeout && !needsTenantScope) {
       return client.query<T>(sql, params);
     }
 
     await client.query('BEGIN');
     try {
-      // SET LOCAL is transaction-scoped: it cannot leak onto the pooled
-      // connection once the transaction ends.
-      await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+      // Both of the following are transaction-scoped, so neither can leak onto
+      // the pooled connection once this transaction ends.
+      if (needsTenantScope) {
+        await this.applyTenantScope(client, projectId);
+      }
+      if (hasBoundedTimeout) {
+        await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
+      }
       const result = await client.query<T>(sql, params);
       await client.query('COMMIT');
       return result;
@@ -368,14 +441,18 @@ class LogDatabaseManager {
     fn: (client: PoolClient) => Promise<T>,
     options?: { projectId?: string | undefined; timeout?: number },
   ): Promise<T> {
-    const client = await this.getConnection({
-      operation: 'write',
-      ...(options?.projectId !== undefined ? { projectId: options.projectId } : {}),
-    });
+    const client = await this.getConnection({ operation: 'write' });
     const timeout = options?.timeout ?? env.LOG_DB_WRITE_TIMEOUT;
+    const projectId = options?.projectId;
 
     try {
       await client.query('BEGIN');
+      // Applied AFTER BEGIN so it is transaction-scoped and reverts on
+      // COMMIT/ROLLBACK. Applying it before BEGIN (the previous behaviour) made
+      // it session-scoped and leaked it onto the pooled connection.
+      if (typeof projectId === 'string' && projectId.length > 0) {
+        await this.applyTenantScope(client, projectId);
+      }
       if (timeout > 0) {
         await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeout)}`);
       }

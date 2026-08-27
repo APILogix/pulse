@@ -25,7 +25,12 @@ const envSchema = z.object({
         .default('127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'),
     // Primary Database (PostgreSQL)
     DATABASE_URL: z.string(),
-    DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
+    // Raised 10 -> 20. The primary pool serves request-path metadata reads
+    // (API key resolution, quota checks, project/org lookups) for the whole API
+    // tier; at 10 a burst of concurrent requests queued on pool acquisition.
+    // Budget note: this is PER PROCESS. See docs/deployment/environment-configuration.md
+    // for the fleet-wide connection accounting before raising it further.
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(100).default(20),
     DB_POOL_MIN: z.coerce.number().int().min(0).max(100).default(0),
     DB_IDLE_TIMEOUT_MS: z.coerce.number().int().min(0).default(30000),
     DB_CONNECTION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
@@ -49,7 +54,12 @@ const envSchema = z.object({
     // Log Database (Primary + Replica)
     LOG_DB_PRIMARY: z.string().optional(),
     LOG_DB_REPLICA: z.string().optional(),
-    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(10),
+    // Raised 10 -> 20. This pool serves Log DB READS (dashboards, analytics) in
+    // the API tier and Log DB reads/migrations in the worker tiers. Ingest WRITES
+    // no longer draw from it — they use the dedicated pool sized by
+    // INGESTION_WRITE_POOL_SIZE (see shared/workers/ingestion-worker-main.ts) —
+    // so raising this buys read concurrency without affecting write admission.
+    LOG_POOL_MAX: z.coerce.number().int().min(1).max(500).default(20),
     // Do not pin warm log connections in every API replica while idle.
     LOG_POOL_MIN: z.coerce.number().int().min(0).max(500).default(0),
     // Read-path statement timeout (ms). Bounds runaway analytical reads.
@@ -239,8 +249,25 @@ const envSchema = z.object({
         .enum(['on', 'off', 'local', 'remote_write', 'remote_apply'])
         .default('on'),
     INGESTION_LOG_DB_LOCK_TIMEOUT_MS: z.coerce.number().int().min(0).default(2_000),
-    INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+    // Per-transaction statement timeout for ingest writes. MUST stay well below
+    // INGESTION_JOB_EXPIRE_SECONDS (300s): pg-boss re-delivers an expired job
+    // WITHOUT cancelling the still-running transaction, so an unbounded statement
+    // produces duplicate work AND doubles connection demand while the original
+    // transaction keeps its connection hostage. 0 disables (previous default) and
+    // is unsafe under load — a single pathological batch could pin one of the
+    // pool's connections indefinitely. 60s is ~2 orders of magnitude above the
+    // observed p99 for a 200-event batch, so it only fires on genuine pathology.
+    INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(0).default(60_000),
     INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.coerce.number().int().min(0).default(30_000),
+    // Dedicated telemetry write pool for the ingestion worker process. Isolates
+    // ingest writes from the shared Log DB pool (LOG_POOL_MAX) so a burst of
+    // dashboard reads in the API process cannot steal ingest write capacity, and
+    // vice versa.
+    INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(20),
+    // Hard ceiling on concurrent ingest transactions (write-admission permits).
+    // Bounded to (pool - reserve) at runtime by resolveWritePermits(), so this can
+    // under-use the pool but can never oversubscribe it.
+    INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(16),
     INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.coerce.number().min(0).default(1000),
     MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
     MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
@@ -283,8 +310,26 @@ const envSchema = z.object({
     INGESTION_FAIRNESS_MAX_DEFERS: z.coerce.number().int().min(0).max(20).default(5),
     INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: z.coerce.number().int().min(1).max(60).default(2),
     // Per-event-type worker concurrency (pg-boss localConcurrency / batchSize).
-    INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(8),
+    //
+    // Total in-flight jobs = SDK_EVENT_TYPES(10) x CONCURRENCY x BATCH_SIZE.
+    // This governs FETCH pressure and resident memory, NOT database concurrency —
+    // database concurrency is bounded independently by INGESTION_WRITE_CONCURRENCY.
+    //
+    // Concurrency was lowered from 8 to 2 (10x2x4 = 80 in-flight instead of 320).
+    // Reason: each in-flight job holds its payload in the heap, capped at
+    // INGESTION_JOB_MAX_BYTES (1 MiB). At 320 in-flight the worst case is ~320 MB
+    // resident against `--max-old-space-size=512` and `max_memory_restart: 700M`
+    // in ecosystem.config.cjs — an OOM-restart hazard that also loses in-flight
+    // work. 80 in-flight bounds that at ~80 MB while still keeping the 16 write
+    // permits saturated 5:1, so throughput is unchanged.
+    INGESTION_TYPE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(256).default(2),
     INGESTION_TYPE_WORKER_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(4),
+    // Gateway backpressure queue-depth probe cache TTL. The probe is a grouped
+    // scan over pgboss.job on the CONTENDED control pool; at the previous
+    // hardcoded 1000ms it ran ~once/second per API process purely to feed an
+    // advisory shedding decision. Backpressure thresholds are 100k/250k jobs, so
+    // a slightly staler snapshot cannot change the outcome.
+    INGESTION_QUEUE_DEPTH_CACHE_MS: z.coerce.number().int().min(250).max(60_000).default(3_000),
     // Metrics HTTP endpoint exposed by worker processes.
     INGESTION_WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65535).default(9465),
     // Cron schedules (pg-boss) for the usage rollup and alert rule evaluator.
@@ -399,6 +444,24 @@ export const env = envSchema.parse(process.env);
     ]);
     if (distinct.size < 5) {
         throw new Error('Auth misconfiguration: JWT_SECRET, JWT_REFRESH_SECRET, COOKIE_SECRET, AUTH_TOKEN_SECRET, and ENCRYPTION_KEY must each be unique.');
+    }
+})();
+// Ingestion durability invariant: an ingest transaction must be forced to abort
+// BEFORE pg-boss considers its job expired and re-delivers it. pg-boss does not
+// cancel the in-flight transaction on expiry, so violating this ordering yields
+// two workers writing the same batch concurrently while the original still holds
+// a pool connection — the exact death spiral this guard exists to prevent.
+// A disabled statement timeout (0) is allowed but warned about, because it makes
+// the upper bound on connection hold time unbounded.
+(function assertIngestionTimeoutsAreOrdered() {
+    const statementTimeoutMs = env.INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS;
+    const expiryMs = env.INGESTION_JOB_EXPIRE_SECONDS * 1000;
+    if (statementTimeoutMs > 0 && statementTimeoutMs >= expiryMs) {
+        throw new Error('Ingestion misconfiguration: INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS ' +
+            `(${statementTimeoutMs}ms) must be strictly less than INGESTION_JOB_EXPIRE_SECONDS ` +
+            `(${env.INGESTION_JOB_EXPIRE_SECONDS}s = ${expiryMs}ms). Otherwise pg-boss re-delivers ` +
+            'the job while the original transaction is still running, causing duplicate work and ' +
+            'doubled connection demand.');
     }
 })();
 //# sourceMappingURL=env.js.map

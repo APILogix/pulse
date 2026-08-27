@@ -62,6 +62,21 @@ function groupKey(projectId: string, fingerprint: string): string {
   return `${projectId}\u0000${fingerprint}`;
 }
 
+/**
+ * Canonical ordering of group aggregates: `(project_id, fingerprint)`.
+ *
+ * Must match the `ORDER BY g.project_id, g.fingerprint` used by the locking
+ * SELECTs so the JS-side emitted VALUES order and the SQL-side lock order agree.
+ * Plain lexicographic comparison is correct and sufficient here — both columns
+ * are ASCII (UUID text and a hex sha256 digest), so there is no collation
+ * subtlety to reconcile with PostgreSQL's ordering.
+ */
+function compareAggregate(left: GroupAggregate, right: GroupAggregate): number {
+  if (left.projectId !== right.projectId) return left.projectId < right.projectId ? -1 : 1;
+  if (left.fingerprint !== right.fingerprint) return left.fingerprint < right.fingerprint ? -1 : 1;
+  return 0;
+}
+
 function isNewerItem(left: BatchErrorGroupItem, right: BatchErrorGroupItem): boolean {
   const leftAt = left.occurredAt ?? new Date();
   const rightAt = right.occurredAt ?? new Date();
@@ -109,7 +124,15 @@ export class ErrorGroupRepository {
       if (severityRank(severity) > severityRank(existing.highestSeverity)) existing.highestSeverity = severity;
     }
 
-    const aggregateList = [...aggregates.values()];
+    // Deterministic aggregate order. `aggregates` is keyed insertion-ordered,
+    // i.e. arbitrary batch arrival order, which made the row-lock acquisition
+    // order below differ between concurrent workers. See the ORDER BY note on
+    // the locking SELECT: sorting here keeps the emitted VALUES lists (lock
+    // probe, INSERT, UPDATE) in one canonical order so the SQL and the JS agree.
+    // Observably inert: results are returned keyed by `inputIndex`, the per-group
+    // `isNew` marker is per-group, and regression selection sorts by inputIndex
+    // within a group — none of them depend on aggregate ordering.
+    const aggregateList = [...aggregates.values()].sort(compareAggregate);
     const keyValues: unknown[] = [];
     let keyParam = 1;
     const keyRows = aggregateList.map((group) => {
@@ -119,11 +142,27 @@ export class ErrorGroupRepository {
       return row;
     });
 
+    // DEADLOCK AVOIDANCE — the ORDER BY is load-bearing, not cosmetic.
+    //
+    // This statement takes a row lock on every already-existing group in the
+    // batch. Two ingestion workers processing overlapping fingerprint sets
+    // previously locked those rows in whatever order their own batch happened to
+    // produce, which is the textbook recipe for a lock cycle: worker A holds
+    // fingerprint X and wants Y while worker B holds Y and wants X. PostgreSQL
+    // resolves that by killing one transaction with 40P01 (deadlock_detected),
+    // which `failureReason()` classifies as retryable — so under concurrent load
+    // on hot fingerprints the tier burned capacity on deadlock-retry churn.
+    //
+    // PostgreSQL places the LockRows node ABOVE the Sort node, so rows are locked
+    // in sorted output order. Ordering by the group's natural key therefore gives
+    // every worker in the fleet one global lock order, making a cycle impossible.
+    // Cost is a sort over U (unique fingerprints in this batch), not N events.
     const existingRows = await client.query<GroupRow>(
       `WITH input(project_id, fingerprint) AS (VALUES ${keyRows.join(', ')})
        SELECT g.*
          FROM error_groups g
          JOIN input i ON i.project_id = g.project_id AND i.fingerprint = g.fingerprint
+        ORDER BY g.project_id, g.fingerprint
         FOR UPDATE OF g`,
       keyValues,
     );
@@ -197,11 +236,15 @@ export class ErrorGroupRepository {
           racedParam += 2;
           return row;
         });
+        // Same global lock ordering as the primary probe above — this path is
+        // reached precisely BECAUSE another worker is writing the same groups,
+        // so it is the most deadlock-prone statement in the batch.
         const racedExistingRows = await client.query<GroupRow>(
           `WITH input(project_id, fingerprint) AS (VALUES ${racedRows.join(', ')})
            SELECT g.*
              FROM error_groups g
              JOIN input i ON i.project_id = g.project_id AND i.fingerprint = g.fingerprint
+            ORDER BY g.project_id, g.fingerprint
             FOR UPDATE OF g`,
           racedValues,
         );

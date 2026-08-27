@@ -110,6 +110,23 @@ export class WorkerMetrics {
     errorGroupsReused = 0;
     errorRegressions = 0;
     errorDuplicates = 0;
+    /**
+     * Times the set-based error grouper bailed out to per-event resolution because
+     * a matched group had `merged_into` set. This is the only remaining O(N)
+     * database path in error ingestion, so a non-trivial rate here is the signal
+     * that error-batch query count has degraded from O(1) to ~3N.
+     */
+    errorGroupMergeFallbacks = 0;
+    errorGroupMergeFallbackEvents = 0;
+    // ── Write admission (DB concurrency ceiling) ──────────────────────────────
+    /** Configured concurrent ingest transactions permitted. */
+    writePermits = 0;
+    /** Permits currently held (i.e. transactions in flight). */
+    writeInFlight = 0;
+    /** Handlers waiting for a permit — the saturation signal. */
+    writeQueued = 0;
+    /** High-water mark of `writeQueued`, so short bursts are not missed by scrapes. */
+    writeQueuedPeak = 0;
     errorGroupLookupMs = new Map();
     errorGroupUpsertMs = new Map();
     errorTransactionMs = new Map();
@@ -223,6 +240,31 @@ export class WorkerMetrics {
     recordErrorDuplicate() {
         this.errorDuplicates += 1;
     }
+    /** One batch fell back to per-event group resolution; `events` is that batch's size. */
+    recordErrorGroupMergeFallback(events) {
+        this.errorGroupMergeFallbacks += 1;
+        if (Number.isFinite(events) && events > 0) {
+            this.errorGroupMergeFallbackEvents += Math.trunc(events);
+        }
+    }
+    /** Configured write-admission permits (reported once at worker construction). */
+    setWritePermits(permits) {
+        if (!Number.isFinite(permits) || permits <= 0)
+            return;
+        this.writePermits = Math.trunc(permits);
+    }
+    /**
+     * Current admission occupancy. Called on every admit, so the peak is tracked
+     * here rather than sampled — a burst that fills and drains between two Prometheus
+     * scrapes would otherwise be invisible, which is exactly the event we most need
+     * to see when diagnosing a latency spike.
+     */
+    setWriteAdmission(inFlight, queued) {
+        this.writeInFlight = Number.isFinite(inFlight) ? Math.max(0, Math.trunc(inFlight)) : 0;
+        this.writeQueued = Number.isFinite(queued) ? Math.max(0, Math.trunc(queued)) : 0;
+        if (this.writeQueued > this.writeQueuedPeak)
+            this.writeQueuedPeak = this.writeQueued;
+    }
     recordErrorLatencies(lookup, upsert, transaction, domain) {
         if (lookup !== null)
             this.observe(this.errorGroupLookupMs, 'lookup', lookup);
@@ -266,6 +308,17 @@ export class WorkerMetrics {
         counter('ingest_error_groups_reused_total', 'Existing error groups reused.', this.errorGroupsReused);
         counter('ingest_error_regressions_total', 'Resolved error groups regressed to open.', this.errorRegressions);
         counter('ingest_error_duplicates_total', 'Duplicate error events rejected.', this.errorDuplicates);
+        counter('ingest_error_group_merge_fallback_total', 'Error batches that fell back to per-event group resolution (query count degrades to O(N)).', this.errorGroupMergeFallbacks);
+        counter('ingest_error_group_merge_fallback_events_total', 'Error events processed through the per-event group resolution fallback.', this.errorGroupMergeFallbackEvents);
+        // ── Write admission ────────────────────────────────────────────────────
+        // Read these three together to tell capacity problems apart from DB problems:
+        //   queued > 0 sustained          -> not enough write capacity (raise permits/pool)
+        //   in_flight == permits, queued 0 -> perfectly saturated, this is the goal
+        //   in_flight < permits but slow   -> the database is the bottleneck, not admission
+        gauge('ingest_write_admission_permits', 'Configured ceiling on concurrent ingest database transactions.', this.writePermits);
+        gauge('ingest_write_admission_in_flight', 'Ingest database transactions currently holding an admission permit.', this.writeInFlight);
+        gauge('ingest_write_admission_queued', 'Job handlers waiting for a write-admission permit.', this.writeQueued);
+        gauge('ingest_write_admission_queued_peak', 'High-water mark of handlers waiting for a write-admission permit.', this.writeQueuedPeak);
         const queueMetrics = [
             ['jobsProcessed', 'ingest_jobs_processed_total', 'Jobs completed by the ingestion workers.'],
             ['jobsFailed', 'ingest_jobs_failed_total', 'Jobs that failed (pg-boss retries them).'],

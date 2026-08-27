@@ -4,9 +4,9 @@
  * Request-path flow (fast, no heavy work):
  *   1. Envelope checks (object / apiKey / non-empty events / batch cap).
  *   2. Resolve project from the API key (LRU cache -> Postgres fallback),
- *      including billing plan tier and org-wide rate limits.
- *   3. Enforce project status, key permissions, project + org rate limits,
- *      and a cached org quota pre-check.
+ *      including billing plan tier.
+ *   3. Enforce project status, key permissions, and a cached org quota
+ *      pre-check.
  *   4. Plan-aware backpressure shedding driven by the ingest.* queue depth.
  *   5. BASIC per-event validation only (object, known SDK type, size cap) —
  *      full Zod normalization runs worker-side, never here.
@@ -21,8 +21,6 @@
  * worker processes.
  *
  * Hardening notes:
- *   - Rate limiters are sweeping, atomic, bounded token-buckets (no Map
- *     leak, no race window between read and increment).
  *   - Quota pre-check is cached (TTL INGESTION_QUOTA_CACHE_TTL_MS) and
  *     fail-open: a missing row or DB error never blocks ingestion.
  *   - Queue provisioning runs once per process behind a module-level
@@ -34,7 +32,6 @@ import { logger } from '../../config/logger.js';
 import { apiKeyCache } from '../../config/lrucashe.js';
 import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffort, syncEnvironmentSdkConfigLookupToLogDbBestEffort, syncProjectLookupToLogDbBestEffort, } from '../../shared/logdb/lookup-sync.js';
 import { PostgresWriter } from './postgress.writter.js';
-import { IngestionRateLimiter } from './rate-limiter.js';
 import { UsageCounter } from './usage/usage-counter.js';
 import { SDK_EVENT_TYPES, normalizeSdkEnvironment, } from './pipeline/event-normalizer.js';
 import { enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
@@ -83,8 +80,6 @@ export class IngestionService {
     pool;
     writer;
     sdkConfigService;
-    rateLimiter;
-    orgRateLimiter;
     usage;
     backpressure;
     replayMaxEvents;
@@ -124,14 +119,6 @@ export class IngestionService {
         this.replayMaxEvents = config.replayMaxEvents ?? env.INGESTION_REPLAY_MAX_EVENTS;
         this.jobChunkSize = config.jobChunkSize ?? env.INGESTION_JOB_CHUNK_SIZE;
         this.jobMaxBytes = Math.max(MAX_EVENT_BYTES, config.jobMaxBytes ?? env.INGESTION_JOB_MAX_BYTES);
-        this.rateLimiter = new IngestionRateLimiter({
-            ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
-            sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
-        });
-        this.orgRateLimiter = new IngestionRateLimiter({
-            ttlMs: env.INGESTION_RATE_BUCKET_TTL_MS,
-            sweepIntervalMs: env.INGESTION_RATE_BUCKET_SWEEP_MS,
-        });
         // API-tier usage counter. Tier-1 (memory) + Tier-2 (UNLOGGED staging) only;
         // the worker tier drives the staging->durable rollup so the many API
         // cluster processes don't all contend on flush_usage_counters().
@@ -269,10 +256,21 @@ export class IngestionService {
             this.depthRefreshPromise = null;
         });
     }
-    /** Cached queue-depth probe (background refreshed at most every 1s). */
+    /**
+     * Cached queue-depth probe. Never awaits the probe: it returns the current
+     * snapshot immediately and kicks off a background refresh when stale, so the
+     * request path stays O(1).
+     *
+     * The TTL is configurable (INGESTION_QUEUE_DEPTH_CACHE_MS, default 3000ms)
+     * rather than the previous hardcoded 1000ms. The probe is a grouped scan over
+     * pgboss.job executed on the contended control pool, and it only feeds an
+     * ADVISORY shedding decision whose thresholds are 100k/250k jobs — a snapshot
+     * a couple of seconds old cannot change that verdict, so paying for it once
+     * per second per API process was wasted contention.
+     */
     async queueDepth() {
         const now = Date.now();
-        if (now - this.cachedDepthAt > 1000) {
+        if (now - this.cachedDepthAt > env.INGESTION_QUEUE_DEPTH_CACHE_MS) {
             this.refreshQueueDepth();
         }
         return this.cachedDepth;
@@ -387,7 +385,7 @@ export class IngestionService {
     /**
      * Public typed-ingestion entrypoint used by the data-driven route table
      * (route-table.ts). It is a thin pass-through to the single policy boundary
-     * `processIngest`, so API-key validation, quota checks, rate limits,
+     * `processIngest`, so API-key validation, quota checks, admission control,
      * backpressure, per-event type enforcement, and queue-priority math are never
      * duplicated per endpoint. A typed route accepts ONLY its declared event
      * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
@@ -428,7 +426,7 @@ export class IngestionService {
         if (events.length > this.maxBatchSize)
             throw new Error('BATCH_TOO_LARGE');
         timings.envelopeMs = elapsedSince(envelopeStartedAt);
-        // 2. Project resolution (+ plan tier, org rate limits).
+        // 2. Project resolution (+ plan tier).
         const projectLookupStartedAt = Date.now();
         const project = await this.resolveProject(apiKey);
         timings.projectLookupMs = elapsedSince(projectLookupStartedAt);
@@ -448,15 +446,8 @@ export class IngestionService {
         const authzStartedAt = Date.now();
         this.assertKeyCanUseEndpoint(project, expectedType);
         timings.authzMs = elapsedSince(authzStartedAt);
-        // 4. Rate limits: project-scoped AND org-wide (noisy-neighbor guard).
-        const rateLimitStartedAt = Date.now();
-        const decision = this.rateLimiter.tryConsume(project.id, project.rateLimitPerSecond, project.rateLimitPerMinute, events.length);
-        if (!decision.allowed)
-            throw new Error('RATE_LIMIT_EXCEEDED');
-        const orgDecision = this.orgRateLimiter.tryConsume(project.orgId, project.orgRateLimitPerSecond, project.orgRateLimitPerMinute, events.length);
-        if (!orgDecision.allowed)
-            throw new Error('RATE_LIMIT_EXCEEDED');
-        timings.rateLimitMs = elapsedSince(rateLimitStartedAt);
+        // 4. Route-level rate limiting is currently disabled for ingestion.
+        timings.rateLimitMs = 0;
         // 5. Quota pre-check (cached, fail-open).
         const quotaStartedAt = Date.now();
         this.assertQuotaAvailable(project.orgId);
@@ -644,15 +635,14 @@ export class IngestionService {
             enqueueQueues,
             ...timings,
         }, 'ingestion admission profile');
-        const nextMinuteMs = (Math.floor(Date.now() / 60_000) + 1) * 60_000;
         const response = {
             success: true,
             accepted,
             rejected: errors.length,
             batchId,
             limits: {
-                remaining: decision.perMinuteRemaining,
-                resetAt: nextMinuteMs,
+                remaining: Number.MAX_SAFE_INTEGER,
+                resetAt: 0,
             },
         };
         if (errors.length > 0)
@@ -801,8 +791,8 @@ export class IngestionService {
                 deadLettered,
             },
             perQueue: depth.perQueue,
-            rateLimiterEntries: this.rateLimiter.size(),
-            orgRateLimiterEntries: this.orgRateLimiter.size(),
+            rateLimiterEntries: 0,
+            orgRateLimiterEntries: 0,
             quotaCacheEntries: this.quotaCache.size,
             backpressure: {
                 highWater: this.backpressure.highWater,
@@ -816,11 +806,12 @@ export class IngestionService {
         if (!project)
             throw new Error('INVALID_API_KEY');
         return {
-            perSecond: project.rateLimitPerSecond,
-            perMinute: project.rateLimitPerMinute,
+            enabled: false,
+            perSecond: null,
+            perMinute: null,
             maxBatchSize: this.maxBatchSize,
-            orgPerSecond: project.orgRateLimitPerSecond,
-            orgPerMinute: project.orgRateLimitPerMinute,
+            orgPerSecond: null,
+            orgPerMinute: null,
             planTier: project.planTier,
         };
     }
@@ -1042,8 +1033,6 @@ export class IngestionService {
     }
     /** Drain in-process state. The queue is durable in Postgres. */
     async shutdown() {
-        this.rateLimiter.dispose();
-        this.orgRateLimiter.dispose();
         this.quotaCache.clear();
         await this.usage.stop();
     }

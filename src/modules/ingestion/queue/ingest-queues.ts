@@ -312,8 +312,30 @@ const DEPTH_SQL = `
       ELSE NULL
     END AS oldest_pending_age_ms
   FROM pgboss.job
-  WHERE name LIKE 'ingest.%'
+  WHERE name = ANY($1::text[])
   GROUP BY name, state`;
+
+/**
+ * Exact queue-name list for the depth probe.
+ *
+ * WHY `= ANY($1)` INSTEAD OF `LIKE 'ingest.%'`
+ * -------------------------------------------
+ * pg-boss v12 provisions `pgboss.job` as a PARTITIONED table with one partition
+ * per queue name. A `LIKE` predicate is opaque to the partition-pruning planner,
+ * so the previous form scanned EVERY partition of the job table — including
+ * unrelated queues (alerting, automation, billing, webhooks) — on every probe.
+ * Equality against a known list prunes to just these partitions.
+ *
+ * The list is intentionally the union of the ten typed ingest queues plus the
+ * DLQ intake and usage-rollup queues, which is byte-for-byte the same set the
+ * old `LIKE 'ingest.%'` matched (every name here begins with `ingest.`). This is
+ * a pure planner optimization with no change to the returned numbers.
+ */
+const DEPTH_QUEUE_NAMES: readonly string[] = [
+  ...ALL_INGEST_QUEUES,
+  INGEST_DLQ_INTAKE_QUEUE,
+  INGEST_USAGE_ROLLUP_QUEUE,
+];
 
 const DLQ_DEPTH_SQL = `
   SELECT queue, COUNT(*)::int AS n
@@ -350,12 +372,16 @@ export interface IngestQueueDepthSnapshot {
 
 /**
  * Queue depth probe. pg-boss v12 exposes no public size API, so we read the
- * job table directly — one grouped scan. Callers (gateway) cache the result
- * at ~1s granularity so the request path stays O(1).
+ * job table directly — one partition-pruned grouped scan.
+ *
+ * This runs on the CONTENDED control pool, so its cost and frequency both
+ * matter. Callers cache the result (gateway: INGESTION_QUEUE_DEPTH_CACHE_MS,
+ * metrics server: DEPTH_CACHE_MS) so the request path stays O(1) and never
+ * awaits this probe.
  */
 export async function ingestQueueDepth(
   pool: {
-    query: (sql: string) => Promise<{
+    query: (sql: string, params?: unknown[]) => Promise<{
       rows: Array<
         | {
             name: string;
@@ -385,7 +411,7 @@ export async function ingestQueueDepth(
     dlqPerQueue: [],
   };
   try {
-    const r = await pool.query(DEPTH_SQL);
+    const r = await pool.query(DEPTH_SQL, [DEPTH_QUEUE_NAMES]);
     for (const row of r.rows) {
       if (!('name' in row)) continue;
       const count = Number(row.n) || 0;

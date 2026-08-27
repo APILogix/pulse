@@ -22,8 +22,6 @@ export declare class IngestionService {
     private readonly pool;
     private readonly writer;
     private readonly sdkConfigService?;
-    private readonly rateLimiter;
-    private readonly orgRateLimiter;
     private readonly usage;
     private readonly backpressure;
     private readonly replayMaxEvents;
@@ -42,7 +40,18 @@ export declare class IngestionService {
     invalidateOrgQuotaCache(orgId: string): void;
     private resolveProject;
     private refreshQueueDepth;
-    /** Cached queue-depth probe (background refreshed at most every 1s). */
+    /**
+     * Cached queue-depth probe. Never awaits the probe: it returns the current
+     * snapshot immediately and kicks off a background refresh when stale, so the
+     * request path stays O(1).
+     *
+     * The TTL is configurable (INGESTION_QUEUE_DEPTH_CACHE_MS, default 3000ms)
+     * rather than the previous hardcoded 1000ms. The probe is a grouped scan over
+     * pgboss.job executed on the contended control pool, and it only feeds an
+     * ADVISORY shedding decision whose thresholds are 100k/250k jobs — a snapshot
+     * a couple of seconds old cannot change that verdict, so paying for it once
+     * per second per API process was wasted contention.
+     */
     private queueDepth;
     /**
      * Plan-aware shedding. At high water we shed anything below the business
@@ -70,7 +79,7 @@ export declare class IngestionService {
     /**
      * Public typed-ingestion entrypoint used by the data-driven route table
      * (route-table.ts). It is a thin pass-through to the single policy boundary
-     * `processIngest`, so API-key validation, quota checks, rate limits,
+     * `processIngest`, so API-key validation, quota checks, admission control,
      * backpressure, per-event type enforcement, and queue-priority math are never
      * duplicated per endpoint. A typed route accepts ONLY its declared event
      * family; any foreign event fails the whole batch with INVALID_EVENT_TYPE.
@@ -100,11 +109,12 @@ export declare class IngestionService {
     getHealth(): Promise<HealthStatus>;
     getIngestionHealth(): Promise<unknown>;
     getLimits(apiKey: string): Promise<{
-        perSecond: number;
-        perMinute: number;
+        enabled: boolean;
+        perSecond: null;
+        perMinute: null;
         maxBatchSize: number;
-        orgPerSecond: number;
-        orgPerMinute: number;
+        orgPerSecond: null;
+        orgPerMinute: null;
         planTier: PlanTier;
     }>;
     /**

@@ -386,10 +386,21 @@ export class IngestionService {
       });
   }
 
-  /** Cached queue-depth probe (background refreshed at most every 1s). */
+  /**
+   * Cached queue-depth probe. Never awaits the probe: it returns the current
+   * snapshot immediately and kicks off a background refresh when stale, so the
+   * request path stays O(1).
+   *
+   * The TTL is configurable (INGESTION_QUEUE_DEPTH_CACHE_MS, default 3000ms)
+   * rather than the previous hardcoded 1000ms. The probe is a grouped scan over
+   * pgboss.job executed on the contended control pool, and it only feeds an
+   * ADVISORY shedding decision whose thresholds are 100k/250k jobs — a snapshot
+   * a couple of seconds old cannot change that verdict, so paying for it once
+   * per second per API process was wasted contention.
+   */
   private async queueDepth(): Promise<IngestQueueDepthSnapshot> {
     const now = Date.now();
-    if (now - this.cachedDepthAt > 1000) {
+    if (now - this.cachedDepthAt > env.INGESTION_QUEUE_DEPTH_CACHE_MS) {
       this.refreshQueueDepth();
     }
     return this.cachedDepth;

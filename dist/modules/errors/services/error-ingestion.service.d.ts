@@ -3,6 +3,7 @@ import type { ErrorGroupingService } from './error-grouping.service.js';
 import type { ErrorRepository } from '../repositories/error.repository.js';
 import type { ErrorGroupEventRecord } from '../models/error-group.model.js';
 import type { UpsertErrorGroupParams, GroupMutationResult } from '../repositories/error-group.repository.js';
+import type { Logger } from 'pino';
 import type { WorkerMetrics } from '../../ingestion/workers/metrics-server.js';
 export interface IngestionResult {
     inserted: boolean;
@@ -17,7 +18,17 @@ export declare class ErrorIngestionService {
     private readonly errorGroupingService;
     private readonly errorRepository;
     private readonly metrics?;
-    constructor(pool: Pool, errorGroupingService: ErrorGroupingService, errorRepository: ErrorRepository, metrics?: WorkerMetrics | undefined);
+    /**
+     * Optional so existing callers and unit tests keep working unchanged. Used
+     * to surface the per-event grouping fallback, which is otherwise invisible.
+     */
+    private readonly log?;
+    constructor(pool: Pool, errorGroupingService: ErrorGroupingService, errorRepository: ErrorRepository, metrics?: WorkerMetrics | undefined, 
+    /**
+     * Optional so existing callers and unit tests keep working unchanged. Used
+     * to surface the per-event grouping fallback, which is otherwise invisible.
+     */
+    log?: Pick<Logger, "warn"> | undefined);
     ingestError(groupParams: UpsertErrorGroupParams, eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>): Promise<void>;
     private ingestErrorWithClient;
     private publishDomainEvents;

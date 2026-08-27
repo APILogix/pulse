@@ -15,9 +15,17 @@ export interface GroupMutationResult {
     isRegression: boolean;
     regressionCount?: number;
 }
+export interface BatchErrorGroupItem extends UpsertErrorGroupParams {
+    inputIndex: number;
+}
+export interface BatchErrorGroupResult {
+    inputIndex: number;
+    result: GroupMutationResult;
+}
 export declare class ErrorGroupRepository {
     private readonly pool;
     constructor(pool: Pool);
+    upsertGroupsBatch(client: PoolClient, items: BatchErrorGroupItem[]): Promise<BatchErrorGroupResult[]>;
     upsertGroup(client: PoolClient, params: UpsertErrorGroupParams): Promise<GroupMutationResult>;
     private updateExistingGroup;
     private lockByFingerprint;

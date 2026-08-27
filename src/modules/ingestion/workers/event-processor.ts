@@ -45,6 +45,7 @@ import {
   type PerTypeWriteStats,
   type ScopedEvent,
 } from '../pipeline/telemetry-writer.js';
+import { WriteAdmissionController, resolveWritePermits } from '../pipeline/write-admission.js';
 import { UsageCounter } from '../usage/usage-counter.js';
 import {
   INGEST_DLQ_INTAKE_QUEUE,
@@ -160,6 +161,29 @@ function errorCode(err: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+/**
+ * Identity of an event for outbox filtering: `(organization_id, event_id)`.
+ *
+ * Both sides of the comparison read the SAME raw values — `ScopedEvent.orgId` /
+ * `event.eventId` on one side and `eventRecord.organization_id` /
+ * `eventRecord.event_id` on the other, where the record fields were populated
+ * from exactly those scoped fields. No truncation or normalization is applied
+ * here on purpose: introducing any would risk a silent mismatch that drops
+ * legitimate outbox rows (a correctness bug in alert delivery).
+ *
+ * NUL is the separator because it cannot appear in a UUID or an SDK event id,
+ * so `(a, bc)` can never collide with `(ab, c)`.
+ */
+function outboxIdentityKey(orgId: string | null, eventId: string): string {
+  return `${orgId ?? ''}\u0000${eventId}`;
+}
+
+/** Raw SDK event id off a scoped event, matching what the error record stored. */
+function scopedEventId(scoped: ScopedEvent): string {
+  const value = (scoped.event as { eventId?: unknown }).eventId;
+  return typeof value === 'string' ? value : '';
+}
+
 function ingestionFailureClass(err: unknown): string {
   const code = errorCode(err);
   if (code === '55P03') return 'db_lock_timeout';
@@ -179,13 +203,40 @@ export class EventProcessor {
   private readonly writer: TelemetryWriter;
   private readonly usage: UsageCounter;
   private readonly errorIngestionService: ErrorIngestionService;
+  /**
+   * Bounds concurrent ingest transactions to the telemetry pool's real capacity.
+   *
+   * Without this, every pg-boss job handler races on `pool.connect()`. With the
+   * per-type worker fan-out (10 queues x localConcurrency x batchSize) demand
+   * exceeded the pool by more than an order of magnitude, so handlers spent
+   * their time in `pg`'s waiter list and the ones that exceeded
+   * `connectionTimeoutMillis` failed with a connection error — turning overload
+   * into retries and dead letters instead of just slower progress.
+   */
+  private readonly admission: WriteAdmissionController;
 
   constructor(
     private readonly pool: Pool,
     private readonly metrics: WorkerMetrics,
     private readonly log: Logger,
     usagePool: Pool = pool,
+    admission?: WriteAdmissionController,
   ) {
+    // Derive permits from the pool actually being written to, so the invariant
+    // "permits <= pool capacity" holds regardless of how the pool was built.
+    const poolMax = (pool as unknown as { options?: { max?: number } }).options?.max;
+    const permits = resolveWritePermits(
+      env.INGESTION_WRITE_CONCURRENCY,
+      typeof poolMax === 'number' && poolMax > 0 ? poolMax : env.INGESTION_WRITE_POOL_SIZE,
+    );
+    this.admission = admission ?? new WriteAdmissionController(permits);
+    // Optional-called: unit tests inject partial WorkerMetrics stubs, and metrics
+    // reporting must never be able to fail worker construction.
+    this.metrics.setWritePermits?.(permits);
+    log.info(
+      { writePermits: permits, telemetryPoolMax: poolMax ?? null, configured: env.INGESTION_WRITE_CONCURRENCY },
+      'ingest write admission configured',
+    );
     this.writer = new TelemetryWriter(pool, log);
     // The usage-rollup cron job is the ONLY rollup driver (driveRollup: false)
     // — this instance just drains tier-1 memory into usage_counter_staging.
@@ -198,7 +249,13 @@ export class EventProcessor {
     const errorGroupRepo = new ErrorGroupRepository(pool);
     const errorRepo = new ErrorRepository(pool);
     const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
-    this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics);
+    this.errorIngestionService = new ErrorIngestionService(
+      pool,
+      errorGroupingService,
+      errorRepo,
+      this.metrics,
+      log,
+    );
   }
 
   start(): void {
@@ -304,6 +361,15 @@ export class EventProcessor {
     let dbQueryMs = 0;
 
     if (scoped.length > 0) {
+      // ── Write admission ───────────────────────────────────────────────────
+      // Wait here (in memory, FIFO, no timeout) rather than on `pool.connect()`.
+      // The permit guarantees a pool connection is available, so
+      // `dbConnectionWaitMs` below now measures genuine pool behaviour instead
+      // of queueing, and `writeAdmissionWaitMs` isolates admission queueing as
+      // its own signal. Splitting the two is what makes saturation diagnosable:
+      // high admission wait = not enough write capacity; high connection wait
+      // = the pool itself is unhealthy.
+      await this.admission.run(async () => {
       const dbConnectionStartedAt = Date.now();
       const client = await this.pool.connect();
       timings.dbConnectionWaitMs = elapsedSince(dbConnectionStartedAt);
@@ -404,8 +470,31 @@ export class EventProcessor {
           errorDomainEvents = errorResult.domainEvents;
           if (result.totalInserted > 0) {
             const outboxStartedAt = Date.now();
-            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
+            // Only events the DB actually inserted may produce outbox rows.
+            // Previously the whole `scoped` array was passed, so a batch of
+            // 1 new + 99 redelivered duplicates built a 100-row UNNEST payload
+            // and attempted 100 `alert_runtime_idempotency_keys` inserts that
+            // were guaranteed to be swallowed by ON CONFLICT DO NOTHING. That
+            // is pure write amplification (heap + index + WAL) on the retry
+            // path, which is exactly when the system is already under stress.
+            // `errorResult.domainEvents` is populated once per INSERTED error,
+            // so it is the authoritative inserted set.
+            const insertedKeys = new Set(
+              errorResult.domainEvents.map((domainEvent) =>
+                outboxIdentityKey(
+                  domainEvent.eventRecord.organization_id,
+                  domainEvent.eventRecord.event_id,
+                ),
+              ),
+            );
+            const insertedScoped = scoped.filter((candidate) =>
+              insertedKeys.has(outboxIdentityKey(candidate.orgId, scopedEventId(candidate))),
+            );
+            result.outboxInserted = insertedScoped.length > 0
+              ? await this.writer.appendTelemetryOutbox(insertedScoped, client)
+              : 0;
             timings.outboxMs = elapsedSince(outboxStartedAt);
+            timings.outboxRowsSkippedDuplicate = scoped.length - insertedScoped.length;
           }
         } else {
           const insertStartedAt = Date.now();
@@ -459,6 +548,11 @@ export class EventProcessor {
         restoreQuery();
         client.release();
       }
+      }, (waitedMs) => {
+        timings.writeAdmissionWaitMs = waitedMs;
+        const { inFlight, queued } = this.admission.stats();
+        this.metrics.setWriteAdmission?.(inFlight, queued);
+      });
     }
 
     if (result.totalInserted > 0) {

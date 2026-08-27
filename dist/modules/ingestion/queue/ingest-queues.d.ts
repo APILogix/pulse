@@ -126,11 +126,15 @@ export interface IngestQueueDepthSnapshot {
 }
 /**
  * Queue depth probe. pg-boss v12 exposes no public size API, so we read the
- * job table directly — one grouped scan. Callers (gateway) cache the result
- * at ~1s granularity so the request path stays O(1).
+ * job table directly — one partition-pruned grouped scan.
+ *
+ * This runs on the CONTENDED control pool, so its cost and frequency both
+ * matter. Callers cache the result (gateway: INGESTION_QUEUE_DEPTH_CACHE_MS,
+ * metrics server: DEPTH_CACHE_MS) so the request path stays O(1) and never
+ * awaits this probe.
  */
 export declare function ingestQueueDepth(pool: {
-    query: (sql: string) => Promise<{
+    query: (sql: string, params?: unknown[]) => Promise<{
         rows: Array<{
             name: string;
             state: string;

@@ -1,0 +1,471 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Create `scripts/lib/ingestion-evidence.ts` — the provenance envelope": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807679853
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807723353
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808691176
+      }
+    ],
+    "1.4 Create `scripts/lib/aggregate.ts` — run aggregation, validity filtering, knee selection": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807679880
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807724740
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808692147
+      }
+    ],
+    "1.7 Create `scripts/lib/statement-counter.ts` — server-statement counting": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807679910
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807726183
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808693540
+      }
+    ],
+    "1.9 Create the evidence artifact directory and exclude it from the diff boundary": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807679945
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807727587
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808694940
+      }
+    ],
+    "2.1 Extend `scripts/audit-ingestion-db-schema.ts` with usage, storage and autovacuum readings": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807679975
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807728642
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808697109
+      }
+    ],
+    "2.2 Correct the audited table set and reuse the prior-phase removed-index list": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680009
+      }
+    ],
+    "2.3 Create `scripts/lib/query-path-scan.ts` and wire `--query-path-scan` into the audit script": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680038
+      }
+    ],
+    "2.5 Create `scripts/lib/index-inventory.ts` — inventory generator, redundancy detection, disposition gate": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680067
+      }
+    ],
+    "3.1 Add 1 Hz sampling mode to `scripts/diagnose-ingestion-db-runtime.ts`": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680097
+      }
+    ],
+    "3.2 Create `scripts/lib/pg-stat-statements.ts` — capability probe, scoped reset, delta capture": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680135
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808959053
+      }
+    ],
+    "3.3 Extend `scripts/explain-ingestion-writes.ts` with WAL extraction and the environment guard": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680163
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808959995
+      }
+    ],
+    "3.4 Extend `scripts/bench-ingestion-worker.ts` with windows, repetitions, WAL and mix control": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680194
+      }
+    ],
+    "3.5 Add the `phase2` preset to `scripts/run-ingestion-benchmark-matrix.ts`": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680227
+      }
+    ],
+    "3.6 Create `scripts/measure-ingestion-index-cost.ts` — the only DDL-executing harness": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680263
+      }
+    ],
+    "4.1 Extend `scripts/validate-ingestion-evidence-bundle.ts` into the Requirement 17.4 gate": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680297
+      }
+    ],
+    "4.2 Create `scripts/lib/change-set.ts` — the Phase_2_Change_Set ledger and rank gate": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680324
+      }
+    ],
+    "5. Checkpoint — instrumentation complete, guarded paths untouched": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680359
+      }
+    ],
+    "6.1 Create `scripts/capture-ingestion-baseline.ts` — the baseline runner": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680392
+      }
+    ],
+    "6.2 Execute the baseline runner and validate the bundle": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680427
+      }
+    ],
+    "6.3 Capture the pre-change Regression_Suite pass list": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680464
+      }
+    ],
+    "6.4 Promote the bench environment allowlist into `src/config/env.ts`": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680492
+      }
+    ],
+    "7.1 Generate the Write_Path_Map": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680517
+      }
+    ],
+    "7.2 Execute the Index_Inventory and GIN forensics collection": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680549
+      }
+    ],
+    "7.3 Execute the index-present versus index-absent INSERT measurements": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680581
+      }
+    ],
+    "7.4 Generate the Trigger_Inventory with the `RETURNING` branch probe": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680615
+      }
+    ],
+    "7.5 Execute the trigger-cost and sequence-advance measurements": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680645
+      }
+    ],
+    "7.6 Generate the public identifier, sequence and default analysis": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680681
+      }
+    ],
+    "7.7 Execute the INSERT and statement cost attribution": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680715
+      }
+    ],
+    "7.8 Execute the transaction, WAL and COMMIT attribution": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680746
+      }
+    ],
+    "7.9 Execute the error-ingestion statement count measurement and classification": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680782
+      }
+    ],
+    "7.10 Execute the storage and autovacuum analysis": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680813
+      }
+    ],
+    "7.11 Execute the batch size sweep": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680852
+      }
+    ],
+    "7.12 Execute the cross-signal interference comparison": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680886
+      }
+    ],
+    "7.13 Execute the multi-tenant fairness measurement": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680917
+      }
+    ],
+    "7.14 Compute and validate the memory bound": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680949
+      }
+    ],
+    "7.15 Execute the write amplification accounting": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807680977
+      }
+    ],
+    "7.16 Rank the bottlenecks and assign P0/P1/P2": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681004
+      }
+    ],
+    "8. Checkpoint — forensics complete before any remediation": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681032
+      }
+    ],
+    "9.1 Add the `public_id` CHECK constraints migration and its down file": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681055
+      }
+    ],
+    "9.2 Add the `db_constraint_violation` failure class for SQLSTATE 23514": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681082
+      }
+    ],
+    "10.11 Write the ten-signal round-trip integration test": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681111
+      }
+    ],
+    "10.12 Write the retry, acknowledgement, usage and correlation assertions": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681137
+      }
+    ],
+    "10.13 Write the boot-guard and backpressure example unit tests": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681170
+      }
+    ],
+    "11. Checkpoint — P0 complete and Regression_Suite green before any P1 change": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681198
+      }
+    ],
+    "12.7 Capture and compare removed-index result-set parity": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681231
+      }
+    ],
+    "13.1 Write the fresh-versus-migrated parity integration test": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681261
+      }
+    ],
+    "13.3 Write the `.down.sql` convention conformance test": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681296
+      }
+    ],
+    "14. Checkpoint — P1 complete and Regression_Suite green before P2": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681335
+      }
+    ],
+    "15.1 Re-measure with the identical commands and environment": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681367
+      }
+    ],
+    "15.2 Generate the Forensic_Report with its 23 sections": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681402
+      }
+    ],
+    "15.3 Emit the machine-checkable report index and wire it into the gate": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681439
+      }
+    ],
+    "15.4 Write the verdict section": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681473
+      }
+    ],
+    "15.5 Record the Phase_1_Protections status table": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681506
+      }
+    ],
+    "15.6 Run the post-change Regression_Suite and compare pass lists": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681533
+      }
+    ],
+    "15.7 Add the modified-file boundary check": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681566
+      }
+    ],
+    "15.8 Write the closeout smoke checks": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681600
+      }
+    ],
+    "16. Final checkpoint": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787807681635
+      }
+    ],
+    "1. Shared measurement modules under `scripts/lib/` (pre-baseline safe)": [
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787808694959
+      }
+    ]
+  }
+}

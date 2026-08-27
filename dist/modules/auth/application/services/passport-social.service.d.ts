@@ -1,4 +1,3 @@
-import { Authenticator } from '@fastify/passport';
 import type { FastifyInstance } from 'fastify';
 import type { LinkableProvider } from '../../infrastructure/config/identity-link.config.js';
 export interface PassportSocialProfile {
@@ -9,6 +8,6 @@ export interface PassportSocialProfile {
     profileMetadata: Record<string, unknown>;
     avatarUrl: string | null;
 }
-export declare const socialPassport: Authenticator;
+export declare const socialPassport: any;
 export declare function registerPassportSocialAuth(fastify: FastifyInstance): Promise<void>;
 //# sourceMappingURL=passport-social.service.d.ts.map

@@ -428,12 +428,42 @@ export function errorNameOf(event: NormalizedEvent): string {
 }
 
 /**
+ * Per-event memoization of the storage fingerprint.
+ *
+ * `errorFingerprint` is called at least TWICE for every error event on the hot
+ * path — once in EventProcessor while building the error batch (feeding both
+ * `groupParams.fingerprint` and `eventRecord.fingerprint`) and again inside
+ * `appendTelemetryOutbox` when composing the outbox attributes — and a third
+ * time in `writeErrors` on the non-grouped path. Each call normalizes the stack
+ * frame array and runs a sha256, which is pure CPU burned on the event loop of
+ * the process that is also supposed to be draining queues.
+ *
+ * A WeakMap keyed on the event object gives exact-once computation per event
+ * with no lifetime management: entries become collectable the moment the batch
+ * is released. Keyed on the object identity rather than a derived string so
+ * there is zero risk of a hash collision changing a fingerprint.
+ *
+ * Correctness note: this is only sound because normalized events are treated as
+ * immutable after `normalizeEvent()`. The one mutation that does occur —
+ * assigning `eventId` in EventProcessor — is not an input to the fingerprint
+ * (which reads only `name` and `stack`), so it cannot invalidate a cached value.
+ */
+const fingerprintCache = new WeakMap<object, string>();
+
+/**
  * Storage fingerprint for an error event (shared with the error grouper so
  * events_errors.fingerprint and analytics_error_groups.fingerprint agree).
  */
 export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf(event)): string {
   const e = event as Extract<NormalizedEvent, { type: 'error' }>;
-  return computeErrorFingerprint(errorName, e.stack);
+  if (typeof event !== 'object' || event === null) {
+    return computeErrorFingerprint(errorName, e.stack);
+  }
+  const cached = fingerprintCache.get(event);
+  if (cached !== undefined) return cached;
+  const fingerprint = computeErrorFingerprint(errorName, e.stack);
+  fingerprintCache.set(event, fingerprint);
+  return fingerprint;
 }
 
 /** Build a parameterized multi-row INSERT. JSONB values are passed as JSON text
@@ -442,6 +472,65 @@ export function errorFingerprint(event: NormalizedEvent, errorName = errorNameOf
  * against the (project_id, event_id) identity indexes. PostgreSQL rowCount is
  * still the inserted-row count, so hot-path inserts avoid RETURNING unless a
  * caller needs returned identity data. */
+/**
+ * PostgreSQL's wire protocol encodes the bind-parameter count as a signed
+ * 16-bit integer, so a single statement can carry at most 65535 parameters.
+ * Exceeding it is not a slow query — the statement is rejected outright.
+ */
+const PG_MAX_BIND_PARAMS = 65535;
+
+/**
+ * Insert `rows` using as few multi-row statements as the bind-parameter limit
+ * allows, returning the total inserted count.
+ *
+ * ## Why this is needed
+ *
+ * Most event types are 1 event -> 1 row, so a job capped at
+ * INGESTION_JOB_CHUNK_SIZE (200) events can never approach the parameter limit
+ * (200 x ~67 cols = ~13.4k params, ~5x headroom).
+ *
+ * Trace ingestion is the exception: it is 1 event -> N rows. `writeTraceSpanTree`
+ * flattens each trace's span tree recursively with no cap, and the normalizer
+ * permits a declared `spanCount` up to LIMITS.maxTraceSpanCount (10,000). With
+ * `events_spans` at 67 columns the ceiling is floor(65535/67) = 978 rows, so:
+ *
+ *   - one trace with >= 978 spans, OR
+ *   - 200 traces averaging >= 5 spans (200 x 5 = 1000 > 978)
+ *
+ * would emit a single INSERT that PostgreSQL refuses. Five spans per trace is
+ * entirely ordinary, so this was reachable with realistic production traffic.
+ * The failure surfaces as a rejected statement, which fails the job, burns its
+ * three retries, and dead-letters the batch — losing the traces.
+ *
+ * Chunking preserves set-based batching (normal batches still emit exactly one
+ * statement) and stays inside the caller's transaction, so atomicity is
+ * unchanged: either every chunk commits or the transaction rolls back.
+ */
+async function insertChunked(
+  db: Queryable,
+  table: string,
+  cols: string[],
+  rows: unknown[][],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const maxRowsPerStatement = Math.max(1, Math.floor(PG_MAX_BIND_PARAMS / cols.length));
+
+  // Common case: the whole batch fits in one statement.
+  if (rows.length <= maxRowsPerStatement) {
+    const { text, values } = buildInsert(table, cols, rows);
+    const res = await db.query(text, values);
+    return res.rowCount ?? 0;
+  }
+
+  let inserted = 0;
+  for (let offset = 0; offset < rows.length; offset += maxRowsPerStatement) {
+    const { text, values } = buildInsert(table, cols, rows.slice(offset, offset + maxRowsPerStatement));
+    const res = await db.query(text, values);
+    inserted += res.rowCount ?? 0;
+  }
+  return inserted;
+}
+
 function buildInsert(table: string, cols: string[], rows: unknown[][], returning?: string): { text: string; values: unknown[] } {
   const values: unknown[] = [];
   const tuples: string[] = [];
@@ -1062,7 +1151,10 @@ export class TelemetryWriter {
       this.collectTraceSpanRows(scoped, e.rootSpan, null, 0, ts, rows);
     }
     if (rows.length === 0) return;
-    const { text, values } = buildInsert(
+    // Chunked: this is the only 1-event -> N-rows writer, so it is the only one
+    // that can exceed PG_MAX_BIND_PARAMS. See insertChunked() for the arithmetic.
+    await insertChunked(
+      db,
       'events_spans',
       ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
        'name', 'span_kind', 'span_type', 'span_status', 'message', 'endpoint',
@@ -1079,7 +1171,6 @@ export class TelemetryWriter {
        'sdk_name', 'sdk_version', 'metadata', 'payload'],
       rows,
     );
-    await db.query(text, values);
   }
 
   private collectTraceSpanRows(

@@ -15,12 +15,19 @@ This hub links directly to the detailed **Architecture**, **Working & Operations
 
 ---
 
+## 🔬 Performance Forensics
+
+- [Ingestion Pipeline Performance Forensics & Optimization Record](./ingestion-performance-forensics.md) — root-cause analysis of ingestion latency (connection starvation, transaction hold time, lock ordering, write amplification), the changes implemented, and the remaining bottleneck ranking.
+
+---
+
 ## 🚀 Production Deployment Runbooks
 
 - [Production Deployment & PM2 Orchestration Guide](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/deployment/production-deployment-guide.md)
 - [Docker & Container Architecture Guide](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/deployment/docker-and-compose.md)
 - [Database Operations, Migrations & Maintenance Runbook](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/deployment/database-operations.md)
 - [Environment Variables & Connection Pool Sizing Reference](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/deployment/environment-configuration.md)
+- [Scaling & Neon Plan Upgrade Runbook](./deployment/scaling-and-plan-upgrade-runbook.md) — pool inventory, the `min(max, 8 × min)` compute formula, connection-budget calculator, and the backend changes required before adding instances.
 
 ---
 
@@ -40,6 +47,8 @@ This hub links directly to the detailed **Architecture**, **Working & Operations
 | Module | Architecture Doc | Working Doc | Benchmark Doc | Future Updates Doc |
 | :--- | :--- | :--- | :--- | :--- |
 | **Ingestion** | [Architecture](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/ingestion/architecture.md) | [Working](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/ingestion/working.md) | [Benchmark](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/ingestion/benchmark.md) | [Future Updates](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/ingestion/future_updation.md) |
+| ↳ **Full Pipeline Flow** | [Complete end-to-end lifecycle — HTTP arrival, 9-step gateway admission, durability boundary, queue, worker gates, transaction, ACK, failure paths](./modules/ingestion/full-pipeline-flow.md) | | | |
+| ↳ **Event Pipeline & Batching** | [How events are inserted — batching at all 4 stages, per-type insert reference, statement counts](./modules/ingestion/event-pipeline-and-batching.md) | | | |
 | **Analytics (v1)** | [Architecture](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics/architecture.md) | [Working](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics/working.md) | [Benchmark](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics/benchmark.md) | [Future Updates](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics/future_updation.md) |
 | **Analytics Engine (v2)** | [Architecture](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics-engine/architecture.md) | [Working](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics-engine/working.md) | [Benchmark](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics-engine/benchmark.md) | [Future Updates](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/analytics-engine/future_updation.md) |
 | **Observability & APM** | [Architecture](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/observability/architecture.md) | [Working](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/observability/working.md) | [Benchmark](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/observability/benchmark.md) | [Future Updates](file:///c:/Users/vikas/OneDrive/Desktop/SaasBackend/pulse/docs/modules/observability/future_updation.md) |

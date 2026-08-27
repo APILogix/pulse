@@ -156,6 +156,8 @@ declare const envSchema: z.ZodObject<{
     INGESTION_LOG_DB_LOCK_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_WRITE_POOL_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_WRITE_CONCURRENCY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     MAX_QUEUE_DEPTH: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     MAX_GAUGE_AGE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -184,6 +186,7 @@ declare const envSchema: z.ZodObject<{
     INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_TYPE_WORKER_CONCURRENCY: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_TYPE_WORKER_BATCH_SIZE: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
+    INGESTION_QUEUE_DEPTH_CACHE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_WORKER_METRICS_PORT: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     INGESTION_USAGE_ROLLUP_CRON: z.ZodDefault<z.ZodString>;
     INGESTION_ALERT_EVAL_CRON: z.ZodDefault<z.ZodString>;
@@ -334,6 +337,8 @@ export declare const env: {
     INGESTION_LOG_DB_LOCK_TIMEOUT_MS: number;
     INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: number;
     INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: number;
+    INGESTION_WRITE_POOL_SIZE: number;
+    INGESTION_WRITE_CONCURRENCY: number;
     INGESTION_FAST_REQUEST_MIN_DURATION_MS: number;
     MAX_QUEUE_DEPTH: number;
     MAX_GAUGE_AGE_MS: number;
@@ -361,6 +366,7 @@ export declare const env: {
     INGESTION_FAIRNESS_DEFER_DELAY_SECONDS: number;
     INGESTION_TYPE_WORKER_CONCURRENCY: number;
     INGESTION_TYPE_WORKER_BATCH_SIZE: number;
+    INGESTION_QUEUE_DEPTH_CACHE_MS: number;
     INGESTION_WORKER_METRICS_PORT: number;
     INGESTION_USAGE_ROLLUP_CRON: string;
     INGESTION_ALERT_EVAL_CRON: string;
