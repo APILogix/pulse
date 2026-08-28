@@ -45,11 +45,13 @@ function clientWithQueries() {
     return {
         query: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
         release: vi.fn(),
+        processID: 4242,
     };
 }
 function poolWithClient(client) {
     return {
         connect: vi.fn().mockResolvedValue(client),
+        query: vi.fn().mockResolvedValue({ rows: [{ cancelled: true }], rowCount: 1 }),
     };
 }
 function logger() {
@@ -106,6 +108,15 @@ function requestEvent(index) {
         latency: 12,
     };
 }
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
 describe('EventProcessor failure and idempotency behavior', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -160,6 +171,7 @@ describe('EventProcessor failure and idempotency behavior', () => {
         expect(client.query).toHaveBeenCalledWith("SET LOCAL synchronous_commit = on; SET LOCAL lock_timeout = '2000ms'; SET LOCAL idle_in_transaction_session_timeout = '30000ms'");
         expect(client.query).toHaveBeenCalledWith('COMMIT');
         expect(mocks.usageIncrement).not.toHaveBeenCalled();
+        expect(mocks.writerAppendTelemetryOutbox).not.toHaveBeenCalled();
         expect(result).toMatchObject({
             received: 2,
             inserted: 0,
@@ -205,6 +217,198 @@ describe('EventProcessor failure and idempotency behavior', () => {
         });
         expect(workerMetrics.recordStage).toHaveBeenCalledWith('perType.request.durationMs', 'request', 19);
         expect(workerMetrics.recordProcessed).toHaveBeenCalledWith('ingest.request', 'request', 2, 1, 1, expect.any(Number), expect.any(Number), expect.any(Number));
+    });
+    it('uses metadata.receivedAt as the retry-stable timestamp and identity clock', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const workerMetrics = metrics();
+        const receivedAt = '2026-08-24T00:00:00.000Z';
+        const receivedAtMs = Date.parse(receivedAt);
+        const job = payload([{
+                type: 'request',
+                requestId: 'stable-request',
+                timestamp: '2035-01-01T00:00:00.000Z',
+                method: 'GET',
+                url: '/stable',
+                statusCode: 200,
+                latency: 12,
+            }], {
+            metadata: {
+                ...payload([]).metadata,
+                receivedAt,
+            },
+        });
+        mocks.writerWriteBatchDetailedInTransaction.mockResolvedValue({
+            totalReceived: 1,
+            totalInserted: 0,
+            perType: { request: { received: 1, inserted: 0, durationMs: 1 } },
+            insertedErrors: [],
+        });
+        const processor = new EventProcessor(pool, workerMetrics, logger(), pool);
+        await processor.process(job, 'ingest.request');
+        await processor.process(job, 'ingest.request');
+        const first = mocks.writerWriteBatchDetailedInTransaction.mock.calls[0]?.[1]?.[0];
+        const second = mocks.writerWriteBatchDetailedInTransaction.mock.calls[1]?.[1]?.[0];
+        expect(first.occurredAtMs).toBe(receivedAtMs);
+        expect(first.event.timestamp).toBe(receivedAtMs);
+        expect(second.occurredAtMs).toBe(receivedAtMs);
+        expect(second.event.eventId).toBe(first.event.eventId);
+    });
+    it('rejects a missing or malformed durable receipt clock before pool checkout', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const processor = new EventProcessor(pool, metrics(), logger(), pool);
+        const invalid = payload([requestEvent(1)], {
+            metadata: { ...payload([]).metadata, receivedAt: 'not-a-timestamp' },
+        });
+        await expect(processor.process(invalid, 'ingest.request')).rejects.toThrow('INVALID_RECEIVED_AT');
+        expect(pool.connect).not.toHaveBeenCalled();
+        expect(mocks.pgbossSend).not.toHaveBeenCalled();
+    });
+    it('rejects an already-aborted pg-boss job before any side effect', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const processor = new EventProcessor(pool, metrics(), logger(), pool);
+        const abort = new AbortController();
+        abort.abort(new Error('handler expired'));
+        await expect(processor.process(payload([requestEvent(1)]), 'ingest.request', abort.signal)).rejects.toMatchObject({ code: 'INGESTION_JOB_ABORTED' });
+        expect(pool.connect).not.toHaveBeenCalled();
+        expect(mocks.pgbossSend).not.toHaveBeenCalled();
+        expect(mocks.writerWriteBatchDetailedInTransaction).not.toHaveBeenCalled();
+    });
+    it('removes an expired job from write admission without checking out a connection', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const { WriteAdmissionController } = await import('../pipeline/write-admission.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const admission = new WriteAdmissionController(1);
+        const gate = deferred();
+        const holder = admission.run(async () => gate.promise);
+        await vi.waitFor(() => expect(admission.stats().inFlight).toBe(1));
+        const processor = new EventProcessor(pool, metrics(), logger(), pool, admission);
+        const abort = new AbortController();
+        const processing = processor.process(payload([requestEvent(1)]), 'ingest.request', abort.signal);
+        await vi.waitFor(() => expect(admission.stats().queued).toBe(1));
+        abort.abort(new Error('handler expired while queued'));
+        await expect(processing).rejects.toMatchObject({ code: 'INGESTION_JOB_ABORTED' });
+        expect(pool.connect).not.toHaveBeenCalled();
+        expect(admission.stats()).toEqual({ permits: 1, inFlight: 1, queued: 0 });
+        gate.resolve(undefined);
+        await holder;
+        expect(admission.stats()).toEqual({ permits: 1, inFlight: 0, queued: 0 });
+    });
+    it('releases a pool checkout that arrives after connection-wait cancellation', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const checkout = deferred();
+        pool.connect.mockReturnValueOnce(checkout.promise);
+        const processor = new EventProcessor(pool, metrics(), logger(), pool);
+        const abort = new AbortController();
+        const processing = processor.process(payload([requestEvent(1)]), 'ingest.request', abort.signal);
+        await vi.waitFor(() => expect(pool.connect).toHaveBeenCalledTimes(1));
+        abort.abort(new Error('expired during pool checkout'));
+        await expect(processing).rejects.toMatchObject({ code: 'INGESTION_JOB_ABORTED' });
+        checkout.resolve(client);
+        await vi.waitFor(() => expect(client.release).toHaveBeenCalledTimes(1));
+        expect(mocks.writerWriteBatchDetailedInTransaction).not.toHaveBeenCalled();
+    });
+    it('cancels the active backend, rolls back, and releases its client when expiry fires mid-transaction', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const activeInsert = deferred();
+        const cancelled = Object.assign(new Error('canceling statement due to user request'), { code: '57014' });
+        const querySpy = client.query;
+        querySpy.mockImplementation((sql) => {
+            if (sql === 'INSERT INTO cancellation_probe DEFAULT VALUES')
+                return activeInsert.promise;
+            return Promise.resolve({ rows: [], rowCount: 0 });
+        });
+        pool.query.mockImplementation(async (sql, values) => {
+            if (sql.includes('pg_cancel_backend'))
+                activeInsert.reject(cancelled);
+            return { rows: [{ cancelled: true }], rowCount: 1, values };
+        });
+        mocks.writerWriteBatchDetailedInTransaction.mockImplementationOnce(async (db) => {
+            await db.query('INSERT INTO cancellation_probe DEFAULT VALUES');
+            return {
+                totalReceived: 1,
+                totalInserted: 1,
+                perType: { request: { received: 1, inserted: 1, durationMs: 1 } },
+                insertedErrors: [],
+            };
+        });
+        const log = logger();
+        const processor = new EventProcessor(pool, metrics(), log, pool);
+        const abort = new AbortController();
+        const processing = processor.process(payload([requestEvent(1)]), 'ingest.request', abort.signal);
+        await vi.waitFor(() => {
+            expect(querySpy).toHaveBeenCalledWith('INSERT INTO cancellation_probe DEFAULT VALUES');
+        });
+        abort.abort(new Error('handler execution exceeded 300s'));
+        await expect(processing).rejects.toMatchObject({
+            name: 'AbortError',
+            code: 'INGESTION_JOB_ABORTED',
+        });
+        expect(pool.query).toHaveBeenCalledWith('SELECT pg_cancel_backend($1)::boolean AS cancelled', [4242]);
+        expect(querySpy).toHaveBeenCalledWith('ROLLBACK');
+        expect(querySpy).not.toHaveBeenCalledWith('COMMIT');
+        expect(client.release).toHaveBeenCalledTimes(1);
+        expect(mocks.usageIncrement).not.toHaveBeenCalled();
+        expect(log.error).toHaveBeenCalledWith(expect.objectContaining({
+            failureClass: 'job_aborted',
+            sqlState: '57014',
+        }), 'ingestion batch transaction failed');
+    });
+    it('accounts committed inserts when expiry races but COMMIT reports success', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const abort = new AbortController();
+        client.query.mockImplementation((sql) => {
+            if (sql === 'COMMIT')
+                abort.abort(new Error('expiry raced with commit completion'));
+            return Promise.resolve({ rows: [], rowCount: 0 });
+        });
+        mocks.writerWriteBatchDetailedInTransaction.mockResolvedValueOnce({
+            totalReceived: 1,
+            totalInserted: 1,
+            perType: { request: { received: 1, inserted: 1, durationMs: 1 } },
+            insertedErrors: [],
+        });
+        mocks.writerAppendTelemetryOutbox.mockResolvedValueOnce(1);
+        const processor = new EventProcessor(pool, metrics(), logger(), pool);
+        await expect(processor.process(payload([requestEvent(1)]), 'ingest.request', abort.signal)).resolves.toMatchObject({ inserted: 1, outboxInserted: 1 });
+        expect(mocks.usageIncrement).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111', 'billing:events:request', 1);
+        expect(client.release).toHaveBeenCalledTimes(1);
+    });
+    it('routes an actual-node oversized trace to validation DLQ before pool checkout', async () => {
+        const { EventProcessor } = await import('./event-processor.js');
+        const client = clientWithQueries();
+        const pool = poolWithClient(client);
+        const processor = new EventProcessor(pool, metrics(), logger(), pool);
+        const children = Array.from({ length: 10_000 }, (_, index) => ({
+            id: `child-${index}`,
+            name: `child ${index}`,
+        }));
+        mocks.pgbossSend.mockResolvedValueOnce('dlq-trace');
+        const job = payload([{
+                type: 'trace',
+                traceId: 'oversized-trace',
+                spanCount: 1,
+                rootSpan: { id: 'root', name: 'root', children },
+            }], { eventType: 'trace' });
+        const result = await processor.process(job, 'ingest.trace');
+        expect(result).toMatchObject({ received: 1, validated: 0, rejected: 1, inserted: 0 });
+        expect(pool.connect).not.toHaveBeenCalled();
+        expect(mocks.pgbossSend).toHaveBeenCalledWith('ingest.dlq-intake', expect.objectContaining({
+            sourceQueue: 'ingest.trace',
+            payload: [expect.objectContaining({ detail: expect.stringContaining('maximum node count 10000') })],
+        }), {});
     });
 });
 //# sourceMappingURL=event-processor.test.js.map

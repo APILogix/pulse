@@ -23,7 +23,7 @@ import { ConnectorService } from './service.js';
 import { ConnectorMonitor } from './monitor.js';
 import { connectorRoutes } from './routes.js';
 import { slackConnectorRoutes } from './providers/slack/slack.routes.js';
-import { CONNECTOR_JOBS } from './job.constants.js';
+import { CONNECTOR_JOBS, CONNECTOR_TRANSPORT_QUEUE_PREFIX } from './job.constants.js';
 import { env } from '../../config/env.js';
 import './registry.js'; // ensure built-in connector types register at boot
 
@@ -66,7 +66,7 @@ async function connectorsModule(
       }
 
       let expireInSeconds = 60; // fallback
-      if (queue.startsWith(CONNECTOR_JOBS.send)) {
+      if (queue.startsWith(CONNECTOR_TRANSPORT_QUEUE_PREFIX)) {
         expireInSeconds = env.CONNECTOR_SEND_EXPIRE_SECONDS;
       } else if (queue === CONNECTOR_JOBS.healthCheck) {
         expireInSeconds = env.CONNECTOR_HEALTH_EXPIRE_SECONDS;

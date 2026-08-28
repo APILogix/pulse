@@ -9,6 +9,11 @@ import { writeFile } from 'fs/promises';
 import type { Pool } from 'pg';
 import { pool as primaryPool, closeDatabase } from '../src/config/database.js';
 import { logDB } from '../src/config/log-database.js';
+import {
+  GLOSSARY_GUARD_INDEXES,
+  INGESTION_TABLE_SET,
+  PRIOR_PHASE_INDEX_REMOVALS,
+} from './lib/ingestion-catalog-scope.js';
 
 type OutputFormat = 'markdown' | 'json';
 
@@ -218,25 +223,73 @@ interface AuditOutputV2 extends AuditOutput {
   tableStorage: TableStorageRow[];
   toastRelations: ToastRow[];
   autovacuumSettings: ReloptionRow[];
+  glossaryGuardIndexes: GuardIndexRow[];
+  priorPhaseIndexRemovals: PriorPhaseIndexRemovalRow[];
 }
 
-const defaultTables = [
-  'events_requests',
-  'events_errors',
-  'events_logs',
-  'events_metrics',
-  'events_spans',
-  'events_traces',
-  'events_messages',
-  'events_profiles',
-  'events_replays',
-  'events_cron_checkins',
-  'telemetry_outbox',
-  'alert_runtime_idempotency_keys',
-  'error_groups',
-  'analytics_error_groups',
-  'ingestion_dead_letter_jobs',
-];
+/**
+ * The catalog reading's verdict on one object the forensics expects to find, or
+ * expects to be gone. `unconfirmed` exists because "the name is not in this
+ * reading" and "the name is gone from the database" are different claims: if the
+ * owning table was never audited, or is itself absent, an absent index name
+ * proves nothing.
+ */
+type CatalogConfirmation =
+  | { status: 'confirmed_absent'; detail: string }
+  | { status: 'still_present'; detail: string }
+  | { status: 'confirmed_present'; detail: string }
+  | { status: 'missing'; detail: string }
+  | { status: 'unconfirmed'; reason: string };
+
+/**
+ * Requirement 4.11: each index already removed by `025`, `028` or `029`,
+ * recorded with its table, name, originating migration file, a prior-phase
+ * `REMOVE` disposition, and the confirmation from this catalog reading that the
+ * name is absent from the measured environment.
+ */
+interface PriorPhaseIndexRemovalRow {
+  table_name: string;
+  index_name: string;
+  originating_migration_file: string;
+  disposition: 'REMOVE';
+  priorPhase: true;
+  /** The table was in the audited set for this run. */
+  owning_table_requested: boolean;
+  /** The table came back from the catalog reading. */
+  owning_table_present: boolean;
+  absent_from_catalog: boolean;
+  catalogConfirmation: CatalogConfirmation;
+}
+
+/**
+ * A glossary term that names an index rather than a relation, resolved against
+ * the catalog so the Index_Inventory records a real object. Requirement 4.9
+ * forbids `REMOVE` and `MOVE_TO_DERIVED` on every entry listed here.
+ */
+interface GuardIndexRow {
+  glossary_term: string;
+  table_name: string;
+  index_name: string;
+  originating_migration_file: string;
+  columns: string[];
+  requirements: string[];
+  origin_note: string;
+  owning_table_requested: boolean;
+  owning_table_present: boolean;
+  present_in_catalog: boolean;
+  is_unique: boolean | null;
+  index_def: string | null;
+  disposition: 'KEEP';
+  catalogConfirmation: CatalogConfirmation;
+}
+
+/**
+ * Requirement 4.1 audited scope. The glossary also lists
+ * `events_errors_idempotency` in the Ingestion_Table_Set; it is an index, not a
+ * relation, and is recorded through `glossaryGuardIndexes` instead of being
+ * requested here as a table that does not exist.
+ */
+const defaultTables = [...INGESTION_TABLE_SET];
 
 function tableFilterSql(alias: string): string {
   return `(${alias}.nspname = 'public' AND ${alias === 'n' ? 'c' : alias}.relname = ANY($1::text[]))
@@ -362,6 +415,12 @@ function renderReadUsage(readUsage: IndexReadUsage): string {
     : String(readUsage.indexScans);
 }
 
+function renderConfirmation(confirmation: CatalogConfirmation): string {
+  return confirmation.status === 'unconfirmed'
+    ? `unconfirmed (${confirmation.reason})`
+    : `${confirmation.status} (${confirmation.detail})`;
+}
+
 function renderMarkdown(audit: AuditOutputV2): string {
   const lines = [
     '# Ingestion Database Schema Audit',
@@ -437,6 +496,44 @@ function renderMarkdown(audit: AuditOutputV2): string {
       row.attached_idx_scan ?? 'unavailable',
       row.total_idx_scan ?? 'unavailable',
       row.parent_stat_present,
+    ].map(renderCell).join(' | ')} |`),
+    '',
+    '## Glossary Guard Indexes',
+    '',
+    'Glossary terms in the Ingestion_Table_Set that name an index rather than a relation, resolved against this catalog reading.',
+    '',
+    '| Glossary term | Table | Index | Origin migration | Columns | Requirements | Unique | Present | Disposition | Confirmation |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...audit.glossaryGuardIndexes.map((row) => `| ${[
+      row.glossary_term,
+      row.table_name,
+      row.index_name,
+      row.originating_migration_file,
+      row.columns,
+      row.requirements,
+      row.is_unique ?? 'unavailable',
+      row.present_in_catalog,
+      row.disposition,
+      renderConfirmation(row.catalogConfirmation),
+    ].map(renderCell).join(' | ')} |`),
+    '',
+    ...audit.glossaryGuardIndexes.map((row) => `- ${row.glossary_term}: ${row.origin_note}`),
+    '',
+    '## Prior-Phase Index Removals',
+    '',
+    'Indexes already removed by 025, 028 and 029, each with the confirmation from this reading that the name is absent.',
+    '',
+    '| Table | Index | Originating migration | Disposition | Prior phase | Table present | Absent from catalog | Confirmation |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...audit.priorPhaseIndexRemovals.map((row) => `| ${[
+      row.table_name,
+      row.index_name,
+      row.originating_migration_file,
+      row.disposition,
+      row.priorPhase,
+      row.owning_table_present,
+      row.absent_from_catalog,
+      renderConfirmation(row.catalogConfirmation),
     ].map(renderCell).join(' | ')} |`),
     '',
     '## Constraints',
@@ -1056,8 +1153,139 @@ async function collectAutovacuumSettings(pool: Pool, tables: string[]): Promise<
   });
 }
 
-async function collectAudit(config: AuditConfig): Promise<AuditOutputV2> {
-  await logDB.connect();
+/** Index names this reading returned, keyed `table_name` → set of index names. */
+function indexNamesByTable(indexes: IndexRow[]): Map<string, Set<string>> {
+  const byTable = new Map<string, Set<string>>();
+  for (const row of indexes) {
+    const names = byTable.get(row.table_name) ?? new Set<string>();
+    names.add(row.index_name);
+    byTable.set(row.table_name, names);
+  }
+  return byTable;
+}
+
+/**
+ * Requirement 4.11. Derived from the catalog reading this run already produced,
+ * so the confirmation and the definitions it is compared against come from the
+ * same reading at the same timestamp.
+ */
+function resolvePriorPhaseIndexRemovals(
+  requestedTables: string[],
+  presentTables: TableRow[],
+  indexes: IndexRow[],
+): PriorPhaseIndexRemovalRow[] {
+  const requested = new Set(requestedTables);
+  const present = new Set(presentTables.map((row) => row.table_name));
+  const byTable = indexNamesByTable(indexes);
+
+  return PRIOR_PHASE_INDEX_REMOVALS.map((removal) => {
+    const owningTableRequested = requested.has(removal.table);
+    const owningTablePresent = present.has(removal.table);
+    const stillPresent = byTable.get(removal.table)?.has(removal.indexName) === true;
+
+    let catalogConfirmation: CatalogConfirmation;
+    if (!owningTableRequested) {
+      catalogConfirmation = {
+        status: 'unconfirmed',
+        reason: `${removal.table} was not in the audited table set for this run, so this reading cannot confirm ${removal.indexName} is absent`,
+      };
+    } else if (!owningTablePresent) {
+      catalogConfirmation = {
+        status: 'unconfirmed',
+        reason: `${removal.table} is itself absent from the catalog reading, so the absence of ${removal.indexName} does not confirm ${removal.migrationFile} was applied`,
+      };
+    } else if (stillPresent) {
+      catalogConfirmation = {
+        status: 'still_present',
+        detail: `${removal.indexName} is still present on ${removal.table} in the measured environment even though ${removal.migrationFile} drops it`,
+      };
+    } else {
+      catalogConfirmation = {
+        status: 'confirmed_absent',
+        detail: `${removal.indexName} is absent from the catalog reading of ${removal.table}, confirming the ${removal.migrationFile} removal in the measured environment`,
+      };
+    }
+
+    return {
+      table_name: removal.table,
+      index_name: removal.indexName,
+      originating_migration_file: removal.migrationFile,
+      disposition: 'REMOVE',
+      priorPhase: true,
+      owning_table_requested: owningTableRequested,
+      owning_table_present: owningTablePresent,
+      absent_from_catalog: !stillPresent,
+      catalogConfirmation,
+    } satisfies PriorPhaseIndexRemovalRow;
+  });
+}
+
+/**
+ * Resolves each glossary term that names an index rather than a relation, so the
+ * Ingestion_Table_Set term `events_errors_idempotency` points at a real object
+ * instead of being audited as a missing table.
+ */
+function resolveGlossaryGuardIndexes(
+  requestedTables: string[],
+  presentTables: TableRow[],
+  indexes: IndexRow[],
+  indexUsage: IndexUsageRow[],
+): GuardIndexRow[] {
+  const requested = new Set(requestedTables);
+  const present = new Set(presentTables.map((row) => row.table_name));
+  const byTable = indexNamesByTable(indexes);
+
+  return GLOSSARY_GUARD_INDEXES.map((guard) => {
+    const owningTableRequested = requested.has(guard.table);
+    const owningTablePresent = present.has(guard.table);
+    const presentInCatalog = byTable.get(guard.table)?.has(guard.indexName) === true;
+    const usage = indexUsage.find(
+      (row) => row.table_name === guard.table && row.index_name === guard.indexName,
+    );
+    const definition = indexes.find(
+      (row) => row.table_name === guard.table && row.index_name === guard.indexName,
+    );
+
+    let catalogConfirmation: CatalogConfirmation;
+    if (!owningTableRequested || !owningTablePresent) {
+      catalogConfirmation = {
+        status: 'unconfirmed',
+        reason: owningTableRequested
+          ? `${guard.table} is absent from the catalog reading, so ${guard.indexName} could not be resolved`
+          : `${guard.table} was not in the audited table set for this run, so ${guard.indexName} could not be resolved`,
+      };
+    } else if (presentInCatalog) {
+      catalogConfirmation = {
+        status: 'confirmed_present',
+        detail: `${guard.glossaryTerm} resolves to index ${guard.indexName} on ${guard.table}, created by ${guard.originMigrationFile}`,
+      };
+    } else {
+      catalogConfirmation = {
+        status: 'missing',
+        detail: `${guard.glossaryTerm} resolves to index ${guard.indexName} on ${guard.table}, but that index is absent from the measured environment even though ${guard.originMigrationFile} creates it`,
+      };
+    }
+
+    return {
+      glossary_term: guard.glossaryTerm,
+      table_name: guard.table,
+      index_name: guard.indexName,
+      originating_migration_file: guard.originMigrationFile,
+      columns: [...guard.columns],
+      requirements: [...guard.requirements],
+      origin_note: guard.originNote,
+      owning_table_requested: owningTableRequested,
+      owning_table_present: owningTablePresent,
+      present_in_catalog: presentInCatalog,
+      is_unique: usage?.is_unique ?? null,
+      index_def: definition?.index_def ?? usage?.index_def ?? null,
+      disposition: 'KEEP',
+      catalogConfirmation,
+    } satisfies GuardIndexRow;
+  });
+}
+
+async function collectAudit(config: AuditConfig): Promise<AuditOutputV2> {  await logDB.connect();
   const pool = logDB.getPrimaryPool();
 
   const database = await pool.query<{ current_database: string }>('SELECT current_database()');
@@ -1304,6 +1532,21 @@ async function collectAudit(config: AuditConfig): Promise<AuditOutputV2> {
     capabilities.collectionErrors.autovacuumSettings = errorMessage(err);
   }
 
+  // Both sections below are derived from readings this run already produced, so
+  // the confirmation and the definitions it is compared against share one
+  // catalog timestamp.
+  const glossaryGuardIndexes = resolveGlossaryGuardIndexes(
+    auditTables,
+    tables.rows,
+    indexes.rows,
+    indexUsage,
+  );
+  const priorPhaseIndexRemovals = resolvePriorPhaseIndexRemovals(
+    auditTables,
+    tables.rows,
+    indexes.rows,
+  );
+
   return {
     generatedAt: new Date().toISOString(),
     logDatabase: database.rows[0]?.current_database ?? '',
@@ -1325,6 +1568,8 @@ async function collectAudit(config: AuditConfig): Promise<AuditOutputV2> {
     tableStorage,
     toastRelations,
     autovacuumSettings,
+    glossaryGuardIndexes,
+    priorPhaseIndexRemovals,
   };
 }
 

@@ -634,6 +634,163 @@ export class AlertRuntimeRepository {
      * write on a read-mostly CONFIG table in the control plane. At a 5s cadence that
      * is untenable, and it also violated ADR-0006.
      */
+    /**
+     * Atomically advance breach state and claim the right to fire for one evaluation scope.
+     *
+     * Correctness contract (ADR: alerting hardening):
+     *   - The consecutive-breach counter is incremented **in the database**, never
+     *     computed in the application from a stale read, so concurrent evaluations
+     *     of the same scope cannot lose updates.
+     *   - The cooldown gate is decided **in the same statement** from the row's
+     *     previous `last_fired_at`, while that row is locked by the upsert. Exactly
+     *     one concurrent evaluation can observe `fired = true` for a given cooldown
+     *     window, so duplicate alerts are impossible even when Redis is unavailable.
+     *
+     * Structure: the `locked` CTE upserts the row (taking a row lock) and returns its
+     * PREVIOUS counters; the outer UPDATE then applies the transition derived from
+     * those previous values. Because both run in one statement they share one
+     * transaction and one lock, eliminating the read-then-write race.
+     */
+    async claimBreachDecision(input, client) {
+        const fireCondition = `(
+      (CASE WHEN l.prev_breaching THEN l.prev_breaches + 1 ELSE 1 END) >= $10::int
+      AND (
+        $11::int <= 0
+        OR l.prev_fired_at IS NULL
+        OR l.prev_fired_at <= $9::timestamptz - ($11::int * INTERVAL '1 second')
+      )
+    )`;
+        const result = await this.exec(client).query(`WITH locked AS (
+         INSERT INTO alert_rule_eval_state (
+           scope_hash, organization_id, rule_id, binding_id, project_id, environment,
+           service, endpoint, consecutive_breaches, is_breaching, last_evaluated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, FALSE, $9)
+         ON CONFLICT (scope_hash) DO UPDATE SET last_evaluated_at = $9
+         RETURNING consecutive_breaches AS prev_breaches,
+                   is_breaching         AS prev_breaching,
+                   last_fired_at        AS prev_fired_at
+       )
+       UPDATE alert_rule_eval_state s
+          SET consecutive_breaches = CASE WHEN l.prev_breaching THEN l.prev_breaches + 1 ELSE 1 END,
+              is_breaching         = TRUE,
+              last_evaluated_at    = $9,
+              last_fired_at        = CASE WHEN ${fireCondition} THEN $9 ELSE s.last_fired_at END
+         FROM locked l
+        WHERE s.scope_hash = $1
+       RETURNING s.consecutive_breaches,
+                 ${fireCondition} AS fired,
+                 s.last_fired_at`, [
+            input.scopeHash,
+            input.organizationId,
+            input.ruleId,
+            input.bindingId ?? null,
+            input.projectId ?? null,
+            input.environment ?? null,
+            input.service ?? null,
+            input.endpoint ?? null,
+            input.evaluatedAt,
+            Math.max(1, input.requiredBreaches),
+            Math.max(0, input.cooldownSeconds),
+        ]);
+        const row = result.rows[0];
+        if (!row) {
+            // Defensive: the outer UPDATE always matches the row the CTE just upserted.
+            // Reaching here means the row vanished concurrently (manual delete/retention).
+            // Fail closed - do not fire on an indeterminate state.
+            return { consecutiveBreaches: 0, fired: false, lastFiredAt: null, indeterminate: true };
+        }
+        return {
+            consecutiveBreaches: Number(row.consecutive_breaches),
+            fired: row.fired === true,
+            lastFiredAt: row.last_fired_at,
+            indeterminate: false,
+        };
+    }
+    /**
+     * Claim and resolve alerts whose `auto_resolve_at` deadline has passed.
+     *
+     * Semantics: this is a TIMEOUT-based resolution, not a verified recovery. The
+     * alert is closed because it stopped being re-asserted for the configured
+     * window, so `resolution_reason` is set to 'auto_resolved' to distinguish it
+     * from a real evaluated recovery (`recover` -> 'resolved').
+     *
+     * Correctness properties:
+     *   - Concurrency-safe: `FOR UPDATE SKIP LOCKED` means two sweep workers (or
+     *     two replicas) never claim the same row.
+     *   - Idempotent: the same statement both selects on `state = 'firing' AND
+     *     auto_resolve_at <= NOW()` and clears those predicates, so a replay
+     *     cannot resolve the same alert twice or emit a duplicate history row.
+     *   - Only `firing` alerts are eligible. An `acknowledged` alert is owned by a
+     *     human; auto-resolving it would hide it from whoever is handling it.
+     *   - Uses the existing partial index `idx_alert_event_state_autoresolve`
+     *     (`(auto_resolve_at) WHERE state = 'firing' AND auto_resolve_at IS NOT
+     *     NULL`) - the predicates below are chosen to match it, so no new index
+     *     is required.
+     *
+     * `organizationId` is optional: the scheduled sweep runs across tenants (like
+     * the escalation sweep), but callers may scope it for targeted use or tests.
+     */
+    async claimAutoResolvableAlerts(limit, organizationId, client) {
+        const boundedLimit = Math.max(1, Math.min(limit, 1000));
+        const result = await this.exec(client).query(`UPDATE alert_event_state s
+          SET state             = 'resolved',
+              resolved_at       = NOW(),
+              resolution_reason = 'auto_resolved',
+              auto_resolve_at   = NULL,
+              next_escalation_at = NULL,
+              updated_at        = NOW()
+        WHERE s.alert_key IN (
+          SELECT alert_key
+            FROM alert_event_state
+           WHERE state = 'firing'
+             AND auto_resolve_at IS NOT NULL
+             AND auto_resolve_at <= NOW()
+             AND ($2::uuid IS NULL OR organization_id = $2::uuid)
+           ORDER BY auto_resolve_at ASC
+           LIMIT $1
+           FOR UPDATE SKIP LOCKED
+        )
+       RETURNING s.alert_key,
+                 s.organization_id,
+                 s.project_id,
+                 s.latest_event_id,
+                 s.severity`, [boundedLimit, organizationId ?? null]);
+        return result.rows;
+    }
+    /**
+     * Atomically clear breach state for a scope and report whether this call is the
+     * one that observed the breach->healthy edge (so exactly one recovery alert is
+     * emitted even under concurrent evaluation).
+     */
+    async claimRecovery(input, client) {
+        const result = await this.exec(client).query(`WITH locked AS (
+         INSERT INTO alert_rule_eval_state (
+           scope_hash, organization_id, rule_id, binding_id, project_id, environment,
+           service, endpoint, consecutive_breaches, is_breaching, last_evaluated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, FALSE, $9)
+         ON CONFLICT (scope_hash) DO UPDATE SET last_evaluated_at = $9
+         RETURNING is_breaching AS prev_breaching
+       )
+       UPDATE alert_rule_eval_state s
+          SET consecutive_breaches = 0,
+              is_breaching         = FALSE,
+              last_evaluated_at    = $9,
+              last_recovered_at    = CASE WHEN l.prev_breaching THEN $9 ELSE s.last_recovered_at END
+         FROM locked l
+        WHERE s.scope_hash = $1
+       RETURNING l.prev_breaching AS recovered`, [
+            input.scopeHash,
+            input.organizationId,
+            input.ruleId,
+            input.bindingId ?? null,
+            input.projectId ?? null,
+            input.environment ?? null,
+            input.service ?? null,
+            input.endpoint ?? null,
+            input.evaluatedAt,
+        ]);
+        return { recovered: result.rows[0]?.recovered === true };
+    }
     async upsertRuleEvalState(input, client) {
         await this.exec(client).query(`INSERT INTO alert_rule_eval_state (
          scope_hash, organization_id, rule_id, binding_id, project_id, environment,

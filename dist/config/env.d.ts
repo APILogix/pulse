@@ -191,7 +191,6 @@ declare const envSchema: z.ZodObject<{
     INGESTION_USAGE_ROLLUP_CRON: z.ZodDefault<z.ZodString>;
     INGESTION_ALERT_EVAL_CRON: z.ZodDefault<z.ZodString>;
     ALERTING_V2_WRITE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
-    ALERTING_V2_READ: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     ALERTING_EVAL_DRY_RUN: z.ZodOptional<z.ZodEnum<{
         true: "true";
         false: "false";
@@ -371,7 +370,6 @@ export declare const env: {
     INGESTION_USAGE_ROLLUP_CRON: string;
     INGESTION_ALERT_EVAL_CRON: string;
     ALERTING_V2_WRITE: boolean;
-    ALERTING_V2_READ: boolean;
     ALERTING_RUNTIME_POOL_ASSERT: boolean;
     CONNECTOR_GLOBAL_LIMITS: boolean;
     CONNECTOR_GLOBAL_LIMIT: number;

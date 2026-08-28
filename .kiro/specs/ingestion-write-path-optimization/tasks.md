@@ -123,20 +123,21 @@ appears in the Requirement 19.6 modified-file boundary check.
       `reloptions` filtered to `autovacuum_*`
     - _Requirements: 4.1, 4.2, 4.3, 4.10, 5.1, 6.1, 12.1, 12.2, 12.4, 12.7, 12.8_ (design §1.3)
 
-  - [~] 2.2 Correct the audited table set and reuse the prior-phase removed-index list
+  - [ ] 2.2 Correct the audited table set and reuse the prior-phase removed-index list
     - Replace `defaultTables` with the full Ingestion_Table_Set: the ten Canonical_Event_Tables plus
       `error_groups`, `error_group_history`, `analytics_error_groups`, `telemetry_outbox`,
       `alert_runtime_idempotency_keys`, `ingestion_dead_letter_jobs`
     - Record `events_errors_idempotency` as the unique guard index `idx_events_errors_event_unique` on
       `events_errors` created by `018_events_errors_idempotency.sql`, with that origin noted, so the
       glossary term resolves to a real object instead of a missing table
-    - Read the eighteen prior-phase dropped index names from the existing `forbiddenRequestHotPathIndexes`
-      list in `scripts/validate-ingestion-evidence-bundle.ts` rather than duplicating them, and emit each
-      with its originating migration file (`025`/`028`/`029`), `REMOVE` marked `priorPhase: true`, and the
-      catalog confirmation that the name is absent
+    - Read the twenty-four prior-phase dropped index names from canonical migrations `025`/`028`/`029`
+      through `scripts/lib/ingestion-catalog-scope.ts`; have
+      `scripts/validate-ingestion-evidence-bundle.ts` derive its fourteen request-specific names from the
+      same helper rather than duplicating them, and emit each removal with its originating migration file,
+      `REMOVE` marked `priorPhase: true`, and the catalog confirmation that the name is absent
     - _Requirements: 4.1, 4.11_ (design §1.3, §4.1)
 
-  - [~] 2.3 Create `scripts/lib/query-path-scan.ts` and wire `--query-path-scan` into the audit script
+  - [ ] 2.3 Create `scripts/lib/query-path-scan.ts` and wire `--query-path-scan` into the audit script
     - Implement the nine-pattern set from design §4.2 per indexed column (containment, reversed
       containment, contained-by, key/any-key/all-keys existence, path extraction, key extraction,
       `jsonb_path_exists`/`jsonb_path_query*`, `WHERE`/`HAVING` co-occurrence as `weak`, and the index name
@@ -154,7 +155,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       `arbSourceFileWithJsonbPredicate` including decoys (column name in a comment, in a string, in an
       unrelated expression)
 
-  - [~] 2.5 Create `scripts/lib/index-inventory.ts` — inventory generator, redundancy detection, disposition gate
+  - [ ] 2.5 Create `scripts/lib/index-inventory.ts` — inventory generator, redundancy detection, disposition gate
     - Build `IndexInventoryEntry` records from `AuditOutputV2.indexUsage` plus the query-path scan, with
       every field of the design §Data Models interface populated
     - Implement Requirement 4.7 redundancy detection as a pure computation over parsed `indkey` column
@@ -179,7 +180,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       an if-and-only-if and the gate must reject them
 
 - [ ] 3. Runtime, plan, throughput and index-cost harnesses
-  - [~] 3.1 Add 1 Hz sampling mode to `scripts/diagnose-ingestion-db-runtime.ts`
+  - [ ] 3.1 Add 1 Hz sampling mode to `scripts/diagnose-ingestion-db-runtime.ts`
     - Add `--duration-seconds` and `--sample-interval-ms` (default 1000) and emit one series per
       Signal_Type with every field of the design §3 table: `writePoolMax`, `active`, `idle`, `waiting`,
       `checkoutWaitMs` and `transactionMs` p50/p95/p99, `workerConcurrency`, `writePermits`,
@@ -193,7 +194,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       citing both the checkout-wait and batch-duration series
     - _Requirements: 3.1, 3.2, 3.7, 3.8, 10.2_ (design §3, §7.1)
 
-  - [-] 3.2 Create `scripts/lib/pg-stat-statements.ts` — capability probe, scoped reset, delta capture
+  - [x] 3.2 Create `scripts/lib/pg-stat-statements.ts` — capability probe, scoped reset, delta capture
     - Probe with `SELECT to_regclass('pg_stat_statements') IS NOT NULL`; on absence record
       `statementCostSource: 'explain_analyze'` and the absence itself
     - Reset scoped by `(userid, dbid)` so the measurement is valid on a shared benchmark cluster; on
@@ -205,7 +206,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       counter can run
     - _Requirements: 1.6, 8.3, 9.1, 9.8_ (design §2.2)
 
-  - [-] 3.3 Extend `scripts/explain-ingestion-writes.ts` with WAL extraction and the environment guard
+  - [x] 3.3 Extend `scripts/explain-ingestion-writes.ts` with WAL extraction and the environment guard
     - Flatten per-statement `EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON)` output into a table keyed by
       statement, exposing WAL records/bytes/FPI per statement alongside plan node types and the index names
       appearing in the plan
@@ -214,7 +215,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       `Unmeasured_Declaration` for that statement and record the reason
     - _Requirements: 8.3, 8.4, 8.5, 8.6_ (design §1.1, §Component map)
 
-  - [~] 3.4 Extend `scripts/bench-ingestion-worker.ts` with windows, repetitions, WAL and mix control
+  - [ ] 3.4 Extend `scripts/bench-ingestion-worker.ts` with windows, repetitions, WAL and mix control
     - Add `--warmup-seconds`, `--duration-seconds`, `--repetitions`, and a sustained mode, discarding the
       warm-up window from every reported value
     - Add WAL bytes per batch transaction from `pg_current_wal_lsn()` sampled on a separate connection
@@ -229,7 +230,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - Record process CPU ms, peak RSS MB and `ingestion-workers` restart count per run
     - _Requirements: 1.7, 3.1, 10.1, 11.1, 11.2, 13.1, 13.2, 14.3, 15.6, 16.1, 17.1, 17.2_ (design §Component map, §7)
 
-  - [~] 3.5 Add the `phase2` preset to `scripts/run-ingestion-benchmark-matrix.ts`
+  - [ ] 3.5 Add the `phase2` preset to `scripts/run-ingestion-benchmark-matrix.ts`
     - Cover all nine Workload_Classes with ≥3 repetitions each, ≥10 s warm-up and ≥60 s measurement window
       per repetition, and the batch-size grid N ∈ {1, 10, 25, 50, 100, 200, 500} × ten Signal_Types
     - Label every cell with its Workload_Class and aggregate repetitions through `scripts/lib/aggregate.ts`
@@ -237,7 +238,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       (`error_rate_regression`, `exceeds_job_max_bytes`, `exceeds_statement_timeout`, `terminated_early`)
     - _Requirements: 11.1, 11.7, 11.8, 17.1, 17.3, 17.8, 17.9_ (design §7.2)
 
-  - [~] 3.6 Create `scripts/measure-ingestion-index-cost.ts` — the only DDL-executing harness
+  - [ ] 3.6 Create `scripts/measure-ingestion-index-cost.ts` — the only DDL-executing harness
     - Enforce all five guards before any DDL: (1) `--allow-ddl` present, (2) resolved environment in the
       allowlist, (3) `SELECT current_database()` equals an explicitly supplied `--expect-database`,
       (4) `pg_is_in_recovery()` false, (5) measured tables' `n_live_tup` below `--max-live-tuples`
@@ -271,7 +272,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - _Requirements: 5.4, 22.1_ (design §Testing Strategy, integration tests)
 
 - [ ] 4. Evidence gate and change-set ledger
-  - [~] 4.1 Extend `scripts/validate-ingestion-evidence-bundle.ts` into the Requirement 17.4 gate
+  - [ ] 4.1 Extend `scripts/validate-ingestion-evidence-bundle.ts` into the Requirement 17.4 gate
     - Fail the bundle when any evidence entry is neither `measured` with complete provenance nor a
       byte-exact `Unmeasured_Declaration` with a non-empty reason — the third state is what the gate exists
       to catch
@@ -285,7 +286,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       carries `restorationFailed`
     - _Requirements: 1.4, 4.10, 5.5, 17.4, 17.5, 17.6, 17.7, 20.6, 20.9, 22.1_ (design §1.1, §10)
 
-  - [~] 4.2 Create `scripts/lib/change-set.ts` — the Phase_2_Change_Set ledger and rank gate
+  - [ ] 4.2 Create `scripts/lib/change-set.ts` — the Phase_2_Change_Set ledger and rank gate
     - Implement `ChangeRecord` from design §Data Models with `rank`, `citedEvidence`, `modifiedFiles`,
       `before`/`after`/`changePct`, `implementedAtUtc`, `status`, `deferredRequiredCommand`,
       `rejectionEvidence`, `requiresOperatorApproval`, `approvalRecordedAtUtc`
@@ -303,7 +304,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - `scripts/lib/change-set.property.test.ts`, unit project, `numRuns: 100`, generator `arbChangeSet`
       including orderings that violate the P0-before-P1 rule and approval states that must be rejected
 
-- [~] 5. Checkpoint — instrumentation complete, guarded paths untouched
+- [ ] 5. Checkpoint — instrumentation complete, guarded paths untouched
   - Run `npm run test` and confirm the new `scripts/lib/**` property tests pass
   - Confirm `git status --porcelain` reports **no** changes under `src/modules/ingestion/`,
     `src/modules/errors/`, `database/migrations/logdb/` or `src/config/env.ts` — if it does, the baseline
@@ -311,7 +312,7 @@ appears in the Requirement 19.6 modified-file boundary check.
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Baseline capture — the Requirement 1.4 ordering gate
-  - [~] 6.1 Create `scripts/capture-ingestion-baseline.ts` — the baseline runner
+  - [ ] 6.1 Create `scripts/capture-ingestion-baseline.ts` — the baseline runner
     - Reachability probe: 3 connection attempts each with a 10 s `connectionTimeoutMillis`; on exhaustion
       mark every metric of every Signal_Type unmeasured with the driver error as the reason and continue in
       catalog-and-source-only mode
@@ -328,18 +329,18 @@ appears in the Requirement 19.6 modified-file boundary check.
       reason; siblings keep their values
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 3.1_ (design §1.2)
 
-  - [~] 6.2 Execute the baseline runner and validate the bundle
+  - [ ] 6.2 Execute the baseline runner and validate the bundle
     - Run `scripts/capture-ingestion-baseline.ts` on a clean tree and commit
       `artifacts/ingestion-phase2/baseline-record.json` content into the evidence bundle
     - Run `scripts/validate-ingestion-evidence-bundle.ts` against it and confirm the clean-tree gate passes
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.7, 17.6_ (design §1.2)
 
-  - [~] 6.3 Capture the pre-change Regression_Suite pass list
+  - [ ] 6.3 Capture the pre-change Regression_Suite pass list
     - Run `npm run test` and `npm run test:integration` once, before any guarded-path modification, and
       write the full passing-test list to `artifacts/ingestion-phase2/pre-change-pass-list.json`
     - _Requirements: 19.4, 19.5_ (design §9)
 
-  - [~] 6.4 Promote the bench environment allowlist into `src/config/env.ts`
+  - [ ] 6.4 Promote the bench environment allowlist into `src/config/env.ts`
     - Add `INGESTION_BENCH_ENV_ALLOWLIST` as a comma-separated Zod-validated setting with default
       `staging,bench,benchmark,local`, and have `assertBenchEnvironment()` in
       `scripts/lib/ingestion-evidence.ts` consume it
@@ -348,7 +349,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - _Requirements: 5.4, 8.5_ (design §1.1)
 
 - [ ] 7. Forensic inventories, attribution and sweeps (read-only against the Log_DB)
-  - [~] 7.1 Generate the Write_Path_Map
+  - [ ] 7.1 Generate the Write_Path_Map
     - Create `scripts/generate-ingestion-write-path-map.ts` emitting `WritePathMapEntry` per Signal_Type
       with the ordered stages (endpoint → queue insert → worker claim → batch assembly → validation →
       normalization → connection acquisition → `BEGIN` → SQL statements → outbox insert → `COMMIT` → ack),
@@ -368,7 +369,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - Confirm each closed form against observed counts at N ∈ {1, 10, 50, 200}
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8_ (design §1.4)
 
-  - [~] 7.2 Execute the Index_Inventory and GIN forensics collection
+  - [ ] 7.2 Execute the Index_Inventory and GIN forensics collection
     - Run `npm run ingestion:db:audit -- --query-path-scan` and generate the full Index_Inventory through
       `scripts/lib/index-inventory.ts` into `artifacts/ingestion-phase2/index-inventory.json`
     - Confirm the read-usage window spans at least 24 h or one complete Benchmark_Matrix run, whichever is
@@ -377,7 +378,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       `jsonbPredicates`
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.7, 4.11, 5.1, 5.2_ (design §1.3, §4.1, §4.2)
 
-  - [~] 7.3 Execute the index-present versus index-absent INSERT measurements
+  - [ ] 7.3 Execute the index-present versus index-absent INSERT measurements
     - Run `scripts/measure-ingestion-index-cost.ts --allow-ddl --expect-database <db>` for every candidate
       index (the ten GIN indexes of design finding F6 first), R = 3, 200 rows per repetition
     - Attach each `IndexInsertCostMeasurement` to its inventory entry, run
@@ -387,7 +388,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       alternative wherever a bounded JSONB read requirement exists
     - _Requirements: 4.8, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 22.1, 22.6_ (design §4.2, §4.3, §4.4)
 
-  - [~] 7.4 Generate the Trigger_Inventory with the `RETURNING` branch probe
+  - [ ] 7.4 Generate the Trigger_Inventory with the `RETURNING` branch probe
     - Create `scripts/generate-ingestion-trigger-inventory.ts` enumerating every trigger on the
       Ingestion_Table_Set from the catalog, including partitioned-parent triggers, partition-attached
       triggers and disabled triggers, with `whenClause`, `statementsPerInvocation` and
@@ -403,7 +404,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - Assign each branch `duplicative` or `load-bearing` with its guarantee and its regression test file
     - _Requirements: 6.1, 6.2, 6.3, 6.7, 6.8_ (design §5.1, §5.4)
 
-  - [~] 7.5 Execute the trigger-cost and sequence-advance measurements
+  - [ ] 7.5 Execute the trigger-cost and sequence-advance measurements
     - Run `scripts/measure-ingestion-index-cost.ts --target trigger` (R = 5, 200 rows, `events_errors` and
       `events_spans`) and `--target sequence`, recording median ms, p95 ms, per-row overhead in
       microseconds with the printed formula, and the condition-B contract assertion result
@@ -411,7 +412,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       narrowing deferred
     - _Requirements: 6.4, 6.9, 7.8_ (design §5.3)
 
-  - [~] 7.6 Generate the public identifier, sequence and default analysis
+  - [ ] 7.6 Generate the public identifier, sequence and default analysis
     - Emit `PublicIdAnalysisEntry` per Canonical_Event_Table: default expression, backing sequence, trigger
       branch, and the assigning mechanism plus contract satisfaction for each of the three shapes
       (omitted, `NULL`, empty string)
@@ -421,7 +422,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       task 9 closes
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_ (design §5.2)
 
-  - [~] 7.7 Execute the INSERT and statement cost attribution
+  - [ ] 7.7 Execute the INSERT and statement cost attribution
     - Per Canonical_Event_Table, 200-event controlled batch replayed ≥3 times: rows inserted, bytes
       inserted, INSERT duration, WAL bytes, index count, total index size, median reported with command,
       environment and UTC timestamp per run
@@ -437,7 +438,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       retaining the table's other measured values
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8_ (design §2.2, §Component map)
 
-  - [~] 7.8 Execute the transaction, WAL and COMMIT attribution
+  - [ ] 7.8 Execute the transaction, WAL and COMMIT attribution
     - Aggregate ≥100 batch transactions per Signal_Type into p50/p95/p99 for `BEGIN`, summed statement,
       outbox insert, `COMMIT`, connection hold time (`transactionMs + dbConnectionWaitMs`, derivation
       printed) and WAL bytes per batch transaction
@@ -448,7 +449,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       and record the observed values rather than the config defaults
     - _Requirements: 10.1, 10.2, 10.3, 10.6, 10.8_ (design §7.1)
 
-  - [~] 7.9 Execute the error-ingestion statement count measurement and classification
+  - [ ] 7.9 Execute the error-ingestion statement count measurement and classification
     - Create `scripts/measure-error-ingestion-statements.ts` covering the eight cells N ∈ {1, 10, 50, 200}
       × fingerprint distribution ∈ {distinct-per-event, single-repeated}, and separately the new-group,
       existing-group and merged-group states
@@ -463,7 +464,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       the Requirement 9.7 before/after pair
     - _Requirements: 9.1, 9.2, 9.4, 9.7, 9.8_ (design §2.1, §2.2, §6.1)
 
-  - [~] 7.10 Execute the storage and autovacuum analysis
+  - [ ] 7.10 Execute the storage and autovacuum analysis
     - From `AuditOutputV2`, record per parent and per partition: table bytes, index bytes, live/dead tuples,
       dead percentage, last autovacuum and autoanalyze timestamps, plus TOAST size or explicit absence
     - Apply the Requirement 12.3 candidate rule including the second clause (`n_live_tup = 0` with
@@ -481,7 +482,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       rather than adding a second pruning path
     - _Requirements: 12.1, 12.2, 12.3, 12.5, 12.6, 12.8_ (design §7.3)
 
-  - [~] 7.11 Execute the batch size sweep
+  - [ ] 7.11 Execute the batch size sweep
     - Run the `phase2` matrix grid N ∈ {1, 10, 25, 50, 100, 200, 500} × ten Signal_Types, 3 runs × ≥60 s
       with the first 30 s discarded, recording every field of `BatchSizeSweepCell`
     - Apply `selectKnee()`, the >5 % regression rule and the no-knee rule; exclude any N whose error rate
@@ -494,7 +495,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - Record the `Unmeasured_Declaration` per unmeasurable (N, Signal_Type) cell with its reason
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8_ (design §7.2)
 
-  - [~] 7.12 Execute the cross-signal interference comparison
+  - [ ] 7.12 Execute the cross-signal interference comparison
     - Mixed run: trace + span ≥60 % of offered events, request/error/log each ≥10 %, ≥300 s, ≥100,000
       offered events; control runs: each of request, error, log, trace, span alone at the **same offered
       events/s for that signal**, same batch size, worker concurrency, environment and build
@@ -504,7 +505,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       cannot execute
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.7_ (design §7.4)
 
-  - [~] 7.13 Execute the multi-tenant fairness measurement
+  - [ ] 7.13 Execute the multi-tenant fairness measurement
     - Multi-tenant class with ≥5 organizations, one submitting ≥90 % of offered events; record per
       organization events/s, queue wait p50/p95/p99, deferral count and the count admitted after reaching
       `INGESTION_FAIRNESS_MAX_DEFERS`, reading `recordDeferred` and
@@ -514,7 +515,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       produced it and marked `requiresOperatorApproval: true`
     - _Requirements: 14.3, 14.4, 14.5_ (design §7.5)
 
-  - [~] 7.14 Compute and validate the memory bound
+  - [ ] 7.14 Compute and validate the memory bound
     - Emit `MemoryBound` with `maxInFlightJobs = queues × INGESTION_TYPE_WORKER_CONCURRENCY ×
       INGESTION_TYPE_WORKER_BATCH_SIZE`, `worstCaseJobBytes = maxInFlightJobs × INGESTION_JOB_MAX_BYTES`,
       plus measured peak serialized batch allocation and measured peak DB connection buffer allocation,
@@ -527,7 +528,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - Record peak RSS MB, restart count and run timestamp at the recommended batch size and concurrency
     - _Requirements: 15.1, 15.3, 15.6_ (design §7.6)
 
-  - [~] 7.15 Execute the write amplification accounting
+  - [ ] 7.15 Execute the write amplification accounting
     - Per Signal_Type from a controlled 200-event batch, to two decimal places: Canonical_Event_Table rows
       written, rows **updated** as a separate term so the design finding F7 double write is visible, index
       entries maintained split by access method, `telemetry_outbox` rows, auxiliary rows
@@ -539,7 +540,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       range and its measured per-event WAL
     - _Requirements: 16.1, 16.4, 16.6_ (design §7.7)
 
-  - [~] 7.16 Rank the bottlenecks and assign P0/P1/P2
+  - [ ] 7.16 Rank the bottlenecks and assign P0/P1/P2
     - Order every recorded bottleneck by measured contribution to batch transaction duration, highest
       first, each carrying its measured contribution and its Evidence_Record source
     - Assign every proposed change exactly one rank through `scripts/lib/change-set.ts`: P0 for a defect
@@ -550,7 +551,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       command, and confirm `assertRankOrdering()` and `assertApprovalGating()` pass over the ledger
     - _Requirements: 3.7, 8.8, 20.7, 22.3, 22.5, 22.7_ (design §Architecture control flow, §10)
 
-- [~] 8. Checkpoint — forensics complete before any remediation
+- [ ] 8. Checkpoint — forensics complete before any remediation
   - Run `scripts/validate-ingestion-evidence-bundle.ts` and confirm every collected artifact passes the
     Requirement 17.4 gate
   - Confirm every entry in `index-inventory.json` carries a disposition and every `REMOVE` carries its
@@ -558,7 +559,7 @@ appears in the Requirement 19.6 modified-file boundary check.
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 9. P0 — Public_ID_Contract enforcement (unconditional, design §6.3)
-  - [~] 9.1 Add the `public_id` CHECK constraints migration and its down file
+  - [ ] 9.1 Add the `public_id` CHECK constraints migration and its down file
     - Create `database/migrations/logdb/03_observability_v2/032_public_id_contract_checks.sql` with ten
       `ALTER TABLE … ADD CONSTRAINT chk_events_<t>_public_id CHECK (public_id ~ '^<PFX>-[0-9]{9,19}$') NOT VALID`
       statements using the design §5.2 prefixes (`REQ`, `ERR`, `TRC`, `SPN`, `LOG`, `MTR`, `MSG`, `RPL`,
@@ -572,7 +573,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       — keyed on the exact recorded relative path so precisely one ledger row is removed
     - _Requirements: 7.7, 18.1, 18.2, 18.4, 18.5, 18.8, 18.9_ (design §6.3, §8.2, §8.4)
 
-  - [~] 9.2 Add the `db_constraint_violation` failure class for SQLSTATE 23514
+  - [ ] 9.2 Add the `db_constraint_violation` failure class for SQLSTATE 23514
     - Add the class to `ingestionFailureClass()` in `src/modules/ingestion/workers/event-processor.ts` and
       to `failureReason()` in `src/modules/ingestion/workers/worker-registry.ts`, classified **permanent**
       so the batch is dead-lettered rather than retried
@@ -680,14 +681,14 @@ appears in the Requirement 19.6 modified-file boundary check.
       instrumenting `computeErrorFingerprint` with a call counter and asserting exactly N invocations for N
       events irrespective of the distinct fingerprint count
 
-  - [~] 10.11 Write the ten-signal round-trip integration test
+  - [ ] 10.11 Write the ten-signal round-trip integration test
     - Submit one event of each of the ten Signal_Types through the gateway, drain the worker, assert
       retrievability from the Canonical_Event_Table after acknowledgement, a non-empty `public_id`, and
       field-by-field equality with the submitted values
     - `src/modules/ingestion/__tests__/ten-signal-round-trip.integration.test.ts`
     - _Requirements: 19.1, 19.2_ (design §Testing Strategy, integration tests)
 
-  - [~] 10.12 Write the retry, acknowledgement, usage and correlation assertions
+  - [ ] 10.12 Write the retry, acknowledgement, usage and correlation assertions
     - Assert a transient failure returns the job to the queue and a permanent failure does not; that
       acknowledgement occurs only after `COMMIT` succeeds; that usage counters increase by the persisted
       non-duplicate count; that every persisted span references its submitted trace identifier; and that
@@ -701,7 +702,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - `src/modules/ingestion/__tests__/retry-and-guarantees.integration.test.ts`
     - _Requirements: 14.6, 19.7, 21.1, 21.4_ (design §7.5, §9)
 
-  - [~] 10.13 Write the boot-guard and backpressure example unit tests
+  - [ ] 10.13 Write the boot-guard and backpressure example unit tests
     - `INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS >= INGESTION_JOB_EXPIRE_SECONDS × 1000` throws at module load
       with the ordering message, which is what makes "terminate before claiming any job" hold by
       construction
@@ -721,7 +722,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       `scripts/lib/__tests__/report-fixtures.test.ts`
     - _Requirements: 1.5, 1.6, 2.8, 3.5, 3.8, 5.7, 9.4, 10.4, 12.3, 12.8, 15.2, 15.5_ (design §Testing Strategy, example tests)
 
-- [~] 11. Checkpoint — P0 complete and Regression_Suite green before any P1 change
+- [ ] 11. Checkpoint — P0 complete and Regression_Suite green before any P1 change
   - Run `npm run test` and `npm run test:integration`; zero failures required before task 12 begins
     (Requirement 22.4)
   - Confirm the change-set ledger shows every P0 change implemented with its UTC timestamp
@@ -836,7 +837,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       and after
     - _Requirements: 12.4, 12.7, 18.1, 18.2, 18.4, 18.5_ (design §7.3, §8.2, §8.4)
 
-  - [~] 12.7 Capture and compare removed-index result-set parity
+  - [ ] 12.7 Capture and compare removed-index result-set parity
     - Create a helper mode that, for each `namedProductionQueries` entry in the Index_Inventory, executes the
       query with fixed input parameters against a seeded dataset and stores
       `{rowCount, sha256 of the ordered serialized rows}` **before** any removal ships; keep the full result
@@ -848,7 +849,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - _Requirements: 19.3, 19.9, 21.1_ (design §9)
 
 - [ ] 13. Schema delivery verification
-  - [~] 13.1 Write the fresh-versus-migrated parity integration test
+  - [ ] 13.1 Write the fresh-versus-migrated parity integration test
     - Apply every migration to a scratch database created from empty; dump `pg_indexes`,
       `pg_get_triggerdef`, `pg_get_functiondef`, column defaults and `reloptions` for the whole
       Ingestion_Table_Set; compare against the same dump from a database that applied the pre-Phase-2
@@ -863,7 +864,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - `database/__tests__/logdb-migrations.property.test.ts`, integration project, `numRuns: 100` over
       generated starting states and migration orderings against a scratch database
 
-  - [~] 13.3 Write the `.down.sql` convention conformance test
+  - [ ] 13.3 Write the `.down.sql` convention conformance test
     - For every new migration file that creates or drops an index, trigger, column or function, assert a
       sibling `.down.sql` exists with the same three-digit ordinal prefix, the same base name and the same
       subfolder; assert each down file deletes exactly one `logdb_migrations` row keyed on its own forward
@@ -877,14 +878,14 @@ appears in the Requirement 19.6 modified-file boundary check.
     - `database/__tests__/logdb-down-file-convention.test.ts`
     - _Requirements: 18.4, 18.5, 18.7, 18.8, 18.10_ (design §8.4)
 
-- [~] 14. Checkpoint — P1 complete and Regression_Suite green before P2
+- [ ] 14. Checkpoint — P1 complete and Regression_Suite green before P2
   - Run `npm run test` and `npm run test:integration`; zero failures required before task 15 begins
   - Confirm the change-set ledger's rank ordering gate passes and every deferred change carries its required
     command
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 15. P2 — re-measurement, Forensic_Report and closeout
-  - [~] 15.1 Re-measure with the identical commands and environment
+  - [ ] 15.1 Re-measure with the identical commands and environment
     - Re-run every baseline command with byte-identical arguments in the same environment, and re-run the
       task 7.9 error statement counts and the task 7.15 amplification accounting from the same
       Workload_Class and the same controlled 200-event batch
@@ -896,7 +897,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       guarantee requiring that write
     - _Requirements: 9.7, 16.5, 16.7, 20.3, 20.6, 21.3_ (design §Architecture control flow, §10)
 
-  - [~] 15.2 Generate the Forensic_Report with its 23 sections
+  - [ ] 15.2 Generate the Forensic_Report with its 23 sections
     - Create `docs/ingestion-write-path-optimization.md` via a generator script reading the artifact bundle,
       with one distinct non-empty heading per design §10 item in that order: current architecture,
       Phase_1_Protections status, bottleneck ranking, expensive statements, Index_Inventory, GIN and JSONB
@@ -916,14 +917,14 @@ appears in the Requirement 19.6 modified-file boundary check.
       `INGESTION_GENERAL_*` / `INGESTION_SPECIALIZED_*`
     - _Requirements: 20.1, 20.2, 20.3, 20.6, 20.7, 20.8, 20.9_ (design §10)
 
-  - [~] 15.3 Emit the machine-checkable report index and wire it into the gate
+  - [ ] 15.3 Emit the machine-checkable report index and wire it into the gate
     - Write `artifacts/ingestion-phase2/report-index.json` mapping every reported number in the report to its
       Evidence_Record entry and provenance envelope
     - Extend `scripts/validate-ingestion-evidence-bundle.ts` to fail when a number in the report has no
       entry, or when an entry is neither `measured` nor a byte-exact `Unmeasured_Declaration`
     - _Requirements: 17.4, 17.6, 20.6, 20.9_ (design §10)
 
-  - [~] 15.4 Write the verdict section
+  - [ ] 15.4 Write the verdict section
     - State each defect the Phase_2_Change_Set fixed; each remaining bottleneck with its measured value; the
       highest-cost remaining bottleneck and the Evidence_Record entry identifying it; the change with the
       largest measured events/s improvement; each change recommended against adopting with its supporting
@@ -934,7 +935,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       operator decision with a UTC timestamp
     - _Requirements: 20.4, 21.5, 21.6, 21.7, 22.5, 22.7, 22.8_ (design §10)
 
-  - [~] 15.5 Record the Phase_1_Protections status table
+  - [ ] 15.5 Record the Phase_1_Protections status table
     - Assign each of the ten Phase_1_Protections items exactly one of `PRESERVED`, `MODIFIED` or `REMOVED`
       with the source file path evidencing it, and reference `docs/ingestion-performance-forensics.md` as the
       Phase 1 record
@@ -942,13 +943,13 @@ appears in the Requirement 19.6 modified-file boundary check.
       live pool max are evidenced by task 10.8's property test rather than by inspection
     - _Requirements: 3.3, 3.4, 20.5, 21.1, 21.4_ (design §Design principles, §10)
 
-  - [~] 15.6 Run the post-change Regression_Suite and compare pass lists
+  - [ ] 15.6 Run the post-change Regression_Suite and compare pass lists
     - Run `npm run test` and `npm run test:integration` after the final modification; require zero failures
     - Diff the passing-test list against `artifacts/ingestion-phase2/pre-change-pass-list.json` and require
       every pre-change pass to still pass
     - _Requirements: 19.4, 19.5, 21.4, 22.4_ (design §9)
 
-  - [~] 15.7 Add the modified-file boundary check
+  - [ ] 15.7 Add the modified-file boundary check
     - Add a CI script asserting `git diff --name-only <baseline-commit>..HEAD` contains only paths under
       `src/modules/ingestion/`, `src/modules/errors/`, `database/migrations/logdb/`, `src/config/env.ts`, the
       ingestion measurement scripts under `scripts/` (including the new
@@ -958,7 +959,7 @@ appears in the Requirement 19.6 modified-file boundary check.
       appear in the diff
     - _Requirements: 19.6_ (design §9)
 
-  - [~] 15.8 Write the closeout smoke checks
+  - [ ] 15.8 Write the closeout smoke checks
     - Each of the four baseline harness commands exits 0 against the bench database; the Benchmark_Matrix
       records a command invoking `scripts/run-ingestion-benchmark-matrix.ts`;
       `docs/ingestion-write-path-optimization.md` exists with all 23 headings present, distinct and
@@ -967,7 +968,7 @@ appears in the Requirement 19.6 modified-file boundary check.
     - `scripts/__tests__/phase2-closeout-smoke.test.ts`
     - _Requirements: 1.3, 17.3, 20.1, 20.2, 21.2_ (design §Testing Strategy, smoke checks)
 
-- [~] 16. Final checkpoint
+- [ ] 16. Final checkpoint
   - Confirm the evidence gate accepts the full bundle, the change-set rank ordering gate passes, the report
     index resolves every reported number, and both Regression_Suite projects are green
   - Ensure all tests pass, ask the user if questions arise.

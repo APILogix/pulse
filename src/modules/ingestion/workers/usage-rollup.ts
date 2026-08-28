@@ -93,6 +93,13 @@ const DAILY_UPSERT_SQL = `
     ${COUNTER_COLUMNS.map((c) => `${c} = usage_daily_counters.${c} + EXCLUDED.${c}`).join(',\n    ')}`;
 
 export class UsageRollup {
+  // Worker registrations are process-local, but pg-boss schedules are shared
+  // database state. Track and roll back only the local worker; a replica must
+  // never unschedule the healthy fleet's singleton cron during start or stop.
+  private workerMayBeRegistered = false;
+  private started = false;
+  private startPromise: Promise<void> | null = null;
+
   constructor(
     private readonly pool: Pool,
     private readonly metrics: WorkerMetrics,
@@ -101,25 +108,65 @@ export class UsageRollup {
 
   /** Register the worker + the singleton cron schedule. Call after pgboss.start(). */
   async start(): Promise<void> {
-    await pgboss.work(
-      INGEST_USAGE_ROLLUP_QUEUE,
-      { localConcurrency: 1, batchSize: 1 } as never,
-      (async () => {
-        await this.run();
-      }) as never,
-    );
-    await pgboss.schedule(
-      INGEST_USAGE_ROLLUP_QUEUE,
-      env.INGESTION_USAGE_ROLLUP_CRON,
-      { triggeredAt: new Date().toISOString() } satisfies UsageRollupPayload,
-      { singletonKey: 'usage-rollup' } as never,
-    );
-    this.log.info({ cron: env.INGESTION_USAGE_ROLLUP_CRON }, 'Usage rollup scheduled');
+    if (this.started) return;
+    if (!this.startPromise) {
+      this.startPromise = this.startInternal().finally(() => {
+        this.startPromise = null;
+      });
+    }
+    await this.startPromise;
+  }
+
+  private async startInternal(): Promise<void> {
+    if (this.workerMayBeRegistered) {
+      const cleanupFailure = await this.cleanupWorkerRegistration('retry cleanup');
+      if (cleanupFailure) throw cleanupFailure;
+    }
+
+    try {
+      this.workerMayBeRegistered = true;
+      await pgboss.work(
+        INGEST_USAGE_ROLLUP_QUEUE,
+        { localConcurrency: 1, batchSize: 1 } as never,
+        (async () => {
+          await this.run();
+        }) as never,
+      );
+
+      // schedule() is idempotent shared state. If it rejects after a partial
+      // database write, leaving that desired schedule in place is safer than
+      // globally deleting a schedule owned by healthy replicas.
+      await pgboss.schedule(
+        INGEST_USAGE_ROLLUP_QUEUE,
+        env.INGESTION_USAGE_ROLLUP_CRON,
+        { triggeredAt: new Date().toISOString() } satisfies UsageRollupPayload,
+        { singletonKey: 'usage-rollup' } as never,
+      );
+      this.started = true;
+      this.log.info({ cron: env.INGESTION_USAGE_ROLLUP_CRON }, 'Usage rollup scheduled');
+    } catch (err) {
+      this.started = false;
+      await this.cleanupWorkerRegistration('start rollback');
+      throw err;
+    }
+  }
+
+  private async cleanupWorkerRegistration(context: string): Promise<unknown | null> {
+    if (!this.workerMayBeRegistered) return null;
+    try {
+      await pgboss.offWork(INGEST_USAGE_ROLLUP_QUEUE, { wait: true });
+      this.workerMayBeRegistered = false;
+      return null;
+    } catch (err) {
+      this.log.warn({ err, context }, 'Usage rollup offWork cleanup failed');
+      return err;
+    }
   }
 
   async stop(): Promise<void> {
-    await pgboss.unschedule(INGEST_USAGE_ROLLUP_QUEUE).catch(() => undefined);
-    await pgboss.offWork(INGEST_USAGE_ROLLUP_QUEUE).catch(() => undefined);
+    if (this.startPromise) await this.startPromise.catch(() => undefined);
+    this.started = false;
+    await this.cleanupWorkerRegistration('stop');
   }
 
   /** One rollup pass. Throws on failure (staging preserved for the next tick). */

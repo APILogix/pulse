@@ -112,6 +112,17 @@ describe('TelemetryWriter batching', () => {
         expect(inserts).toHaveLength(1);
         expect(tupleCount(inserts[0].sql)).toBe(50);
     });
+    it('uses a precomputed scoped occurrence time instead of a per-write clock fallback', async () => {
+        const writer = new TelemetryWriter(db, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() });
+        const occurredAtMs = Date.parse('2026-08-24T00:00:00.000Z');
+        const scoped = scopedLog(1);
+        scoped.occurredAtMs = occurredAtMs;
+        delete scoped.event.timestamp;
+        await writer.writeBatchDetailedInTransaction(db, [scoped]);
+        const values = insertsInto('events_logs')[0]?.values ?? [];
+        // events_logs occurred_at is column 36 (zero-based value index 35).
+        expect(values[35]).toBe(new Date(occurredAtMs).toISOString());
+    });
     it('makes every insert idempotent with ON CONFLICT DO NOTHING', async () => {
         const writer = new TelemetryWriter(db, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() });
         await writer.writeBatchDetailedInTransaction(db, [scopedLog(1)]);

@@ -93,10 +93,70 @@ function binding(projectId = PROJECT): AlertRuleBindingRow {
 }
 
 describe('alert runtime rule catalog', () => {
-  it('keeps the canonical default runtime preset set at 35 rules', () => {
+  /**
+   * Preset-set integrity.
+   *
+   * The hard-coded count (was 35) went stale as presets were added and this test
+   * failed for months while asserting nothing useful. What actually matters is
+   * that preset keys are UNIQUE and that every preset is classifiable into a
+   * runtime tier - a duplicate key silently overwrites a rule during seeding, and
+   * an unclassifiable preset is never evaluated by any tier. Both are asserted
+   * against the live array rather than a magic number, so adding a preset no
+   * longer breaks the suite.
+   */
+  it('keeps every default preset key unique', () => {
     const keys = DEFAULT_ALERT_PRESETS.map((preset) => preset.presetKey);
-    expect(keys).toHaveLength(35);
-    expect(new Set(keys).size).toBe(35);
+    const duplicates = keys.filter((key, index) => keys.indexOf(key) !== index);
+    expect(duplicates).toEqual([]);
+    expect(new Set(keys).size).toBe(keys.length);
+    // Sanity floor: the catalog should never silently empty out.
+    expect(keys.length).toBeGreaterThanOrEqual(35);
+  });
+
+  /**
+   * Field-path classification must never CONTRADICT a preset's declared tier.
+   *
+   * How the two interact: `listRulesForTier()` selects a rule when
+   * `evaluation_category` matches OR the field path prefix matches. So a preset
+   * with an explicit category still works even if its path is unregistered
+   * (`tierForFieldPath` → null). That is tolerated.
+   *
+   * What is NOT tolerated is a path that resolves to a DIFFERENT tier than the
+   * preset declares - that means the rule can be picked up by two tiers reading
+   * two different data sources, so it either double-fires or reads a payload that
+   * has no such field.
+   */
+  it('never derives a tier that contradicts a preset declared category', () => {
+    const conflicts = DEFAULT_ALERT_PRESETS
+      .map((preset) => ({
+        key: preset.presetKey,
+        fieldPath: preset.condition.fieldPath,
+        declared: preset.evaluationCategory === 'fast' ? 'fast' : 'analytics',
+        derived: tierForFieldPath(preset.condition.fieldPath),
+      }))
+      // null is acceptable (evaluation_category carries the rule); a non-null
+      // disagreement is not.
+      .filter((row) => row.derived !== null
+        && (row.derived === 'fast' ? 'fast' : 'analytics') !== row.declared);
+
+    expect(conflicts, `presets whose field path contradicts their category: ${JSON.stringify(conflicts)}`)
+      .toEqual([]);
+  });
+
+  it('registers every FAST preset field path in the tier prefix map', () => {
+    // Fast-tier paths must be registered, because inferEvaluationCategory()
+    // defaults an unregistered path to 'analytics'. A user-created rule on such a
+    // path would land on the window tier, whose rollup tables have no such
+    // column, so hasRelevantMetrics would skip it and the rule would never fire.
+    // Analytics paths are exempt: 'analytics' is already the default, so an
+    // unregistered analytics path still routes correctly.
+    const unregistered = DEFAULT_ALERT_PRESETS
+      .filter((preset) => preset.evaluationCategory === 'fast')
+      .filter((preset) => tierForFieldPath(preset.condition.fieldPath) !== 'fast')
+      .map((preset) => `${preset.presetKey} (${preset.condition.fieldPath})`);
+
+    expect(unregistered, `fast presets missing from TIER_FIELD_PREFIXES.fast: ${unregistered.join(', ')}`)
+      .toEqual([]);
   });
 
   it('classifies instant event dependencies', () => {

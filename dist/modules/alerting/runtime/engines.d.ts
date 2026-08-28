@@ -36,6 +36,8 @@ export interface RuntimeEvaluationSummary {
     suppressed: number;
     skipped: number;
     failed: number;
+    /** Scopes skipped because their source rollup was too stale to trust. */
+    stale: number;
 }
 export interface RuntimePayload {
     values: Record<string, unknown>;

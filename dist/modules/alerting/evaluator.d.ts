@@ -3,9 +3,20 @@
  *
  * Evaluates a payload against a set of conditions. Conditions are combined as:
  *   - Conditions sharing a `conditionGroupId` are OR'd together within the group.
- *   - Groups (and ungrouped conditions) are AND'd together.
- *   - A condition marked `isRequired=false` that fails does not fail the group
- *     unless it is the only condition contributing to its group's truth.
+ *   - Groups and ungrouped REQUIRED conditions are AND'd together.
+ *   - An ungrouped condition with `isRequired: false` is OPTIONAL: it is
+ *     evaluated and reported in `conditionResults` for observability, but it
+ *     does not gate the match. `isRequired` defaults to true (matching the
+ *     `alert_rule_conditions.is_required` column default), so omitting it
+ *     preserves strict AND behaviour.
+ *   - Degenerate case: if a rule has NO required terms (every ungrouped
+ *     condition is optional and there are no groups), at least one optional
+ *     condition must pass. Without this guard an all-optional rule would match
+ *     unconditionally - including against an empty payload - and continuously
+ *     emit false positives.
+ *
+ * Note: `isRequired` is only meaningful for UNGROUPED conditions. Inside a
+ * group the combinator is already OR, so a failing member never fails the group.
  *
  * The engine reads scalar values from the payload by dotted `fieldPath`
  * (e.g. "cpu.usage", "error.rate"). Aggregations over time windows are the

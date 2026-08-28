@@ -341,20 +341,17 @@ const envSchema = z.object({
     //
     // ALERTING_V2_WRITE: when true, alerting/connector runtime writes are mirrored
     // into the typed *_v2 Log DB tables (Increment 1 creates them; Increment 5
-    // begins dual-write). Legacy tables stay authoritative until ALERTING_V2_READ.
+    // begins dual-write). This flag governs TABLE mirroring only - it has nothing
+    // to do with connector transport selection, which is now V2-only.
     // A v2 mirror failure is logged and MUST NOT fail the request.
     ALERTING_V2_WRITE: z
         .string()
         .optional()
         .transform((value) => value === 'true'),
-    // ALERTING_V2_READ: when true, reads come from the typed *_v2 runtime tables.
-    // Requires ALERTING_V2_WRITE plus a passing verification gate
-    // (07-migration-plan.md §9). Defined here so Increment 1 ships the complete,
-    // documented rollout switch rather than adding flags piecemeal later.
-    ALERTING_V2_READ: z
-        .string()
-        .optional()
-        .transform((value) => value === 'true'),
+    // ALERTING_V2_READ: REMOVED. The V1/V2 transport bifurcation it selected no
+    // longer exists - canonical V2 (connector.v2.<provider>) is the only delivery
+    // path, so there is nothing left to switch between. Do not reintroduce a flag
+    // that can silently reactivate a legacy transport.
     // DEV-002 (docs/alerting-redesign/DEVIATIONS.md): the scheduled evaluators read telemetry
     // through an injected pool. When the telemetry pool differs from the control-plane pool,
     // repointing changes WHAT the evaluator can see, so firing is suppressed by default until

@@ -33,6 +33,7 @@ import { pgboss } from '../../../lib/pgboss.js';
 import {
   normalizeEvent,
   normalizeSdkEnvironment,
+  parseSafeEpochMs,
   resolveTimestamp,
   type NormalizedEvent,
 } from '../pipeline/event-normalizer.js';
@@ -46,6 +47,11 @@ import {
   type ScopedEvent,
 } from '../pipeline/telemetry-writer.js';
 import { WriteAdmissionController, resolveWritePermits } from '../pipeline/write-admission.js';
+import {
+  INGESTION_JOB_ABORTED,
+  IngestionJobAbortedError,
+  throwIfIngestionAborted,
+} from '../pipeline/ingestion-abort.js';
 import { UsageCounter } from '../usage/usage-counter.js';
 import {
   INGEST_DLQ_INTAKE_QUEUE,
@@ -100,11 +106,46 @@ function elapsedSince(start: number): number {
 
 type QueryCallback = (...args: unknown[]) => void;
 
-function instrumentClientQueries(client: PoolClient, onQueryComplete: (durationMs: number) => void): () => void {
+function queryText(args: unknown[]): string | null {
+  const first = args[0];
+  if (typeof first === 'string') return first;
+  if (first && typeof first === 'object') {
+    const text = (first as { text?: unknown }).text;
+    return typeof text === 'string' ? text : null;
+  }
+  return null;
+}
+
+function instrumentClientQueries(
+  client: PoolClient,
+  onQueryComplete: (durationMs: number) => void,
+  signal?: AbortSignal,
+  onActiveChange?: (active: boolean) => void,
+): () => void {
   const originalQuery = client.query;
   client.query = ((...args: unknown[]) => {
+    const sql = queryText(args);
+    // Cleanup must remain possible after abort. Every other new statement is
+    // rejected before it can extend an expired transaction.
+    if (signal?.aborted && !/^\s*ROLLBACK\b/i.test(sql ?? '')) {
+      const err = new IngestionJobAbortedError('database query', signal.reason);
+      const lastArg = args[args.length - 1];
+      if (typeof lastArg === 'function') {
+        queueMicrotask(() => (lastArg as QueryCallback)(err));
+        return undefined;
+      }
+      return Promise.reject(err);
+    }
+
     const queryStartedAt = Date.now();
-    const record = (): void => onQueryComplete(elapsedSince(queryStartedAt));
+    let finished = false;
+    onActiveChange?.(true);
+    const record = (): void => {
+      if (finished) return;
+      finished = true;
+      onActiveChange?.(false);
+      onQueryComplete(elapsedSince(queryStartedAt));
+    };
     const lastArg = args[args.length - 1];
 
     if (typeof lastArg === 'function') {
@@ -147,6 +188,97 @@ function instrumentClientQueries(client: PoolClient, onQueryComplete: (durationM
   };
 }
 
+/**
+ * Race pool checkout against pg-boss expiry without leaking a connection if
+ * the pool resolves after the abort wins.
+ */
+async function connectWithAbort(pool: Pool, signal?: AbortSignal): Promise<PoolClient> {
+  throwIfIngestionAborted(signal, 'database connection wait');
+  const pending = pool.connect();
+  if (!signal) return pending;
+
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new IngestionJobAbortedError('database connection wait', signal.reason));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+
+  try {
+    return await Promise.race([pending, aborted]);
+  } catch (err) {
+    if (signal.aborted) {
+      // pool.connect() itself has no AbortSignal API. Release a late checkout as
+      // soon as it arrives so an expired waiter cannot permanently consume it.
+      void pending.then((client) => client.release()).catch(() => undefined);
+    }
+    throw err;
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+interface PostgresAbortGuard {
+  dispose: () => Promise<void>;
+}
+
+/**
+ * Cancel the currently executing statement on this checked-out backend.
+ *
+ * The target client remains checked out until `dispose()` and rollback finish,
+ * so its PID cannot be reassigned to unrelated application work while the
+ * cancellation query is in flight. Admission reserves pool headroom for this
+ * control query. If cancellation itself fails, statement_timeout remains the
+ * final bound and the query wrapper refuses every subsequent statement except
+ * ROLLBACK.
+ */
+function installPostgresAbortGuard(
+  pool: Pool,
+  client: PoolClient,
+  signal: AbortSignal | undefined,
+  isQueryActive: () => boolean,
+  log: Logger,
+): PostgresAbortGuard {
+  let cancellation: Promise<void> | null = null;
+  const backendPid = (client as unknown as { processID?: unknown }).processID;
+
+  const onAbort = (): void => {
+    if (!isQueryActive() || cancellation) return;
+    if (typeof backendPid !== 'number' || !Number.isInteger(backendPid) || backendPid <= 0) {
+      log.warn({ backendPid: backendPid ?? null }, 'cannot cancel aborted ingestion query: backend pid unavailable');
+      return;
+    }
+    cancellation = pool
+      .query<{ cancelled: boolean }>(
+        'SELECT pg_cancel_backend($1)::boolean AS cancelled',
+        [backendPid],
+      )
+      .then((result) => {
+        if (result.rows[0]?.cancelled !== true) {
+          log.warn({ backendPid }, 'PostgreSQL reported ingestion query was not cancelled');
+        }
+      })
+      .catch((err) => {
+        // Do not release the target client early. Its SET LOCAL
+        // statement_timeout still bounds the active statement, after which the
+        // abort-aware query wrapper forces rollback.
+        log.warn({ err, backendPid }, 'failed to cancel aborted ingestion query');
+      });
+  };
+
+  if (signal) {
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  }
+
+  return {
+    dispose: async () => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      if (cancellation) await cancellation;
+    },
+  };
+}
+
 function serializedBytes(value: unknown): number {
   try {
     return Buffer.byteLength(JSON.stringify(value));
@@ -186,6 +318,7 @@ function scopedEventId(scoped: ScopedEvent): string {
 
 function ingestionFailureClass(err: unknown): string {
   const code = errorCode(err);
+  if (code === INGESTION_JOB_ABORTED) return 'job_aborted';
   if (code === '55P03') return 'db_lock_timeout';
   if (code === '57014') return 'db_statement_timeout';
   if (code === '53300' || code === '08000' || code === '08003' || code === '08006') return 'db_connection';
@@ -267,7 +400,12 @@ export class EventProcessor {
   }
 
   /** Process one ingest job payload. Throws to fail the job (pg-boss retry). */
-  async process(payload: IngestJobPayload, queue: string): Promise<EventProcessorResult> {
+  async process(
+    payload: IngestJobPayload,
+    queue: string,
+    signal?: AbortSignal,
+  ): Promise<EventProcessorResult> {
+    throwIfIngestionAborted(signal, 'event processing');
     const startedAt = Date.now();
     const type = payload?.eventType;
     const projectId = payload?.projectId ?? '';
@@ -276,8 +414,14 @@ export class EventProcessor {
     const rawEvents = Array.isArray(payload?.events) ? payload.events : [];
     const environment = normalizeSdkEnvironment(payload?.metadata?.environment);
     if (!environment) throw new Error('INVALID_ENVIRONMENT');
-    const receivedAt = Date.parse(payload?.metadata?.receivedAt ?? '');
-    const queueWaitMs = Number.isFinite(receivedAt) ? Math.max(0, startedAt - receivedAt) : null;
+    const receivedAtMs = parseSafeEpochMs(payload?.metadata?.receivedAt);
+    if (receivedAtMs === null || receivedAtMs <= 0) {
+      // A stable receipt clock is part of the durable queue contract. Falling
+      // back to Date.now() here would make the same pg-boss payload acquire a
+      // different occurred_at (and potentially event id) on every retry.
+      throw new Error('INVALID_RECEIVED_AT');
+    }
+    const queueWaitMs = Math.max(0, startedAt - receivedAtMs);
     const timings: Record<string, number> = {};
     const serializationStartedAt = Date.now();
     const batchBytes = serializedBytes(rawEvents);
@@ -298,8 +442,9 @@ export class EventProcessor {
     const scoped: ScopedEvent[] = [];
     const rejected: Array<{ event: unknown; detail: string }> = [];
     for (const raw of rawEvents) {
+      throwIfIngestionAborted(signal, 'event normalization');
       const normalizationStartedAt = Date.now();
-      const r = normalizeEvent(raw);
+      const r = normalizeEvent(raw, { nowMs: receivedAtMs });
       normalizationMs += elapsedSince(normalizationStartedAt);
       if (!r.ok) {
         rejected.push({ event: raw, detail: `${r.reason}: ${r.detail}` });
@@ -315,6 +460,10 @@ export class EventProcessor {
           event,
         );
       }
+      const occurredAtMs = resolveTimestamp(event, {
+        nowMs: receivedAtMs,
+        fallbackMs: receivedAtMs,
+      });
       scoped.push({
         projectId,
         projectSlug: payload.metadata?.projectSlug,
@@ -324,6 +473,7 @@ export class EventProcessor {
         orgName: payload.metadata?.orgName,
         environment,
         apiKeyName,
+        occurredAtMs,
         event,
       });
     }
@@ -333,6 +483,7 @@ export class EventProcessor {
     // Route validation rejects to the DLQ intake queue (one message per job).
     // If this send throws, the job fails and retries — rejects are never lost.
     if (rejected.length > 0) {
+      throwIfIngestionAborted(signal, 'validation DLQ enqueue');
       const dlqStartedAt = Date.now();
       const dlq: DlqIntakePayload = {
         sourceQueue: queue,
@@ -345,6 +496,7 @@ export class EventProcessor {
         error: `validation_failed: ${rejected.length} event(s) rejected; first: ${rejected[0]?.detail ?? 'unknown'}`,
       };
       await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {} as never);
+      throwIfIngestionAborted(signal, 'validation DLQ enqueue');
       timings.dlqEnqueueMs = elapsedSince(dlqStartedAt);
     }
 
@@ -362,26 +514,38 @@ export class EventProcessor {
 
     if (scoped.length > 0) {
       // ── Write admission ───────────────────────────────────────────────────
-      // Wait here (in memory, FIFO, no timeout) rather than on `pool.connect()`.
-      // The permit guarantees a pool connection is available, so
-      // `dbConnectionWaitMs` below now measures genuine pool behaviour instead
-      // of queueing, and `writeAdmissionWaitMs` isolates admission queueing as
-      // its own signal. Splitting the two is what makes saturation diagnosable:
-      // high admission wait = not enough write capacity; high connection wait
-      // = the pool itself is unhealthy.
+      // Wait here (in memory, FIFO, abortable by pg-boss expiry) rather
+      // than on `pool.connect()`. The permit guarantees capacity remains,
+      // while connectWithAbort also releases any checkout that arrives after
+      // cancellation. `writeAdmissionWaitMs` stays separate from real pool
+      // acquisition time so saturation remains diagnosable.
       await this.admission.run(async () => {
+      throwIfIngestionAborted(signal, 'database transaction');
       const dbConnectionStartedAt = Date.now();
-      const client = await this.pool.connect();
+      const client = await connectWithAbort(this.pool, signal);
       timings.dbConnectionWaitMs = elapsedSince(dbConnectionStartedAt);
+      let queryActive = false;
       const restoreQuery = instrumentClientQueries(client, (durationMs) => {
         dbQueries += 1;
         dbQueryMs += durationMs;
         this.metrics.recordDbQueryDuration(type ?? 'unknown', durationMs);
+      }, signal, (active) => {
+        queryActive = active;
       });
+      const abortGuard = installPostgresAbortGuard(
+        this.pool,
+        client,
+        signal,
+        () => queryActive,
+        this.log,
+      );
+      let transactionOpen = false;
       try {
+        throwIfIngestionAborted(signal, 'database transaction');
         const transactionStartedAt = Date.now();
         const beginStartedAt = Date.now();
         await client.query('BEGIN');
+        transactionOpen = true;
         await applyIngestionTransactionSettings(client);
         timings.beginMs = elapsedSince(beginStartedAt);
 
@@ -408,7 +572,7 @@ export class EventProcessor {
                 ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
                 environment: s.environment,
                 service: typeof e.service === 'string' ? e.service : undefined,
-                occurredAt: new Date(resolveTimestamp(e)),
+                occurredAt: new Date(s.occurredAtMs ?? receivedAtMs),
               },
               eventRecord: {
                 id: typeof e.id === 'string' ? e.id : randomUUID(),
@@ -448,7 +612,7 @@ export class EventProcessor {
                 extra: e.extra ?? {},
                 metadata: e.metadata ?? {},
                 ai_response: e.aiResponse ?? null,
-                occurred_at: new Date(resolveTimestamp(e)),
+                occurred_at: new Date(s.occurredAtMs ?? receivedAtMs),
                 payload: e
               }
             };
@@ -507,8 +671,13 @@ export class EventProcessor {
           }
         }
 
+        // ACK remains downstream of this durable boundary. Checking immediately
+        // before submission ensures an abort cannot interleave in JavaScript;
+        // an abort while COMMIT is active is handled by pg_cancel_backend.
+        throwIfIngestionAborted(signal, 'transaction commit');
         const commitStartedAt = Date.now();
         await client.query('COMMIT');
+        transactionOpen = false;
         timings.commitMs = elapsedSince(commitStartedAt);
         timings.transactionMs = elapsedSince(transactionStartedAt);
         if (errorDomainEvents.length > 0) {
@@ -517,15 +686,25 @@ export class EventProcessor {
           timings.domainEventMs = elapsedSince(domainEventStartedAt);
         }
       } catch (err) {
+        // Keep the target client checked out until its cancellation request has
+        // completed, then rollback on that same connection. This prevents a
+        // late cancel from hitting an unrelated future pool borrower.
+        await abortGuard.dispose();
         const rollbackStartedAt = Date.now();
-        await client.query('ROLLBACK').catch(() => undefined);
+        if (transactionOpen) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          transactionOpen = false;
+        }
         timings.rollbackMs = elapsedSince(rollbackStartedAt);
         timings.totalProcessingMs = elapsedSince(startedAt);
+        const failure = signal?.aborted
+          ? new IngestionJobAbortedError('database transaction', err)
+          : err;
         this.log.error(
           {
-            err,
+            err: failure,
             phase: 'ingestion_profile_failed',
-            failureClass: ingestionFailureClass(err),
+            failureClass: ingestionFailureClass(failure),
             sqlState: errorCode(err),
             queue,
             eventType: type ?? 'unknown',
@@ -543,8 +722,9 @@ export class EventProcessor {
           },
           'ingestion batch transaction failed',
         );
-        throw err;
+        throw failure;
       } finally {
+        await abortGuard.dispose();
         restoreQuery();
         client.release();
       }
@@ -552,7 +732,7 @@ export class EventProcessor {
         timings.writeAdmissionWaitMs = waitedMs;
         const { inFlight, queued } = this.admission.stats();
         this.metrics.setWriteAdmission?.(inFlight, queued);
-      });
+      }, signal);
     }
 
     if (result.totalInserted > 0) {
@@ -586,7 +766,7 @@ export class EventProcessor {
 
     // 6) Metrics.
     const duplicateCount = Math.max(0, result.totalReceived - result.totalInserted);
-    const e2eMs = Number.isFinite(receivedAt) ? Math.max(0, Date.now() - receivedAt) : null;
+    const e2eMs = Math.max(0, Date.now() - receivedAtMs);
     timings.totalProcessingMs = elapsedSince(startedAt);
     if (queueWaitMs != null) this.metrics.recordStage('queue_wait', type ?? 'unknown', queueWaitMs);
     for (const [stage, ms] of Object.entries(timings)) {

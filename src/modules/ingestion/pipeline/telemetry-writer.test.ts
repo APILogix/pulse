@@ -131,6 +131,20 @@ describe('TelemetryWriter batching', () => {
     expect(tupleCount(inserts[0]!.sql)).toBe(50);
   });
 
+  it('uses a precomputed scoped occurrence time instead of a per-write clock fallback', async () => {
+    const writer = new TelemetryWriter(db as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
+    const occurredAtMs = Date.parse('2026-08-24T00:00:00.000Z');
+    const scoped = scopedLog(1) as ReturnType<typeof scopedLog> & { occurredAtMs: number };
+    scoped.occurredAtMs = occurredAtMs;
+    delete (scoped.event as { timestamp?: number }).timestamp;
+
+    await writer.writeBatchDetailedInTransaction(db as never, [scoped] as never);
+
+    const values = insertsInto('events_logs')[0]?.values ?? [];
+    // events_logs occurred_at is column 36 (zero-based value index 35).
+    expect(values[35]).toBe(new Date(occurredAtMs).toISOString());
+  });
+
   it('makes every insert idempotent with ON CONFLICT DO NOTHING', async () => {
     const writer = new TelemetryWriter(db as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
 

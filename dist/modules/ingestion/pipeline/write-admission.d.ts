@@ -65,11 +65,13 @@ export declare class WriteAdmissionController {
      * Run `fn` while holding one admission permit. Acquires FIFO, always
      * releases. The awaited duration before `fn` starts is returned to the caller
      * via `onAdmitted` so it can be recorded as `admissionWaitMs` separately from
-     * real database time.
+     * real database time. An aborted waiter is removed synchronously and can
+     * never consume a future permit.
      */
-    run<T>(fn: () => Promise<T>, onAdmitted?: (waitedMs: number) => void): Promise<T>;
+    run<T>(fn: () => Promise<T>, onAdmitted?: (waitedMs: number) => void, signal?: AbortSignal): Promise<T>;
     private acquire;
     private release;
+    private removeAbortListener;
     stats(): WriteAdmissionStats;
 }
 /**

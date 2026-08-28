@@ -1,8 +1,16 @@
 /**
  * Connector pg-boss queue wiring.
  *
- * Required queues:
- *   - connector-send
+ * TRANSPORT (notification delivery) - canonical V2 only:
+ *   - connector.v2.<provider>       one consumer per registered provider
+ *
+ * There is exactly ONE transport implementation. The former
+ * `connector-send-<provider>` family was a second, parallel transport with
+ * weaker tenant verification and a circuit guard that was written but never
+ * enforced; it has been removed rather than feature-flagged off, so it cannot be
+ * accidentally reactivated.
+ *
+ * CONTROL PLANE queues:
  *   - connector-health-check
  *   - connector-test
  *   - connector-secret-rotation
@@ -19,7 +27,7 @@ import { ConnectorService } from './service.js';
 import { ConnectorMonitor } from './monitor.js';
 import { sweepRateLimiter } from './runtime.js';
 import { decryptConfig, encryptConfig } from './secrets/secret.service.js';
-import { CONNECTOR_JOBS } from './job.constants.js';
+import { CONNECTOR_JOBS, connectorTransportQueue, providerFromTransportQueue } from './job.constants.js';
 import type { ConnectorConfigRow, NotificationPayload, RequestMeta } from './types.js';
 import { env } from '../../config/env.js';
 import { listConnectorTypes } from './registry.js';
@@ -196,7 +204,18 @@ async function processManagedEmailJob(
   log: FastifyBaseLogger,
 ): Promise<void> {
   const startedAt = Date.now();
-  console.log(`\n[ALERT_EMAIL] 📨 Processing managed email job: ${jobId} | NotificationJob: ${jobData.notificationJobId} | Rule: ${jobData.ruleId ?? 'N/A'} | Severity: ${jobData.severity} | Org: ${jobData.organizationId}`);
+  // Structured logging only. Recipient addresses and rendered email bodies are
+  // PII/customer content and must never be written to stdout.
+  log.debug(
+    {
+      jobId,
+      notificationJobId: jobData.notificationJobId,
+      ruleId: jobData.ruleId ?? null,
+      severity: jobData.severity,
+      organizationId: jobData.organizationId,
+    },
+    'processing managed email job',
+  );
 
   const capability = await notificationEntitlement.resolve(jobData.organizationId);
   if (!capability.alertingEnabled && !capability.managedEmailEnabled) {
@@ -210,8 +229,7 @@ async function processManagedEmailJob(
       latencyMs: Date.now() - startedAt,
     });
     recordNotificationDelivery('notification.delivery.entitlement_blocked');
-    console.log(`[ALERT_EMAIL] 🚫 Managed email blocked by entitlement for Org: ${jobData.organizationId}`);
-    log.warn({ jobId, orgId: jobData.organizationId }, 'Managed email blocked by entitlement');
+    log.warn({ jobId, organizationId: jobData.organizationId }, 'Managed email blocked by entitlement');
     return;
   }
 
@@ -220,14 +238,15 @@ async function processManagedEmailJob(
     const owner = await owners.findActiveVerifiedOwner(jobData.organizationId, jobData.projectId);
     if (owner) {
       targetEmail = owner.email;
-      console.log(`[ALERT_EMAIL] 👤 Target email resolved from Project Owner: "${targetEmail}" (User: ${owner.userId})`);
+      // Log the resolution SOURCE and user id, never the address itself.
+      log.debug({ jobId, recipientSource: 'project_owner', recipientUserId: owner.userId }, 'managed email recipient resolved');
     } else {
       const fallback = owners.findActiveVerifiedFallbackRecipient
         ? await owners.findActiveVerifiedFallbackRecipient(jobData.organizationId, jobData.projectId)
         : null;
       if (fallback) {
         targetEmail = fallback.email;
-        console.log(`[ALERT_EMAIL] 👤 Target email resolved from Org Fallback (Admin/Owner): "${targetEmail}" (User: ${fallback.userId})`);
+        log.debug({ jobId, recipientSource: 'organization_fallback', recipientUserId: fallback.userId }, 'managed email recipient resolved');
       } else {
         await runtimeRepository.recordNotificationDelivery({
           organizationId: jobData.organizationId,
@@ -239,8 +258,10 @@ async function processManagedEmailJob(
           latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.owner_unavailable');
-        console.log(`[ALERT_EMAIL] ❌ Managed email delivery failed: Neither project owner nor fallback email is available for Project: ${jobData.projectId}`);
-        log.warn({ jobId, projectId: jobData.projectId }, 'Managed email delivery failed: owner email unavailable');
+        log.warn(
+          { jobId, projectId: jobData.projectId, organizationId: jobData.organizationId },
+          'Managed email delivery failed: neither project owner nor organization fallback recipient is available',
+        );
         return;
       }
     }
@@ -248,17 +269,24 @@ async function processManagedEmailJob(
 
   const template = renderManagedAlertEmail(jobData, targetEmail);
 
-  console.log(`[ALERT_EMAIL] 📝 Rendered Alert Email Template:`);
-  console.log(`[ALERT_EMAIL]   📌 To: "${targetEmail}"`);
-  console.log(`[ALERT_EMAIL]   📌 Subject: "${template.subject}"`);
-  console.log(`[ALERT_EMAIL]   📌 Rule ID: ${jobData.ruleId ?? 'N/A'}`);
-  console.log(`[ALERT_EMAIL]   📌 Alert Key: ${jobData.alertKey ?? 'N/A'}`);
-  console.log(`[ALERT_EMAIL]   📌 Severity: ${jobData.severity.toUpperCase()}`);
-  console.log(`[ALERT_EMAIL]   📌 Delivery Mode: ${jobData.deliveryMode}`);
-  console.log(`[ALERT_EMAIL] 📄 Email Body Preview (Plain Text):\n--------------------------------------------------\n${template.text}\n--------------------------------------------------`);
+  // Deliberately does NOT log the recipient address, the subject, or the
+  // rendered body. Those are customer content/PII; dumping them to stdout
+  // leaks alert contents into log aggregation. Identifiers are enough to trace
+  // a delivery, and the payload is already persisted on the notification job.
+  log.debug(
+    {
+      jobId,
+      notificationJobId: jobData.notificationJobId,
+      ruleId: jobData.ruleId ?? null,
+      alertKey: jobData.alertKey ?? null,
+      severity: jobData.severity,
+      deliveryMode: jobData.deliveryMode,
+      bodyLength: template.text.length,
+    },
+    'managed email template rendered',
+  );
 
   try {
-    console.log(`[ALERT_EMAIL] 🚀 Sending email via SMTP to "${targetEmail}"...`);
     await sendEmail({
       to: targetEmail,
       subject: template.subject,
@@ -274,11 +302,17 @@ async function processManagedEmailJob(
       latencyMs: Date.now() - startedAt,
     });
     recordNotificationDelivery('notification.delivery.sent');
-    console.log(`[ALERT_EMAIL] ✅ Managed email alert delivered successfully to "${targetEmail}" | NotificationJob: ${jobData.notificationJobId} | Latency: ${Date.now() - startedAt}ms`);
-    log.info({ jobId, targetEmail, notificationJobId: jobData.notificationJobId }, 'Managed email alert delivered successfully');
+    log.info(
+      {
+        jobId,
+        notificationJobId: jobData.notificationJobId,
+        organizationId: jobData.organizationId,
+        latencyMs: Date.now() - startedAt,
+      },
+      'Managed email alert delivered successfully',
+    );
   } catch (err: unknown) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[ALERT_EMAIL] ❌ Managed email delivery error to "${targetEmail}":`, errMsg);
     const isPermanent = errMsg.includes('invalid') || errMsg.includes('recipient') || errMsg.includes('550') || errMsg.includes('syntax');
 
     await runtimeRepository.recordNotificationDelivery({
@@ -291,7 +325,10 @@ async function processManagedEmailJob(
       latencyMs: Date.now() - startedAt,
     });
     recordNotificationDelivery('notification.delivery.failed');
-    log.error({ err, jobId, targetEmail }, 'Managed email delivery attempt failed');
+    log.error(
+      { err, jobId, notificationJobId: jobData.notificationJobId, permanent: isPermanent },
+      'Managed email delivery attempt failed',
+    );
 
     if (!isPermanent) {
       throw err;
@@ -324,9 +361,10 @@ export async function registerConnectorWorkers(
     ? [CONNECTOR_JOBS.deliveryRetry]
     : Object.values(CONNECTOR_JOBS);
   const connectorTypes = listConnectorTypes();
-  const providerQueues = connectorTypes.map((t) => `${CONNECTOR_JOBS.send}-${t.type}`);
-  const transportQueues = connectorTypes.map((t) => `connector.v2.${t.type}`);
-  const registeredQueueNames = [...baseQueues, ...providerQueues, ...transportQueues];
+  // Canonical V2 transport queues are the ONLY notification transport consumers.
+  // The legacy `connector-send-<provider>` family has been removed entirely.
+  const transportQueues = connectorTypes.map((t) => connectorTransportQueue(t.type));
+  const registeredQueueNames = [...baseQueues, ...transportQueues];
   await Promise.all(registeredQueueNames.map((queue) =>
     safeCreateQueue(queue, config.strictQueueCreation === true),
   ));
@@ -344,7 +382,7 @@ export async function registerConnectorWorkers(
   circuitProbeTimer.unref();
 
   for (const queue of transportQueues) {
-    const providerType = queue.slice('connector.v2.'.length);
+    const providerType = providerFromTransportQueue(queue);
     const concurrency = getProviderConcurrency(providerType);
     await pgboss.work(
       queue,
@@ -375,6 +413,9 @@ export async function registerConnectorWorkers(
             log.warn({ jobId: job.id, channelKind }, 'Connector transport blocked by entitlement');
             return;
           }
+          // Defensive tenant verification: the connector is looked up org-scoped
+          // AND its stored organization_id is re-compared to the job's claimed
+          // tenant. One tenant can never deliver through another's connector.
           const row = await repository.findById(job.data.organizationId, job.data.connectorId);
           if (!row || row.status !== 'active' || row.organization_id !== job.data.organizationId) {
             await runtimeRepository.recordNotificationDelivery({
@@ -388,6 +429,39 @@ export async function registerConnectorWorkers(
             log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive or tenant mismatched connector');
             return;
           }
+
+          // Global rate-limit + circuit guard. Previously this guard was only
+          // CONSULTED on the legacy provider queue while the canonical V2 queue
+          // merely wrote to it, so the circuit state existed but never actually
+          // protected the live delivery path. It is now enforced here.
+          if (env.CONNECTOR_GLOBAL_LIMITS) {
+            const guard = await globalGuards.acquire(job.data.connectorId, {
+              limit: env.CONNECTOR_GLOBAL_LIMIT,
+              windowSeconds: env.CONNECTOR_GLOBAL_WINDOW_SECONDS,
+              failureThreshold: env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD,
+              resetSeconds: env.CONNECTOR_CIRCUIT_RESET_SECONDS,
+            });
+            if (!guard.allowed) {
+              // Deferred, not failed: leave the job queued so the delivery-retry
+              // sweep replays it once the window/circuit reopens. This keeps
+              // retry bounded instead of burning the attempt budget.
+              await runtimeRepository.recordNotificationDelivery({
+                organizationId: job.data.organizationId,
+                jobId: job.data.notificationJobId,
+                jobStatus: 'queued',
+                attemptStatus: 'failed',
+                errorCategory: guard.circuitState === 'open' ? 'circuit_open' : 'rate_limit',
+                errorMessage: `Delivery deferred by global guard (circuit=${guard.circuitState})`,
+              });
+              recordNotificationDelivery('notification.delivery.rate_limited');
+              log.warn(
+                { jobId: job.id, connectorId: job.data.connectorId, circuitState: guard.circuitState },
+                'Connector transport deferred by global guard',
+              );
+              return;
+            }
+          }
+
           const outcome = await dispatcher.dispatch(row, job.data.payload as unknown as NotificationPayload, { routeId: null });
           const succeeded = outcome.status === 'sent';
           const retryable = outcome.result.retryable === true;
@@ -402,83 +476,10 @@ export async function registerConnectorWorkers(
             externalMessageId: outcome.result.externalMessageId ?? null,
             responseStatusCode: outcome.result.statusCode ?? null,
           });
+          // Feed the same guard we gate on above, so open/half-open/closed
+          // transitions are driven by the live delivery path.
           if (succeeded) await globalGuards.recordSuccess(job.data.connectorId);
           else await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
-        }));
-      }) as never,
-    );
-  }
-
-  for (const queue of providerQueues) {
-    const providerType = queue.slice(`${CONNECTOR_JOBS.send}-`.length);
-    const concurrency = getProviderConcurrency(providerType);
-    await pgboss.work(
-      queue,
-      { 
-        localConcurrency: concurrency, 
-        batchSize: env.CONNECTOR_SEND_BATCH_SIZE 
-      } as never,
-      (async (arg: unknown) => {
-        const jobs = allJobs<ConnectorSendJobData | ManagedEmailJobData>(arg);
-        if (jobs.length === 0) return;
-
-        const connectorIds = Array.from(new Set(jobs.map(j => 'connectorId' in j.data ? j.data.connectorId : null).filter((id): id is string => Boolean(id))));
-        const rows = connectorIds.length > 0 ? await repository.getByIds(connectorIds) : [];
-        const rowMap = new Map(rows.map(r => [r.id, r]));
-
-        await Promise.allSettled(jobs.map(async (job) => {
-          if (isManagedEmailJob(job.data)) {
-            await processManagedEmailJob(job.data, job.id, runtimeRepository, notificationEntitlement, owners, log);
-            return;
-          }
-          workerMetrics.recordJobStarted();
-          try {
-            let row: ConnectorConfigRow | null | undefined = rowMap.get(job.data.connectorId);
-            const payload = payloadWithProjectChannel(job.data);
-            const capability = await notificationEntitlement.resolve(job.data.organizationId);
-            const requestedType = row?.type ?? queue.slice(`${CONNECTOR_JOBS.send}-`.length);
-            const channelKind = toChannelKind(requestedType);
-            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(channelKind)) {
-              recordNotificationDelivery('notification.delivery.entitlement_blocked');
-              log.warn({ jobId: job.id, channelKind }, 'Connector send blocked by entitlement');
-              workerMetrics.recordJobFailed(false);
-              return;
-            }
-            if (!row || row.status !== 'active') {
-              log.warn(
-                { jobId: job.id, connectorId: job.data.connectorId, status: row?.status ?? null },
-                'Connector send blocked: connector unavailable; canonical routing must create any fallback job',
-              );
-              workerMetrics.recordJobFailed(false);
-              return;
-            }
-            if (env.CONNECTOR_GLOBAL_LIMITS) {
-              const guard = await globalGuards.acquire(job.data.connectorId, {
-                limit: env.CONNECTOR_GLOBAL_LIMIT,
-                windowSeconds: env.CONNECTOR_GLOBAL_WINDOW_SECONDS,
-                failureThreshold: env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD,
-                resetSeconds: env.CONNECTOR_CIRCUIT_RESET_SECONDS,
-              });
-              if (!guard.allowed) {
-                workerMetrics.recordJobFailed(true);
-                log.warn({ jobId: job.id, connectorId: job.data.connectorId, circuitState: guard.circuitState }, 'Connector delivery denied by global guard');
-                return;
-              }
-            }
-
-            const outcome = await dispatcher.dispatch(row, payload, { routeId: job.data.routeId ?? null });
-            if (outcome.status === 'sent') {
-              if (env.CONNECTOR_GLOBAL_LIMITS) await globalGuards.recordSuccess(job.data.connectorId);
-              workerMetrics.recordJobCompleted();
-            } else {
-              if (env.CONNECTOR_GLOBAL_LIMITS) await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
-              workerMetrics.recordJobFailed(outcome.result.retryable ?? false);
-            }
-          } catch (err) {
-            workerMetrics.recordJobFailed(false);
-            log.error({ err, jobId: job.id }, 'Connector send job errored unexpectedly');
-            // no rethrow — the delivery row + DLQ is the source of truth
-          }
         }));
       }) as never,
     );

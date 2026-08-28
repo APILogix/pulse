@@ -13,6 +13,18 @@ import { NotificationRoutingService } from './notification-routing.service.js';
 import { AlertDecisionEngine, alertFingerprint } from '../decision/decision.engine.js';
 import { AlertRedisStateService } from './alert-redis-state.js';
 import { computeAlertFingerprint } from './alert-fingerprint.js';
+import { IncidentsRepository } from '../incidents/incidents.repository.js';
+import {
+  recordAlertRecovered,
+  recordAlertTriggered,
+  recordCooldownBlocked,
+  recordEvaluated,
+  recordEvaluationFailed,
+  recordEvaluationLatency,
+  recordEvaluationMatched,
+  recordEvaluationSkipped,
+  recordEvaluationStale,
+} from './alert-runtime-metrics.js';
 import { resolveAllEffectiveThresholds } from '../policy/resolve-threshold.js';
 import { buildEffectiveProjectRule } from './effective-rule-contract.js';
 import type { ScopedEvent } from '../../ingestion/pipeline/telemetry-writer.js';
@@ -53,7 +65,34 @@ export interface RuntimeEvaluationSummary {
   suppressed: number;
   skipped: number;
   failed: number;
+  /** Scopes skipped because their source rollup was too stale to trust. */
+  stale: number;
 }
+
+/**
+ * Maximum age of a rollup bucket that may still drive an alert decision, per
+ * tier, in seconds.
+ *
+ * DERIVATION (not arbitrary): window/operational tiers read `*_metrics_1m`
+ * tables, whose bucket granularity is 60s, so a healthy pipeline produces a new
+ * bucket every minute. The AI tier reads `ai_metrics_1h` (3600s granularity).
+ * The allowance is a small multiple of the tier's own bucket granularity, sized
+ * to tolerate normal rollup-worker lag without accepting genuinely stale data:
+ *
+ *   window      = 3 x 60s   = 180s   (poll cadence 5s; 2 buckets of lag headroom)
+ *   operational = 5 x 60s   = 300s   (poll cadence 30s; coarser, more headroom)
+ *   ai          = 2 x 3600s = 7200s  (matches the tier's existing 2h SQL lookback)
+ *
+ * Beyond this the analytics pipeline is lagging or stalled, so the rollup no
+ * longer represents "now". Firing on it would be a false positive, and treating
+ * it as healthy would mask a blind monitoring system - so we skip the decision
+ * and surface it via `alert_evaluation_stale_total`.
+ */
+const ROLLUP_MAX_STALENESS_SECONDS: Record<string, number> = {
+  window: 180,
+  operational: 300,
+  ai: 7200,
+};
 
 export interface RuntimePayload {
   values: Record<string, unknown>;
@@ -96,6 +135,10 @@ export class AlertRuntimeEngines {
         channelRepository: new AlertChannelRepository(controlDb),
         configRepository: new AlertConfigRepository(controlDb),
       }),
+      // Incidents are control-plane state, so they use the control/primary pool.
+      // This engine only ever runs in a worker process, so incident writes are
+      // structurally off the ingestion request path.
+      incidents: new IncidentsRepository(controlDb),
     });
     this.redisState = redisState ?? new AlertRedisStateService({ logger });
     this.log = logger.child({ component: 'alert-runtime-engines' });
@@ -115,12 +158,20 @@ export class AlertRuntimeEngines {
     summary.scopes = 1;
     summary.rules = resolved.length;
 
-    console.log(`[ALERTING] 🚀 Moving to alert rules checking (fast tier) | Org: ${input.organizationId} | Project: ${input.projectId ?? 'all'} | Events: ${(input.events ?? []).length + (input.signals ?? []).length} | Rules Found: ${resolved.length}`);
-    if (resolved.length > 0) {
-      console.log(`[ALERTING] 📋 Alert rules found for scope:`, resolved.map((r) => ({ id: r.rule.id, name: r.rule.name, severity: r.effective.severity, enabled: r.effective.enabled, conditionCount: r.effective.conditions.length })));
-    } else {
-      console.log(`[ALERTING] ⚠️ No active alert rules matched scope for Org: ${input.organizationId}, Project: ${input.projectId ?? 'all'} (Total in Catalog for tier: ${snapshot.rules.length})`);
-    }
+    // Rule-level detail is per-event on the fast path: keep it at debug and
+    // structured. Never console.log here.
+    this.log.debug(
+      {
+        tier: 'fast',
+        organizationId: input.organizationId,
+        projectId: input.projectId ?? null,
+        matchedRuleIds: resolved.map((r) => r.rule.id),
+        catalogRulesTotal: snapshot.rules.length,
+      },
+      resolved.length > 0
+        ? 'fast tier resolved candidate rules for scope'
+        : 'fast tier resolved no candidate rules for scope',
+    );
 
     this.log.info(
       {
@@ -162,7 +213,7 @@ export class AlertRuntimeEngines {
       }
     }
 
-    console.log(`[ALERTING] ✅ Alert rules check complete (fast tier) | Evaluated: ${summary.evaluated} | Fired: ${summary.fired} | Recovered: ${summary.recovered} | Suppressed: ${summary.suppressed} | Duration: ${Date.now() - startedAt}ms`);
+    recordEvaluationLatency('fast', Date.now() - startedAt);
 
     this.log.info(
       {
@@ -192,8 +243,6 @@ export class AlertRuntimeEngines {
     // Load organization rule catalog snapshot once per tick (3 queries total instead of 3 * N)
     const snapshot = await this.catalog.loadCatalogSnapshot(input.organizationId, input.tier);
 
-    console.log(`[ALERTING] 🚀 Moving to alert rules checking (${input.tier} tier) | Org: ${input.organizationId} | Scopes: ${scopes.length} | Catalog Rules: ${snapshot.rules.length}`);
-
     this.log.info(
       {
         phase: '3_alert_check_started',
@@ -205,7 +254,35 @@ export class AlertRuntimeEngines {
       '[Phase 3/4] Moving to alert rules checking',
     );
 
+    const maxStalenessSeconds = ROLLUP_MAX_STALENESS_SECONDS[input.tier] ?? 300;
+    const evaluationStartedAt = Date.now();
+
     for (const scopePayload of scopes) {
+      // ── Rollup freshness gate ───────────────────────────────────────────────
+      // Rollup-driven tiers evaluate a pre-aggregated bucket produced by the
+      // independent analytics pipeline. If that pipeline lags or stalls, the
+      // bucket no longer represents current state. Deciding on it would either
+      // fire a false positive or silently report "healthy" while blind, so we
+      // refuse the decision and make the staleness observable instead.
+      const bucketAgeSeconds = (evaluationStartedAt - scopePayload.payload.observedAt.getTime()) / 1000;
+      if (bucketAgeSeconds > maxStalenessSeconds) {
+        summary.stale += 1;
+        recordEvaluationStale(input.tier);
+        this.log.warn(
+          {
+            tier: input.tier,
+            organizationId: input.organizationId,
+            projectId: scopePayload.scope.projectId ?? null,
+            environment: scopePayload.scope.environment ?? null,
+            bucketAgeSeconds: Math.round(bucketAgeSeconds),
+            maxStalenessSeconds,
+            observedAt: scopePayload.payload.observedAt.toISOString(),
+          },
+          'alert evaluation skipped: source rollup is stale (analytics pipeline may be lagging)',
+        );
+        continue;
+      }
+
       // In-memory pure resolution of effective rules and bindings (Zero Control DB queries)
       const resolved = snapshot.resolveRulesForScope(scopePayload.scope);
       summary.rules += resolved.length;
@@ -221,7 +298,7 @@ export class AlertRuntimeEngines {
       }
     }
 
-    console.log(`[ALERTING] ✅ Alert rules check complete (${input.tier} tier) | Evaluated: ${summary.evaluated} | Fired: ${summary.fired} | Recovered: ${summary.recovered} | Suppressed: ${summary.suppressed} | Duration: ${Date.now() - startedAt}ms`);
+    recordEvaluationLatency(input.tier, Date.now() - startedAt);
 
     this.log.info(
       {
@@ -232,6 +309,7 @@ export class AlertRuntimeEngines {
         fired: summary.fired,
         recovered: summary.recovered,
         suppressed: summary.suppressed,
+        stale: summary.stale,
         durationMs: Date.now() - startedAt,
       },
       '[Phase 4/4] Alert rules check complete',
@@ -271,7 +349,11 @@ export class AlertRuntimeEngines {
       });
 
       if (!hasRelevantMetrics) {
-        // Payload belongs to a different domain (e.g. evaluating CPU rules on a Log payload)
+        // Payload belongs to a different domain (e.g. evaluating CPU rules on a
+        // Log payload). Previously this returned silently with no counter, making
+        // "rule never evaluated" indistinguishable from "rule evaluated false".
+        recordEvaluationSkipped(engine, 'no_relevant_metrics');
+        summary.skipped += 1;
         return;
       }
 
@@ -287,56 +369,35 @@ export class AlertRuntimeEngines {
         scope.service ?? '',
         scope.endpoint ?? '',
       ].join(':'));
-      const states = await this.runtime.getRuleEvalStates([scopeHash]);
-      const previous = states[0] ?? null;
       const now = payload.observedAt;
       summary.evaluated += 1;
+      recordEvaluated(engine);
+      if (result.matched) recordEvaluationMatched(engine);
 
-      console.log(`\n[ALERTING] [Phase 2/4: Candidate Evaluation] Rule: "${rule.name}" (${rule.id}) | Scope: [Project: ${scope.projectId ?? 'all'}, Env: ${scope.environment ?? 'all'}] | Tier: ${engine}`);
-      console.log(`[ALERTING] [Phase 3/4: Payload Inspection] Payload Values:`, JSON.stringify(payload.values));
-
-      for (const res of result.conditionResults) {
-        const statusEmoji = res.passed ? '✅ PASSED' : '❌ FAILED';
-        console.log(`[ALERTING]   👉 Condition [${res.fieldPath}]: Operator "${res.operator}" | Expected Threshold: ${JSON.stringify(res.expected)} | Actual Found: ${JSON.stringify(res.actual ?? 'undefined')} -> ${statusEmoji}`);
-      }
-
-      console.log(`[ALERTING] [Phase 3/4: Evaluation Verdict] Rule "${rule.name}": Matched = ${result.matched} | Observed = ${observed ?? 'n/a'} | Threshold = ${threshold ?? 'n/a'}`);
-
-      if (!result.matched) {
-        await this.runtime.upsertRuleEvalState({
-          scopeHash,
-          organizationId: rule.organization_id,
+      // Per-condition detail is high-volume (fires on every candidate on the fast
+      // path). Keep it structured and at trace/debug level only - never a raw
+      // console.log of the full telemetry payload.
+      this.log.trace(
+        {
           ruleId: rule.id,
-          bindingId: effective.bindingId,
-          projectId: scope.projectId ?? null,
-          environment: scope.environment ?? null,
-          service: scope.service ?? null,
-          endpoint: scope.endpoint ?? null,
-          consecutiveBreaches: 0,
-          isBreaching: false,
-          evaluatedAt: now,
-          recoveredAt: previous?.is_breaching ? now : null,
-        });
-        if (previous?.is_breaching) {
-          console.log(`[ALERTING] 🔄 Alert RECOVERED: "${rule.name}" (${rule.id})`);
-          await this.appendDecision(rule, effective, scope, payload, engine, 'recovered', observed, threshold);
-          summary.recovered += 1;
-        }
-        return;
-      }
+          engine,
+          matched: result.matched,
+          conditions: result.conditionResults.map((res) => ({
+            fieldPath: res.fieldPath,
+            operator: res.operator,
+            passed: res.passed,
+          })),
+        },
+        'alert condition evaluation detail',
+      );
 
-      const consecutive = (previous?.is_breaching ? previous.consecutive_breaches : 0) + 1;
-      const shouldFire = consecutive >= effective.consecutiveBreaches;
-      const dbCoolingDown = previous?.last_fired_at
-        ? now.getTime() - previous.last_fired_at.getTime() < effective.cooldownSeconds * 1000
-        : false;
-
-      // Extract groupBy from rule metadata / labels / groupingKeyTemplate
+      // Canonical alert identity MUST be computed before the matched/unmatched
+      // branch: a fire and its later recovery have to resolve to the SAME
+      // alertKey, otherwise a grouped alert fires under one key and "recovers"
+      // under another, leaving the original alert firing forever.
       const ruleMetadata = (rule.metadata ?? {}) as Record<string, unknown>;
       const ruleLabels = (rule.labels ?? {}) as Record<string, unknown>;
       const groupBy = (ruleMetadata.groupBy ?? ruleMetadata.group_by ?? ruleLabels.groupBy ?? ruleLabels.group_by ?? null) as string[] | null;
-
-      // Compute deterministic fingerprint with normalized route and bounded grouping dimensions
       const { fingerprint: alertKey, dimensionKey, normalizedDimensions } = computeAlertFingerprint({
         organizationId: rule.organization_id,
         projectId: scope.projectId ?? null,
@@ -351,9 +412,55 @@ export class AlertRuntimeEngines {
         severity: effective.severity,
       });
 
-      let inCooldown = dbCoolingDown;
-      if (shouldFire && effective.cooldownSeconds > 0) {
-        const cooldownResult = await this.redisState.acquireCooldown({
+      if (!result.matched) {
+        // Atomic recovery claim: exactly one concurrent evaluation observes the
+        // breaching -> healthy edge, so only one recovery alert is emitted.
+        const { recovered } = await this.runtime.claimRecovery({
+          scopeHash,
+          organizationId: rule.organization_id,
+          ruleId: rule.id,
+          bindingId: effective.bindingId,
+          projectId: scope.projectId ?? null,
+          environment: scope.environment ?? null,
+          service: scope.service ?? null,
+          endpoint: scope.endpoint ?? null,
+          evaluatedAt: now,
+        });
+        if (recovered) {
+          this.log.info(
+            { ruleId: rule.id, organizationId: rule.organization_id, engine, observed, threshold },
+            'alert recovered',
+          );
+          recordAlertRecovered(engine);
+          // Same canonical alertKey as the fire, so the recovery resolves the
+          // alert it is actually recovering.
+          await this.appendDecision(
+            rule,
+            effective,
+            scope,
+            payload,
+            engine,
+            'recovered',
+            observed,
+            threshold,
+            normalizedDimensions.route ?? scope.endpoint ?? null,
+            normalizedDimensions.service ?? scope.service ?? null,
+            dimensionKey !== 'global' ? dimensionKey : null,
+            alertKey,
+          );
+          summary.recovered += 1;
+        }
+        return;
+      }
+
+      // ── Fire gate ────────────────────────────────────────────────────────────
+      // Redis is a best-effort FAST-PATH FILTER ONLY. It may cheaply tell us
+      // "definitely still cooling down" so we can skip the DB round trip, but it
+      // is NEVER the correctness boundary: a Redis outage (or a Redis false
+      // "acquired") cannot cause a duplicate alert, because the authoritative
+      // decision below is a single atomic DB statement.
+      if (effective.cooldownSeconds > 0) {
+        const cooldownProbe = await this.redisState.acquireCooldown({
           organizationId: rule.organization_id,
           projectId: scope.projectId ?? null,
           ruleId: rule.id,
@@ -362,37 +469,39 @@ export class AlertRuntimeEngines {
           workerId: this.workerId,
           tier: engine,
         });
-
-        if (!cooldownResult.acquired) {
-          inCooldown = true;
-        } else if (cooldownResult.fallback) {
-          // Redis unavailable - fallback to database cooldown state
-          inCooldown = dbCoolingDown;
-        } else {
-          // Successfully acquired Redis cooldown gate
-          inCooldown = false;
+        // Only a definitive "already held" (not a fallback/degraded result) is
+        // allowed to short-circuit, and even then the DB row still records the
+        // evaluation so breach counting stays accurate.
+        if (!cooldownProbe.acquired && !cooldownProbe.fallback) {
+          // Still record the breach atomically so consecutive counting stays
+          // correct while we skip the fire decision. cooldownSeconds is passed
+          // as 0 here only to advance the counter; `fired` is ignored.
+          await this.runtime.claimBreachDecision({
+            scopeHash,
+            organizationId: rule.organization_id,
+            ruleId: rule.id,
+            bindingId: effective.bindingId,
+            projectId: scope.projectId ?? null,
+            environment: scope.environment ?? null,
+            service: scope.service ?? null,
+            endpoint: scope.endpoint ?? null,
+            evaluatedAt: now,
+            requiredBreaches: Number.MAX_SAFE_INTEGER,
+            cooldownSeconds: effective.cooldownSeconds,
+          });
+          recordCooldownBlocked(engine, 'redis-fastpath');
+          this.log.debug(
+            { ruleId: rule.id, organizationId: rule.organization_id, engine, dimensionKey, gate: 'redis-fastpath' },
+            'alert suppressed: cooldown active',
+          );
+          summary.suppressed += 1;
+          return;
         }
       }
 
-      console.log(`[ALERTING] [Phase 4/4: Action Gate] 🚨 Rule "${rule.name}" MATCHED! Consecutive Breaches: ${consecutive}/${effective.consecutiveBreaches} | ShouldFire: ${shouldFire} | InCooldown: ${inCooldown} | Dimension: ${dimensionKey}`);
-
-      this.log.info(
-        {
-          ruleId: rule.id,
-          ruleName: rule.name,
-          organizationId: rule.organization_id,
-          projectId: scope.projectId ?? null,
-          engine,
-          observed,
-          threshold,
-          shouldFire,
-          inCooldown,
-          dimensionKey,
-        },
-        'alert rule matches condition',
-      );
-
-      await this.runtime.upsertRuleEvalState({
+      // AUTHORITATIVE gate: atomic breach increment + cooldown claim in one
+      // statement. Exactly one concurrent evaluation can receive fired=true.
+      const decision = await this.runtime.claimBreachDecision({
         scopeHash,
         organizationId: rule.organization_id,
         ruleId: rule.id,
@@ -401,24 +510,76 @@ export class AlertRuntimeEngines {
         environment: scope.environment ?? null,
         service: scope.service ?? null,
         endpoint: scope.endpoint ?? null,
-        consecutiveBreaches: consecutive,
-        isBreaching: true,
         evaluatedAt: now,
-        firedAt: shouldFire && !inCooldown ? now : null,
+        requiredBreaches: effective.consecutiveBreaches,
+        cooldownSeconds: effective.cooldownSeconds,
       });
 
+      const consecutive = decision.consecutiveBreaches;
+      const shouldFire = consecutive >= effective.consecutiveBreaches;
+      const inCooldown = !decision.fired;
+
+      this.log.debug(
+        {
+          ruleId: rule.id,
+          organizationId: rule.organization_id,
+          projectId: scope.projectId ?? null,
+          engine,
+          observed,
+          threshold,
+          consecutive,
+          requiredBreaches: effective.consecutiveBreaches,
+          shouldFire,
+          inCooldown,
+          dimensionKey,
+        },
+        'alert rule matched condition',
+      );
+
+      // NOTE: no further state write here. `claimBreachDecision` above is the
+      // single authoritative writer for consecutive_breaches/last_fired_at.
+      // Writing again would reintroduce the lost-update race it exists to remove.
+
+      if (decision.indeterminate) {
+        // Fail closed and make it visible rather than firing on unknown state.
+        this.log.error(
+          { ruleId: rule.id, organizationId: rule.organization_id, engine, scopeHash },
+          'alert fire gate indeterminate: evaluation state row missing, refusing to fire',
+        );
+        recordEvaluationFailed(engine, 'indeterminate_state');
+        summary.failed += 1;
+        return;
+      }
       if (!shouldFire) {
-        console.log(`[ALERTING]   ⏳ SUPPRESSED: Waiting for ${effective.consecutiveBreaches} consecutive breaches (currently ${consecutive}/${effective.consecutiveBreaches}).`);
+        this.log.debug(
+          { ruleId: rule.id, engine, consecutive, requiredBreaches: effective.consecutiveBreaches },
+          'alert suppressed: awaiting consecutive breaches',
+        );
         summary.suppressed += 1;
         return;
       }
       if (inCooldown) {
-        console.log(`[ALERTING]   ⏳ SUPPRESSED: Rule "${rule.name}" is currently in cooldown (${effective.cooldownSeconds}s window active, dimension: ${dimensionKey}).`);
+        recordCooldownBlocked(engine, 'db-authoritative');
+        this.log.debug(
+          { ruleId: rule.id, engine, cooldownSeconds: effective.cooldownSeconds, dimensionKey, gate: 'db-authoritative' },
+          'alert suppressed: cooldown active',
+        );
         summary.suppressed += 1;
         return;
       }
 
-      console.log(`[ALERTING]   🔥 FIRED! Dispatched alert notification decision for "${rule.name}" (dimension: ${dimensionKey}).`);
+      this.log.info(
+        {
+          ruleId: rule.id,
+          organizationId: rule.organization_id,
+          projectId: scope.projectId ?? null,
+          engine,
+          observed,
+          threshold,
+          dimensionKey,
+        },
+        'alert fired',
+      );
       await this.appendDecision(
         rule,
         effective,
@@ -431,12 +592,17 @@ export class AlertRuntimeEngines {
         normalizedDimensions.route ?? scope.endpoint ?? null,
         normalizedDimensions.service ?? scope.service ?? null,
         dimensionKey !== 'global' ? dimensionKey : null,
+        alertKey,
       );
+      recordAlertTriggered(engine);
       summary.fired += 1;
     } catch (err) {
       summary.failed += 1;
-      console.error(`[ALERTING] 💥 Evaluation error for rule "${rule.name}" (${rule.id}):`, err);
-      this.log.error({ err, ruleId: rule.id, orgId: rule.organization_id }, 'Runtime alert evaluation failed');
+      recordEvaluationFailed(engine, 'exception');
+      this.log.error(
+        { err, ruleId: rule.id, organizationId: rule.organization_id, engine },
+        'Runtime alert evaluation failed',
+      );
     }
   }
 
@@ -452,13 +618,23 @@ export class AlertRuntimeEngines {
     endpointOverride?: string | null,
     serviceOverride?: string | null,
     dimensionOverride?: string | null,
+    canonicalAlertKey?: string,
   ): Promise<void> {
     const effectiveProjectRule = buildEffectiveProjectRule(rule, effective, scope);
     if (!effectiveProjectRule) {
-      console.log(`[ALERTING] ⚠️ Skipping decision: Could not build effective project rule for "${rule.name}" (${rule.id})`);
+      // Fail loudly: a missing effective project rule means we cannot establish
+      // rule identity, so the decision is dropped. This must be observable.
+      recordEvaluationFailed(engine, 'no_effective_project_rule');
+      this.log.error(
+        { ruleId: rule.id, organizationId: rule.organization_id, projectId: scope.projectId ?? null, engine },
+        'alert decision skipped: could not build effective project rule',
+      );
       return;
     }
     const result = await this.decision.decide({
+      // Pass the canonical identity so the cooldown key and the durable
+      // dedup/state key are guaranteed identical (single fingerprint contract).
+      ...(canonicalAlertKey ? { alertKey: canonicalAlertKey } : {}),
       organizationId: rule.organization_id,
       projectId: scope.projectId ?? null,
       environment: scope.environment ?? null,
@@ -519,12 +695,10 @@ export class AlertRuntimeEngines {
     });
     await Promise.all(result.notificationJobs.map((job) => this.enqueueNotificationJob(job.id)));
     if (result.notificationJobs.length > 0) {
-      console.log(`[ALERTING] 🔔 Alert queued: "${rule.name}" | AlertKey: ${result.alertKey} | Notification Jobs: ${result.notificationJobs.length}`);
       this.log.info(
         {
           alertKey: result.alertKey,
           ruleId: rule.id,
-          ruleName: rule.name,
           organizationId: rule.organization_id,
           projectId: scope.projectId ?? null,
           notificationJobs: result.notificationJobs.length,
@@ -1196,5 +1370,6 @@ function emptySummary(): RuntimeEvaluationSummary {
     suppressed: 0,
     skipped: 0,
     failed: 0,
+    stale: 0,
   };
 }

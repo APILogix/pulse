@@ -46,6 +46,10 @@ import {
   type IngestJobPayload,
 } from '../queue/ingest-queues.js';
 import { SDK_EVENT_TYPES, type SdkEventType } from '../pipeline/event-normalizer.js';
+import {
+  INGESTION_JOB_ABORTED,
+  throwIfIngestionAborted,
+} from '../pipeline/ingestion-abort.js';
 import { EventProcessor, stableStringify } from './event-processor.js';
 import { UsageRollup } from './usage-rollup.js';
 import { MetricsServer, WorkerMetrics } from './metrics-server.js';
@@ -61,6 +65,8 @@ interface JobOutcome {
 interface DeliveredJob {
   id: string;
   data: unknown;
+  /** Shared pg-boss v12 handler signal; aborted on expiry or worker stop. */
+  signal?: AbortSignal;
   retryCount?: number;
   createdOn?: Date | string | number;
   startAfter?: Date | string | number;
@@ -90,6 +96,7 @@ function errorCode(err: unknown): string | null {
 
 function failureReason(err: unknown): string {
   const code = errorCode(err);
+  if (code === INGESTION_JOB_ABORTED) return 'job_aborted';
   if (code === '55P03') return 'db_lock_timeout';
   if (code === '57014') return 'db_statement_timeout';
   if (code === '53300' || code === '08000' || code === '08003' || code === '08006') return 'db_connection';
@@ -155,8 +162,14 @@ export class WorkerRegistry {
   /** Tenant fairness: per-org in-flight job count for THIS process. */
   private readonly inFlight = new Map<string, number>();
   private readonly workerInFlight = new Map<string, number>();
-  private readonly registeredQueues: string[] = [];
+  /**
+   * Queues whose work registration may still exist. A queue is removed only
+   * after offWork succeeds, including registrations whose work() call rejected
+   * after partially installing the worker.
+   */
+  private readonly registeredQueues = new Set<string>();
   private started = false;
+  private startPromise: Promise<void> | null = null;
 
   constructor(
     private readonly pool: Pool,
@@ -184,70 +197,137 @@ export class WorkerRegistry {
   /** Provision queues, then register every worker + cron + metrics. */
   async start(): Promise<void> {
     if (this.started) return;
-    this.started = true;
+    if (!this.startPromise) {
+      this.startPromise = this.startInternal().finally(() => {
+        this.startPromise = null;
+      });
+    }
+    await this.startPromise;
+  }
 
-    await provisionIngestQueues();
+  private async cleanupRegisteredQueues(
+    context: string,
+  ): Promise<Array<{ queue: string; err: unknown }>> {
+    const failures: Array<{ queue: string; err: unknown }> = [];
+    for (const queue of [...this.registeredQueues].reverse()) {
+      try {
+        await pgboss.offWork(queue, { wait: true });
+        this.registeredQueues.delete(queue);
+      } catch (err) {
+        failures.push({ queue, err });
+        this.log.warn({ err, queue, context }, 'offWork failed during worker cleanup');
+      }
+    }
+    return failures;
+  }
 
-    // 1) One worker pool per event type.
-    for (const type of SDK_EVENT_TYPES) {
-      const queue = INGEST_QUEUES[type];
-      this.metrics.setWorkerCapacity(
-        queue,
-        type,
-        env.INGESTION_TYPE_WORKER_CONCURRENCY * env.INGESTION_TYPE_WORKER_BATCH_SIZE,
-      );
-      await pgboss.work(
-        queue,
-        {
-          localConcurrency: env.INGESTION_TYPE_WORKER_CONCURRENCY,
-          batchSize: env.INGESTION_TYPE_WORKER_BATCH_SIZE,
-          perJobResults: true,
-          includeMetadata: true,
-        } as never,
-        ((jobs: unknown) => this.handleIngestBatch(queue, type, jobs)) as never,
-      );
-      this.registeredQueues.push(queue);
+  private async startInternal(): Promise<void> {
+    // A prior failed start/stop may have left worker registrations active. Do
+    // not provision or register replacements until every cleanup succeeds.
+    if (this.registeredQueues.size > 0) {
+      const cleanupFailures = await this.cleanupRegisteredQueues('start retry preflight');
+      const firstFailure = cleanupFailures[0];
+      if (firstFailure) throw firstFailure.err;
     }
 
-    // 2) DLQ intake — persists exhausted/rejected jobs for ops replay.
-    await pgboss.work(
-      INGEST_DLQ_INTAKE_QUEUE,
-      { localConcurrency: 2, batchSize: 10, perJobResults: true, includeMetadata: true } as never,
-      ((jobs: unknown) => this.handleDlqBatch(jobs)) as never,
-    );
-    this.registeredQueues.push(INGEST_DLQ_INTAKE_QUEUE);
+    let rollupStartAttempted = false;
+    let processorStarted = false;
+    let metricsServerStarted = false;
+    try {
+      await provisionIngestQueues();
 
-    // 3) Singleton usage-rollup cron + 4) metrics collectors.
-    await this.rollup.start();
-    this.processor.start();
-    this.metricsServer.start();
+      // 1) One worker pool per event type.
+      for (const type of SDK_EVENT_TYPES) {
+        const queue = INGEST_QUEUES[type];
+        this.metrics.setWorkerCapacity(
+          queue,
+          type,
+          env.INGESTION_TYPE_WORKER_CONCURRENCY * env.INGESTION_TYPE_WORKER_BATCH_SIZE,
+        );
+        // Track the attempted registration before awaiting it so failed starts
+        // can defensively call offWork() even if pg-boss partially registered.
+        this.registeredQueues.add(queue);
+        await pgboss.work(
+          queue,
+          {
+            localConcurrency: env.INGESTION_TYPE_WORKER_CONCURRENCY,
+            batchSize: env.INGESTION_TYPE_WORKER_BATCH_SIZE,
+            perJobResults: true,
+            includeMetadata: true,
+          } as never,
+          ((jobs: unknown) => this.handleIngestBatch(queue, type, jobs)) as never,
+        );
+      }
 
-    this.log.info(
-      {
-        queues: ALL_INGEST_QUEUES.length,
-        typeConcurrency: env.INGESTION_TYPE_WORKER_CONCURRENCY,
-        typeBatchSize: env.INGESTION_TYPE_WORKER_BATCH_SIZE,
-        fairnessMaxDefers: env.INGESTION_FAIRNESS_MAX_DEFERS,
-        metricsPort: env.INGESTION_WORKER_METRICS_PORT,
-      },
-      'WorkerRegistry started',
-    );
+      // 2) DLQ intake — persists exhausted/rejected jobs for ops replay.
+      this.registeredQueues.add(INGEST_DLQ_INTAKE_QUEUE);
+      await pgboss.work(
+        INGEST_DLQ_INTAKE_QUEUE,
+        { localConcurrency: 2, batchSize: 10, perJobResults: true, includeMetadata: true } as never,
+        ((jobs: unknown) => this.handleDlqBatch(jobs)) as never,
+      );
+
+      // 3) Singleton usage-rollup cron + 4) metrics collectors.
+      rollupStartAttempted = true;
+      await this.rollup.start();
+      this.processor.start();
+      processorStarted = true;
+      this.metricsServer.start();
+      metricsServerStarted = true;
+      this.started = true;
+
+      this.log.info(
+        {
+          queues: ALL_INGEST_QUEUES.length,
+          typeConcurrency: env.INGESTION_TYPE_WORKER_CONCURRENCY,
+          typeBatchSize: env.INGESTION_TYPE_WORKER_BATCH_SIZE,
+          fairnessMaxDefers: env.INGESTION_FAIRNESS_MAX_DEFERS,
+          metricsPort: env.INGESTION_WORKER_METRICS_PORT,
+        },
+        'WorkerRegistry started',
+      );
+    } catch (err) {
+      this.started = false;
+      await this.cleanupRegisteredQueues('start rollback');
+      if (metricsServerStarted) {
+        await this.metricsServer.stop().catch((cleanupErr) => this.log.warn({ err: cleanupErr }, 'metrics server start cleanup failed'));
+      }
+      if (processorStarted) {
+        await this.processor.stop().catch((cleanupErr) => this.log.warn({ err: cleanupErr }, 'usage counter start cleanup failed'));
+      }
+      if (rollupStartAttempted) {
+        await this.rollup.stop().catch((cleanupErr) => this.log.warn({ err: cleanupErr }, 'usage rollup start cleanup failed'));
+      }
+      throw err;
+    }
   }
 
   /** offWork every queue (waiting for in-flight jobs), then drain the rest. */
   async stop(): Promise<void> {
-    if (!this.started) return;
+    // If shutdown races startup, wait for the shared attempt so a successful
+    // registration cannot escape after stop() has already returned.
+    if (this.startPromise) await this.startPromise.catch(() => undefined);
+    const drainServices = this.started;
     this.started = false;
 
-    await this.rollup.stop();
-    for (const queue of this.registeredQueues) {
-      await pgboss
-        .offWork(queue, { wait: true })
-        .catch((err) => this.log.warn({ err, queue }, 'offWork failed during stop'));
+    // UsageRollup tracks partial start state itself, so this also retries its
+    // cleanup after a failed registry start.
+    await this.rollup.stop().catch((err) => this.log.warn({ err }, 'usage rollup stop failed'));
+    await this.cleanupRegisteredQueues('stop');
+
+    if (drainServices) {
+      await this.processor.stop().catch((err) => this.log.warn({ err }, 'usage counter drain failed'));
+      await this.metricsServer.stop().catch((err) => this.log.warn({ err }, 'metrics server stop failed'));
     }
-    await this.processor.stop().catch((err) => this.log.warn({ err }, 'usage counter drain failed'));
-    await this.metricsServer.stop().catch((err) => this.log.warn({ err }, 'metrics server stop failed'));
-    this.log.info('WorkerRegistry stopped');
+
+    if (this.registeredQueues.size > 0) {
+      this.log.warn(
+        { queues: [...this.registeredQueues] },
+        'WorkerRegistry stop incomplete; worker cleanup will be retried before the next start',
+      );
+    } else if (drainServices) {
+      this.log.info('WorkerRegistry stopped');
+    }
   }
 
   // ── Per-type ingest batch handler ─────────────────────────────────────────
@@ -283,7 +363,12 @@ export class WorkerRegistry {
     const outcomes = await Promise.all(
       jobs.map(async (job): Promise<JobOutcome> => {
         try {
-          const output = await this.runOne(queue, type, job.data as IngestJobPayload);
+          const output = await this.runOne(
+            queue,
+            type,
+            job.data as IngestJobPayload,
+            job.signal,
+          );
           return { id: job.id, status: 'completed', output };
         } catch (err) {
           const payload = job.data as Partial<IngestJobPayload> | undefined;
@@ -306,7 +391,13 @@ export class WorkerRegistry {
    * 'completed' (the re-enqueued copy carries the work); admitted jobs release
    * their in-flight slot in `finally`.
    */
-  private async runOne(queue: string, type: SdkEventType, payload: IngestJobPayload): Promise<Record<string, unknown>> {
+  private async runOne(
+    queue: string,
+    type: SdkEventType,
+    payload: IngestJobPayload,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    throwIfIngestionAborted(signal, 'worker dispatch');
     const workerKey = `${queue}|${type}`;
     const workerCount = (this.workerInFlight.get(workerKey) ?? 0) + 1;
     this.workerInFlight.set(workerKey, workerCount);
@@ -325,7 +416,10 @@ export class WorkerRegistry {
       if (current >= limit && deferCount < env.INGESTION_FAIRNESS_MAX_DEFERS) {
         // Re-enqueue a copy with an aged priority boost, then complete the
         // original — if the send throws, the original FAILS and retries, so the
-        // events are never lost.
+        // events are never lost. An abort after send may produce an extra retry,
+        // but idempotent event/outbox writes make that safer than acknowledging
+        // an already-expired original.
+        throwIfIngestionAborted(signal, 'fairness defer');
         const copy: IngestJobPayload = {
           ...payload,
           metadata: { ...payload.metadata, deferCount: deferCount + 1 },
@@ -334,6 +428,7 @@ export class WorkerRegistry {
           startAfter: env.INGESTION_FAIRNESS_DEFER_DELAY_SECONDS,
           priority: jobPriority(planTier, type, deferCount + 1),
         } as never);
+        throwIfIngestionAborted(signal, 'fairness defer');
         this.metrics.recordDeferred(queue, eventCount);
         this.log.info(
           {
@@ -363,10 +458,11 @@ export class WorkerRegistry {
         );
       }
 
+      throwIfIngestionAborted(signal, 'tenant admission');
       this.inFlight.set(orgId, current + 1);
       this.metrics.setOrgInFlight(orgId, current + 1);
       try {
-        await this.processor.process(payload, queue);
+        await this.processor.process(payload, queue, signal);
         this.metrics.recordFairnessProcessed();
         return { deferred: false, deferCount };
       } finally {

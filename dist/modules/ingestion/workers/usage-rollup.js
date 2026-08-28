@@ -49,6 +49,12 @@ export class UsageRollup {
     pool;
     metrics;
     log;
+    // Worker registrations are process-local, but pg-boss schedules are shared
+    // database state. Track and roll back only the local worker; a replica must
+    // never unschedule the healthy fleet's singleton cron during start or stop.
+    workerMayBeRegistered = false;
+    started = false;
+    startPromise = null;
     constructor(pool, metrics, log) {
         this.pool = pool;
         this.metrics = metrics;
@@ -56,15 +62,57 @@ export class UsageRollup {
     }
     /** Register the worker + the singleton cron schedule. Call after pgboss.start(). */
     async start() {
-        await pgboss.work(INGEST_USAGE_ROLLUP_QUEUE, { localConcurrency: 1, batchSize: 1 }, (async () => {
-            await this.run();
-        }));
-        await pgboss.schedule(INGEST_USAGE_ROLLUP_QUEUE, env.INGESTION_USAGE_ROLLUP_CRON, { triggeredAt: new Date().toISOString() }, { singletonKey: 'usage-rollup' });
-        this.log.info({ cron: env.INGESTION_USAGE_ROLLUP_CRON }, 'Usage rollup scheduled');
+        if (this.started)
+            return;
+        if (!this.startPromise) {
+            this.startPromise = this.startInternal().finally(() => {
+                this.startPromise = null;
+            });
+        }
+        await this.startPromise;
+    }
+    async startInternal() {
+        if (this.workerMayBeRegistered) {
+            const cleanupFailure = await this.cleanupWorkerRegistration('retry cleanup');
+            if (cleanupFailure)
+                throw cleanupFailure;
+        }
+        try {
+            this.workerMayBeRegistered = true;
+            await pgboss.work(INGEST_USAGE_ROLLUP_QUEUE, { localConcurrency: 1, batchSize: 1 }, (async () => {
+                await this.run();
+            }));
+            // schedule() is idempotent shared state. If it rejects after a partial
+            // database write, leaving that desired schedule in place is safer than
+            // globally deleting a schedule owned by healthy replicas.
+            await pgboss.schedule(INGEST_USAGE_ROLLUP_QUEUE, env.INGESTION_USAGE_ROLLUP_CRON, { triggeredAt: new Date().toISOString() }, { singletonKey: 'usage-rollup' });
+            this.started = true;
+            this.log.info({ cron: env.INGESTION_USAGE_ROLLUP_CRON }, 'Usage rollup scheduled');
+        }
+        catch (err) {
+            this.started = false;
+            await this.cleanupWorkerRegistration('start rollback');
+            throw err;
+        }
+    }
+    async cleanupWorkerRegistration(context) {
+        if (!this.workerMayBeRegistered)
+            return null;
+        try {
+            await pgboss.offWork(INGEST_USAGE_ROLLUP_QUEUE, { wait: true });
+            this.workerMayBeRegistered = false;
+            return null;
+        }
+        catch (err) {
+            this.log.warn({ err, context }, 'Usage rollup offWork cleanup failed');
+            return err;
+        }
     }
     async stop() {
-        await pgboss.unschedule(INGEST_USAGE_ROLLUP_QUEUE).catch(() => undefined);
-        await pgboss.offWork(INGEST_USAGE_ROLLUP_QUEUE).catch(() => undefined);
+        if (this.startPromise)
+            await this.startPromise.catch(() => undefined);
+        this.started = false;
+        await this.cleanupWorkerRegistration('stop');
     }
     /** One rollup pass. Throws on failure (staging preserved for the next tick). */
     async run() {

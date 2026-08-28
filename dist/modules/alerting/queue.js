@@ -11,12 +11,14 @@ import { AlertConfigRepository } from './config/alert-config.repository.js';
 import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
 import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
+import { AlertAutoResolveSweep } from './runtime/auto-resolve-sweep.js';
 import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
 import { EmailOnlyRestrictedRouting, ProjectOwnerRepository } from './runtime/email-only-restricted-routing.js';
 export const ALERT_JOBS = {
     cleanup: 'alert.cleanup',
     escalate: 'alert.escalate',
     escalationSweep: 'alert.escalation-sweep',
+    autoResolveSweep: 'alert.auto-resolve-sweep',
     evaluateFast: 'alert.evaluate.fast',
     evaluateWindow: 'alert.evaluate.window',
     evaluateOperational: 'alert.evaluate.operational',
@@ -37,6 +39,9 @@ const DEFAULTS = {
 export const ALERT_DELIVERY_WORKER_JOBS = [
     ALERT_JOBS.escalate,
     ALERT_JOBS.escalationSweep,
+    // Alert lifecycle correctness, not just delivery: without this sweep a
+    // configured `autoResolveAfterMinutes` never takes effect.
+    ALERT_JOBS.autoResolveSweep,
     ALERT_JOBS.evaluateFast,
     ALERT_JOBS.evaluateWindow,
     ALERT_JOBS.evaluateOperational,
@@ -84,9 +89,17 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
     const snapshotEscalation = new SnapshotEscalationWorker(logger, runtimePool, routing);
+    const autoResolveSweep = new AlertAutoResolveSweep(runtimePool, logger);
     // ── escalation-sweep: advance due escalations + resume expired acks ─────
     await pgboss.work(ALERT_JOBS.escalationSweep, {}, (async () => {
         await escalationSweep.run(cfg.sweepClaimLimit);
+    }));
+    // ── auto-resolve-sweep: close alerts past their auto_resolve_at deadline ─
+    // Part of the alert lifecycle (like the escalation sweep), so it is registered
+    // in the alert-delivery worker group too - without it, `autoResolveAfterMinutes`
+    // silently does nothing.
+    await pgboss.work(ALERT_JOBS.autoResolveSweep, {}, (async () => {
+        await autoResolveSweep.run(cfg.sweepClaimLimit);
     }));
     // ── cleanup: retention purge ────────────────────────────────────────────
     if (!alertDeliveryOnly) {
@@ -160,6 +173,8 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     }));
     // ── Schedules (cron & timers) ───────────────────────────────────────────
     await pgboss.schedule(ALERT_JOBS.escalationSweep, '* * * * *', {}, { singletonKey: 'alert-escalation-sweep' });
+    // singletonKey prevents duplicate cron execution across worker replicas.
+    await pgboss.schedule(ALERT_JOBS.autoResolveSweep, '* * * * *', {}, { singletonKey: 'alert-auto-resolve-sweep' });
     if (!alertDeliveryOnly) {
         await pgboss.schedule(ALERT_JOBS.cleanup, '17 3 * * *', {}, { singletonKey: 'alert-cleanup' });
     }
@@ -168,6 +183,7 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     return {
         stop: async () => {
             await pgboss.unschedule(ALERT_JOBS.escalationSweep).catch(() => undefined);
+            await pgboss.unschedule(ALERT_JOBS.autoResolveSweep).catch(() => undefined);
             if (!alertDeliveryOnly) {
                 await pgboss.unschedule(ALERT_JOBS.cleanup).catch(() => undefined);
             }

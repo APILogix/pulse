@@ -78,3 +78,147 @@ export function recordRedisError(operation: string): void {
 export function recordRedisLatency(operation: string, latencyMs: number): void {
   redisLatencyHistogram.observe({ operation }, latencyMs);
 }
+
+// ── Evaluation + decision lifecycle metrics ─────────────────────────────────
+// Required observability surface for the alerting hardening work: every stage of
+// the evaluation/decision pipeline must be countable without reading logs.
+const evaluationCounter = counter(
+  'alert_evaluation_total',
+  'Total alert rule candidate evaluations that produced a verdict',
+  ['tier'],
+);
+const evaluationMatchedCounter = counter(
+  'alert_evaluation_matched_total',
+  'Total alert rule evaluations whose conditions matched',
+  ['tier'],
+);
+const evaluationSkippedCounter = counter(
+  'alert_evaluation_skipped_total',
+  'Total alert rule evaluations skipped before a verdict',
+  ['tier', 'reason'],
+);
+const evaluationFailedCounter = counter(
+  'alert_evaluation_failed_total',
+  'Total alert rule evaluations that errored or could not be decided',
+  ['tier', 'reason'],
+);
+const evaluationStaleCounter = counter(
+  'alert_evaluation_stale_total',
+  'Total alert rule evaluations skipped because the source rollup was too stale to trust',
+  ['tier'],
+);
+const evaluationLatencyHistogram = histogram(
+  'alert_evaluation_latency_ms',
+  'End-to-end latency of one alert evaluation batch in milliseconds',
+  ['tier'],
+);
+
+const alertTriggeredCounter = counter('alert_triggered_total', 'Total alerts fired', ['tier']);
+const alertRecoveredCounter = counter('alert_recovered_total', 'Total alerts recovered', ['tier']);
+const alertCooldownBlockedCounter = counter(
+  'alert_cooldown_blocked_total',
+  'Total alert fires suppressed by an active cooldown window',
+  ['tier', 'gate'],
+);
+const alertDeduplicatedCounter = counter(
+  'alert_deduplicated_total',
+  'Total alert decisions collapsed onto an existing alert by idempotency/dedup',
+  ['tier'],
+);
+
+export function recordEvaluated(tier: string): void {
+  evaluationCounter.inc({ tier });
+}
+
+export function recordEvaluationMatched(tier: string): void {
+  evaluationMatchedCounter.inc({ tier });
+}
+
+export function recordEvaluationSkipped(tier: string, reason: string): void {
+  evaluationSkippedCounter.inc({ tier, reason });
+}
+
+export function recordEvaluationFailed(tier: string, reason = 'error'): void {
+  evaluationFailedCounter.inc({ tier, reason });
+}
+
+export function recordEvaluationStale(tier: string): void {
+  evaluationStaleCounter.inc({ tier });
+}
+
+export function recordEvaluationLatency(tier: string, latencyMs: number): void {
+  evaluationLatencyHistogram.observe({ tier }, latencyMs);
+}
+
+export function recordAlertTriggered(tier: string): void {
+  alertTriggeredCounter.inc({ tier });
+}
+
+export function recordAlertRecovered(tier: string): void {
+  alertRecoveredCounter.inc({ tier });
+}
+
+/** `gate` distinguishes the cheap Redis fast-path filter from the authoritative DB gate. */
+export function recordCooldownBlocked(tier: string, gate: 'redis-fastpath' | 'db-authoritative'): void {
+  alertCooldownBlockedCounter.inc({ tier, gate });
+}
+
+export function recordAlertDeduplicated(tier: string): void {
+  alertDeduplicatedCounter.inc({ tier });
+}
+
+const alertAutoResolvedCounter = counter(
+  'alert_auto_resolved_total',
+  'Total alerts closed by the auto-resolve deadline sweep (timeout-based, not a verified recovery)',
+);
+
+export function recordAlertAutoResolved(): void {
+  alertAutoResolvedCounter.inc();
+}
+
+// ── Incident lifecycle metrics (Phase 28) ───────────────────────────────────
+const incidentOpenedCounter = counter(
+  'alert_incident_opened_total',
+  'Incidents newly opened (a fingerprint had no active incident)',
+  ['tier'],
+);
+const incidentReusedCounter = counter(
+  'alert_incident_reused_total',
+  'Alert matches folded into an already-active incident instead of opening a new one',
+  ['tier'],
+);
+const incidentResolvedCounter = counter(
+  'alert_incident_resolved_total',
+  'Incidents moved to resolved',
+  ['origin'],
+);
+const incidentAcknowledgedCounter = counter(
+  'alert_incident_acknowledged_total',
+  'Incidents acknowledged by a user',
+);
+const incidentPersistFailedCounter = counter(
+  'alert_incident_persist_failed_total',
+  'Incident persistence failures. Never silent: alert delivery still proceeds.',
+  ['operation'],
+);
+
+export function recordIncidentOpened(tier: string): void {
+  incidentOpenedCounter.inc({ tier });
+}
+
+export function recordIncidentReused(tier: string): void {
+  incidentReusedCounter.inc({ tier });
+}
+
+/** `origin` distinguishes an evaluated recovery from a manual API resolve. */
+export function recordIncidentResolved(origin: 'recovery' | 'manual' | 'auto'): void {
+  incidentResolvedCounter.inc({ origin });
+}
+
+export function recordIncidentAcknowledged(): void {
+  incidentAcknowledgedCounter.inc();
+}
+
+export function recordIncidentPersistFailed(operation: 'open' | 'resolve'): void {
+  incidentPersistFailedCounter.inc({ operation });
+}

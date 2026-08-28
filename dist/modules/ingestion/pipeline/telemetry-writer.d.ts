@@ -13,6 +13,11 @@ export interface ScopedEvent {
     apiKeyName?: string | undefined;
     /** Normalized string supplied by the SDK envelope; never an environment UUID. */
     environment: string;
+    /**
+     * Retry-stable storage time computed once from the event and durable gateway
+     * receipt clock. Optional for direct writer callers and legacy tests.
+     */
+    occurredAtMs?: number | undefined;
     event: NormalizedEvent;
 }
 export interface TimestampContext {
@@ -96,7 +101,7 @@ export declare class TelemetryWriter {
     private writeTraces;
     private writeTracesInTransaction;
     private writeTraceSpanTree;
-    private collectTraceSpanRows;
+    private buildTraceSpanRow;
     private writeMetrics;
     private writeLogs;
     private writeProfiles;

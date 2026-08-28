@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
+    pgbossCreateQueue: vi.fn(),
     pgbossInsert: vi.fn(),
     pgbossSend: vi.fn(),
 }));
 vi.mock('../../../lib/pgboss.js', () => ({
     pgboss: {
+        createQueue: mocks.pgbossCreateQueue,
         insert: mocks.pgbossInsert,
         send: mocks.pgbossSend,
     },
 }));
-import { enqueueIngestJobs, ingestQueueDepth, ingestQueueOptions } from './ingest-queues.js';
+import { ALL_INGEST_QUEUES, INGEST_DLQ_INTAKE_QUEUE, INGEST_USAGE_ROLLUP_QUEUE, enqueueIngestJobs, ingestQueueDepth, ingestQueueOptions, provisionIngestQueues, } from './ingest-queues.js';
 function job(queue, eventType = 'request', statusCode = 200) {
     return {
         queue,
@@ -27,6 +29,8 @@ function job(queue, eventType = 'request', statusCode = 200) {
     };
 }
 beforeEach(() => {
+    mocks.pgbossCreateQueue.mockReset();
+    mocks.pgbossCreateQueue.mockResolvedValue(undefined);
     mocks.pgbossInsert.mockReset();
     mocks.pgbossSend.mockReset();
 });
@@ -36,6 +40,27 @@ describe('ingestQueueOptions', () => {
             partition: true,
             notify: true,
         });
+    });
+});
+describe('queue provisioning', () => {
+    it('creates the DLQ before source queues that reference it', async () => {
+        await provisionIngestQueues();
+        const names = mocks.pgbossCreateQueue.mock.calls.map((call) => call[0]);
+        expect(names).toEqual([
+            INGEST_DLQ_INTAKE_QUEUE,
+            ...ALL_INGEST_QUEUES,
+            INGEST_USAGE_ROLLUP_QUEUE,
+        ]);
+        for (const sourceQueue of ALL_INGEST_QUEUES) {
+            expect(mocks.pgbossCreateQueue).toHaveBeenCalledWith(sourceQueue, expect.objectContaining({ deadLetter: INGEST_DLQ_INTAKE_QUEUE }));
+        }
+    });
+    it('propagates unexpected createQueue failures and stops provisioning', async () => {
+        const error = new Error('queue catalog unavailable');
+        mocks.pgbossCreateQueue.mockRejectedValueOnce(error);
+        await expect(provisionIngestQueues()).rejects.toBe(error);
+        expect(mocks.pgbossCreateQueue).toHaveBeenCalledTimes(1);
+        expect(mocks.pgbossCreateQueue).toHaveBeenCalledWith(INGEST_DLQ_INTAKE_QUEUE, expect.objectContaining({ partition: true, notify: true }));
     });
 });
 describe('enqueueIngestJobs', () => {

@@ -54,6 +54,7 @@ class MockRedis {
 
 function mockLogger(): FastifyBaseLogger {
   const log: any = {
+    trace: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
     warn: vi.fn(),
@@ -64,7 +65,14 @@ function mockLogger(): FastifyBaseLogger {
   return log as FastifyBaseLogger;
 }
 
-describe('AlertRuntimeEngines + Redis Cooldown Integration', () => {
+/**
+ * Cooldown gating integration.
+ *
+ * Correctness contract under test: the DATABASE is the authoritative fire gate
+ * (atomic `claimBreachDecision`), and Redis is only a cheap fast-path filter.
+ * A duplicate fire must be suppressed whether or not Redis participates.
+ */
+describe('AlertRuntimeEngines + Cooldown Integration', () => {
   let mockRedis: MockRedis;
   let redisState: AlertRedisStateService;
   let mockLogDb: any;
@@ -84,23 +92,51 @@ describe('AlertRuntimeEngines + Redis Cooldown Integration', () => {
 
     mockLogDb = {
       query: vi.fn().mockImplementation(async (sql: string, params: any[] = []) => {
-        if (sql.includes('FROM alert_rule_eval_states')) {
-          const hashes = params[0] || [];
-          const rows = hashes.map((h: string) => evalStateStore.get(h)).filter(Boolean);
-          return { rows };
-        }
-        if (sql.includes('INSERT INTO alert_rule_eval_states') || sql.includes('INSERT INTO alert_rule_eval_states_v2')) {
-          const scopeHash = params[0];
+        // Faithful emulation of AlertRuntimeRepository.claimBreachDecision():
+        // the single atomic statement that is now the AUTHORITATIVE fire gate.
+        // Params: [scopeHash, org, rule, binding, project, env, service,
+        //          endpoint, evaluatedAt, requiredBreaches, cooldownSeconds]
+        // claimBreachDecision passes 11 params; claimRecovery passes 9.
+        if (sql.includes('alert_rule_eval_state') && sql.includes('WITH locked') && params.length === 11) {
+          const [scopeHash, orgId, ruleId, , , , , , evaluatedAt, requiredBreaches, cooldownSeconds] = params;
+          const prev = evalStateStore.get(scopeHash);
+          const prevBreaching = prev?.is_breaching === true;
+          const prevFiredAt: Date | null = prev?.last_fired_at ?? null;
+          const now = new Date(evaluatedAt);
+
+          const nextBreaches = prevBreaching ? Number(prev.consecutive_breaches) + 1 : 1;
+          const cooldownElapsed = Number(cooldownSeconds) <= 0
+            || prevFiredAt === null
+            || prevFiredAt.getTime() <= now.getTime() - Number(cooldownSeconds) * 1000;
+          const fired = nextBreaches >= Number(requiredBreaches) && cooldownElapsed;
+
           evalStateStore.set(scopeHash, {
             scope_hash: scopeHash,
-            organization_id: params[1],
-            rule_id: params[2],
-            consecutive_breaches: params[8],
-            is_breaching: params[9],
-            last_evaluated_at: params[10],
-            last_fired_at: params[11],
+            organization_id: orgId,
+            rule_id: ruleId,
+            consecutive_breaches: nextBreaches,
+            is_breaching: true,
+            last_evaluated_at: now,
+            last_fired_at: fired ? now : prevFiredAt,
           });
-          return { rows: [evalStateStore.get(scopeHash)] };
+
+          return {
+            rows: [{
+              consecutive_breaches: nextBreaches,
+              fired,
+              last_fired_at: fired ? now : prevFiredAt,
+            }],
+          };
+        }
+        // Emulation of claimRecovery().
+        if (sql.includes('alert_rule_eval_state') && sql.includes('WITH locked') && params.length === 9) {
+          const scopeHash = params[0];
+          const prev = evalStateStore.get(scopeHash);
+          const recovered = prev?.is_breaching === true;
+          if (prev) {
+            evalStateStore.set(scopeHash, { ...prev, consecutive_breaches: 0, is_breaching: false });
+          }
+          return { rows: [{ recovered }] };
         }
         return { rows: [] };
       }),

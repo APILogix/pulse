@@ -1,5 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CONNECTOR_JOBS } from '../../../src/modules/connectors/job.constants.js';
+import { CONNECTOR_JOBS, connectorTransportQueue } from '../../../src/modules/connectors/job.constants.js';
+
+/** Build a valid canonical V2 ConnectorTransportJob payload. */
+function transportJob(overrides: Record<string, unknown> = {}) {
+  return {
+    organizationId: '11111111-1111-1111-1111-111111111111',
+    notificationJobId: '22222222-2222-2222-2222-222222222222',
+    connectorId: '33333333-3333-3333-3333-333333333333',
+    channelKind: 'slack',
+    severity: 'critical',
+    idempotencyKey: 'idem-1',
+    correlationId: 'corr-1',
+    notificationType: 'alert',
+    routingDecisionHash: null,
+    payload: {
+      notificationType: 'alert',
+      severity: 'critical',
+      title: 'CPU high',
+      body: 'CPU exceeded threshold',
+      correlationId: 'corr-1',
+    },
+    ...overrides,
+  };
+}
 
 const work = vi.fn();
 const send = vi.fn();
@@ -169,30 +192,14 @@ describe('connector queue workers', { timeout: 15000 }, () => {
     const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
     await registerConnectorWorkers(logger() as never);
 
-    const sendWork = work.mock.calls.find((call) => call[0] === `${CONNECTOR_JOBS.send}-slack`);
+    // Canonical V2 transport is the only send path.
+    const sendWork = work.mock.calls.find((call) => call[0] === connectorTransportQueue('slack'));
     expect(sendWork).toBeTruthy();
 
     const handler = sendWork![2] as (job: unknown) => Promise<void>;
     await handler({
       id: 'job-1',
-      data: {
-        organizationId: 'org-1',
-        connectorId: 'missing-slack-1',
-        payload: {
-          notificationType: 'alert',
-          severity: 'critical',
-          title: 'CPU high',
-          body: 'CPU exceeded threshold',
-          correlationId: 'corr-1',
-        },
-        projectChannel: {
-          userId: 'user-1',
-          channelId: 'channel-1',
-          channelType: 'email',
-          destination: 'oncall@example.com',
-          metadata: { source: 'project-channel' },
-        },
-      },
+      data: transportJob({ connectorId: '99999999-9999-9999-9999-999999999999' }),
     });
 
     expect(findFirstActiveByType).not.toHaveBeenCalled();
@@ -213,25 +220,11 @@ describe('connector queue workers', { timeout: 15000 }, () => {
     const { registerConnectorWorkers } = await import('../../../src/modules/connectors/queue.js');
     await registerConnectorWorkers(logger() as never);
 
-    const sendWork = work.mock.calls.find((call) => call[0] === `${CONNECTOR_JOBS.send}-slack`);
+    const sendWork = work.mock.calls.find((call) => call[0] === connectorTransportQueue('slack'));
     const handler = sendWork![2] as (job: unknown) => Promise<void>;
     await handler({
       id: 'job-1',
-      data: {
-        organizationId: 'org-1',
-        connectorId: 'missing-slack-1',
-        payload: {
-          notificationType: 'alert',
-          severity: 'critical',
-          title: 'CPU high',
-          body: 'CPU exceeded threshold',
-          correlationId: 'corr-1',
-        },
-        projectChannel: {
-          channelType: 'email',
-          destination: 'oncall@example.com',
-        },
-      },
+      data: transportJob({ connectorId: '99999999-9999-9999-9999-999999999999' }),
     });
 
     expect(hasFeature).not.toHaveBeenCalled();
@@ -255,11 +248,18 @@ describe('connector queue workers', { timeout: 15000 }, () => {
 
       expect(registeredQueues).toEqual(expect.arrayContaining([
         CONNECTOR_JOBS.deliveryRetry,
-        ...providers.flatMap((provider) => [
-          `${CONNECTOR_JOBS.send}-${provider}`,
-          `connector.v2.${provider}`,
-        ]),
+        ...providers.map((provider) => connectorTransportQueue(provider)),
       ]));
+
+      // MIGRATION PROOF: the legacy `connector-send-<provider>` transport family
+      // must not be registered by any code path. If this ever fails, two
+      // parallel transports are live again.
+      for (const provider of providers) {
+        expect(registeredQueues).not.toContain(`connector-send-${provider}`);
+      }
+      expect(registeredQueues.filter((queue) => queue.startsWith('connector-send'))).toEqual([]);
+      // No duplicate consumers for any queue.
+      expect(new Set(registeredQueues).size).toBe(registeredQueues.length);
       expect(registeredQueues).not.toEqual(expect.arrayContaining([
         CONNECTOR_JOBS.healthCheck,
         CONNECTOR_JOBS.test,

@@ -14,7 +14,7 @@ export declare const EMAIL_MFA_OTP_DIGITS = 6;
 export declare const GENERIC_PASSWORD_RESET_MESSAGE = "If the email exists, a password reset link has been sent";
 export declare const GENERIC_VERIFICATION_MESSAGE = "If the account exists and is not verified, a verification email has been sent";
 export declare const GENERIC_REGISTRATION_MESSAGE = "Account creation request received. Check your email to continue.";
-export declare const randomBytesAsync: any;
+export declare const randomBytesAsync: (arg1: number) => Promise<NonSharedBuffer>;
 export declare function looksLikeRawUserAgent(value: string | null | undefined): boolean;
 export declare function getSessionDeviceName(session: {
     device_name: string | null;

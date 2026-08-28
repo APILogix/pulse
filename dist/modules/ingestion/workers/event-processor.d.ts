@@ -28,7 +28,7 @@ export declare class EventProcessor {
     start(): void;
     stop(): Promise<void>;
     /** Process one ingest job payload. Throws to fail the job (pg-boss retry). */
-    process(payload: IngestJobPayload, queue: string): Promise<EventProcessorResult>;
+    process(payload: IngestJobPayload, queue: string, signal?: AbortSignal): Promise<EventProcessorResult>;
 }
 export interface EventProcessorResult {
     received: number;

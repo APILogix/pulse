@@ -135,6 +135,41 @@ describe('WriteAdmissionController', () => {
     expect(waits[1]).toBeGreaterThanOrEqual(0);
   });
 
+  it('rejects an already-aborted job before acquiring a permit', async () => {
+    const controller = new WriteAdmissionController(1);
+    const abort = new AbortController();
+    const fn = async () => 'should not run';
+    abort.abort(new Error('pg-boss expiry'));
+
+    await expect(controller.run(fn, undefined, abort.signal)).rejects.toMatchObject({
+      name: 'AbortError',
+      code: 'INGESTION_JOB_ABORTED',
+    });
+    expect(controller.stats()).toEqual({ permits: 1, inFlight: 0, queued: 0 });
+  });
+
+  it('removes an aborted FIFO waiter without consuming or leaking the permit', async () => {
+    const controller = new WriteAdmissionController(1);
+    const gate = deferred();
+    const holder = controller.run(async () => gate.promise);
+    await flush();
+
+    const abort = new AbortController();
+    const queuedFn = async () => 'should not run';
+    const queued = controller.run(queuedFn, undefined, abort.signal);
+    await flush();
+    expect(controller.stats()).toEqual({ permits: 1, inFlight: 1, queued: 1 });
+
+    abort.abort(new Error('handler expired'));
+    await expect(queued).rejects.toMatchObject({ code: 'INGESTION_JOB_ABORTED' });
+    expect(controller.stats()).toEqual({ permits: 1, inFlight: 1, queued: 0 });
+
+    gate.resolve();
+    await holder;
+    await expect(controller.run(async () => 'next')).resolves.toBe('next');
+    expect(controller.stats()).toEqual({ permits: 1, inFlight: 0, queued: 0 });
+  });
+
   it('rejects a nonsensical permit count instead of silently allowing unbounded writes', () => {
     expect(() => new WriteAdmissionController(0)).toThrow(/permits >= 1/);
     expect(() => new WriteAdmissionController(Number.NaN)).toThrow(/permits >= 1/);

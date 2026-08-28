@@ -10,11 +10,19 @@ export declare class WorkerRegistry {
     /** Tenant fairness: per-org in-flight job count for THIS process. */
     private readonly inFlight;
     private readonly workerInFlight;
+    /**
+     * Queues whose work registration may still exist. A queue is removed only
+     * after offWork succeeds, including registrations whose work() call rejected
+     * after partially installing the worker.
+     */
     private readonly registeredQueues;
     private started;
+    private startPromise;
     constructor(pool: Pool, log: Logger, telemetryPool?: Pool);
     /** Provision queues, then register every worker + cron + metrics. */
     start(): Promise<void>;
+    private cleanupRegisteredQueues;
+    private startInternal;
     /** offWork every queue (waiting for in-flight jobs), then drain the rest. */
     stop(): Promise<void>;
     private handleIngestBatch;

@@ -1,6 +1,6 @@
 {
   "name": "pulsiv",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "See [docs/enterprise-auth-implementation-plan.md](docs/enterprise-auth-implementation-plan.md) for the enterprise-grade backend remediation plan.",
   "main": "index.js",
   "directories": {
@@ -39,6 +39,9 @@
     "bench:ingestion:compare": "tsx scripts/compare-ingestion-benchmarks.ts",
     "bench:ingestion:matrix:compare": "tsx scripts/compare-ingestion-benchmark-matrices.ts",
     "bench:ingestion:matrix:summary": "tsx scripts/summarize-ingestion-benchmark-matrix.ts",
+    "bench:ingestion:http": "tsx scripts/bench-ingestion-http.ts",
+    "bench:ingestion:http:provision": "tsx scripts/bench/provision-benchmark-fixture.ts",
+    "bench:ingestion:http:fast-regression": "tsx scripts/bench-ingestion-http.ts --mode baseline --duration-seconds 20 --rate 5 --batch-size 10 --profile mixed",
     "explain:ingestion": "tsx scripts/explain-ingestion-writes.ts",
     "explain:ingestion:summary": "tsx scripts/summarize-ingestion-explain.ts",
     "ingestion:db:audit": "tsx scripts/audit-ingestion-db-schema.ts",

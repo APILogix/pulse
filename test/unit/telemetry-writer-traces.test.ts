@@ -211,6 +211,140 @@ describe('Trace resolveTimestamp', () => {
   });
 });
 
+describe('Trace structural validation', () => {
+  function traceWithDepth(depth: number): Record<string, unknown> {
+    const root: Record<string, unknown> = { id: 'span-0', name: 'root' };
+    let current = root;
+    for (let index = 1; index <= depth; index += 1) {
+      const child: Record<string, unknown> = { id: `span-${index}`, name: `span ${index}` };
+      current.children = [child];
+      current = child;
+    }
+    return root;
+  }
+
+  it('uses an explicit receipt clock for deterministic clamping and fallback', () => {
+    const receivedAtMs = Date.parse('2026-08-24T00:00:00.000Z');
+    const first = normalizeEvent({
+      type: 'log',
+      level: 'info',
+      message: 'future clock',
+      timestamp: '2035-01-01T00:00:00.000Z',
+    }, { nowMs: receivedAtMs });
+    const second = normalizeEvent({
+      type: 'log',
+      level: 'info',
+      message: 'future clock',
+      timestamp: '2035-01-01T00:00:00.000Z',
+    }, { nowMs: receivedAtMs });
+
+    expect(first).toEqual(second);
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.event.timestamp).toBe(receivedAtMs);
+
+    const missing = normalizeEvent({ type: 'log', level: 'info', message: 'missing clock' }, { nowMs: receivedAtMs });
+    expect(missing.ok).toBe(true);
+    if (missing.ok) {
+      expect(resolveTimestamp(missing.event, {
+        nowMs: receivedAtMs,
+        fallbackMs: receivedAtMs,
+      })).toBe(receivedAtMs);
+    }
+  });
+
+  it('accepts trace depth 128 and rejects depth 129 before storage', () => {
+    const accepted = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-depth-128',
+      spanCount: 129,
+      rootSpan: traceWithDepth(128),
+    });
+    expect(accepted.ok).toBe(true);
+
+    const rejected = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-depth-129',
+      spanCount: 130,
+      rootSpan: traceWithDepth(129),
+    });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.reason).toBe('validation_failed');
+      expect(rejected.detail).toContain('maximum depth 128');
+    }
+  });
+
+  it('bounds actual trace nodes independently of the declared spanCount', () => {
+    const children = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `child-${index}`,
+      name: `child ${index}`,
+    }));
+    const result = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-node-limit',
+      spanCount: 1,
+      rootSpan: { id: 'root', name: 'root', children },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.detail).toContain('maximum node count 10000');
+  });
+
+  it('rejects malformed children, cycles, and shared span references', () => {
+    const malformed = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-malformed',
+      spanCount: 1,
+      rootSpan: { id: 'root', children: [null] },
+    });
+    expect(malformed.ok).toBe(false);
+
+    const cyclicRoot: Record<string, unknown> = { id: 'root' };
+    cyclicRoot.children = [cyclicRoot];
+    const cyclic = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-cycle',
+      spanCount: 1,
+      rootSpan: cyclicRoot,
+    });
+    expect(cyclic.ok).toBe(false);
+    if (!cyclic.ok) expect(cyclic.detail).toContain('cycles and shared span references');
+
+    const child = { id: 'shared' };
+    const shared = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-shared',
+      spanCount: 3,
+      rootSpan: { id: 'root', children: [child, child] },
+    });
+    expect(shared.ok).toBe(false);
+    if (!shared.ok) expect(shared.detail).toContain('cycles and shared span references');
+  });
+
+  it('keeps a JSON-parsed __proto__ field from becoming an inherited child subtree', () => {
+    const rootSpan = JSON.parse(
+      '{"id":"root","name":"root","__proto__":{"children":[{"id":"hidden-child"}]}}',
+    ) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(rootSpan, '__proto__')).toBe(true);
+
+    const normalized = normalizeEvent({
+      type: 'trace',
+      traceId: 'trace-proto-key',
+      spanCount: 1,
+      rootSpan,
+    });
+
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      const normalizedRoot = normalized.event.rootSpan as Record<string, unknown>;
+      expect(Object.getPrototypeOf(normalizedRoot)).toBeNull();
+      expect(Object.prototype.hasOwnProperty.call(normalizedRoot, '__proto__')).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(normalizedRoot, 'children')).toBe(false);
+      expect(normalizedRoot.children).toBeUndefined();
+    }
+  });
+});
+
 describe('TelemetryWriter Trace & Span Tree Ingestion', () => {
   it('writes root span and deeply nested child spans with resilient timestamps', async () => {
     const queries: Array<{ sql: string; values?: unknown[] }> = [];

@@ -178,23 +178,25 @@ export function ingestQueueOptions(): Record<string, unknown> {
   };
 }
 
-/** createQueue is idempotent; swallow races when several processes boot. */
+/**
+ * Create one queue. pg-boss v12 uses INSERT ... ON CONFLICT DO NOTHING, so an
+ * existing queue is a successful no-op. Unexpected provisioning failures must
+ * propagate; swallowing them leaves workers "started" without usable queues.
+ */
 export async function safeCreateQueue(name: string, options?: Record<string, unknown>): Promise<void> {
   const boss = pgboss as unknown as {
     createQueue?: (n: string, o?: Record<string, unknown>) => Promise<void>;
   };
-  if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name, options).catch((err) => {
-      qLogger.debug({ err, queue: name }, 'createQueue skipped (exists or unsupported)');
-    });
+  if (typeof boss.createQueue !== 'function') {
+    throw new Error('pg-boss createQueue() is unavailable');
   }
+  await boss.createQueue(name, options);
 }
 
-/** Provision every ingest queue + shared DLQ intake. Call after pgboss.start(). */
+/** Provision the DLQ first, then its source queues, then the rollup queue. */
 export async function provisionIngestQueues(): Promise<void> {
-  for (const name of ALL_INGEST_QUEUES) {
-    await safeCreateQueue(name, ingestQueueOptions());
-  }
+  // Source queues reference this queue through their deadLetter option. On a
+  // fresh database pg-boss rejects a source queue whose target does not exist.
   await safeCreateQueue(INGEST_DLQ_INTAKE_QUEUE, {
     partition: true,
     notify: true,
@@ -203,6 +205,9 @@ export async function provisionIngestQueues(): Promise<void> {
     retryBackoff: true,
     expireInSeconds: 3600,
   });
+  for (const name of ALL_INGEST_QUEUES) {
+    await safeCreateQueue(name, ingestQueueOptions());
+  }
   await safeCreateQueue(INGEST_USAGE_ROLLUP_QUEUE);
 }
 

@@ -19,7 +19,8 @@ export class UsageCounter {
     bufferLimit;
     driveRollup;
     timer = null;
-    flushing = false;
+    flushPromise = null;
+    flushRequested = false;
     stopped = false;
     schemaReady = null;
     constructor(pool, log, opts = {}) {
@@ -33,7 +34,9 @@ export class UsageCounter {
         if (this.timer)
             return;
         this.stopped = false;
-        this.timer = setInterval(() => void this.flush(), this.flushIntervalMs);
+        this.timer = setInterval(() => {
+            void this.flush().catch(() => undefined);
+        }, this.flushIntervalMs);
         this.timer.unref?.();
         this.log.info({ flushIntervalMs: this.flushIntervalMs }, 'UsageCounter started');
     }
@@ -48,18 +51,47 @@ export class UsageCounter {
             existing.value += by;
         else
             this.buffer.set(key, { projectId, orgId, counterType, value: by, apiKeyId, eventType });
-        if (this.buffer.size >= this.bufferLimit)
-            void this.flush();
+        if (this.buffer.size >= this.bufferLimit) {
+            void this.flush().catch(() => undefined);
+        }
     }
-    async flush() {
-        if (this.flushing)
-            return;
-        await this.ensureSchema();
+    flush() {
+        if (this.flushPromise) {
+            // A threshold/timer/stop request that arrives during a flush means data
+            // may have accumulated in the replacement buffer. The owner loops once
+            // more before resolving, so callers never mistake the first snapshot for
+            // a complete drain.
+            this.flushRequested = true;
+            return this.flushPromise;
+        }
+        this.flushRequested = false;
+        const run = (async () => {
+            do {
+                this.flushRequested = false;
+                await this.flushOnce();
+            } while (this.flushRequested && this.buffer.size > 0);
+        })();
+        const tracked = run.finally(() => {
+            if (this.flushPromise === tracked)
+                this.flushPromise = null;
+        });
+        this.flushPromise = tracked;
+        return tracked;
+    }
+    async flushOnce() {
         if (this.buffer.size === 0) {
             await this.runRollup();
             return;
         }
-        this.flushing = true;
+        // This await is inside the authoritative flushPromise. A concurrent caller
+        // therefore joins this work instead of starting a second schema/flush path.
+        try {
+            await this.ensureSchema();
+        }
+        catch (err) {
+            this.log.warn({ err, bufferedEntries: this.buffer.size, bufferLimit: this.bufferLimit }, 'UsageCounter schema check failed; counts remain buffered');
+            throw err;
+        }
         const draining = this.buffer;
         this.buffer = new Map();
         try {
@@ -82,10 +114,16 @@ export class UsageCounter {
                 else
                     this.buffer.set(key, entry);
             }
-            this.log.warn({ err }, 'UsageCounter staging flush failed; counts re-buffered');
-        }
-        finally {
-            this.flushing = false;
+            const bufferedEntries = this.buffer.size;
+            this.log.warn({
+                err,
+                bufferedEntries,
+                bufferLimit: this.bufferLimit,
+                overLimitBy: Math.max(0, bufferedEntries - this.bufferLimit),
+            }, 'UsageCounter staging flush failed; counts re-buffered');
+            // The rejection is intentional: stop() can retry once and, if the final
+            // drain still fails, propagate failure instead of claiming a clean drain.
+            throw err;
         }
         await this.runRollup();
     }
@@ -154,6 +192,13 @@ export class UsageCounter {
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
+        }
+        // Join work already in flight. If it failed, flushOnce re-buffered every
+        // count; the final flush below is then a clean retry after the tracked
+        // promise has cleared.
+        if (this.flushPromise) {
+            this.flushRequested = true;
+            await this.flushPromise.catch(() => undefined);
         }
         await this.flush();
         this.log.info('UsageCounter stopped (final flush complete)');

@@ -91,6 +91,11 @@
         "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
         "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
         "timestamp": 1787807680009
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787809861355
       }
     ],
     "2.3 Create `scripts/lib/query-path-scan.ts` and wire `--query-path-scan` into the audit script": [
@@ -112,6 +117,11 @@
         "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
         "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
         "timestamp": 1787807680097
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787809862734
       }
     ],
     "3.2 Create `scripts/lib/pg-stat-statements.ts` — capability probe, scoped reset, delta capture": [
@@ -124,6 +134,11 @@
         "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
         "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
         "timestamp": 1787808959053
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787809852493
       }
     ],
     "3.3 Extend `scripts/explain-ingestion-writes.ts` with WAL extraction and the environment guard": [
@@ -136,6 +151,11 @@
         "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
         "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
         "timestamp": 1787808959995
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787809853451
       }
     ],
     "3.4 Extend `scripts/bench-ingestion-worker.ts` with windows, repetitions, WAL and mix control": [
@@ -143,6 +163,11 @@
         "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
         "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
         "timestamp": 1787807680194
+      },
+      {
+        "executionId": "f1e59126-d06f-433d-8192-6a3344bd7081",
+        "chatSessionId": "sess_f364ebef-e215-40b5-916b-4b065aa8e00e",
+        "timestamp": 1787809863938
       }
     ],
     "3.5 Add the `phase2` preset to `scripts/run-ingestion-benchmark-matrix.ts`": [

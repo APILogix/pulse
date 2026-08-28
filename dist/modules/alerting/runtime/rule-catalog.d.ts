@@ -17,6 +17,16 @@ export declare class AlertCatalogSnapshot {
     readonly conditionsByRule: Map<string, AlertRuleConditionRow[]>;
     readonly bindingsByRule: Map<string, AlertRuleBindingRow[]>;
     constructor(organizationId: string, tier: AlertRuntimeTier, rules: RuntimeRuleRow[], conditionsByRule: Map<string, AlertRuleConditionRow[]>, bindingsByRule: Map<string, AlertRuleBindingRow[]>);
+    /**
+     * Pure, hot-path rule resolution. Called once per scope per evaluation tick.
+     *
+     * Deliberately performs NO logging: it previously emitted several console.log
+     * lines per candidate rule (including building a joined condition-description
+     * string for every rule, even when it was not logged at that level), which is
+     * measurable wasted CPU and unbounded stdout volume on the fast path. Callers
+     * emit structured summaries instead (see AlertRuntimeEngines), and per-rule
+     * outcomes are exported as metrics.
+     */
     resolveRulesForScope(scope: EvaluationScope): ResolvedRuntimeRule[];
 }
 export declare class AlertRuntimeRuleCatalog {

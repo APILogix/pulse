@@ -11,6 +11,7 @@
  *   - alert.notification-router    (claims notification jobs & dispatches to connector queues)
  *   - alert.escalate               (snapshot escalation evaluator)
  *   - alert.escalation-sweep       (advances due escalations)
+ *   - alert.auto-resolve-sweep     (closes alerts past auto_resolve_at)
  *   - alert.cleanup                (daily retention purge)
  */
 import type { FastifyBaseLogger } from 'fastify';
@@ -19,6 +20,7 @@ export declare const ALERT_JOBS: {
     readonly cleanup: "alert.cleanup";
     readonly escalate: "alert.escalate";
     readonly escalationSweep: "alert.escalation-sweep";
+    readonly autoResolveSweep: "alert.auto-resolve-sweep";
     readonly evaluateFast: "alert.evaluate.fast";
     readonly evaluateWindow: "alert.evaluate.window";
     readonly evaluateOperational: "alert.evaluate.operational";
@@ -37,7 +39,7 @@ export interface AlertingWorkerConfig {
     retentionDeliveryAttemptsDays?: number;
     retentionDeadLettersDays?: number;
 }
-export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert.escalate", "alert.escalation-sweep", "alert.evaluate.fast", "alert.evaluate.window", "alert.evaluate.operational", "alert.evaluate.ai", "alert.notification-router", "alert.telemetry-outbox-relay", "alert.error-group-regressed"];
+export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert.escalate", "alert.escalation-sweep", "alert.auto-resolve-sweep", "alert.evaluate.fast", "alert.evaluate.window", "alert.evaluate.operational", "alert.evaluate.ai", "alert.notification-router", "alert.telemetry-outbox-relay", "alert.error-group-regressed"];
 /**
  * Register all Alerting V2 pg-boss workers + timers. Idempotent per process.
  */

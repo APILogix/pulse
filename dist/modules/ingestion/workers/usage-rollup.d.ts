@@ -32,9 +32,14 @@ export declare class UsageRollup {
     private readonly pool;
     private readonly metrics;
     private readonly log;
+    private workerMayBeRegistered;
+    private started;
+    private startPromise;
     constructor(pool: Pool, metrics: WorkerMetrics, log: Logger);
     /** Register the worker + the singleton cron schedule. Call after pgboss.start(). */
     start(): Promise<void>;
+    private startInternal;
+    private cleanupWorkerRegistration;
     stop(): Promise<void>;
     /** One rollup pass. Throws on failure (staging preserved for the next tick). */
     run(): Promise<void>;

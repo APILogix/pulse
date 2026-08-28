@@ -1,4 +1,26 @@
-import { CONNECTOR_JOBS, CONNECTOR_PRIORITY } from '../connectors/job.constants.js';
+/**
+ * Escalation sweep worker.
+ *
+ * Wires the previously schema-only escalation model into a live execution path:
+ *
+ *   1. Expired acknowledgments flip back to `firing` so escalation resumes.
+ *   2. Firing events whose `next_escalation_at` is due are claimed with
+ *      FOR UPDATE SKIP LOCKED (no two workers process the same event).
+ *   3. The next active step of the event's policy is executed: canonical V2
+ *      transport jobs (connector.v2.<provider>) are enqueued for the step's
+ *      connectors, the event advances to that step, and the following step's
+ *      wait schedules the next run. Escalation shares the normal notification
+ *      transport - it has no separate delivery semantics.
+ *   4. When steps run out, the policy's repeat config decides: repeat from
+ *      step 1 (bounded by max_repeats; 0 = unlimited) or stop escalating.
+ *
+ * All escalation transitions write `alert_event_history` rows for audit.
+ */
+import { createHash } from 'node:crypto';
+import { CONNECTOR_PRIORITY } from '../connectors/job.constants.js';
+import { pgboss } from '../../lib/pgboss.js';
+import { logDB } from '../../config/log-database.js';
+import { AlertRuntimeRepository, } from './runtime/alert-runtime.repository.js';
 import { env } from '../../config/env.js';
 import { isEnabled } from '../feature-flags/service.js';
 import { FEATURE_FLAGS } from '../feature-flags/types.js';
@@ -9,12 +31,18 @@ export class AlertEscalationSweep {
     enqueueConnectorJob;
     logger;
     entitlement;
-    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, entitlement = new NotificationEntitlementService()) {
+    runtime;
+    enqueueNotificationJob;
+    constructor(alertRepo, connectorRepo, enqueueConnectorJob, logger, entitlement = new NotificationEntitlementService(), 
+    /** Log DB runtime repository - owns alert_notification_jobs. */
+    runtime = new AlertRuntimeRepository(logDB.getPrimaryPool()), enqueueNotificationJob = (notificationJobId) => pgboss.send('alert.notification-router', { notificationJobId }, { retryLimit: 3, retryDelay: 1, retryBackoff: true, expireInSeconds: 300 })) {
         this.alertRepo = alertRepo;
         this.connectorRepo = connectorRepo;
         this.enqueueConnectorJob = enqueueConnectorJob;
         this.logger = logger;
         this.entitlement = entitlement;
+        this.runtime = runtime;
+        this.enqueueNotificationJob = enqueueNotificationJob;
     }
     async run(limit) {
         const log = this.logger.child({ component: 'escalation-sweep' });
@@ -142,7 +170,7 @@ export class AlertEscalationSweep {
             return false;
         return policy.max_repeats === 0 || repeatCount < policy.max_repeats;
     }
-    /** Enqueue connector-send jobs for every connector in the step. */
+    /** Enqueue canonical V2 transport jobs for every connector in the step. */
     async executeStep(event, step, connectorById) {
         const capability = await this.entitlement.resolve(event.organization_id);
         if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess) {
@@ -154,19 +182,65 @@ export class AlertEscalationSweep {
             const connector = connectorById.get(connectorId);
             if (!connector)
                 return;
-            const queueName = `${CONNECTOR_JOBS.send}-${connector.type}`;
-            await this.enqueueConnectorJob(queueName, {
-                organizationId: event.organization_id,
-                connectorId,
-                payload,
-                routeId: step.route_ids[0] ?? null,
-            }, {
-                priority: CONNECTOR_PRIORITY[event.severity] ?? 0,
-                retryLimit: 0,
-                retryDelay: 60,
-                retryBackoff: true,
-                expireInSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
-            });
+            // Defensive tenant check. `getByIds` is deliberately NOT org-scoped (it is
+            // a bulk loader), so escalation must verify ownership itself before
+            // dispatching. Without this, a step referencing a foreign connector id
+            // would deliver this tenant's alert through another tenant's connector.
+            if (connector.organization_id !== event.organization_id) {
+                this.logger.error({
+                    eventId: event.id,
+                    connectorId,
+                    expectedOrganizationId: event.organization_id,
+                    actualOrganizationId: connector.organization_id,
+                }, 'Escalation blocked: connector does not belong to the event organization');
+                return;
+            }
+            if (connector.status !== 'active') {
+                this.logger.warn({ eventId: event.id, connectorId, status: connector.status }, 'Escalation skipped: connector is not active');
+                return;
+            }
+            // Escalation uses the SAME delivery abstraction as a normal notification:
+            // create a durable alert_notification_jobs row (which carries the
+            // idempotency guarantee) and hand it to the notification router, which
+            // owns the canonical connector.v2.<provider> transport. Escalation must NOT
+            // enqueue a transport job itself - doing so would bypass the notification
+            // job identity/idempotency layer and become a second delivery path.
+            const idempotencyKey = createHash('sha256')
+                .update(`escalation:${event.id}:${step.step_number}:${event.escalation_repeat_count}:${connectorId}`)
+                .digest('hex');
+            let inserted = [];
+            try {
+                inserted = await this.runtime.insertNotificationJobs([{
+                        organizationId: event.organization_id,
+                        projectId: event.project_id,
+                        // Legacy escalation operates on alert_events; alert_event_id carries no
+                        // FK so the legacy event id is a valid correlation value here.
+                        alertEventId: event.id,
+                        alertKey: event.fingerprint,
+                        ruleId: event.rule_id,
+                        channelKind: connector.type,
+                        connectorId,
+                        routeId: step.route_ids[0] ?? null,
+                        notificationType: 'alert.escalated',
+                        severity: event.severity,
+                        priority: CONNECTOR_PRIORITY[event.severity] ?? 0,
+                        escalationStep: step.step_number,
+                        payload: payload,
+                        idempotencyKey,
+                        billable: true,
+                    }]);
+            }
+            catch (err) {
+                this.logger.error({ err, eventId: event.id, connectorId, step: step.step_number }, 'Escalation notification job creation failed');
+                return;
+            }
+            if (inserted.length === 0) {
+                // Idempotency collision: this exact escalation step was already
+                // delivered for this connector. Not an error - do not re-notify.
+                this.logger.debug({ eventId: event.id, connectorId, step: step.step_number }, 'Escalation notification already created for this step; skipping duplicate');
+                return;
+            }
+            await Promise.all(inserted.map((notification) => this.enqueueNotificationJob(notification.id)));
         }));
     }
     toPayload(event, step) {

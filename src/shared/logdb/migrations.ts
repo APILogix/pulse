@@ -11,7 +11,26 @@ export const LOGDB_MIGRATIONS_DIR = path.resolve(
   '../../../database/migrations/logdb',
 );
 
-const LOGDB_MIGRATION_LOCK_KEY = 74_373_201;
+export const LOGDB_MIGRATION_LOCK_KEY = 74_373_201;
+
+/**
+ * Serialize forward and rollback operations without waiting indefinitely.
+ * Advisory locks are session-scoped, so callers must hold the same client
+ * until releaseLogDbMigrationLock() completes.
+ */
+export async function acquireLogDbMigrationLock(client: PoolClient): Promise<void> {
+  const result = await client.query<{ acquired: boolean }>(
+    'SELECT pg_try_advisory_lock($1) AS acquired',
+    [LOGDB_MIGRATION_LOCK_KEY],
+  );
+  if (result.rows[0]?.acquired !== true) {
+    throw new Error('Another Log DB migration or rollback already holds the migration lock');
+  }
+}
+
+export async function releaseLogDbMigrationLock(client: PoolClient): Promise<void> {
+  await client.query('SELECT pg_advisory_unlock($1)', [LOGDB_MIGRATION_LOCK_KEY]);
+}
 
 export interface LogDbMigrationFile {
   filename: string;
@@ -182,8 +201,10 @@ export async function applyLogDbMigrations(
   };
 
   const client = await pool.connect();
+  let lockAcquired = false;
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [LOGDB_MIGRATION_LOCK_KEY]);
+    await acquireLogDbMigrationLock(client);
+    lockAcquired = true;
     await ensureMigrationsTable(client);
 
     for (const migration of migrations) {
@@ -220,7 +241,9 @@ export async function applyLogDbMigrations(
     );
     return result;
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [LOGDB_MIGRATION_LOCK_KEY]).catch(() => undefined);
+    if (lockAcquired) {
+      await releaseLogDbMigrationLock(client).catch(() => undefined);
+    }
     client.release();
   }
 }

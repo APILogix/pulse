@@ -622,8 +622,8 @@ AlertRuntimeEngines
 
 AlertNotificationRouter
     -> in_app: marks the notification sent in Log DB
-    -> managed email: connector.v2.email or connector-send-email
-    -> connector-backed alert: connector.v2.<provider> or connector-send-<provider>
+    -> managed email: connector.v2.email
+    -> connector-backed alert: connector.v2.<provider>
 
 connector transport worker
     -> entitlement and tenant checks
@@ -656,8 +656,7 @@ The alert-only group registers these real consumers:
 | `alert.notification-router` | Claims notification jobs and dispatches transport jobs | Yes |
 | `alert.escalation-sweep` | Advances due legacy escalation steps | Yes |
 | `alert.escalate` | Runs snapshot escalation when `ESCALATION_V2=true` | Yes |
-| `connector.v2.<provider>` | Canonical provider transport, including managed email | Yes |
-| `connector-send-<provider>` | Legacy transport and legacy escalation compatibility | Yes |
+| `connector.v2.<provider>` | Canonical (and only) provider transport, including managed email | Yes |
 | `connector-delivery-retry` | Replays retryable connector delivery rows | Yes |
 
 Providers are sourced from the runtime registry: email, Slack, Discord, Microsoft Teams, PagerDuty, webhook, and SMS. Runtime dispatch timers produce the periodic evaluator, router, and outbox jobs. The circuit-probe timer remains active because it supports connector delivery recovery.
@@ -670,7 +669,7 @@ Managed alert email follows:
 AlertDecisionEngine.decide()
     -> alert_notification_jobs(channel_kind=email, connector_id=NULL)
     -> alert.notification-router
-    -> connector.v2.email (or connector-send-email when ALERTING_V2_READ=false)
+    -> connector.v2.email
     -> processManagedEmailJob()
     -> entitlement and verified owner/fallback checks
     -> sendEmail()
@@ -689,8 +688,7 @@ For each registered provider:
 ```text
 Alert notification job
     -> alert.notification-router
-    -> connector.v2.<provider> (canonical read mode)
-       or connector-send-<provider> (legacy read mode/escalation)
+    -> connector.v2.<provider> (canonical, and the only transport)
     -> registerConnectorWorkers() provider consumer
     -> entitlement and tenant-scoped connector lookup
     -> NotificationDispatcher.dispatch()

@@ -48,6 +48,7 @@
  * - Observable: `stats()` exposes permits/in-flight/queued so saturation is
  *   visible in metrics rather than inferred from latency.
  */
+import { IngestionJobAbortedError, throwIfIngestionAborted, } from './ingestion-abort.js';
 export class WriteAdmissionController {
     permits;
     inFlight = 0;
@@ -62,37 +63,83 @@ export class WriteAdmissionController {
      * Run `fn` while holding one admission permit. Acquires FIFO, always
      * releases. The awaited duration before `fn` starts is returned to the caller
      * via `onAdmitted` so it can be recorded as `admissionWaitMs` separately from
-     * real database time.
+     * real database time. An aborted waiter is removed synchronously and can
+     * never consume a future permit.
      */
-    async run(fn, onAdmitted) {
+    async run(fn, onAdmitted, signal) {
         const startedAt = Date.now();
-        await this.acquire();
-        onAdmitted?.(Date.now() - startedAt);
+        let acquired = false;
         try {
+            await this.acquire(signal);
+            acquired = true;
+            // Covers an abort delivered after acquire() resolved but before this
+            // continuation ran. The finally block still releases the acquired slot.
+            throwIfIngestionAborted(signal, 'write admission');
+            onAdmitted?.(Date.now() - startedAt);
             return await fn();
         }
         finally {
-            this.release();
+            if (acquired)
+                this.release();
         }
     }
-    acquire() {
+    acquire(signal) {
+        throwIfIngestionAborted(signal, 'write admission');
         if (this.inFlight < this.permits) {
             this.inFlight += 1;
             return Promise.resolve();
         }
-        return new Promise((resolve) => {
-            this.waiters.push(resolve);
+        return new Promise((resolve, reject) => {
+            const waiter = {
+                state: 'queued',
+                resolve,
+                reject,
+                ...(signal ? { signal } : {}),
+            };
+            if (signal) {
+                waiter.onAbort = () => {
+                    if (waiter.state !== 'queued')
+                        return;
+                    const index = this.waiters.indexOf(waiter);
+                    if (index >= 0)
+                        this.waiters.splice(index, 1);
+                    waiter.state = 'aborted';
+                    this.removeAbortListener(waiter);
+                    reject(new IngestionJobAbortedError('write admission', signal.reason));
+                };
+                signal.addEventListener('abort', waiter.onAbort, { once: true });
+            }
+            this.waiters.push(waiter);
+            // Abort dispatch is synchronous, but recheck defensively in case a
+            // non-standard signal implementation changed state during registration.
+            if (signal?.aborted)
+                waiter.onAbort?.();
         });
     }
     release() {
-        const next = this.waiters.shift();
-        if (next) {
+        while (this.waiters.length > 0) {
+            const next = this.waiters.shift();
+            if (next.state !== 'queued')
+                continue;
+            if (next.signal?.aborted) {
+                next.state = 'aborted';
+                this.removeAbortListener(next);
+                next.reject(new IngestionJobAbortedError('write admission', next.signal.reason));
+                continue;
+            }
             // Hand the permit straight to the next waiter: inFlight is unchanged, so
             // the count can never transiently exceed `permits`.
-            next();
+            next.state = 'admitted';
+            this.removeAbortListener(next);
+            next.resolve();
             return;
         }
         this.inFlight = Math.max(0, this.inFlight - 1);
+    }
+    removeAbortListener(waiter) {
+        if (waiter.signal && waiter.onAbort) {
+            waiter.signal.removeEventListener('abort', waiter.onAbort);
+        }
     }
     stats() {
         return { permits: this.permits, inFlight: this.inFlight, queued: this.waiters.length };

@@ -4,6 +4,7 @@
  */
 import { access, readFile, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, resolve } from 'path';
+import { priorPhaseRemovedIndexNames } from './lib/ingestion-catalog-scope.js';
 
 type EvidenceStatus = 'passed' | 'failed';
 
@@ -97,22 +98,17 @@ const requiredRequestHotPathIndexes = [
   'idx_events_requests_pubid',
 ];
 
-const forbiddenRequestHotPathIndexes = [
-  'idx_events_requests_attributes_gin',
-  'idx_events_requests_metadata_gin',
-  'idx_events_requests_payload_gin',
-  'idx_events_requests_ai_response_gin',
-  'idx_events_requests_tenant_env_time',
-  'idx_events_requests_user_time',
-  'idx_events_requests_trace',
-  'idx_events_requests_service',
-  'idx_events_requests_endpoint_time',
-  'idx_events_requests_duration_time',
-  'idx_events_requests_geo_time',
-  'idx_events_requests_release_time',
-  'idx_events_requests_session_time',
-  'idx_events_requests_sdk_time',
-];
+/**
+ * The `events_requests` indexes earlier phases removed from the ingestion hot
+ * path, derived from `scripts/lib/ingestion-catalog-scope.ts` so this check and
+ * the audit's prior-phase disposition record cannot drift apart.
+ *
+ * This check is `events_requests`-scoped, so the derivation is too: it yields
+ * the 14 names dropped by `025` and `028`. The 10 `events_spans` and
+ * `events_logs` names dropped by `029` are recorded in the shared list and
+ * surface through the audit's `priorPhaseIndexRemovals` section instead.
+ */
+const forbiddenRequestHotPathIndexes = priorPhaseRemovedIndexNames('events_requests');
 
 const requiredTypedEventTriggerTables = [
   'events_requests',

@@ -22,7 +22,11 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
 import { env } from '../src/config/env.js';
-import { LOGDB_MIGRATIONS_DIR } from '../src/shared/logdb/migrations.js';
+import {
+  LOGDB_MIGRATIONS_DIR,
+  acquireLogDbMigrationLock,
+  releaseLogDbMigrationLock,
+} from '../src/shared/logdb/migrations.js';
 
 function redact(connectionString: string): string {
   try {
@@ -62,9 +66,13 @@ async function main(): Promise<void> {
 
   const connectionString = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
   const pool = new Pool({ connectionString, max: 2 });
+  const client = await pool.connect();
+  let lockAcquired = false;
 
   try {
-    const dbResult = await pool.query<{ db: string }>('SELECT current_database() AS db');
+    await acquireLogDbMigrationLock(client);
+    lockAcquired = true;
+    const dbResult = await client.query<{ db: string }>('SELECT current_database() AS db');
     const database = dbResult.rows[0]!.db;
 
     console.log('='.repeat(64));
@@ -81,17 +89,20 @@ async function main(): Promise<void> {
 
     const looksDisposable = /test|scratch|tmp/i.test(database);
     if (!looksDisposable && !confirmed) {
-      console.error(
-        `\nREFUSING: "${database}" does not look like a disposable database.\n`
+      throw new Error(
+        `REFUSING: "${database}" does not look like a disposable database. `
         + 'Re-run with --yes to confirm a destructive rollback against it.',
       );
-      process.exit(1);
     }
 
     const startedAt = Date.now();
-    await pool.query(sql);
+    await client.query(sql);
     console.log(`Rolled back in ${Date.now() - startedAt}ms`);
   } finally {
+    if (lockAcquired) {
+      await releaseLogDbMigrationLock(client).catch(() => undefined);
+    }
+    client.release();
     await pool.end();
   }
 }

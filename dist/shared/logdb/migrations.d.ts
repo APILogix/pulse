@@ -1,6 +1,14 @@
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
 export declare const LOGDB_MIGRATIONS_DIR: string;
+export declare const LOGDB_MIGRATION_LOCK_KEY = 74373201;
+/**
+ * Serialize forward and rollback operations without waiting indefinitely.
+ * Advisory locks are session-scoped, so callers must hold the same client
+ * until releaseLogDbMigrationLock() completes.
+ */
+export declare function acquireLogDbMigrationLock(client: PoolClient): Promise<void>;
+export declare function releaseLogDbMigrationLock(client: PoolClient): Promise<void>;
 export interface LogDbMigrationFile {
     filename: string;
     filepath: string;

@@ -49,6 +49,11 @@
  *   visible in metrics rather than inferred from latency.
  */
 
+import {
+  IngestionJobAbortedError,
+  throwIfIngestionAborted,
+} from './ingestion-abort.js';
+
 export interface WriteAdmissionStats {
   /** Maximum concurrent ingest transactions allowed. */
   permits: number;
@@ -58,10 +63,18 @@ export interface WriteAdmissionStats {
   queued: number;
 }
 
+interface AdmissionWaiter {
+  state: 'queued' | 'admitted' | 'aborted';
+  signal?: AbortSignal;
+  onAbort?: () => void;
+  resolve: () => void;
+  reject: (err: IngestionJobAbortedError) => void;
+}
+
 export class WriteAdmissionController {
   private readonly permits: number;
   private inFlight = 0;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: AdmissionWaiter[] = [];
 
   constructor(permits: number) {
     if (!Number.isFinite(permits) || permits < 1) {
@@ -74,38 +87,86 @@ export class WriteAdmissionController {
    * Run `fn` while holding one admission permit. Acquires FIFO, always
    * releases. The awaited duration before `fn` starts is returned to the caller
    * via `onAdmitted` so it can be recorded as `admissionWaitMs` separately from
-   * real database time.
+   * real database time. An aborted waiter is removed synchronously and can
+   * never consume a future permit.
    */
-  async run<T>(fn: () => Promise<T>, onAdmitted?: (waitedMs: number) => void): Promise<T> {
+  async run<T>(
+    fn: () => Promise<T>,
+    onAdmitted?: (waitedMs: number) => void,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const startedAt = Date.now();
-    await this.acquire();
-    onAdmitted?.(Date.now() - startedAt);
+    let acquired = false;
     try {
+      await this.acquire(signal);
+      acquired = true;
+      // Covers an abort delivered after acquire() resolved but before this
+      // continuation ran. The finally block still releases the acquired slot.
+      throwIfIngestionAborted(signal, 'write admission');
+      onAdmitted?.(Date.now() - startedAt);
       return await fn();
     } finally {
-      this.release();
+      if (acquired) this.release();
     }
   }
 
-  private acquire(): Promise<void> {
+  private acquire(signal?: AbortSignal): Promise<void> {
+    throwIfIngestionAborted(signal, 'write admission');
     if (this.inFlight < this.permits) {
       this.inFlight += 1;
       return Promise.resolve();
     }
-    return new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
+
+    return new Promise<void>((resolve, reject) => {
+      const waiter: AdmissionWaiter = {
+        state: 'queued',
+        resolve,
+        reject,
+        ...(signal ? { signal } : {}),
+      };
+      if (signal) {
+        waiter.onAbort = () => {
+          if (waiter.state !== 'queued') return;
+          const index = this.waiters.indexOf(waiter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          waiter.state = 'aborted';
+          this.removeAbortListener(waiter);
+          reject(new IngestionJobAbortedError('write admission', signal.reason));
+        };
+        signal.addEventListener('abort', waiter.onAbort, { once: true });
+      }
+      this.waiters.push(waiter);
+      // Abort dispatch is synchronous, but recheck defensively in case a
+      // non-standard signal implementation changed state during registration.
+      if (signal?.aborted) waiter.onAbort?.();
     });
   }
 
   private release(): void {
-    const next = this.waiters.shift();
-    if (next) {
+    while (this.waiters.length > 0) {
+      const next = this.waiters.shift() as AdmissionWaiter;
+      if (next.state !== 'queued') continue;
+      if (next.signal?.aborted) {
+        next.state = 'aborted';
+        this.removeAbortListener(next);
+        next.reject(new IngestionJobAbortedError('write admission', next.signal.reason));
+        continue;
+      }
+
       // Hand the permit straight to the next waiter: inFlight is unchanged, so
       // the count can never transiently exceed `permits`.
-      next();
+      next.state = 'admitted';
+      this.removeAbortListener(next);
+      next.resolve();
       return;
     }
     this.inFlight = Math.max(0, this.inFlight - 1);
+  }
+
+  private removeAbortListener(waiter: AdmissionWaiter): void {
+    if (waiter.signal && waiter.onAbort) {
+      waiter.signal.removeEventListener('abort', waiter.onAbort);
+    }
   }
 
   stats(): WriteAdmissionStats {

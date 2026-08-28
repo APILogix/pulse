@@ -68,9 +68,13 @@ export interface UsageRollupPayload {
     triggeredAt: string;
 }
 export declare function ingestQueueOptions(): Record<string, unknown>;
-/** createQueue is idempotent; swallow races when several processes boot. */
+/**
+ * Create one queue. pg-boss v12 uses INSERT ... ON CONFLICT DO NOTHING, so an
+ * existing queue is a successful no-op. Unexpected provisioning failures must
+ * propagate; swallowing them leaves workers "started" without usable queues.
+ */
 export declare function safeCreateQueue(name: string, options?: Record<string, unknown>): Promise<void>;
-/** Provision every ingest queue + shared DLQ intake. Call after pgboss.start(). */
+/** Provision the DLQ first, then its source queues, then the rollup queue. */
 export declare function provisionIngestQueues(): Promise<void>;
 export interface EnqueueResult {
     jobIds: string[];
