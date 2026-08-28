@@ -18,13 +18,27 @@ Status date: 2026-08-27.
 Expected order:
 
 1. connect required Primary/queue and Log DB resources;
-2. apply Log DB migrations only when the explicitly approved auto-migrate mode is enabled;
-3. start pg-boss;
-4. construct the dedicated Log DB write pool and 16-permit admission gate;
-5. provision/register typed, DLQ, and usage-rollup workers; and
-6. start metrics/health endpoints and UsageCounter scheduling.
+2. when `LOG_DB_AUTO_MIGRATE=true`, run Log DB migrations in unattended `automatic` mode: apply ordinary safe files and defer files marked `requires-operator-drain`;
+3. log each deferred filename and continue startup without executing that file's SQL or inserting its ledger row;
+4. start pg-boss;
+5. construct the dedicated Log DB write pool and 16-permit admission gate;
+6. provision/register typed, DLQ, and usage-rollup workers; and
+7. start metrics/health endpoints and UsageCounter scheduling.
 
 Verify logs/config for both database endpoints, migration mode, queue provisioning, one intended registry per process, write-pool/admission sizes, and reachable `/healthz`/`/metrics`. Effective production overrides are unknown until captured.
+
+### Operator-required migration pending
+
+For migration 030, these warnings are expected after the fixed build is deployed:
+
+- `Operator-drained Log DB migration deferred during automatic startup`; and
+- `Operator-drained Log DB migrations remain pending; continuing ingestion worker startup`.
+
+They mean the worker did **not** run the duplicate scan, index DDL, or ledger insert, and should continue to `Ingestion worker process started`. The scoped log unique guard remains absent until the dedicated rollout is completed, so log retry idempotency remains partial.
+
+Do not set `PGOPTIONS` on the normal worker process and do not make automatic mode bypass the marker. Production runs `dist/shared/workers/ingestion-worker-main.js`; run `npm run build`, deploy the resulting build, then restart/reload ingestion workers. If the old `55000` fatal startup log remains, the process is still running an old build or invoking the explicit operator path.
+
+`LOG_DB_AUTO_MIGRATE=false` disables all startup migrations; use it only when an external deployment step owns every Log DB migration.
 
 ## Shutdown checks
 

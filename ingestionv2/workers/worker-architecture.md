@@ -13,13 +13,24 @@ Status date: 2026-08-27
 | Classification | Order | Step |
 | --- | --- | --- |
 | **MEASURED** | 1 | Create Primary DB pool (`INGESTION_DB_POOL_SIZE=8`, application_name `pulse_ingestion_workers_${NODE_ENV}`). |
-| **MEASURED** | 2 | Connect shared Log DB; optionally apply migrations (`LOG_DB_AUTO_MIGRATE`). |
-| **MEASURED** | 3 | Start pg-boss (its own pool). |
-| **MEASURED** | 4 | Create dedicated telemetry write pool (`INGESTION_WRITE_POOL_SIZE=20`). |
-| **MEASURED** | 5 | Construct `WorkerRegistry(primaryPool, logger, writePool)`. |
-| **MEASURED** | 6 | `WorkerRegistry.start()`: provision queues, register workers, start rollup, processor, metrics. |
-| **MEASURED** | 7 | Install SIGTERM/SIGINT handlers. |
-| **MEASURED** | 8 | Send `'ready'` to PM2 (`process.send?.('ready')`). |
+| **MEASURED** | 2 | Connect shared Log DB. If `LOG_DB_AUTO_MIGRATE=true`, call the shared runner in `automatic` mode: apply unattended-safe pending files and defer `requires-operator-drain` files without executing their SQL or recording them in the ledger. |
+| **MEASURED** | 3 | Warn when operator-drained migrations remain pending, then continue startup. `LOG_DB_AUTO_MIGRATE=false` skips every startup migration. |
+| **MEASURED** | 4 | Start pg-boss (its own pool). |
+| **MEASURED** | 5 | Create dedicated telemetry write pool (`INGESTION_WRITE_POOL_SIZE=20`). |
+| **MEASURED** | 6 | Construct `WorkerRegistry(primaryPool, logger, writePool)`. |
+| **MEASURED** | 7 | `WorkerRegistry.start()`: provision queues, register workers, start rollup, processor, metrics. |
+| **MEASURED** | 8 | Install SIGTERM/SIGINT handlers. |
+| **MEASURED** | 9 | Send `'ready'` to PM2 (`process.send?.('ready')`). |
+
+## Startup migration modes
+
+| Classification | Mode | Behavior |
+| --- | --- | --- |
+| **MEASURED** | Worker `automatic` | A pending marked file increments `skipped` and `deferred`, emits an operator-action warning, executes no file SQL, and receives no `logdb_migrations` row. The worker can start, but the schema protection remains absent until an operator rollout. |
+| **MEASURED** | CLI `operator` | `npm run db:migrate:logdb` executes selected files and leaves their own drain, duplicate, timeout, and lock safeguards authoritative. Migration 030 still raises `55000` on a populated table without the session drain assertion. |
+| **MEASURED** | Disabled | `LOG_DB_AUTO_MIGRATE=false` applies nothing during worker startup and assumes all schema work is managed externally. |
+
+**MEASURED:** production launchers run `dist/shared/workers/ingestion-worker-main.js`; source changes do not affect a running deployment until `npm run build` output is deployed and the worker is restarted/reloaded.
 
 ## WorkerRegistry internal structure
 

@@ -10,17 +10,21 @@
 | **MEASURED** | Log DB rollback tool | `npx tsx scripts/logdb-rollback.ts <relative.down.sql>`; operator controlled, excluded from forward discovery, and serialized with the same advisory lock. |
 | **UNKNOWN** | Primary/control-plane canonical migration root for proposed new work | Tooling references canonical/draft profiles, but the expected canonical source directories were absent during the forensic audit. `primary_db_draft` material is not proven live-upgrade authority. |
 
-## Migration command coordination and dry-run effects
+## Migration command coordination, execution modes, and dry-run effects
 
 | Classification | Behavior | Contract |
 | --- | --- | --- |
 | **MEASURED** | Shared key | Forward `applyLogDbMigrations()` and `logdb-rollback.ts` call `acquireLogDbMigrationLock()` on the same exported key using the same checked-out client they retain through execution. |
 | **MEASURED** | Fail-fast acquisition | The helper uses `SELECT pg_try_advisory_lock($1)`. Contention throws `Another Log DB migration or rollback already holds the migration lock`; it does not wait. |
 | **MEASURED** | Release | Each command releases only after a successful acquisition and releases from `finally`; session termination is PostgreSQL's final lock cleanup. |
+| **MEASURED** | Worker automatic mode | Ingestion startup passes `executionMode: 'automatic'`. A pending file containing `codex-logdb-migration: requires-operator-drain` is read only for classification, counted in both `skipped` and `deferred`, warned, and left without migration SQL execution or a ledger row. Startup continues. |
+| **MEASURED** | Explicit operator mode | `scripts/migrate-logdb.ts` passes `executionMode: 'operator'`; the shared API also defaults to operator for existing direct callers. Marked files execute and retain their own SQL safety gates. |
 | **MEASURED** | Forward dry-run | File discovery/filtering occurs, then the runner acquires the lock, may execute `CREATE TABLE IF NOT EXISTS logdb_migrations`, and queries the ledger for each selected migration. It skips migration-file SQL, duplicate scans, drain assertions, index DDL, and ledger inserts. |
 | **MEASURED** | Rollback dry-run | The tool reads the selected down file, acquires the same lock, and queries `current_database()` for target display. It does not execute the down SQL. It does not itself create/query the migration ledger outside that down SQL. |
 | **MEASURED** | Migration-local timeout scope | Migration 030's `SET LOCAL lock_timeout='5s'` begins only when migration SQL runs. It does not apply to file discovery, client checkout, shared lock acquisition, ledger DDL, or ledger reads. |
 | **UNVERIFIED** | Concurrent-command rehearsal | Granted/denied lock behavior and rollback source wiring have focused coverage, but concurrent forward/rollback commands were not exercised against a production-sized clone. |
+
+**DERIVED:** Automatic deferral prevents an offline migration from crashing normal worker startup, but does not install the missing identity guard. The warning remains on every startup until the exact file is applied and recorded by the operator CLI.
 
 **DERIVED:** The repository commands cannot interleave migration SQL and ledger mutation while both honor the shared lock. An operator can still bypass this protection with direct SQL or other tooling; operational access controls must prohibit that during the window.
 

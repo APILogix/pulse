@@ -10,6 +10,16 @@
 
 **MEASURED:** Repository forward and rollback commands now share a fail-fast session advisory lock. Source/unit evidence does not substitute for a concurrent-command clone rehearsal.
 
+**MEASURED:** Migration 030 is marked `codex-logdb-migration: requires-operator-drain`. Ingestion-worker startup uses automatic mode and defers the pending file without executing its duplicate scan/index DDL or inserting its ledger row; startup continues with a warning. The explicit CLI remains operator mode and still enforces every gate below.
+
+**MEASURED:** Production launchers execute compiled `dist` output. Build and deploy the fixed source before restarting workers; seeing the original fatal `55000` during normal startup indicates the old build or an operator-mode invocation is still running.
+
+## Pending-migration startup state
+
+While 030 is pending, normal worker startup is allowed but the five-column log retry guard is still absent. Expect a deferral warning on each startup. Do not set `pulse.events_logs_identity_drain_confirmed=on` globally or on the worker process: the setting is only for the explicit migration session after writers have actually been drained.
+
+The pending warning is resolved only when this guide's preflight/apply/validation sequence succeeds and the exact filename appears in `logdb_migrations`.
+
 ## Hard preconditions
 
 Do not proceed until all are true:

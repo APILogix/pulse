@@ -104,9 +104,11 @@ const envSchema = z.object({
     LOG_DB_CHUNK_INTERVAL: z.string().default('1 day'),
     LOG_DB_COMPRESS_AFTER: z.string().default('7 days'),
     LOG_DB_RETENTION: z.string().default('90 days'),
-    // Ingestion workers write into the dedicated Log DB event schema. Keep this
-    // enabled so workers fail fast instead of processing jobs against stale/missing
-    // Log DB tables. Set to false only when migrations are handled externally.
+    // Ingestion workers write into the dedicated Log DB event schema. When
+    // enabled, startup applies unattended-safe migrations. Files marked
+    // `requires-operator-drain` are left pending (no SQL or ledger insert) and
+    // logged for explicit drained execution. Set to false only when every Log DB
+    // migration is handled externally.
     LOG_DB_AUTO_MIGRATE: z
         .string()
         .optional()

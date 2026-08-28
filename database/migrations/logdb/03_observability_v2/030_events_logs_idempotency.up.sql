@@ -1,5 +1,7 @@
 BEGIN;
 
+-- codex-logdb-migration: requires-operator-drain
+
 -- Add the retry identity guard missing from events_logs.
 --
 -- Identity scope matches deterministicEventId(): organization, project and
@@ -9,8 +11,10 @@ BEGIN;
 --
 -- SAFETY: CREATE INDEX on a partitioned parent is non-concurrent. A populated
 -- table therefore requires an explicit operator assertion that ingestion is
--- drained. Without it, this auto-discovered migration fails before duplicate
--- scanning or DDL. Empty/fresh databases may proceed without the assertion.
+-- drained. Automatic worker startup recognizes the directive above and
+-- defers this file without scanning, DDL, or a ledger insert. Explicit operator
+-- execution still fails before duplicate scanning or DDL without the session
+-- assertion. Empty/fresh databases may proceed in operator mode without it.
 SET LOCAL lock_timeout = '5s';
 
 DO $$

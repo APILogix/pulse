@@ -2,6 +2,17 @@
 
 Status date: 2026-08-27. Working-tree presence is not deployment proof, and this catalog makes no performance claim.
 
+## Production startup migration correction
+
+| Classification | File/function | Change | Preserved invariant | Focused evidence |
+| --- | --- | --- | --- | --- |
+| **MEASURED** | `src/shared/logdb/migrations.ts` | Added `automatic` versus `operator` execution modes and `requires-operator-drain` classification. Automatic mode defers marked pending files with explicit `deferred` accounting. | Deferred files execute no migration SQL and receive no ledger row; default/direct callers remain operator mode; shared advisory locking is unchanged. | `logdb-log-identity-contract.test.ts` automatic/operator harness. |
+| **MEASURED** | `src/shared/workers/ingestion-worker-main.ts` | Worker auto-migration now uses automatic mode and continues startup after a visible deferral warning. | Ordinary startup-safe migrations still apply; `LOG_DB_AUTO_MIGRATE=false` still skips all; pg-boss/workers start only after migration classification completes. | Static caller assertion plus production build. |
+| **MEASURED** | `scripts/migrate-logdb.ts` | Explicit migration command now states operator mode and reports deferred count separately. | Operator-selected files retain SQL drain/duplicate/timeout gates and shared lock. | Static caller assertion; focused contract test. |
+| **MEASURED** | migration `030_events_logs_idempotency.up.sql` | Added `codex-logdb-migration: requires-operator-drain` immediately after `BEGIN;`. | Explicit transaction detection, `55000`, `23505`, no-delete behavior, five-column identity, and old lookup index remain. | 4-test contract file; three-file migration/evidence command 15/15. |
+
+**DERIVED:** This removes the production startup crash without pretending the index is installed. Until explicit rollout, retries for logs remain only partially protected and every startup reports the pending file.
+
 ## P0 correctness changes implemented in this audit
 
 | Classification | File/function | Change | Preserved invariant | Focused evidence |

@@ -70,6 +70,9 @@ function hasExplicitTransaction(sql) {
 function hasNoTransactionDirective(sql) {
     return /^--\s*codex-logdb-migration:\s*no-transaction\b/im.test(sql);
 }
+export function requiresOperatorDrain(sql) {
+    return /^--\s*codex-logdb-migration:\s*requires-operator-drain\b/im.test(sql);
+}
 async function executeNoTransactionMigration(client, sql) {
     const statements = sql
         .split(';')
@@ -79,17 +82,20 @@ async function executeNoTransactionMigration(client, sql) {
         await client.query(`${statement};`);
     }
 }
-async function applyOneMigration(client, migration, dryRun) {
+async function applyOneMigration(client, migration, dryRun, executionMode) {
     if (await hasMigrationBeenApplied(client, migration.filename)) {
-        return { applied: false, durationMs: 0 };
+        return { status: 'already-applied', durationMs: 0 };
     }
     if (dryRun) {
-        return { applied: false, durationMs: 0 };
+        return { status: 'dry-run', durationMs: 0 };
     }
     const sql = await fs.readFile(migration.filepath, 'utf8');
+    if (executionMode === 'automatic' && requiresOperatorDrain(sql)) {
+        return { status: 'deferred', durationMs: 0 };
+    }
     if (sql.trim().length === 0) {
         await recordMigration(client, migration.filename, 0);
-        return { applied: true, durationMs: 0 };
+        return { status: 'applied', durationMs: 0 };
     }
     const startedAt = Date.now();
     const explicitTx = hasExplicitTransaction(sql);
@@ -112,10 +118,11 @@ async function applyOneMigration(client, migration, dryRun) {
     }
     const durationMs = Date.now() - startedAt;
     await recordMigration(client, migration.filename, durationMs);
-    return { applied: true, durationMs };
+    return { status: 'applied', durationMs };
 }
 export async function applyLogDbMigrations(pool, options = {}) {
     const dryRun = options.dryRun === true;
+    const executionMode = options.executionMode ?? 'operator';
     const allMigrations = await findLogDbMigrationFiles();
     const filters = options.only?.map((value) => value.trim()).filter(Boolean) ?? [];
     const migrations = filters.length === 0
@@ -126,6 +133,7 @@ export async function applyLogDbMigrations(pool, options = {}) {
         found: migrations.length,
         applied: 0,
         skipped: 0,
+        deferred: 0,
         failed: 0,
     };
     const client = await pool.connect();
@@ -136,14 +144,25 @@ export async function applyLogDbMigrations(pool, options = {}) {
         await ensureMigrationsTable(client);
         for (const migration of migrations) {
             try {
-                const applied = await applyOneMigration(client, migration, dryRun);
-                if (applied.applied) {
+                const outcome = await applyOneMigration(client, migration, dryRun, executionMode);
+                if (outcome.status === 'applied') {
                     result.applied += 1;
-                    options.logger?.info({ migration: migration.filename, durationMs: applied.durationMs }, 'Log DB migration applied');
+                    options.logger?.info({ migration: migration.filename, durationMs: outcome.durationMs }, 'Log DB migration applied');
+                }
+                else if (outcome.status === 'deferred') {
+                    result.skipped += 1;
+                    result.deferred += 1;
+                    options.logger?.warn({
+                        migration: migration.filename,
+                        executionMode,
+                        operatorCommand: `npm run db:migrate:logdb -- --only ${migration.filename}`,
+                    }, 'Operator-drained Log DB migration deferred during automatic startup');
                 }
                 else {
                     result.skipped += 1;
-                    options.logger?.debug({ migration: migration.filename, dryRun }, dryRun ? 'Log DB migration dry-run skipped' : 'Log DB migration already applied');
+                    options.logger?.debug({ migration: migration.filename, dryRun, executionMode }, outcome.status === 'dry-run'
+                        ? 'Log DB migration dry-run skipped'
+                        : 'Log DB migration already applied');
                 }
             }
             catch (err) {
@@ -153,9 +172,11 @@ export async function applyLogDbMigrations(pool, options = {}) {
             }
         }
         options.logger?.info({
+            executionMode,
             found: result.found,
             applied: result.applied,
             skipped: result.skipped,
+            deferred: result.deferred,
             failed: result.failed,
         }, 'Log DB migrations complete');
         return result;

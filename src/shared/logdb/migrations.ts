@@ -38,10 +38,25 @@ export interface LogDbMigrationFile {
   basename: string;
 }
 
+export type LogDbMigrationExecutionMode = 'automatic' | 'operator';
+
 export interface ApplyLogDbMigrationsOptions {
   dryRun?: boolean;
   only?: string[];
   logger?: Logger;
+  /**
+   * `automatic` is for unattended process startup and defers migrations marked
+   * `requires-operator-drain`. `operator` executes every selected migration and
+   * leaves each migration's own safety gates authoritative.
+   *
+   * Defaults to `operator` when omitted. A no-options call executes every
+   * pending migration's SQL unconditionally, including drain-gated files like
+   * `030_events_logs_idempotency.up.sql` — safe only against an empty/fresh
+   * database (e.g. scratch test pools). Never call this without
+   * `executionMode: 'automatic'` from unattended process startup against a
+   * live/populated database.
+   */
+  executionMode?: LogDbMigrationExecutionMode;
 }
 
 export interface ApplyLogDbMigrationsResult {
@@ -49,6 +64,8 @@ export interface ApplyLogDbMigrationsResult {
   found: number;
   applied: number;
   skipped: number;
+  /** Pending operator-only migrations included in `skipped`. */
+  deferred: number;
   failed: number;
 }
 
@@ -124,6 +141,10 @@ function hasNoTransactionDirective(sql: string): boolean {
   return /^--\s*codex-logdb-migration:\s*no-transaction\b/im.test(sql);
 }
 
+export function requiresOperatorDrain(sql: string): boolean {
+  return /^--\s*codex-logdb-migration:\s*requires-operator-drain\b/im.test(sql);
+}
+
 async function executeNoTransactionMigration(client: PoolClient, sql: string): Promise<void> {
   const statements = sql
     .split(';')
@@ -135,23 +156,35 @@ async function executeNoTransactionMigration(client: PoolClient, sql: string): P
   }
 }
 
+type ApplyOneMigrationStatus = 'applied' | 'already-applied' | 'dry-run' | 'deferred';
+
+interface ApplyOneMigrationResult {
+  status: ApplyOneMigrationStatus;
+  durationMs: number;
+}
+
 async function applyOneMigration(
   client: PoolClient,
   migration: LogDbMigrationFile,
   dryRun: boolean,
-): Promise<{ applied: boolean; durationMs: number }> {
+  executionMode: LogDbMigrationExecutionMode,
+): Promise<ApplyOneMigrationResult> {
   if (await hasMigrationBeenApplied(client, migration.filename)) {
-    return { applied: false, durationMs: 0 };
+    return { status: 'already-applied', durationMs: 0 };
   }
 
   if (dryRun) {
-    return { applied: false, durationMs: 0 };
+    return { status: 'dry-run', durationMs: 0 };
   }
 
   const sql = await fs.readFile(migration.filepath, 'utf8');
+  if (executionMode === 'automatic' && requiresOperatorDrain(sql)) {
+    return { status: 'deferred', durationMs: 0 };
+  }
+
   if (sql.trim().length === 0) {
     await recordMigration(client, migration.filename, 0);
-    return { applied: true, durationMs: 0 };
+    return { status: 'applied', durationMs: 0 };
   }
 
   const startedAt = Date.now();
@@ -174,7 +207,7 @@ async function applyOneMigration(
 
   const durationMs = Date.now() - startedAt;
   await recordMigration(client, migration.filename, durationMs);
-  return { applied: true, durationMs };
+  return { status: 'applied', durationMs };
 }
 
 export async function applyLogDbMigrations(
@@ -182,6 +215,7 @@ export async function applyLogDbMigrations(
   options: ApplyLogDbMigrationsOptions = {},
 ): Promise<ApplyLogDbMigrationsResult> {
   const dryRun = options.dryRun === true;
+  const executionMode = options.executionMode ?? 'operator';
   const allMigrations = await findLogDbMigrationFiles();
   const filters = options.only?.map((value) => value.trim()).filter(Boolean) ?? [];
   const migrations = filters.length === 0
@@ -197,6 +231,7 @@ export async function applyLogDbMigrations(
     found: migrations.length,
     applied: 0,
     skipped: 0,
+    deferred: 0,
     failed: 0,
   };
 
@@ -209,18 +244,36 @@ export async function applyLogDbMigrations(
 
     for (const migration of migrations) {
       try {
-        const applied = await applyOneMigration(client, migration, dryRun);
-        if (applied.applied) {
+        const outcome = await applyOneMigration(
+          client,
+          migration,
+          dryRun,
+          executionMode,
+        );
+        if (outcome.status === 'applied') {
           result.applied += 1;
           options.logger?.info(
-            { migration: migration.filename, durationMs: applied.durationMs },
+            { migration: migration.filename, durationMs: outcome.durationMs },
             'Log DB migration applied',
+          );
+        } else if (outcome.status === 'deferred') {
+          result.skipped += 1;
+          result.deferred += 1;
+          options.logger?.warn(
+            {
+              migration: migration.filename,
+              executionMode,
+              operatorCommand: `npm run db:migrate:logdb -- --only ${migration.filename}`,
+            },
+            'Operator-drained Log DB migration deferred during automatic startup',
           );
         } else {
           result.skipped += 1;
           options.logger?.debug(
-            { migration: migration.filename, dryRun },
-            dryRun ? 'Log DB migration dry-run skipped' : 'Log DB migration already applied',
+            { migration: migration.filename, dryRun, executionMode },
+            outcome.status === 'dry-run'
+              ? 'Log DB migration dry-run skipped'
+              : 'Log DB migration already applied',
           );
         }
       } catch (err) {
@@ -232,9 +285,11 @@ export async function applyLogDbMigrations(
 
     options.logger?.info(
       {
+        executionMode,
         found: result.found,
         applied: result.applied,
         skipped: result.skipped,
+        deferred: result.deferred,
         failed: result.failed,
       },
       'Log DB migrations complete',

@@ -14,18 +14,35 @@ export interface LogDbMigrationFile {
     filepath: string;
     basename: string;
 }
+export type LogDbMigrationExecutionMode = 'automatic' | 'operator';
 export interface ApplyLogDbMigrationsOptions {
     dryRun?: boolean;
     only?: string[];
     logger?: Logger;
+    /**
+     * `automatic` is for unattended process startup and defers migrations marked
+     * `requires-operator-drain`. `operator` executes every selected migration and
+     * leaves each migration's own safety gates authoritative.
+     *
+     * Defaults to `operator` when omitted. A no-options call executes every
+     * pending migration's SQL unconditionally, including drain-gated files like
+     * `030_events_logs_idempotency.up.sql` — safe only against an empty/fresh
+     * database (e.g. scratch test pools). Never call this without
+     * `executionMode: 'automatic'` from unattended process startup against a
+     * live/populated database.
+     */
+    executionMode?: LogDbMigrationExecutionMode;
 }
 export interface ApplyLogDbMigrationsResult {
     directory: string;
     found: number;
     applied: number;
     skipped: number;
+    /** Pending operator-only migrations included in `skipped`. */
+    deferred: number;
     failed: number;
 }
 export declare function findLogDbMigrationFiles(dir?: string, root?: string): Promise<LogDbMigrationFile[]>;
+export declare function requiresOperatorDrain(sql: string): boolean;
 export declare function applyLogDbMigrations(pool: Pool, options?: ApplyLogDbMigrationsOptions): Promise<ApplyLogDbMigrationsResult>;
 //# sourceMappingURL=migrations.d.ts.map

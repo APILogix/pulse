@@ -83,12 +83,15 @@ async function main(): Promise<void> {
     const result = await applyLogDbMigrations(pool, {
       dryRun,
       only,
+      executionMode: 'operator',
       logger: logger.child({ component: 'logdb-migrations' }),
     });
 
     console.log();
     console.log('-'.repeat(60));
-    console.log(`Summary: ${result.applied} applied, ${result.skipped} skipped, ${result.failed} failed`);
+    console.log(
+      `Summary: ${result.applied} applied, ${result.skipped} skipped (${result.deferred} operator-deferred), ${result.failed} failed`,
+    );
     console.log(`Found ${result.found} migration(s)`);
     if (result.failed > 0) process.exit(1);
   } finally {

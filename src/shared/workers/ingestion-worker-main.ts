@@ -74,7 +74,16 @@ class IngestionWorkerProcess {
     await this.pool.query('SELECT 1');
     await logDB.connect();
     if (env.LOG_DB_AUTO_MIGRATE) {
-      await applyLogDbMigrations(logDB.getPrimaryPool(), { logger: log });
+      const migrationResult = await applyLogDbMigrations(logDB.getPrimaryPool(), {
+        logger: log,
+        executionMode: 'automatic',
+      });
+      if (migrationResult.deferred > 0) {
+        log.warn(
+          { deferredMigrations: migrationResult.deferred },
+          'Operator-drained Log DB migrations remain pending; continuing ingestion worker startup',
+        );
+      }
     } else {
       log.warn('LOG_DB_AUTO_MIGRATE=false; ingestion worker will assume Log DB migrations are already applied');
     }
