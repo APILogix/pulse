@@ -1210,7 +1210,13 @@ export class AlertRuntimeRepository {
         input.service ?? null,
         input.endpoint ?? null,
         input.evaluatedAt,
-        Math.max(1, input.requiredBreaches),
+        // `consecutive_breaches` is a Postgres INTEGER column (32-bit, max
+        // 2147483647). Callers that want to "advance the counter without ever
+        // firing" (see engines.ts fast-path skip) pass Number.MAX_SAFE_INTEGER
+        // (2^53-1), which overflows int4 and raises error 22003. Clamp to the
+        // int4 max here so any such sentinel is representable, instead of
+        // failing every evaluation tick.
+        Math.min(2147483647, Math.max(1, input.requiredBreaches)),
         Math.max(0, input.cooldownSeconds),
       ],
     );
