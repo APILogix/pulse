@@ -241,24 +241,14 @@ WHERE method IS NOT NULL;
 -- ============================================================================
 -- JSONB
 -- ============================================================================
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_context_gin
-ON events_errors USING GIN (context);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_tags_gin
-ON events_errors USING GIN (tags);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_extra_gin
-ON events_errors USING GIN (extra);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_metadata_gin
-ON events_errors USING GIN (metadata);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_payload_gin
-ON events_errors USING GIN (payload);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_ai_response_gin
-ON events_errors USING GIN (ai_response);
+--
+-- No GIN indexes on context/tags/extra/metadata/payload/ai_response: written
+-- on every ingested error but never queried via JSONB containment/path
+-- operators anywhere in the codebase. See docs/ingestionv2/gin-index-audit.md.
+-- Historically created and later dropped by
+-- 031_remaining_jsonb_gin_hot_path.sql; that migration remains for
+-- deployments migrating forward from an older schema, but a fresh database
+-- created from this file never creates them in the first place.
 
 -- ============================================================================
 -- BRIN

@@ -93,8 +93,30 @@ export const ListRulesQuerySchema = PaginationSchema.extend({
 
 export type ListRulesQuery = z.infer<typeof ListRulesQuerySchema>;
 
+/**
+ * Optional evaluation scope for `POST /rules/:id/test`.
+ *
+ * When provided, the test exercises the BINDING-RESOLVED effective rule for that
+ * scope (see policy/resolve-rule.ts) instead of the raw stored conditions — so
+ * "testing" a rule can actually answer "what would fire for this project/
+ * environment/service/endpoint", including any threshold overrides, disables, or
+ * re-enables contributed by `alert_rule_bindings`. Omitting scope entirely
+ * preserves the original behaviour (test against the rule's own raw conditions).
+ */
 export const TestRuleSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
+  projectId: z.string().uuid().optional(),
+  environment: z.string().min(1).max(64).optional(),
+  service: z.string().min(1).max(255).optional(),
+  endpoint: z.string().min(1).max(500).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.projectId && (value.environment || value.service || value.endpoint)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['projectId'],
+      message: 'projectId is required when environment, service or endpoint is supplied',
+    });
+  }
 });
 
 export type TestRuleBody = z.infer<typeof TestRuleSchema>;

@@ -72,14 +72,13 @@ CREATE INDEX IF NOT EXISTS idx_events_replays_service
   WHERE service IS NOT NULL;
 
 -- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_replays_attributes_gin
-  ON events_replays USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_replays_metadata_gin
-  ON events_replays USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_replays_payload_gin
-  ON events_replays USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_replays_ai_response_gin
-  ON events_replays USING GIN (ai_response);
+-- No GIN indexes on attributes/metadata/payload/ai_response: written on
+-- every ingested replay segment but never queried via JSONB
+-- containment/path operators anywhere in the codebase. See
+-- docs/ingestionv2/gin-index-audit.md. Historically created and later
+-- dropped by 031_remaining_jsonb_gin_hot_path.sql; that migration remains
+-- for deployments migrating forward from an older schema, but a fresh
+-- database created from this file never creates them in the first place.
 
 -- Time-scan (append-heavy)
 CREATE INDEX IF NOT EXISTS idx_events_replays_occurred_brin

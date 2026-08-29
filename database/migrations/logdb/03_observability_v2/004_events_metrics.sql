@@ -126,14 +126,13 @@ CREATE INDEX IF NOT EXISTS idx_events_metrics_category_time
   WHERE metric_category IS NOT NULL;
 
 -- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_metrics_attributes_gin
-  ON events_metrics USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_metrics_metadata_gin
-  ON events_metrics USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_metrics_payload_gin
-  ON events_metrics USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_metrics_ai_response_gin
-  ON events_metrics USING GIN (ai_response);
+-- No GIN indexes on attributes/metadata/payload/ai_response: written on
+-- every ingested metric but never queried via JSONB containment/path
+-- operators anywhere in the codebase. See docs/ingestionv2/gin-index-audit.md.
+-- Historically created and later dropped by
+-- 031_remaining_jsonb_gin_hot_path.sql; that migration remains for
+-- deployments migrating forward from an older schema, but a fresh database
+-- created from this file never creates them in the first place.
 
 -- Time-scan (append-heavy)
 CREATE INDEX IF NOT EXISTS idx_events_metrics_occurred_brin

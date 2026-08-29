@@ -153,14 +153,13 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_tenant_id_time
   WHERE tenant_id IS NOT NULL;
 
 -- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_spans_attributes_gin
-  ON events_spans USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_spans_metadata_gin
-  ON events_spans USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_spans_payload_gin
-  ON events_spans USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_spans_ai_response_gin
-  ON events_spans USING GIN (ai_response);
+-- No GIN indexes on attributes/metadata/payload/ai_response: written on
+-- every ingested span but never queried via JSONB containment/path
+-- operators anywhere in the codebase. See docs/ingestionv2/gin-index-audit.md.
+-- Historically created and later dropped by
+-- 029_span_log_ingestion_hot_path.sql; that migration remains for
+-- deployments migrating forward from an older schema, but a fresh database
+-- created from this file never creates them in the first place.
 
 -- Time-scan (append-heavy)
 CREATE INDEX IF NOT EXISTS idx_events_spans_occurred_brin

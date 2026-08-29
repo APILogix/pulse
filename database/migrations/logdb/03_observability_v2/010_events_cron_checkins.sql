@@ -103,14 +103,13 @@ CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_tenant_id_time
   WHERE tenant_id IS NOT NULL;
 
 -- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_attributes_gin
-  ON events_cron_checkins USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_metadata_gin
-  ON events_cron_checkins USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_payload_gin
-  ON events_cron_checkins USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_ai_response_gin
-  ON events_cron_checkins USING GIN (ai_response);
+-- No GIN indexes on attributes/metadata/payload/ai_response: written on
+-- every ingested cron check-in but never queried via JSONB
+-- containment/path operators anywhere in the codebase. See
+-- docs/ingestionv2/gin-index-audit.md. Historically created and later
+-- dropped by 031_remaining_jsonb_gin_hot_path.sql; that migration remains
+-- for deployments migrating forward from an older schema, but a fresh
+-- database created from this file never creates them in the first place.
 
 -- Time-scan (append-heavy)
 CREATE INDEX IF NOT EXISTS idx_events_cron_checkins_occurred_brin

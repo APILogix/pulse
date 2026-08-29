@@ -102,14 +102,13 @@ CREATE INDEX IF NOT EXISTS idx_events_traces_status_time
   WHERE status_code IS NOT NULL;
 
 -- JSONB search
-CREATE INDEX IF NOT EXISTS idx_events_traces_attributes_gin
-  ON events_traces USING GIN (attributes);
-CREATE INDEX IF NOT EXISTS idx_events_traces_metadata_gin
-  ON events_traces USING GIN (metadata);
-CREATE INDEX IF NOT EXISTS idx_events_traces_payload_gin
-  ON events_traces USING GIN (payload);
-CREATE INDEX IF NOT EXISTS idx_events_traces_ai_response_gin
-  ON events_traces USING GIN (ai_response);
+-- No GIN indexes on attributes/metadata/payload/ai_response: written on
+-- every ingested trace but never queried via JSONB containment/path
+-- operators anywhere in the codebase. See docs/ingestionv2/gin-index-audit.md.
+-- Historically created and later dropped by
+-- 031_remaining_jsonb_gin_hot_path.sql; that migration remains for
+-- deployments migrating forward from an older schema, but a fresh database
+-- created from this file never creates them in the first place.
 
 -- Time-scan (append-heavy)
 CREATE INDEX IF NOT EXISTS idx_events_traces_occurred_brin

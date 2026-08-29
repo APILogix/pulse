@@ -175,22 +175,18 @@ WHERE duration_ms IS NOT NULL;
 -- ============================================================================
 -- JSONB
 -- ============================================================================
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_attributes_gin
-ON events_requests
-USING GIN (attributes);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_metadata_gin
-ON events_requests
-USING GIN (metadata);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_payload_gin
-ON events_requests
-USING GIN (payload);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_ai_response_gin
-ON events_requests
-USING GIN (ai_response);
+--
+-- No GIN indexes on attributes/metadata/payload/ai_response: these columns
+-- are written on every ingested request but never queried via JSONB
+-- containment/path operators anywhere in the codebase (the observability
+-- query-engine's field registry marks them non-filterable). A broad GIN
+-- index tokenizes the whole document on every insert with no offsetting
+-- read benefit, so it is intentionally omitted from this hot-path table.
+-- See docs/ingestionv2/gin-index-audit.md. Historically these were created
+-- and later dropped by 025_request_ingestion_hot_path.sql; that migration
+-- remains for deployments migrating forward from an older schema, but a
+-- fresh database created from this file never creates them in the first
+-- place.
 
 -- ============================================================================
 -- BRIN
