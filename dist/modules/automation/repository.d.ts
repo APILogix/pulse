@@ -546,6 +546,16 @@ export declare class AutomationRepository {
             config?: Record<string, unknown>;
             requiredFeatureKey?: string | null;
             metadata?: Record<string, unknown>;
+            /**
+             * Seconds to wait after run creation before this step becomes claimable.
+             * Real scheduling delay (e.g. "escalate to PagerDuty only if still
+             * unresolved after N minutes"), not an action-specific concern — it is
+             * applied here, once, regardless of actionType, by setting the step's
+             * initial next_retry_at. claimNextStep() already treats a queued step
+             * with a future next_retry_at as not-yet-claimable, so no claim-path
+             * change is needed.
+             */
+            initialDelaySeconds?: number | undefined;
         }>;
     }, providedClient?: PoolClient): Promise<{
         run: RunRow;

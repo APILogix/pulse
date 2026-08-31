@@ -137,6 +137,25 @@ export interface AppendHistoryInput {
     changesSummary?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
 }
+/**
+ * Canonical alerting -> automation domain event.
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation.
+ */
+export interface AppendDomainOutboxInput {
+    organizationId: string;
+    projectId?: string | null;
+    environment?: string | null;
+    alertKey: string;
+    alertEventId: string;
+    eventType: 'alert.event.created' | 'alert.event.resolved';
+    /** `alert:{eventType}:{alert_events_v2.idempotency_key}` */
+    dedupeKey: string;
+    severity: LogDbSeverity;
+    occurredAt: Date;
+    payload: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+}
 export interface NotificationJobInsert {
     organizationId: string;
     projectId?: string | null;
@@ -342,6 +361,32 @@ export declare class AlertRuntimeRepository {
     /** Fold a duplicate into the existing alert. Never billed (ADR-0010). */
     incrementDuplicate(alertKey: string, seenAt: Date, client?: PoolClient): Promise<AlertEventStateRow | null>;
     appendHistory(input: AppendHistoryInput, client?: PoolClient): Promise<void>;
+    /**
+     * Append a durable alert domain event for the automation bridge.
+     *
+     * Storage note: this reuses `telemetry_outbox` (`signal_kind =
+     * 'alert_domain_event'`, `fast_path = FALSE`) rather than a dedicated table.
+     * A dedicated table was the original design (see
+     * docs/automationv2/27-alerting-automation-event-contract.md) but the Log DB
+     * is currently at its storage quota and cannot allocate new relations;
+     * widening this table's existing CHECK constraint is a catalog-only change
+     * that does not require new storage. `fast_path = FALSE` means
+     * TelemetryOutboxRelay's own claim query (`WHERE fast_path = TRUE`) can never
+     * see these rows — AlertDomainOutboxRelay claims by `signal_kind` instead, so
+     * the two relays never compete for the same row.
+     *
+     * MUST be called with the same `client` as the enclosing
+     * AlertDecisionEngine.decide() transaction, so the outbox row commits
+     * atomically with alert_events_v2/alert_event_state/alert_event_history_v2.
+     *
+     * Idempotency: `event_id` carries the dedupe key (derived from
+     * alert_events_v2.idempotency_key by the caller), reserved through the same
+     * `alert_runtime_idempotency_keys` table telemetry_outbox already uses
+     * (namespace 'telemetry_outbox', consistent with how that table already
+     * dedupes on `signal_kind || ':' || event_id`) — so a re-delivered or
+     * accidentally-duplicated call is a safe no-op.
+     */
+    appendDomainOutbox(input: AppendDomainOutboxInput, client?: PoolClient): Promise<void>;
     listProjectAlertEvents(organizationId: string, projectId: string, query: {
         status?: string;
         severity?: string;

@@ -6,13 +6,22 @@ import { AutomationService } from './service.js';
 import { TemplateService } from './template.service.js';
 import { AutomationAuditRepository } from './audit.js';
 import { createActionRunner } from './action-runner.js';
+import { createAutomationIntegrations } from './integrations.js';
 import { automationRoutes } from './routes.js';
 import { enqueueAutomationJob } from './workers.js';
 const moduleLogger = logger.child({ component: 'automation-module' });
 async function automationModule(fastify, _options) {
     const repository = new AutomationRepository(pool);
     const auditRepository = new AutomationAuditRepository(pool);
-    const actionRunner = createActionRunner();
+    // Bind the action registry to REAL subsystems (connectors delivery, alerting
+    // incidents/silences, automation approvals). Previously createActionRunner() was
+    // called with no integrations, so every handler fell through to a stub that
+    // reported success while doing nothing.
+    const actionRunner = createActionRunner(createAutomationIntegrations({
+        pool,
+        logger: fastify.log,
+        automationRepository: repository,
+    }));
     const service = new AutomationService(repository, auditRepository, actionRunner);
     const templateService = new TemplateService(repository, service);
     // Wire enqueue callback using pg-boss, preserving DB source of truth on send failure

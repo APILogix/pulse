@@ -262,8 +262,22 @@ export declare const ListRulesQuerySchema: z.ZodObject<{
     search: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type ListRulesQuery = z.infer<typeof ListRulesQuerySchema>;
+/**
+ * Optional evaluation scope for `POST /rules/:id/test`.
+ *
+ * When provided, the test exercises the BINDING-RESOLVED effective rule for that
+ * scope (see policy/resolve-rule.ts) instead of the raw stored conditions — so
+ * "testing" a rule can actually answer "what would fire for this project/
+ * environment/service/endpoint", including any threshold overrides, disables, or
+ * re-enables contributed by `alert_rule_bindings`. Omitting scope entirely
+ * preserves the original behaviour (test against the rule's own raw conditions).
+ */
 export declare const TestRuleSchema: z.ZodObject<{
     payload: z.ZodRecord<z.ZodString, z.ZodUnknown>;
+    projectId: z.ZodOptional<z.ZodString>;
+    environment: z.ZodOptional<z.ZodString>;
+    service: z.ZodOptional<z.ZodString>;
+    endpoint: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type TestRuleBody = z.infer<typeof TestRuleSchema>;
 export declare const RuleTemplateParamsSchema: z.ZodObject<{

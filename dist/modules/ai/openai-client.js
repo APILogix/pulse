@@ -12,12 +12,26 @@ export class OpenAIProvider {
     constructor(config, logger) {
         this.config = config;
         this.logger = logger;
-        this.client = new OpenAI({
-            apiKey: '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',
-            baseURL: 'https://openrouter.ai/api/v1',
-            timeout: config.timeoutMs,
-            maxRetries: 0,
-        });
+        // SECURITY FIX: this constructor previously hardcoded a live-looking
+        // OpenRouter API key and a non-standard baseURL, both committed to git
+        // history, completely ignoring the injected AIConfig.apiKey. That key
+        // must be treated as compromised (removing it from a future commit does
+        // not remove it from history) and rotated/revoked on the provider's side
+        // — this fix only stops the code from reading a hardcoded secret; it does
+        // not itself rotate anything.
+        //
+        // The client is only constructed when a real API key is configured, so
+        // `available` (and every caller that checks it via assertAvailable())
+        // correctly reflects whether this provider can actually be used —
+        // consistent with aiConfig.enabled's own definition (AI_ENABLED==='true'
+        // && Boolean(OPENAI_API_KEY)) in src/config/ai.ts.
+        this.client = config.apiKey
+            ? new OpenAI({
+                apiKey: config.apiKey,
+                timeout: config.timeoutMs,
+                maxRetries: 0,
+            })
+            : null;
     }
     get available() {
         return this.client !== null;

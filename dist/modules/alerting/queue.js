@@ -10,6 +10,7 @@ import { AlertChannelRepository } from '../projects/alerts/channels/channel.repo
 import { AlertConfigRepository } from './config/alert-config.repository.js';
 import { AlertNotificationRouter } from './runtime/notification-router.js';
 import { TelemetryOutboxRelay } from './runtime/telemetry-outbox-relay.js';
+import { AlertDomainOutboxRelay } from './runtime/alert-domain-outbox-relay.js';
 import { SnapshotEscalationWorker } from './escalation/escalation.worker.js';
 import { AlertAutoResolveSweep } from './runtime/auto-resolve-sweep.js';
 import { NotificationEntitlementService } from './runtime/notification-entitlement.service.js';
@@ -26,6 +27,11 @@ export const ALERT_JOBS = {
     notificationRouter: 'alert.notification-router',
     telemetryOutboxRelay: 'alert.telemetry-outbox-relay',
     errorGroupRegressed: 'alert.error-group-regressed',
+    // Relays alert lifecycle domain events (fired/resolved) out of the outbox
+    // and into automation, via ALERT_DOMAIN_OUTBOX_JOB (a separate, automation-
+    // owned pg-boss job created lazily by pgboss.send — not created here, since
+    // this alerting queue list only owns alerting-side queues).
+    alertDomainOutboxRelay: 'alert.domain-outbox-relay',
 };
 const DEFAULTS = {
     group: 'all',
@@ -49,6 +55,10 @@ export const ALERT_DELIVERY_WORKER_JOBS = [
     ALERT_JOBS.notificationRouter,
     ALERT_JOBS.telemetryOutboxRelay,
     ALERT_JOBS.errorGroupRegressed,
+    // Publishing automation events is alert-lifecycle-adjacent, not delivery, but
+    // it must run wherever alert decisions are made (decide() writes the outbox
+    // row), so it belongs in every worker group, not just 'all'.
+    ALERT_JOBS.alertDomainOutboxRelay,
 ];
 function allJobs(arg) {
     if (Array.isArray(arg))
@@ -88,6 +98,7 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     const runtimeEngines = new AlertRuntimeEngines(logger, runtimePool, pool, routing);
     const notificationRouter = new AlertNotificationRouter(runtimePool, logger, projectOwners);
     const telemetryOutboxRelay = new TelemetryOutboxRelay(runtimePool, logger);
+    const alertDomainOutboxRelay = new AlertDomainOutboxRelay(runtimePool, logger);
     const snapshotEscalation = new SnapshotEscalationWorker(logger, runtimePool, routing);
     const autoResolveSweep = new AlertAutoResolveSweep(runtimePool, logger);
     // ── escalation-sweep: advance due escalations + resume expired acks ─────
@@ -151,6 +162,10 @@ export async function registerAlertingWorkers(logger, config = {}, _projectSubsc
     // ── Canonical V2 telemetry outbox relay ─────────────────────────────────
     await pgboss.work(ALERT_JOBS.telemetryOutboxRelay, { localConcurrency: 2, batchSize: 1 }, (async () => {
         await telemetryOutboxRelay.run(250);
+    }));
+    // ── Alerting -> automation domain event outbox relay ────────────────────
+    await pgboss.work(ALERT_JOBS.alertDomainOutboxRelay, { localConcurrency: 2, batchSize: 1 }, (async () => {
+        await alertDomainOutboxRelay.run(100);
     }));
     // ── Canonical V2 error regression evaluator ─────────────────────────────
     await pgboss.work(ALERT_JOBS.errorGroupRegressed, { localConcurrency: 4, batchSize: 1 }, (async (arg) => {
@@ -221,6 +236,10 @@ function startRuntimeDispatchTimers(telemetryPool, log) {
         }).catch(() => undefined), 10_000),
         setInterval(() => void pgboss.send(ALERT_JOBS.telemetryOutboxRelay, {}, {
             singletonKey: `alert-telemetry-outbox:${Math.floor(Date.now() / 1_000)}`,
+            expireInSeconds: 30,
+        }).catch(() => undefined), 1_000),
+        setInterval(() => void pgboss.send(ALERT_JOBS.alertDomainOutboxRelay, {}, {
+            singletonKey: `alert-domain-outbox:${Math.floor(Date.now() / 1_000)}`,
             expireInSeconds: 30,
         }).catch(() => undefined), 1_000),
     ];

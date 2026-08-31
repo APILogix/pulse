@@ -6,6 +6,8 @@ import { renderTemplate, extractVariables } from '../template.js';
 import { resolveRouting } from '../routing.js';
 import { getAlertRuleTemplate, listAlertRuleTemplates } from '../evaluator/rule-templates.js';
 import { AlertRuntimeRuleCatalog } from '../runtime/rule-catalog.js';
+import { resolveEffectiveRule } from '../policy/resolve-rule.js';
+import { AlertRuleBindingsRepository } from '../config/bindings.repository.js';
 import { AlertNotFoundError, AlertValidationError, } from '../types.js';
 import { entitlementsService } from '../../billing/entitlements/service.js';
 import { quotaGuard } from '../../billing/entitlements/quota-guard.js';
@@ -41,9 +43,11 @@ function inferEvaluationCategory(conditions, evaluationIntervalSeconds, presetKe
 export class RulesService {
     repo;
     logger;
+    bindings;
     constructor(deps) {
         this.repo = deps.repository;
         this.logger = deps.logger;
+        this.bindings = new AlertRuleBindingsRepository();
     }
     // ── Rules ──────────────────────────────────────────────────────────────
     async createRule(orgId, meta, body) {
@@ -206,14 +210,48 @@ export class RulesService {
         return this.createRule(orgId, meta, body);
     }
     async testRule(orgId, id, body) {
-        await this.requireRule(orgId, id);
-        const conditions = await this.repo.getRuleConditions(id);
-        const evaluable = conditions.map((c) => ({
-            id: c.id, conditionGroupId: c.condition_group_id, fieldPath: c.field_path,
-            operator: c.operator, thresholdValue: c.threshold_value, isRequired: c.is_required,
-        }));
+        const rule = await this.requireRule(orgId, id);
+        // No scope supplied: preserve original behaviour exactly (raw stored
+        // conditions), so existing callers/tests are unaffected.
+        if (!body.projectId) {
+            const conditions = await this.repo.getRuleConditions(id);
+            const evaluable = toEvaluableConditions(conditions);
+            const result = evaluateRule(body.payload, evaluable);
+            return { matched: result.matched, conditionResults: result.conditionResults, scope: null, effectiveRule: null };
+        }
+        // A scope was supplied: resolve the BINDING-EFFECTIVE rule for that scope
+        // (ADR-0004) and test against its conditions (with threshold overrides
+        // applied), not the rule's raw stored conditions. This is what makes
+        // "testing" a rule actually predictive of what fires in a real project/
+        // environment/service/endpoint context.
+        const [conditions, bindings] = await Promise.all([
+            this.repo.getRuleConditions(id),
+            this.bindings.listByRule(orgId, id),
+        ]);
+        const scope = {
+            organizationId: orgId,
+            projectId: body.projectId,
+            environment: body.environment ?? null,
+            service: body.service ?? null,
+            endpoint: body.endpoint ?? null,
+        };
+        const effective = resolveEffectiveRule(rule, conditions, bindings, scope);
+        const evaluable = toEvaluableConditions(effective.conditions);
         const result = evaluateRule(body.payload, evaluable);
-        return { matched: result.matched, conditionResults: result.conditionResults };
+        return {
+            matched: effective.enabled ? result.matched : false,
+            conditionResults: result.conditionResults,
+            scope,
+            effectiveRule: {
+                enabled: effective.enabled,
+                bindingId: effective.bindingId,
+                resolvedScopeType: effective.resolvedScopeType,
+                resolvedScopeLevel: effective.resolvedScopeLevel,
+                severity: effective.severity,
+                cooldownSeconds: effective.cooldownSeconds,
+                trace: effective.trace,
+            },
+        };
     }
     // ── Event ingestion + lifecycle ──────────────────────────────────────────
     // ── Silences ──────────────────────────────────────────────────────────
@@ -255,6 +293,16 @@ export class RulesService {
             throw new (await import("../types.js")).AlertNotFoundError('Alert rule');
         return rule;
     }
+}
+function toEvaluableConditions(conditions) {
+    return conditions.map((c) => ({
+        id: c.id,
+        conditionGroupId: c.condition_group_id,
+        fieldPath: c.field_path,
+        operator: c.operator,
+        thresholdValue: c.threshold_value,
+        isRequired: c.is_required,
+    }));
 }
 function toConditionInsert(c) {
     return {

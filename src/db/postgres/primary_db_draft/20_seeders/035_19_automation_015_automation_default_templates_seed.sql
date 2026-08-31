@@ -1,3 +1,20 @@
+-- =============================================================================
+-- Canonical platform automation templates (seed).
+--
+-- This is the single authoritative registry of platform-scoped automation
+-- templates. Templates are seeded here and nowhere else; the database is the
+-- source of truth that the API and UI read from.
+--
+-- Idempotency: every statement is an upsert keyed on a stable UUID, so this file
+-- is safe to re-run. Template rows upsert on template_key; version rows upsert on
+-- (template_id, version) and DO UPDATE, so a corrected definition actually rolls
+-- out to already-seeded environments.
+--
+-- Three templates were removed because their purpose depended on an entity that
+-- does not exist in this product (no runbook entity, no status-page subsystem, no
+-- uptime module, and project_releases is an append-only record with nothing to
+-- pause). See docs/automationv2/24-action-inventory-and-decisions.md.
+-- =============================================================================
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
   id, template_key, scope, organization_id, name, description, workflow_type,
@@ -34,7 +51,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.service","operator":"exists"},{"leftPath":"$.severity","operator":"in","rightValue":["warning","error","critical","fatal"]}]'::jsonb,
   '[{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:alert_route_v1_001', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -72,7 +96,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]},{"leftPath":"$.status","operator":"neq","rightValue":"resolved"}]'::jsonb,
   '[{"actionKey":"page_oncall","actionType":"pagerduty.trigger","riskLevel":"medium"},{"actionKey":"notify_escalation","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:escalate_critical_v1_002', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -110,7 +141,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:incident_critical_v1_003', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -148,7 +186,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.incident_id","operator":"exists"}]'::jsonb,
   '[{"actionKey":"append_timeline","actionType":"incident.timeline.append","riskLevel":"low"}]'::jsonb,
   'sha256:timeline_append_v1_004', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -186,45 +231,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]},{"leftPath":"$.duration_minutes","operator":"gt","rightValue":30}]'::jsonb,
   '[{"actionKey":"ai_summary","actionType":"ai.summary.generate","riskLevel":"low"},{"actionKey":"generate_postmortem","actionType":"incident.postmortem.generate_draft","riskLevel":"medium"}]'::jsonb,
   'sha256:postmortem_draft_v1_005', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000006',
-  'release-health-guard',
-  'platform', NULL,
-  'Release Health Guard',
-  'Monitor release health and warn when error rate, latency, or crash rate increases after a deployment.',
-  'release_guard', 'releases',
-  TRUE, TRUE, TRUE, 'business',
-  'module_version_management_features_release_gates',
-  ARRAY['releases','health','guard'],
-  60,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000006',
-  'a0000000-0000-4000-8000-000000000006',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"release_guard","trigger":{"kind":"event","type":"release.health_degraded","sourceModule":"releases"},"conditions":[{"leftPath":"$.error_rate_increased","operator":"eq","rightValue":true},{"leftPath":"$.latency_increased","operator":"eq","rightValue":true}],"actions":[{"actionKey":"warn_release","actionType":"release.guard.warn","riskLevel":"medium","requiresApproval":false,"config":{}},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":50,"dedupeWindowSeconds":600,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"release.health_degraded","sourceModule":"releases"}]'::jsonb,
-  '[{"leftPath":"$.error_rate_increased","operator":"eq","rightValue":true},{"leftPath":"$.latency_increased","operator":"eq","rightValue":true}]'::jsonb,
-  '[{"actionKey":"warn_release","actionType":"release.guard.warn","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
-  'sha256:release_health_v1_006', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -262,7 +276,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.degradation_severe","operator":"eq","rightValue":true},{"leftPath":"$.confidence","operator":"gte","rightValue":0.8}]'::jsonb,
   '[{"actionKey":"recommend_rollback","actionType":"rollback.recommend","riskLevel":"high"},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high"}]'::jsonb,
   'sha256:rollback_approval_v1_007', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -300,7 +321,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.fingerprint_count","operator":"gt","rightValue":5}]'::jsonb,
   '[{"actionKey":"silence_alert","actionType":"alert.silence.create","riskLevel":"medium"},{"actionKey":"notify_silence","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:dedupe_noisy_v1_008', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -338,45 +366,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.maintenance_window_active","operator":"eq","rightValue":true}]'::jsonb,
   '[{"actionKey":"silence_maintenance","actionType":"alert.silence.create","riskLevel":"medium"}]'::jsonb,
   'sha256:silence_maint_v1_009', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000010',
-  'open-runbook-for-critical-service',
-  'platform', NULL,
-  'Open Runbook for Critical Service',
-  'Automatically open the associated runbook and notify the team when a critical alert fires for a service with a configured runbook.',
-  'runbook', 'incidents',
-  TRUE, TRUE, FALSE, 'growth',
-  'module_incident_management_enabled',
-  ARRAY['incidents','runbook','critical'],
-  100,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000010',
-  'a0000000-0000-4000-8000-000000000010',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"runbook","trigger":{"kind":"event","type":"alert.event.created","sourceModule":"alerting"},"conditions":[{"leftPath":"$.severity","operator":"eq","rightValue":"critical"},{"leftPath":"$.service_runbook_url","operator":"exists"}],"actions":[{"actionKey":"open_runbook","actionType":"runbook.open","riskLevel":"low","requiresApproval":false,"config":{}},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":100,"dedupeWindowSeconds":300,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"alert.event.created","sourceModule":"alerting"}]'::jsonb,
-  '[{"leftPath":"$.severity","operator":"eq","rightValue":"critical"},{"leftPath":"$.service_runbook_url","operator":"exists"}]'::jsonb,
-  '[{"actionKey":"open_runbook","actionType":"runbook.open","riskLevel":"low"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
-  'sha256:runbook_critical_v1_010', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -414,7 +411,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.attempts","operator":"lt","rightValue":5}]'::jsonb,
   '[{"actionKey":"retry_delivery","actionType":"connector.delivery.retry","riskLevel":"low"},{"actionKey":"notify_failure","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:connector_dl_retry_v1_011', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -452,7 +456,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.retryable","operator":"eq","rightValue":true},{"leftPath":"$.attempts","operator":"lt","rightValue":3}]'::jsonb,
   '[{"actionKey":"notify_dead_letter","actionType":"notification.send","riskLevel":"low"},{"actionKey":"noop_retry","actionType":"noop","riskLevel":"low"}]'::jsonb,
   'sha256:ingestion_dl_retry_v1_012', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -490,7 +501,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.usage_percent","operator":"in","rightValue":[80,90,100]}]'::jsonb,
   '[{"actionKey":"notify_quota","actionType":"quota.notify","riskLevel":"low"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:quota_threshold_v1_013', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -528,7 +546,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.meter","operator":"eq","rightValue":"ai_credits"}]'::jsonb,
   '[{"actionKey":"notify_ai_spike","actionType":"notification.send","riskLevel":"low"},{"actionKey":"quota_alert","actionType":"quota.notify","riskLevel":"low"}]'::jsonb,
   'sha256:ai_credit_spike_v1_014', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -566,7 +591,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.confidence","operator":"gt","rightValue":0.7}]'::jsonb,
   '[{"actionKey":"security_notify","actionType":"security.notify","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:security_api_key_v1_015', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -604,7 +636,14 @@ INSERT INTO automation_template_versions (
   '[]'::jsonb,
   '[{"actionKey":"export_report","actionType":"report.export","riskLevel":"low"},{"actionKey":"notify_report","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:daily_health_v1_016', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -642,7 +681,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.release_data_exists","operator":"eq","rightValue":true}]'::jsonb,
   '[{"actionKey":"ai_summarize","actionType":"ai.summary.generate","riskLevel":"low"},{"actionKey":"export_report","actionType":"report.export","riskLevel":"low"},{"actionKey":"notify_report","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:weekly_release_v1_017', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -680,7 +726,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.burn_rate","operator":"gt","rightValue":1.5}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:slo_burn_rate_v1_018', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -718,42 +771,12 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.job_criticality","operator":"eq","rightValue":"high"}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"},{"actionKey":"page_oncall","actionType":"pagerduty.trigger","riskLevel":"medium"}]'::jsonb,
   'sha256:cron_missed_v1_019', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000020',
-  'uptime-failure-status-page-draft',
-  'platform', NULL,
-  'Uptime Failure Status Page Draft',
-  'Draft a status page update when a public service uptime check fails for a configurable duration, requiring human approval.',
-  'incident_creation', 'uptime',
-  TRUE, TRUE, TRUE, 'business',
-  'module_uptime_monitoring_enabled',
-  ARRAY['uptime','status_page','approval'],
-  200,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000020',
-  'a0000000-0000-4000-8000-000000000020',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"incident_creation","trigger":{"kind":"event","type":"uptime.failed","sourceModule":"uptime"},"conditions":[{"leftPath":"$.public_service","operator":"eq","rightValue":true},{"leftPath":"$.failure_duration_minutes","operator":"gt","rightValue":5}],"actions":[{"actionKey":"draft_status_page","actionType":"status_page.update","riskLevel":"high","requiresApproval":true,"config":{"mode":"draft"}},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":10,"dedupeWindowSeconds":1800,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"uptime.failed","sourceModule":"uptime"}]'::jsonb,
-  '[{"leftPath":"$.public_service","operator":"eq","rightValue":true},{"leftPath":"$.failure_duration_minutes","operator":"gt","rightValue":5}]'::jsonb,
-  '[{"actionKey":"draft_status_page","actionType":"status_page.update","riskLevel":"high"},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high"}]'::jsonb,
-  'sha256:uptime_status_page_v1_020', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;

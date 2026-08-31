@@ -68,6 +68,7 @@ export interface CreateRuleInput {
 }
 export declare class RulesRepository {
     private readonly db;
+    private readonly bindingsForRevision;
     /**
      * ADR-0006: pools are injected explicitly. Alert RULE definition is
      * control-plane owned, so this defaults to the primary pool and callers that

@@ -1053,23 +1053,26 @@ export class AutomationRepository {
                     requiredFeatureKey: s.requiredFeatureKey ?? null,
                 };
                 const hasKey = s.idempotencyKey != null;
+                const initialNextRetryAt = s.initialDelaySeconds && s.initialDelaySeconds > 0
+                    ? new Date(Date.now() + s.initialDelaySeconds * 1000)
+                    : null;
                 const insertSql = hasKey
                     ? `INSERT INTO automation_run_steps
               (run_id, workflow_id, action_id, step_key, action_type, status, sort_order,
-               max_attempts, requires_approval, idempotency_key, input_payload, metadata)
-             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb)
+               max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
+             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
              ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
              RETURNING *`
                     : `INSERT INTO automation_run_steps
               (run_id, workflow_id, action_id, step_key, action_type, status, sort_order,
-               max_attempts, requires_approval, idempotency_key, input_payload, metadata)
-             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb)
+               max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
+             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
              RETURNING *`;
                 const sR = await client.query(insertSql, [
                     run.id, params.workflowId, s.actionId ?? null, s.stepKey, s.actionType,
                     s.sortOrder, s.maxAttempts ?? 3, s.requiresApproval ?? false,
                     s.idempotencyKey ?? null, JSON.stringify(s.inputPayload ?? {}),
-                    JSON.stringify(stepMetadata),
+                    JSON.stringify(stepMetadata), initialNextRetryAt,
                 ]);
                 if (sR.rows[0])
                     steps.push(toStep(sR.rows[0]));

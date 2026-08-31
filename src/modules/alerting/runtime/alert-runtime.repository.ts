@@ -152,6 +152,26 @@ export interface AppendHistoryInput {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Canonical alerting -> automation domain event.
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation.
+ */
+export interface AppendDomainOutboxInput {
+  organizationId: string;
+  projectId?: string | null;
+  environment?: string | null;
+  alertKey: string;
+  alertEventId: string;
+  eventType: 'alert.event.created' | 'alert.event.resolved';
+  /** `alert:{eventType}:{alert_events_v2.idempotency_key}` */
+  dedupeKey: string;
+  severity: LogDbSeverity;
+  occurredAt: Date;
+  payload: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
 export interface NotificationJobInsert {
   organizationId: string;
   projectId?: string | null;
@@ -558,6 +578,66 @@ export class AlertRuntimeRepository {
         input.newState ?? null,
         json(input.changesSummary),
         json(input.metadata),
+      ],
+    );
+  }
+
+  /**
+   * Append a durable alert domain event for the automation bridge.
+   *
+   * Storage note: this reuses `telemetry_outbox` (`signal_kind =
+   * 'alert_domain_event'`, `fast_path = FALSE`) rather than a dedicated table.
+   * A dedicated table was the original design (see
+   * docs/automationv2/27-alerting-automation-event-contract.md) but the Log DB
+   * is currently at its storage quota and cannot allocate new relations;
+   * widening this table's existing CHECK constraint is a catalog-only change
+   * that does not require new storage. `fast_path = FALSE` means
+   * TelemetryOutboxRelay's own claim query (`WHERE fast_path = TRUE`) can never
+   * see these rows — AlertDomainOutboxRelay claims by `signal_kind` instead, so
+   * the two relays never compete for the same row.
+   *
+   * MUST be called with the same `client` as the enclosing
+   * AlertDecisionEngine.decide() transaction, so the outbox row commits
+   * atomically with alert_events_v2/alert_event_state/alert_event_history_v2.
+   *
+   * Idempotency: `event_id` carries the dedupe key (derived from
+   * alert_events_v2.idempotency_key by the caller), reserved through the same
+   * `alert_runtime_idempotency_keys` table telemetry_outbox already uses
+   * (namespace 'telemetry_outbox', consistent with how that table already
+   * dedupes on `signal_kind || ':' || event_id`) — so a re-delivered or
+   * accidentally-duplicated call is a safe no-op.
+   */
+  async appendDomainOutbox(input: AppendDomainOutboxInput, client?: PoolClient): Promise<void> {
+    await this.exec(client).query(
+      `WITH reserved AS (
+         INSERT INTO alert_runtime_idempotency_keys (namespace, organization_id, idempotency_key)
+         VALUES ('telemetry_outbox', $1, 'alert_domain_event:' || $2)
+         ON CONFLICT DO NOTHING
+         RETURNING 1
+       )
+       INSERT INTO telemetry_outbox (
+         organization_id, project_id, environment, signal_kind, event_id,
+         severity, fast_path, attributes, occurred_at
+       )
+       SELECT $1, $3, $4, 'alert_domain_event', $2,
+              $5::logdb_severity, FALSE, $6::jsonb, $7
+       WHERE EXISTS (SELECT 1 FROM reserved)
+       ON CONFLICT DO NOTHING`,
+      [
+        input.organizationId,
+        input.dedupeKey,
+        input.projectId ?? null,
+        input.environment ?? null,
+        input.severity,
+        JSON.stringify({
+          eventType: input.eventType,
+          alertKey: input.alertKey,
+          alertEventId: input.alertEventId,
+          dedupeKey: input.dedupeKey,
+          payload: input.payload,
+          metadata: input.metadata ?? {},
+        }),
+        input.occurredAt.toISOString(),
       ],
     );
   }

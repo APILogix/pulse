@@ -24,7 +24,8 @@ import type { FastifyBaseLogger } from 'fastify';
 import { pgboss } from '../../lib/pgboss.js';
 import { AutomationRepository } from './repository.js';
 import { AutomationAuditRepository } from './audit.js';
-import { ActionRunnerRegistry, buildIdempotencyKey } from './action-runner.js';
+import { ActionRunnerRegistry, buildIdempotencyKey, readActionWaitSeconds } from './action-runner.js';
+import { createAutomationIntegrations } from './integrations.js';
 import { evaluateConditions } from './evaluator.js';
 import { pool } from '../../config/database.js';
 import { nextCronOccurrence } from './cron.js';
@@ -41,6 +42,12 @@ export const AUTOMATION_QUEUES = {
   maintenance: 'automation-maintenance',
   deadLetter: 'automation-dead-letter',
   schedule: 'automation-schedule',
+  // Consumer for AlertDomainOutboxRelay (src/modules/alerting/runtime/
+  // alert-domain-outbox-relay.ts). This queue is the ONLY thing alerting knows
+  // about automation — alerting sends a job here, automation decides what (if
+  // anything) to do with it. Alerting never queries automation_events_inbox and
+  // automation never queries alert_events_v2 directly.
+  alertDomainEventIngest: 'automation-ingest.alert-domain-event',
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -236,6 +243,7 @@ async function processInbox(
             requiredFeatureKey: featureKey,
             idempotencyKey: `${idempotencyKey}:step:${a.action_key}`,
             inputPayload: event.payload,
+            initialDelaySeconds: readActionWaitSeconds(a.config),
             metadata: {
               riskLevel: a.risk_level ?? 'low',
               config: a.config ?? {},
@@ -716,15 +724,24 @@ async function executeRun(
           metadata: { errorCode, timeout: true, actionType: step.actionType },
         });
       } else {
-        await handleStepFailure(step, errorCode, errorMessage, {}, repo, log, runId, orgId);
+        const outcome = await handleStepFailure(step, errorCode, errorMessage, {}, repo, log, runId, orgId);
         await auditRepo.insertAuditLog({
           organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
           actorType: 'system', action: 'step.failed', entityType: 'step',
           metadata: { errorCode, actionType: step.actionType },
         });
-        // HARDENED: Rethrow transient job failures so pg-boss retry works
-        // Transient = not timeout, not action-level failure, but infrastructure error
-        if (errorCode === 'STEP_ERROR' && step.attempt < step.maxAttempts) {
+        /**
+         * Rethrow ONLY when the application could not take ownership of the retry.
+         *
+         * The application-scheduled delayed job is the authoritative retry path (see
+         * handleStepFailure). Rethrowing unconditionally — as this used to — created a
+         * SECOND, non-deduplicated retry via pg-boss, which wasted cycles, could
+         * dead-letter a run that was still legitimately retrying, and consumed the
+         * per-step attempt budget faster than max_attempts implies.
+         *
+         * So pg-boss retry is now strictly the fallback for a failed enqueue.
+         */
+        if (outcome.retryScheduled && !outcome.retryEnqueued) {
           throw err;
         }
       }
@@ -754,11 +771,119 @@ async function executeRun(
   }
 }
 
+/** Outcome of handling a step failure, so the caller knows who owns the retry. */
+export interface StepFailureOutcome {
+  /** True when the step has attempts left and was put back into 'queued'. */
+  retryScheduled: boolean;
+  /**
+   * True when the application successfully scheduled the delayed execute job.
+   * When false and retryScheduled is true, nobody has claimed responsibility for
+   * resuming the run, so the caller must let pg-boss retry as a fallback.
+   */
+  retryEnqueued: boolean;
+}
+
 /**
  * Handle step failure with bounded exponential retry.
- * HARDENED: Enqueues a delayed execute job so retries actually resume.
+ *
+ * RETRY OWNERSHIP (single authoritative mechanism):
+ *   The application owns step retries, not pg-boss. It persists `next_retry_at` on
+ *   automation_run_steps and enqueues one delayed execute job to resume the run.
+ *   This is the authoritative path because it is the only one that understands
+ *   per-step semantics: the action's own retryBackoffSeconds, the durable per-step
+ *   `attempt` counter, and the sequential step ordering.
+ *
+ *   Previously this coexisted with a pg-boss job-level retry (executeRun rethrew the
+ *   error), and because the two used different singletonKeys
+ *   (`run:<id>:retry:<stepId>` vs `run:<id>`) pg-boss could not dedupe them. That
+ *   produced two independent resume attempts per failure, with three concrete
+ *   consequences:
+ *     1. the earlier pg-boss retry woke up before `next_retry_at`, claimed nothing,
+ *        and burned a cycle re-loading the run and re-checking entitlements;
+ *     2. once pg-boss exhausted its retryLimit the job was dead-lettered and a
+ *        `run.dead_lettered` audit entry was written even though the application
+ *        retry was still pending — making a live run look dead;
+ *     3. two concurrent claims could consume the per-step attempt budget faster
+ *        than max_attempts implies.
+ *
+ *   pg-boss retry is now the explicit FALLBACK, used only when the application
+ *   could not enqueue the delayed job (see the return value). The maintenance sweep
+ *   remains the final backstop.
  */
-async function handleStepFailure(
+/** Job payload shape published by AlertDomainOutboxRelay (alerting side). */
+export interface AlertDomainEventJobData {
+  organizationId: string;
+  projectId: string | null;
+  eventType: string;
+  alertKey: string;
+  alertEventId: string;
+  dedupeKey: string;
+  payload: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  occurredAt: string;
+}
+
+/**
+ * Ingest one alert domain event job into automation_events_inbox.
+ *
+ * Extracted from the pgboss.work() closure (same pattern as handleStepFailure)
+ * so the tenant/entitlement/idempotency/audit contract can be unit-tested
+ * directly instead of only through the full worker registration.
+ *
+ * Deliberately bypasses AutomationService.ingestEvent(): that method is the
+ * human-actor HTTP path (auth checks, actorType:'user' audit) — this is a
+ * trusted system-to-system handoff, the same category as runScheduleSweep's
+ * direct repository insert. Callers are expected to rethrow on failure so
+ * pg-boss retry (governed by the relay's own retryLimit/retryBackoff) applies
+ * as the single retry owner — this function itself never retries.
+ */
+export async function ingestAlertDomainEvent(
+  data: AlertDomainEventJobData,
+  repo: AutomationRepository,
+  auditRepo: AutomationAuditRepository,
+  log: FastifyBaseLogger,
+): Promise<{ created: boolean; skippedReason?: 'not_entitled' }> {
+  // HARDENED: module entitlement is re-checked here (not just at the API
+  // layer) so an org that has lost automation access does not have events
+  // silently piling up in an inbox nothing will ever process for it —
+  // findMatchingWorkflows would return nothing anyway, but this avoids doing
+  // the insert at all for a plainly-unentitled org.
+  const entitled = await repo.hasEntitlement(data.organizationId, 'module_automation_enabled');
+  if (!entitled) return { created: false, skippedReason: 'not_entitled' };
+
+  const result = await repo.insertInboxEvent({
+    organizationId: data.organizationId,
+    projectId: data.projectId,
+    sourceModule: 'alerting',
+    eventType: data.eventType,
+    sourceEventId: data.alertEventId,
+    dedupeKey: data.dedupeKey,
+    payload: data.payload,
+    metadata: { ...data.metadata, bridgedFrom: 'alerting', alertKey: data.alertKey },
+  });
+
+  if (result.created) {
+    await auditRepo.insertAuditLog({
+      organizationId: data.organizationId,
+      actorType: 'system',
+      action: 'trigger.received',
+      entityType: 'inbox_event',
+      entityId: result.event.id,
+      metadata: { sourceModule: 'alerting', eventType: data.eventType, alertKey: data.alertKey },
+    });
+    // DB is source of truth; enqueue is best-effort exactly like every other
+    // inbox producer in this module (ingestEvent, runScheduleSweep).
+    try {
+      await enqueueAutomationJob({ type: 'automation.inbox.process', payload: { eventId: result.event.id, orgId: data.organizationId } });
+    } catch (enqErr) {
+      log.warn({ err: enqErr, eventId: result.event.id }, 'Failed to enqueue inbox processing for bridged alert event; scheduled sweep will recover');
+    }
+  }
+
+  return { created: result.created };
+}
+
+export async function handleStepFailure(
   step: { id: string; runId?: string; attempt: number; maxAttempts: number; metadata: Record<string, unknown> },
   errorCode: string,
   errorMessage: string,
@@ -767,7 +892,7 @@ async function handleStepFailure(
   log: FastifyBaseLogger,
   runId?: string,
   orgId?: string,
-): Promise<void> {
+): Promise<StepFailureOutcome> {
   const retryBackoff = (step.metadata?.retryBackoffSeconds as number) ?? 30;
 
   if (step.attempt < step.maxAttempts) {
@@ -783,9 +908,9 @@ async function handleStepFailure(
       nextRetryAt,
     });
 
-    // CRITICAL FIX: Enqueue a delayed execute job so the retry actually runs.
-    // Without this, steps with nextRetryAt would sit forever until maintenance sweep.
+    // Enqueue the single delayed execute job that owns this retry.
     const effectiveRunId = runId ?? (step as any).runId;
+    let retryEnqueued = false;
     if (effectiveRunId && orgId) {
       try {
         await pgboss.send(
@@ -793,22 +918,28 @@ async function handleStepFailure(
           { runId: effectiveRunId, orgId },
           { startAfter: nextRetryAt.toISOString(), singletonKey: `run:${effectiveRunId}:retry:${step.id}` } as never,
         );
+        retryEnqueued = true;
       } catch (enqErr) {
-        log.warn({ err: enqErr, stepId: step.id }, 'Failed to enqueue retry job (maintenance sweep will recover)');
+        log.warn(
+          { err: enqErr, stepId: step.id },
+          'Failed to enqueue retry job; falling back to pg-boss job retry, then maintenance sweep',
+        );
       }
     }
 
-    log.debug({ stepId: step.id, attempt: step.attempt, nextRetryAt }, 'Step scheduled for retry');
-  } else {
-    // Exhausted retries
-    await repo.updateStepStatus(step.id, {
-      status: 'failed',
-      errorCode,
-      errorMessage,
-      outputPayload: output,
-      completedAt: new Date(),
-    });
+    log.debug({ stepId: step.id, attempt: step.attempt, nextRetryAt, retryEnqueued }, 'Step scheduled for retry');
+    return { retryScheduled: true, retryEnqueued };
   }
+
+  // Exhausted retries — terminal failure, nobody should retry this step again.
+  await repo.updateStepStatus(step.id, {
+    status: 'failed',
+    errorCode,
+    errorMessage,
+    outputPayload: output,
+    completedAt: new Date(),
+  });
+  return { retryScheduled: false, retryEnqueued: false };
 }
 
 
@@ -1007,7 +1138,13 @@ export async function registerAutomationWorkers(
   const log = logger.child({ component: 'automation-workers' });
   const repo = new AutomationRepository(pool);
   const auditRepo = new AutomationAuditRepository(pool);
-  const actionRunner = new ActionRunnerRegistry();
+  // The worker process is where actions actually execute, so it MUST get the real
+  // integrations. Previously this was `new ActionRunnerRegistry()` with no
+  // integrations, which meant every action silently no-opped in production even
+  // though the API process looked correctly configured.
+  const actionRunner = new ActionRunnerRegistry(
+    createAutomationIntegrations({ pool, logger: log, automationRepository: repo }),
+  );
 
   // Safe queue creation (idempotent)
   await Promise.all(
@@ -1037,6 +1174,30 @@ export async function registerAutomationWorkers(
         // HARDENED (defect 11): Rethrow unexpected errors so pg-boss retries.
         // Do NOT catch-and-swallow.
         await executeRun(job.data.runId, job.data.orgId, repo, auditRepo, actionRunner, log);
+      }
+    }) as never,
+  );
+
+  // ─── Alert domain event ingest worker ──────────────────────────────────────
+  // Consumes jobs published by AlertDomainOutboxRelay (alerting side). This is
+  // the ONLY code in automation that knows alerting exists, and even here it
+  // only knows a job SHAPE, not any alerting table or repository. Deliberately
+  // bypasses AutomationService.ingestEvent(): that method is the human-actor
+  // HTTP path (auth checks, actorType:'user' audit) — this is a trusted
+  // system-to-system handoff, the same category as runScheduleSweep's direct
+  // repository insert.
+  await pgboss.work(
+    AUTOMATION_QUEUES.alertDomainEventIngest,
+    { batchSize: 5, localConcurrency: 2 } as never,
+    (async (arg: unknown) => {
+      const jobs = allJobs<AlertDomainEventJobData>(arg);
+      for (const job of jobs) {
+        try {
+          await ingestAlertDomainEvent(job.data, repo, auditRepo, log);
+        } catch (err) {
+          log.error({ err, jobId: job.id, dedupeKey: job.data.dedupeKey }, 'Failed to ingest alert domain event into automation inbox');
+          throw err; // let pg-boss retry — the relay's own retryLimit/retryBackoff governs this
+        }
       }
     }) as never,
   );

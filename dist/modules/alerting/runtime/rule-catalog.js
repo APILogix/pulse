@@ -26,6 +26,14 @@ const TIER_FIELD_PREFIXES = {
         'errors.unhandled',
         'errors.fatal',
         'errors.crash',
+        // Backs the `unhandled_rejection_fast` preset. It was previously absent here,
+        // so field-path classification returned null for it: the preset itself still
+        // worked (listRulesForTier also matches evaluation_category = 'fast'), but a
+        // USER-created rule on errors.rejection would be inferred as 'analytics' by
+        // inferEvaluationCategory() and land on the window tier, whose rollup tables
+        // have no such column - so hasRelevantMetrics would skip it and the rule
+        // would never fire. Registering the prefix makes both paths agree.
+        'errors.rejection',
         'logs.oom',
         'logs.security',
         'cron.failed',
@@ -42,6 +50,17 @@ const TIER_FIELD_PREFIXES = {
         'deployment.failed',
         'heartbeat.lost',
         'connector.failure',
+        // These four back fast-tier presets whose field paths were never registered
+        // here. The presets themselves work (listRulesForTier also matches
+        // evaluation_category = 'fast'), but inferEvaluationCategory() classifies an
+        // unregistered path as 'analytics', so a user-created rule on one of them
+        // would be routed to the window tier - whose rollup tables contain no such
+        // column - and silently never fire. Registering them makes the heuristic
+        // agree with the presets.
+        'span.timeout',
+        'db.deadlock',
+        'eventloop.lag',
+        'telemetry.drops',
     ],
     window: [
         'errors.rate',

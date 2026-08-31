@@ -150,8 +150,8 @@ export class AlertDecisionEngine {
     candidate: AlertDecisionCandidate,
     alertKey: string,
     kind: 'fired' | 'recovered',
-  ): Promise<string | null> {
-    if (!this.incidents) return null;
+  ): Promise<{ incidentId: string | null; occurrenceCount: number | null; startedAt: Date | null }> {
+    if (!this.incidents) return { incidentId: null, occurrenceCount: null, startedAt: null };
     const tier = typeof candidate.labels?.tier === 'string' ? candidate.labels.tier : 'unknown';
 
     try {
@@ -181,7 +181,11 @@ export class AlertDecisionEngine {
               );
             });
         }
-        return resolved?.id ?? null;
+        return {
+          incidentId: resolved?.id ?? null,
+          occurrenceCount: resolved?.occurrence_count ?? null,
+          startedAt: resolved?.started_at ?? null,
+        };
       }
 
       const incidents = this.incidents;
@@ -230,14 +234,14 @@ export class AlertDecisionEngine {
           );
         });
 
-      return incident.id;
+      return { incidentId: incident.id, occurrenceCount: incident.occurrence_count, startedAt: incident.started_at };
     } catch (err) {
       recordIncidentPersistFailed(kind === 'recovered' ? 'resolve' : 'open');
       this.log.error(
         { err, alertKey, organizationId: candidate.organizationId, kind },
         'incident persistence failed; alert delivery continues',
       );
-      return null;
+      return { incidentId: null, occurrenceCount: null, startedAt: null };
     }
   }
 
@@ -267,7 +271,7 @@ export class AlertDecisionEngine {
     // kept outside that transaction because the two live in different databases -
     // there is no distributed transaction, and incident persistence must never be
     // able to roll back or block notification creation.
-    const incidentId = await this.persistIncident(candidate, alertKey, kind);
+    const { incidentId, occurrenceCount, startedAt } = await this.persistIncident(candidate, alertKey, kind);
 
     this.log.debug(
       {
@@ -412,6 +416,39 @@ export class AlertDecisionEngine {
         },
       }, client);
 
+      // Publish the alerting -> automation domain event in the SAME transaction
+      // as the alert commit above (see appendDomainOutbox's doc comment for why
+      // this is an outbox row, not a direct cross-database write). Published for
+      // both 'fired' and 'recovered' kinds — including suppressed/no-routing
+      // fired events, because automation rule matching is independent of whether
+      // a human notification was routed. Only genuinely duplicate/collapsed
+      // decisions (handled by the `if (!event)` branch earlier) produce no event.
+      await this.runtime.appendDomainOutbox({
+        organizationId: candidate.organizationId,
+        projectId: candidate.projectId ?? null,
+        environment: candidate.environment ?? null,
+        alertKey,
+        alertEventId: event.id,
+        eventType: kind === 'fired' ? 'alert.event.created' : 'alert.event.resolved',
+        dedupeKey: `alert:${kind === 'fired' ? 'alert.event.created' : 'alert.event.resolved'}:${idempotencyKey}`,
+        severity: toSeverity(candidate.policy.severity),
+        occurredAt: candidate.observedAt,
+        payload: buildAlertAutomationEventPayload({
+          alertKey,
+          kind,
+          candidate,
+          incidentId,
+          occurrenceCount,
+          startedAt,
+        }),
+        metadata: {
+          ruleId: candidate.policy.ruleId,
+          bindingId: candidate.policy.bindingId,
+          engine: 'fast',
+          source: candidate.source,
+        },
+      }, client);
+
       if (kind === 'recovered' || !routingDecision || routingDecision.suppressed) {
         return {
           alertKey,
@@ -499,6 +536,48 @@ function hash(value: string): string {
 function toSeverity(value: string): LogDbSeverity {
   if (value === 'debug' || value === 'info' || value === 'warning' || value === 'error' || value === 'critical' || value === 'fatal') return value;
   return 'error';
+}
+
+/**
+ * Build the canonical alerting -> automation event payload.
+ *
+ * See docs/automationv2/27-alerting-automation-event-contract.md for the full
+ * contract and field derivation. Fields are FLAT at the top level (not nested
+ * under a `data`/`resource` envelope) because automation's condition evaluator
+ * reads them directly as `$.service`, `$.severity`, etc. — six already-seeded
+ * automation templates depend on this exact flat shape.
+ */
+function buildAlertAutomationEventPayload(input: {
+  alertKey: string;
+  kind: 'fired' | 'recovered';
+  candidate: AlertDecisionCandidate;
+  incidentId: string | null;
+  occurrenceCount: number | null;
+  startedAt: Date | null;
+}): Record<string, unknown> {
+  const { alertKey, kind, candidate, incidentId, occurrenceCount, startedAt } = input;
+  const durationMinutes = kind === 'recovered' && startedAt
+    ? Math.max(0, Math.round((candidate.observedAt.getTime() - startedAt.getTime()) / 60_000))
+    : null;
+  return {
+    alert_key: alertKey,
+    // occurrence_count is null only if no incidents repository is configured or
+    // incident persistence failed (both already logged elsewhere); 1 is the
+    // correct floor for "this fingerprint has fired at least once".
+    fingerprint_count: occurrenceCount ?? 1,
+    service: candidate.service ?? null,
+    severity: toSeverity(candidate.policy.severity),
+    status: kind === 'fired' ? 'firing' : 'resolved',
+    incident_id: incidentId,
+    duration_minutes: durationMinutes,
+    environment: candidate.environment ?? null,
+    project_id: candidate.projectId ?? null,
+    rule_id: candidate.policy.ruleId,
+    observed_value: candidate.observedValue ?? null,
+    threshold_value: candidate.thresholdValue ?? null,
+    labels: candidate.labels ?? {},
+    occurred_at: candidate.observedAt.toISOString(),
+  };
 }
 
 function severityPriority(value: string): number {

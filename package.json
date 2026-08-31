@@ -63,6 +63,7 @@
     "db:migrate:logdb": "tsx scripts/migrate-logdb.ts",
     "db:create:logdb": "tsx scripts/migrate-logdb.ts",
     "db:create:primary": "tsx scripts/create-primary-db.ts",
+    "db:bootstrap:v2": "tsx scripts/bootstrap-db-v2.ts",
     "db:seed:primary": "tsx scripts/run-primary-seeders.ts",
     "db:truncate:primary": "tsx scripts/truncate-primary-db.ts",
     "db:drop:primary": "tsx scripts/drop-primary-db.ts",

@@ -1740,6 +1740,16 @@ export class AutomationRepository {
       config?: Record<string, unknown>;
       requiredFeatureKey?: string | null;
       metadata?: Record<string, unknown>;
+      /**
+       * Seconds to wait after run creation before this step becomes claimable.
+       * Real scheduling delay (e.g. "escalate to PagerDuty only if still
+       * unresolved after N minutes"), not an action-specific concern — it is
+       * applied here, once, regardless of actionType, by setting the step's
+       * initial next_retry_at. claimNextStep() already treats a queued step
+       * with a future next_retry_at as not-yet-claimable, so no claim-path
+       * change is needed.
+       */
+      initialDelaySeconds?: number | undefined;
     }>;
   }, providedClient?: PoolClient): Promise<{ run: RunRow; steps: RunStepRow[] }> {
     const doWork = async (client: PoolClient) => {
@@ -1775,23 +1785,26 @@ export class AutomationRepository {
           requiredFeatureKey: s.requiredFeatureKey ?? null,
         };
         const hasKey = s.idempotencyKey != null;
+        const initialNextRetryAt = s.initialDelaySeconds && s.initialDelaySeconds > 0
+          ? new Date(Date.now() + s.initialDelaySeconds * 1000)
+          : null;
         const insertSql = hasKey
           ? `INSERT INTO automation_run_steps
               (run_id, workflow_id, action_id, step_key, action_type, status, sort_order,
-               max_attempts, requires_approval, idempotency_key, input_payload, metadata)
-             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb)
+               max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
+             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
              ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
              RETURNING *`
           : `INSERT INTO automation_run_steps
               (run_id, workflow_id, action_id, step_key, action_type, status, sort_order,
-               max_attempts, requires_approval, idempotency_key, input_payload, metadata)
-             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb)
+               max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
+             VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
              RETURNING *`;
         const sR = await client.query(insertSql, [
           run.id, params.workflowId, s.actionId ?? null, s.stepKey, s.actionType,
           s.sortOrder, s.maxAttempts ?? 3, s.requiresApproval ?? false,
           s.idempotencyKey ?? null, JSON.stringify(s.inputPayload ?? {}),
-          JSON.stringify(stepMetadata),
+          JSON.stringify(stepMetadata), initialNextRetryAt,
         ]);
         if (sR.rows[0]) steps.push(toStep(sR.rows[0]));
       }
