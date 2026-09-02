@@ -9,7 +9,7 @@ import { randomUUID } from 'crypto';
 
 import type { PoolClient } from 'pg';
 
-import { pool } from '../../../../config/database.js';
+import { pool, query, withTransaction } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import { sendEmail } from '../../../../shared/email/mailer.js';
 import type { EmailMessage } from '../../../../shared/email/email.types.js';
@@ -27,7 +27,7 @@ interface ClaimedAuthEmailRow {
 }
 
 export async function enqueueAuthEmail(message: EmailMessage): Promise<void> {
-  await pool.query(
+  await query(
     `INSERT INTO auth_email_outbox (id, to_email, subject, html, text)
      VALUES ($1, $2, $3, $4, $5)`,
     [randomUUID(), message.to, message.subject, message.html, message.text ?? ''],
@@ -41,9 +41,7 @@ export async function sendAuthEmail(message: EmailMessage): Promise<void> {
 async function claimAuthEmailBatch(
   batchSize: number,
 ): Promise<ClaimedAuthEmailRow[]> {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  return withTransaction(async (client) => {
     const claimed = await client.query<ClaimedAuthEmailRow>(
       `WITH claimable AS (
          SELECT id
@@ -69,18 +67,12 @@ async function claimAuthEmailBatch(
        RETURNING o.id, o.to_email, o.subject, o.html, o.text, o.attempts`,
       [batchSize, STALE_PROCESSING_MS],
     );
-    await client.query('COMMIT');
     return claimed.rows;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function markAuthEmailSent(id: string): Promise<void> {
-  await pool.query(
+  await query(
     `UPDATE auth_email_outbox
      SET status = 'sent',
          sent_at = NOW(),
@@ -95,7 +87,7 @@ async function markAuthEmailFailed(
   id: string,
   err: unknown,
 ): Promise<void> {
-  await pool.query(
+  await query(
     `UPDATE auth_email_outbox
      SET attempts = attempts + 1,
          last_error = $2,

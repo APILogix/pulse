@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { pool } from "../../../config/database.js";
+import { pool, withTransaction } from "../../../config/database.js";
 import type { CursorPaginatedResponse } from "./types.js";
 
 export function pgErr(e: unknown): { code?: string } {
@@ -28,17 +28,6 @@ export class BaseRepository {
   protected readonly db = pool;
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
-    const client = await this.db.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await fn(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+    return withTransaction(fn, this.db);
   }
 }

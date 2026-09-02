@@ -8,6 +8,7 @@ import {
   GENERATOR_ID,
   INSTRUMENTATION_KEYS,
   KILLSWITCH_KEYS,
+  PERSISTENCE_GOVERNANCE_KEYS,
   PII_DETECTION_KEYS,
   PRIVACY_CAPTURE_KEYS,
   QUEUE_OVERFLOW_STRATEGIES,
@@ -52,6 +53,8 @@ export const BOUNDS = {
   "tenant.quotaPerWindow": { min: 1, max: 1000000, integer: true },
   "tenant.windowDurationMs": { min: 1000, max: 3600000, integer: true },
   "tenant.criticalReserve": { min: 0, max: 100000, integer: true },
+  "persistence.maxPersistPerMinute": { min: 1, max: 1000000, integer: true },
+  "persistence.budgetExceededLogIntervalMs": { min: 1000, max: 600000, integer: true },
 } as const satisfies Record<string, NumericBound>;
 
 export const SAMPLING_RATE_BOUND: NumericBound = { min: 0, max: 1, integer: false };
@@ -283,6 +286,12 @@ export function validateEditableLeaf(segments: string[], value: unknown): SdkCon
           const bound = BOUNDS[`tenant.${rest[1]}` as keyof typeof BOUNDS];
           if (bound) checkNumber(pointer, value, bound, out);
         }
+      } else if (rest[0] === "persistenceGovernance") {
+        if (rest[1] === "adaptive") checkBoolean(pointer, value, out);
+        else {
+          const bound = BOUNDS[`persistence.${rest[1]}` as keyof typeof BOUNDS];
+          if (bound) checkNumber(pointer, value, bound, out);
+        }
       } else {
         const bound = BOUNDS[`limits.${rest[0]}` as keyof typeof BOUNDS];
         if (bound) checkNumber(pointer, value, bound, out);
@@ -363,7 +372,7 @@ export function validateSchemaV1(config: unknown): asserts config is SchemaV1Con
   const limits = objectValue(root.limits, "/limits", out);
   const limitKeys = [
     "maxSpansPerTrace", "maxSpanAttributes", "maxAttributeLength", "maxPayloadSize",
-    "maxQueueSize", "maxMemoryMb", "tenantGovernance",
+    "maxQueueSize", "maxMemoryMb", "tenantGovernance", "persistenceGovernance",
   ] as const;
   checkExactKeys("/limits", limits, limitKeys, out);
   for (const key of limitKeys.slice(0, 5)) {
@@ -379,6 +388,16 @@ export function validateSchemaV1(config: unknown): asserts config is SchemaV1Con
   if (typeof tenant.criticalReserve === "number" && typeof tenant.quotaPerWindow === "number" && tenant.criticalReserve > tenant.quotaPerWindow) {
     out.push({ path: "/limits/tenantGovernance/criticalReserve", rule: "cross_field", message: "criticalReserve must be <= quotaPerWindow" });
   }
+  const persistence = objectValue(limits.persistenceGovernance, "/limits/persistenceGovernance", out);
+  checkExactKeys("/limits/persistenceGovernance", persistence, PERSISTENCE_GOVERNANCE_KEYS, out);
+  checkNumber("/limits/persistenceGovernance/maxPersistPerMinute", persistence.maxPersistPerMinute, BOUNDS["persistence.maxPersistPerMinute"], out);
+  checkBoolean("/limits/persistenceGovernance/adaptive", persistence.adaptive, out);
+  checkNumber(
+    "/limits/persistenceGovernance/budgetExceededLogIntervalMs",
+    persistence.budgetExceededLogIntervalMs,
+    BOUNDS["persistence.budgetExceededLogIntervalMs"],
+    out,
+  );
 
   const killswitches = objectValue(root.killswitches, "/killswitches", out);
   checkExactKeys("/killswitches", killswitches, KILLSWITCH_KEYS, out);

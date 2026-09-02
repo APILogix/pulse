@@ -51,7 +51,17 @@ export class ObservabilityRepository {
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
         const params = [ctx.organizationId, id];
         let filterClause;
-        if (isPubId) {
+        if (resource.name === 'requests' && /^TRC-\d{1,12}$/i.test(id.trim())) {
+            filterClause = `trace_id = (
+        SELECT t.trace_id
+        FROM events_traces t
+        WHERE t.organization_id = ${resource.table}.organization_id
+          AND t.public_id = $2
+          AND t.project_id IS NOT DISTINCT FROM ${resource.table}.project_id
+        LIMIT 1
+      )`;
+        }
+        else if (isPubId) {
             filterClause = `public_id = $2`;
         }
         else if (isUuid) {
@@ -99,20 +109,13 @@ export class ObservabilityRepository {
     async countRelatedSpans(ctx, traceId, requestId, from, to) {
         if (!traceId && !requestId)
             return 0;
-        const params = [ctx.organizationId, from, to];
+        const keyColumn = traceId ? 'trace_id' : 'request_id';
+        const keyValue = traceId ?? requestId;
+        const params = [ctx.organizationId, from, to, keyValue];
         let sql = `SELECT COUNT(*)::int AS count FROM events_spans
-               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
-        const conditions = [];
-        if (traceId) {
-            params.push(traceId);
-            conditions.push(`trace_id = $${params.length}`);
-        }
-        if (requestId) {
-            params.push(requestId);
-            conditions.push(`request_id = $${params.length}`);
-        }
-        sql += conditions.join(' OR ');
-        sql += `)`;
+               WHERE organization_id = $1
+                 AND occurred_at >= $2 AND occurred_at < $3
+                 AND ${keyColumn} = $4`;
         sql += this.projectPredicate(ctx, params);
         const rows = await this.run(sql, params);
         return Number(rows[0]?.count ?? 0);
@@ -124,20 +127,13 @@ export class ObservabilityRepository {
     async countRelatedLogs(ctx, traceId, requestId, from, to) {
         if (!traceId && !requestId)
             return 0;
-        const params = [ctx.organizationId, from, to];
+        const keyColumn = traceId ? 'trace_id' : 'request_id';
+        const keyValue = traceId ?? requestId;
+        const params = [ctx.organizationId, from, to, keyValue];
         let sql = `SELECT COUNT(*)::int AS count FROM events_logs
-               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
-        const conditions = [];
-        if (traceId) {
-            params.push(traceId);
-            conditions.push(`trace_id = $${params.length}`);
-        }
-        if (requestId) {
-            params.push(requestId);
-            conditions.push(`request_id = $${params.length}`);
-        }
-        sql += conditions.join(' OR ');
-        sql += `)`;
+               WHERE organization_id = $1
+                 AND occurred_at >= $2 AND occurred_at < $3
+                 AND ${keyColumn} = $4`;
         sql += this.projectPredicate(ctx, params);
         const rows = await this.run(sql, params);
         return Number(rows[0]?.count ?? 0);
@@ -149,20 +145,13 @@ export class ObservabilityRepository {
     async fetchRelatedErrors(ctx, traceId, requestId, from, to, limit = 20) {
         if (!traceId && !requestId)
             return [];
-        const params = [ctx.organizationId, from, to];
+        const keyColumn = traceId ? 'trace_id' : 'request_id';
+        const keyValue = traceId ?? requestId;
+        const params = [ctx.organizationId, from, to, keyValue];
         let sql = `SELECT public_id, message FROM events_errors
-               WHERE organization_id = $1 AND occurred_at >= $2 AND occurred_at < $3 AND (`;
-        const conditions = [];
-        if (traceId) {
-            params.push(traceId);
-            conditions.push(`trace_id = $${params.length}`);
-        }
-        if (requestId) {
-            params.push(requestId);
-            conditions.push(`request_id = $${params.length}`);
-        }
-        sql += conditions.join(' OR ');
-        sql += `)`;
+               WHERE organization_id = $1
+                 AND occurred_at >= $2 AND occurred_at < $3
+                 AND ${keyColumn} = $4`;
         sql += this.projectPredicate(ctx, params);
         params.push(Math.max(1, Math.min(Math.trunc(limit), 100)));
         sql += ` ORDER BY occurred_at DESC LIMIT $${params.length}`;

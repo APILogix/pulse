@@ -107,6 +107,16 @@ export declare const BOUNDS: {
         readonly max: 100000;
         readonly integer: true;
     };
+    readonly "persistence.maxPersistPerMinute": {
+        readonly min: 1;
+        readonly max: 1000000;
+        readonly integer: true;
+    };
+    readonly "persistence.budgetExceededLogIntervalMs": {
+        readonly min: 1000;
+        readonly max: 600000;
+        readonly integer: true;
+    };
 };
 export declare const SAMPLING_RATE_BOUND: NumericBound;
 export declare const MAX_SAMPLING_ROUTES = 1000;

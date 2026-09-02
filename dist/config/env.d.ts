@@ -29,7 +29,7 @@ declare const envSchema: z.ZodObject<{
     DB_QUERY_TIMEOUT_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_KEEPALIVE_INITIAL_DELAY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     DB_SSL_ENABLED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
-    DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
     LOG_DB_PRIMARY: z.ZodOptional<z.ZodString>;
     LOG_DB_REPLICA: z.ZodOptional<z.ZodString>;
     LOG_POOL_MAX: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -42,13 +42,17 @@ declare const envSchema: z.ZodObject<{
     LOG_DB_KEEPALIVE_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_SLOW_QUERY_MS: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
     LOG_DB_SSL_ENABLED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
-    LOG_DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
+    LOG_DB_SSL_REJECT_UNAUTHORIZED: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean | undefined, string | undefined>>;
     LOG_DB_ENABLE_TIMESCALE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     LOG_DB_CHUNK_INTERVAL: z.ZodDefault<z.ZodString>;
     LOG_DB_COMPRESS_AFTER: z.ZodDefault<z.ZodString>;
     LOG_DB_RETENTION: z.ZodDefault<z.ZodString>;
     LOG_DB_AUTO_MIGRATE: z.ZodPipe<z.ZodOptional<z.ZodString>, z.ZodTransform<boolean, string | undefined>>;
     CLICKHOUSE_URL: z.ZodOptional<z.ZodString>;
+    SUPABASE_URL: z.ZodOptional<z.ZodString>;
+    SUPABASE_PUBLISHABLE_KEY: z.ZodOptional<z.ZodString>;
+    SUPABASE_SECRET_KEY: z.ZodOptional<z.ZodString>;
+    SUPABASE_JWKS_URL: z.ZodOptional<z.ZodString>;
     REDIS_URL: z.ZodString;
     JWT_SECRET: z.ZodString;
     JWT_REFRESH_SECRET: z.ZodString;
@@ -241,7 +245,7 @@ export declare const env: {
     DB_QUERY_TIMEOUT_MS: number;
     DB_KEEPALIVE_INITIAL_DELAY_MS: number;
     DB_SSL_ENABLED: boolean | undefined;
-    DB_SSL_REJECT_UNAUTHORIZED: boolean;
+    DB_SSL_REJECT_UNAUTHORIZED: boolean | undefined;
     LOG_POOL_MAX: number;
     LOG_POOL_MIN: number;
     LOG_QUERY_TIMEOUT: number;
@@ -252,7 +256,7 @@ export declare const env: {
     LOG_DB_KEEPALIVE_MS: number;
     LOG_DB_SLOW_QUERY_MS: number;
     LOG_DB_SSL_ENABLED: boolean | undefined;
-    LOG_DB_SSL_REJECT_UNAUTHORIZED: boolean;
+    LOG_DB_SSL_REJECT_UNAUTHORIZED: boolean | undefined;
     LOG_DB_ENABLE_TIMESCALE: boolean;
     LOG_DB_CHUNK_INTERVAL: string;
     LOG_DB_COMPRESS_AFTER: string;
@@ -395,6 +399,10 @@ export declare const env: {
     LOG_DB_PRIMARY?: string | undefined;
     LOG_DB_REPLICA?: string | undefined;
     CLICKHOUSE_URL?: string | undefined;
+    SUPABASE_URL?: string | undefined;
+    SUPABASE_PUBLISHABLE_KEY?: string | undefined;
+    SUPABASE_SECRET_KEY?: string | undefined;
+    SUPABASE_JWKS_URL?: string | undefined;
     CORS_ORIGINS?: string | undefined;
     FRONTEND_URL?: string | undefined;
     SMTP_HOST?: string | undefined;

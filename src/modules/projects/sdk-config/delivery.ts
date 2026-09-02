@@ -8,6 +8,7 @@ import {
   SCHEMA_VERSION,
   type FeatureKey,
   type KillswitchKey,
+  type PersistenceGovernance,
   type SchemaV1Config,
 } from "./schema-v1.js";
 
@@ -110,6 +111,9 @@ export function resolveDeliveryScope(
 export interface OperatorOverride {
   killswitches?: Partial<Record<KillswitchKey, boolean>>;
   features?: Partial<Record<FeatureKey, false>>;
+  limits?: {
+    persistenceGovernance?: Partial<PersistenceGovernance>;
+  };
 }
 
 function applyOperatorOverride(config: SchemaV1Config, override: OperatorOverride | undefined): void {
@@ -119,6 +123,24 @@ function applyOperatorOverride(config: SchemaV1Config, override: OperatorOverrid
   }
   for (const feature of FEATURE_KEYS) {
     if (override.features?.[feature] === false) config.features[feature] = false;
+  }
+  const persistence = override.limits?.persistenceGovernance;
+  if (persistence) {
+    if (typeof persistence.maxPersistPerMinute === "number") {
+      config.limits.persistenceGovernance.maxPersistPerMinute = Math.min(
+        config.limits.persistenceGovernance.maxPersistPerMinute,
+        persistence.maxPersistPerMinute,
+      );
+    }
+    if (typeof persistence.adaptive === "boolean") {
+      config.limits.persistenceGovernance.adaptive = persistence.adaptive;
+    }
+    if (typeof persistence.budgetExceededLogIntervalMs === "number") {
+      config.limits.persistenceGovernance.budgetExceededLogIntervalMs = Math.max(
+        config.limits.persistenceGovernance.budgetExceededLogIntervalMs,
+        persistence.budgetExceededLogIntervalMs,
+      );
+    }
   }
 }
 

@@ -138,6 +138,15 @@ class IngestionWorkerProcess {
             keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
             allowExitOnIdle: false,
         });
+        pool.on('connect', (client) => {
+            client.on('error', (err) => {
+                if (isExpectedServerlessDisconnect(err)) {
+                    log.debug({ err: err.message }, 'Client telemetry write pool connection closed by server (Neon/PgBouncer)');
+                    return;
+                }
+                log.debug({ err: err.message }, 'PostgreSQL client socket error on active/checked-out telemetry write connection');
+            });
+        });
         pool.on('error', (err) => {
             if (isExpectedServerlessDisconnect(err)) {
                 log.debug({ err: err.message }, 'Idle telemetry write pool connection closed by server (Neon/PgBouncer)');

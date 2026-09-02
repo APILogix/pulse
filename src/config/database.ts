@@ -1,10 +1,11 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
 import {
   isExpectedServerlessDisconnect,
   isTransientPostgresError,
   resolvePostgresSslConfig,
+  sanitizePostgresConnectionString,
 } from './postgres-ssl.js';
 
 const dbLogger = logger.child({ component: 'database' });
@@ -24,7 +25,7 @@ if (!env.DATABASE_URL) {
  *   remote queries during cold starts or transient network latency
  */
 export const pool = new Pool({
-  connectionString: env.DATABASE_URL,
+  connectionString: sanitizePostgresConnectionString(env.DATABASE_URL),
   ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
     enabled: env.DB_SSL_ENABLED,
     rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
@@ -43,8 +44,21 @@ export const pool = new Pool({
 // Pool lifecycle events — only actionable events are logged.
 // 'acquire' is intentionally omitted: it fires on every query and produces
 // excessive noise at scale (~360K lines/hour at 100 QPS).
-pool.on('connect', () => {
+pool.on('connect', (client: PoolClient) => {
   dbLogger.debug('New connection added to pool');
+  client.on('error', (err: Error) => {
+    if (isExpectedServerlessDisconnect(err)) {
+      dbLogger.debug(
+        { err: err.message },
+        'Client connection closed by server (Neon/PgBouncer).',
+      );
+      return;
+    }
+    dbLogger.debug(
+      { err: err.message },
+      'PostgreSQL client socket error on active/checked-out connection',
+    );
+  });
 });
 
 pool.on('remove', () => {
@@ -119,6 +133,69 @@ export const query = async (text: string, params?: any[]) => {
       }
       dbLogger.error({ err, query: text.slice(0, 120) }, 'Query failed');
       throw err;
+    }
+  }
+};
+
+/**
+ * Transaction runner with automatic rollback, dead client cleanup,
+ * and transient disconnect retry.
+ */
+export const withTransaction = async <T>(
+  fn: (client: PoolClient) => Promise<T>,
+  targetPool: Pool = pool,
+  options?: { maxRetries?: number },
+): Promise<T> => {
+  const maxRetries = options?.maxRetries ?? 2;
+  let attempt = 0;
+
+  while (true) {
+    let client: PoolClient | null = null;
+    let transactionError: unknown;
+    try {
+      client = await targetPool.connect();
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      transactionError = e;
+      if (client && !isExpectedServerlessDisconnect(e) && !isTransientPostgresError(e)) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          dbLogger.debug(
+            { err: rollbackError, originalError: e },
+            'Failed to rollback transaction; preserving original error',
+          );
+        }
+      }
+      attempt++;
+      if (attempt <= maxRetries && isTransientPostgresError(e)) {
+        const delayMs = 150 * attempt;
+        dbLogger.debug(
+          { attempt, maxRetries, delayMs, err: (e as any)?.message || String(e) },
+          'Transient database connection error in transaction; retrying with fresh connection...',
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw e;
+    } finally {
+      if (client) {
+        if (
+          transactionError &&
+          (isTransientPostgresError(transactionError) || isExpectedServerlessDisconnect(transactionError))
+        ) {
+          client.release(
+            transactionError instanceof Error
+              ? transactionError
+              : new Error('Destroying transaction client after connection-level failure'),
+          );
+        } else {
+          client.release();
+        }
+      }
     }
   }
 };

@@ -52,6 +52,16 @@ async function bootstrapWorkers(): Promise<void> {
     keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
   });
 
+  pgPool.on('connect', (client) => {
+    client.on('error', (err: Error) => {
+      if (isExpectedServerlessDisconnect(err)) {
+        workerLogger.debug({ err: err.message }, 'Client background worker connection closed (Neon/PgBouncer)');
+        return;
+      }
+      workerLogger.debug({ err: err.message }, 'PostgreSQL client socket error on active/checked-out background worker connection');
+    });
+  });
+
   pgPool.on('error', (err: Error) => {
     if (isExpectedServerlessDisconnect(err)) {
       workerLogger.debug({ err: err.message }, 'Idle worker pool connection closed by server (Neon/PgBouncer)');

@@ -6,22 +6,20 @@
  * consistent across the module.
  */
 import { randomUUID } from 'crypto';
-import { pool } from '../../../../config/database.js';
+import { pool, query, withTransaction } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import { sendEmail } from '../../../../shared/email/mailer.js';
 const log = logger.child({ component: 'auth-email-outbox' });
 const STALE_PROCESSING_MS = 15 * 60 * 1000;
 export async function enqueueAuthEmail(message) {
-    await pool.query(`INSERT INTO auth_email_outbox (id, to_email, subject, html, text)
+    await query(`INSERT INTO auth_email_outbox (id, to_email, subject, html, text)
      VALUES ($1, $2, $3, $4, $5)`, [randomUUID(), message.to, message.subject, message.html, message.text ?? '']);
 }
 export async function sendAuthEmail(message) {
     await enqueueAuthEmail(message);
 }
 async function claimAuthEmailBatch(batchSize) {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+    return withTransaction(async (client) => {
         const claimed = await client.query(`WITH claimable AS (
          SELECT id
          FROM auth_email_outbox
@@ -44,19 +42,11 @@ async function claimAuthEmailBatch(batchSize) {
        FROM claimable
        WHERE o.id = claimable.id
        RETURNING o.id, o.to_email, o.subject, o.html, o.text, o.attempts`, [batchSize, STALE_PROCESSING_MS]);
-        await client.query('COMMIT');
         return claimed.rows;
-    }
-    catch (err) {
-        await client.query('ROLLBACK');
-        throw err;
-    }
-    finally {
-        client.release();
-    }
+    });
 }
 async function markAuthEmailSent(id) {
-    await pool.query(`UPDATE auth_email_outbox
+    await query(`UPDATE auth_email_outbox
      SET status = 'sent',
          sent_at = NOW(),
          processing_started_at = NULL,
@@ -64,7 +54,7 @@ async function markAuthEmailSent(id) {
      WHERE id = $1`, [id]);
 }
 async function markAuthEmailFailed(id, err) {
-    await pool.query(`UPDATE auth_email_outbox
+    await query(`UPDATE auth_email_outbox
      SET attempts = attempts + 1,
          last_error = $2,
          processing_started_at = NULL,

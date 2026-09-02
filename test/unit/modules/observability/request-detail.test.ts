@@ -198,6 +198,29 @@ describe('Request detail assembler', () => {
     expect(result.tags).toEqual([{ key: 'method', label: 'Method', value: 'GET' }]);
   });
 
+  it('uses trace_public_id from the raw request projection when related lookup is empty', () => {
+    const result = assembleRequestDetail({
+      public_id: 'REQ-00000005',
+      method: 'GET',
+      endpoint: '/api/trace-linked',
+      status_code: 200,
+      duration_ms: 12,
+      occurred_at: '2026-01-01T00:00:00.000Z',
+      trace_id: 'trace-1',
+      trace_public_id: 'TRC-00000005',
+      payload: {},
+    }, {
+      relatedErrors: [],
+      logsCount: 0,
+      spanCount: 1,
+      tracePublicId: null,
+    });
+
+    expect(result.header.tracePublicId).toBe('TRC-00000005');
+    expect(result.trace.publicId).toBe('TRC-00000005');
+    expect(result.related.trace.publicId).toBe('TRC-00000005');
+  });
+
   it('parses JSON-string attributes and metadata', () => {
     const raw = {
       public_id: 'REQ-00000003',

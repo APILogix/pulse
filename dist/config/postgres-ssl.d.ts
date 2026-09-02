@@ -4,6 +4,11 @@ export interface PostgresSslOptions {
     rejectUnauthorized?: boolean | undefined;
 }
 /**
+ * Strips sslmode/ssl query parameters from connection string so pg-connection-string
+ * does not override pool SSL options with weaker or conflicting defaults.
+ */
+export declare function sanitizePostgresConnectionString(connectionString: string): string;
+/**
  * Resolves SSL configuration for PostgreSQL connections.
  * Automatically enables SSL for Neon, Supabase, and other managed Postgres platforms
  * while respecting explicit overrides and URL query parameters.

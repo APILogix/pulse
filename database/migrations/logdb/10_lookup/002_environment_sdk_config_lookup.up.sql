@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS environment_sdk_config_lookup (
   synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+COMMENT ON COLUMN environment_sdk_config_lookup.compiled_snapshot IS
+  'Mirrors the full SDK schema-v1 remote config document, including limits.persistenceGovernance for SDK-side persistence budget control.';
+
 CREATE INDEX IF NOT EXISTS idx_environment_sdk_config_lookup_project
   ON environment_sdk_config_lookup(project_id, environment_id);
 

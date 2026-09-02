@@ -116,6 +116,15 @@ function createPrimaryPool() {
         keepAlive: true,
         keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
     });
+    primaryPool.on('connect', (client) => {
+        client.on('error', (error) => {
+            if (isExpectedServerlessDisconnect(error)) {
+                log.debug({ error: error.message }, '[alert-workers] Client primary pool connection closed');
+                return;
+            }
+            log.debug({ error: error.message }, '[alert-workers] PostgreSQL client socket error on active/checked-out connection');
+        });
+    });
     primaryPool.on('error', (error) => {
         if (isExpectedServerlessDisconnect(error)) {
             log.debug({ error: error.message }, '[alert-workers] Idle primary pool connection closed');

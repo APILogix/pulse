@@ -74,6 +74,11 @@ export const TENANT_GOVERNANCE_KEYS = [
     "windowDurationMs",
     "criticalReserve",
 ];
+export const PERSISTENCE_GOVERNANCE_KEYS = [
+    "maxPersistPerMinute",
+    "adaptive",
+    "budgetExceededLogIntervalMs",
+];
 export const ENTITLEMENT_KEYS = [
     "customSpans",
     "customMetrics",

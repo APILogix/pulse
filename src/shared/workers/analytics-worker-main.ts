@@ -160,6 +160,7 @@ async function buildMetrics(
   return `${lines.join('\n')}\n`;
 }
 
+
 async function bootstrap(): Promise<void> {
   if (!env.ANALYTICS_ENGINE_ENABLED) {
     workerLogger.warn('ANALYTICS_ENGINE_ENABLED=false — analytics worker process exiting');
@@ -180,6 +181,16 @@ async function bootstrap(): Promise<void> {
     application_name: `pulse_analytics_workers_${env.NODE_ENV}`,
     keepAlive: true,
     keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
+  });
+
+  pool.on('connect', (client) => {
+    client.on('error', (error: Error) => {
+      if (isExpectedServerlessDisconnect(error)) {
+        workerLogger.debug({ err: error.message }, 'Client analytics worker Log DB connection closed by server (Neon/PgBouncer)');
+        return;
+      }
+      workerLogger.debug({ err: error.message }, 'PostgreSQL client socket error on active/checked-out analytics connection');
+    });
   });
 
   pool.on('error', (error: Error) => {
@@ -208,6 +219,7 @@ async function bootstrap(): Promise<void> {
   let runtime: AnalyticsEngineRuntime | null = null;
   runtime = await registerAnalyticsEngineWorkers(pool, workerLogger);
 
+  let healthServerReady = false;
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const url = request.url ?? '/';
     if (url.startsWith('/health')) {
@@ -240,7 +252,16 @@ async function bootstrap(): Promise<void> {
     response.end(JSON.stringify({ error: 'not_found', paths: ['/health', '/metrics'] }));
   });
 
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    healthServerReady = false;
+    workerLogger.warn(
+      { err, port: env.ANALYTICS_HEALTH_PORT },
+      'Analytics worker health/metrics endpoint failed; continuing without HTTP health server',
+    );
+  });
+
   server.listen(env.ANALYTICS_HEALTH_PORT, () => {
+    healthServerReady = true;
     workerLogger.info(
       { port: env.ANALYTICS_HEALTH_PORT },
       'Analytics worker health/metrics endpoint listening',
@@ -252,7 +273,7 @@ async function bootstrap(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     workerLogger.info({ signal }, 'Analytics worker shutdown signal received — draining');
-    server.close();
+    if (healthServerReady) server.close();
     if (runtime) await runtime.stop();
     await stopPgBoss();
     queueReady = false;

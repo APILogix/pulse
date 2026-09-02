@@ -1,7 +1,7 @@
 import { Pool } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
-import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from './postgres-ssl.js';
+import { isExpectedServerlessDisconnect, resolvePostgresSslConfig, sanitizePostgresConnectionString, } from './postgres-ssl.js';
 const dbLogger = logger.child({ component: 'log-database' });
 /** PostgreSQL error codes that must never be retried — retrying cannot help. */
 const NON_RETRYABLE_PG_CODES = new Set([
@@ -79,7 +79,7 @@ class LogDatabaseManager {
     createPool(connectionString, appName) {
         const ssl = this.resolveSslConfig(connectionString, appName);
         const config = {
-            connectionString,
+            connectionString: sanitizePostgresConnectionString(connectionString),
             max: env.LOG_POOL_MAX,
             min: env.LOG_POOL_MIN,
             idleTimeoutMillis: env.LOG_DB_IDLE_TIMEOUT,
@@ -105,8 +105,15 @@ class LogDatabaseManager {
         return ssl;
     }
     setupPoolMonitoring(pool, name) {
-        pool.on('connect', () => {
+        pool.on('connect', (client) => {
             dbLogger.debug({ pool: name }, 'New connection added to pool');
+            client.on('error', (err) => {
+                if (isExpectedServerlessDisconnect(err)) {
+                    dbLogger.debug({ pool: name, err: err.message }, 'Client log DB connection closed by server (Neon/PgBouncer)');
+                    return;
+                }
+                dbLogger.debug({ pool: name, err: err.message }, 'PostgreSQL client socket error on active/checked-out log DB connection');
+            });
         });
         // Idle server-side disconnects are expected with managed providers; only
         // surface genuinely unexpected pool errors at error level.

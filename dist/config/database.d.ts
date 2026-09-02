@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 /**
  * Primary PostgreSQL connection pool.
  *
@@ -22,6 +22,13 @@ export declare const connectDB: () => Promise<void>;
  * Slow queries (>1s) are logged at warn level for investigation.
  */
 export declare const query: (text: string, params?: any[]) => Promise<import("pg").QueryResult<any>>;
+/**
+ * Transaction runner with automatic rollback, dead client cleanup,
+ * and transient disconnect retry.
+ */
+export declare const withTransaction: <T>(fn: (client: PoolClient) => Promise<T>, targetPool?: Pool, options?: {
+    maxRetries?: number;
+}) => Promise<T>;
 /**
  * Graceful shutdown — drains active connections before closing.
  */

@@ -19,6 +19,7 @@ import {
 import { SdkConfigError } from "../../src/modules/projects/sdk-config/errors.js";
 import {
   FEATURE_KEYS,
+  ENTITLEMENT_KEYS,
   INSTRUMENTATION_KEYS,
   KILLSWITCH_KEYS,
   PII_DETECTION_KEYS,
@@ -147,23 +148,26 @@ describe("compiler and canonical hash", () => {
       http: true,
       https: true,
       fetch: true,
-      axios: false,
+      axios: true,
       fastify: true,
       express: true,
-      graphql: false,
-      prisma: false,
-      mongodb: false,
-      redis: false,
-      bullmq: false,
-      pg: false,
-      mysql2: false,
+      graphql: true,
+      prisma: true,
+      mongodb: true,
+      redis: true,
+      bullmq: true,
+      pg: true,
+      mysql2: true,
       eventEmitterPatch: true,
     });
-    expect(config.sampling.routes).toEqual({
-      "/health": { requests: 0, traces: 0, spans: 0, metrics: 0, logs: 0 },
-      "/favicon.ico": { traces: 0, requests: 0 },
-    });
+    expect(config.sampling).toMatchObject(
+      Object.fromEntries(SAMPLING_SIGNALS.map((signal) => [signal, 1])),
+    );
+    expect(config.sampling.routes).toEqual({});
     expect(config.limits.maxMemoryMb).toBe("auto");
+    expect(config.limits.maxSpansPerTrace).toBe(5_000);
+    expect(config.limits.maxPayloadSize).toBe(4_194_304);
+    expect(config.limits.maxQueueSize).toBe(100_000);
     expect(config.limits.tenantGovernance).toEqual({
       enabled: false,
       maxTenantsTracked: 1000,
@@ -171,6 +175,13 @@ describe("compiler and canonical hash", () => {
       windowDurationMs: 60_000,
       criticalReserve: 100,
     });
+    expect(config.limits.persistenceGovernance).toEqual({
+      maxPersistPerMinute: 100_000,
+      adaptive: true,
+      budgetExceededLogIntervalMs: 60_000,
+    });
+    expect(Object.values(config.features)).toEqual(FEATURE_KEYS.map(() => true));
+    expect(Object.values(config.entitlements)).toEqual(ENTITLEMENT_KEYS.map(() => true));
   });
 
   it("accepts auto or a bounded numeric maxMemoryMb and rejects old spellings", () => {
@@ -214,6 +225,8 @@ describe("editable intent is a closed allowlist", () => {
     ["privacy", "piiDetection", "maskEmails"],
     ["limits", "maxMemoryMb"],
     ["limits", "tenantGovernance", "maxTenantsTracked"],
+    ["limits", "persistenceGovernance", "maxPersistPerMinute"],
+    ["limits", "persistenceGovernance", "adaptive"],
     ["transport", "routes", "traces", "compression"],
     ["transport", "routes", "traces", "priority"],
     ["transport", "keepAlive"],
@@ -238,6 +251,7 @@ describe("editable intent is a closed allowlist", () => {
     ["privacy", "pii", "enabled"],
     ["privacy", "scrubbing", "queryParams"],
     ["limits", "maxBreadcrumbs"],
+    ["limits", "persistenceGovernance", "debug"],
     ["transport", "retry", "initialDelayMs"],
     ["runtime", "debug"],
   ])("classifies removed path %j as unknown", (...segments) => {
@@ -322,9 +336,17 @@ describe("validation and direct delivery", () => {
     );
 
     const invalidReserve = deepClone(compileInitial(IDENTITY, TOPOLOGY, AT));
-    invalidReserve.transport.queue.criticalReserve = 20_000;
+    invalidReserve.transport.queue.criticalReserve = 200_000;
+    invalidReserve.meta.configHash = computeConfigHash(invalidReserve);
     expect(expectSdkError(() => validateSchemaV1(invalidReserve)).details).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: "/transport/queue/criticalReserve", rule: "cross_field" })]),
+    );
+
+    const invalidPersistence = deepClone(compileInitial(IDENTITY, TOPOLOGY, AT)) as any;
+    invalidPersistence.limits.persistenceGovernance.maxPersistPerMinute = 1_000_001;
+    invalidPersistence.meta.configHash = computeConfigHash(invalidPersistence);
+    expect(expectSdkError(() => validateSchemaV1(invalidPersistence)).details).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "/limits/persistenceGovernance/maxPersistPerMinute", rule: "max" })]),
     );
   });
 
@@ -368,10 +390,15 @@ describe("validation and direct delivery", () => {
 
     const disabled = buildDeliverySnapshot({
       compiled,
-      override: { features: { tracing: false }, killswitches: { disableSDK: true } },
+      override: {
+        features: { tracing: false },
+        killswitches: { disableSDK: true },
+        limits: { persistenceGovernance: { maxPersistPerMinute: 10_000 } },
+      },
     });
     expect(disabled.config.features.tracing).toBe(false);
     expect(disabled.config.killswitches.disableSDK).toBe(true);
+    expect(disabled.config.limits.persistenceGovernance.maxPersistPerMinute).toBe(10_000);
     expect(disabled.config.meta.configHash).toBe(computeConfigHash(disabled.config));
     expect(disabled.etag).not.toBe(direct.etag);
   });

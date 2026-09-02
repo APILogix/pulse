@@ -1,4 +1,4 @@
-import { FEATURE_KEYS, INSTRUMENTATION_KEYS, KILLSWITCH_KEYS, PII_DETECTION_KEYS, PRIVACY_CAPTURE_KEYS, ROUTE_KEYS, SAMPLING_SIGNALS, TENANT_GOVERNANCE_KEYS, } from "./schema-v1.js";
+import { FEATURE_KEYS, INSTRUMENTATION_KEYS, KILLSWITCH_KEYS, PERSISTENCE_GOVERNANCE_KEYS, PII_DETECTION_KEYS, PRIVACY_CAPTURE_KEYS, ROUTE_KEYS, SAMPLING_SIGNALS, TENANT_GOVERNANCE_KEYS, } from "./schema-v1.js";
 const FEATURE_SET = new Set(FEATURE_KEYS);
 const KILLSWITCH_SET = new Set(KILLSWITCH_KEYS);
 const SIGNAL_SET = new Set(SAMPLING_SIGNALS);
@@ -7,6 +7,7 @@ const ROUTE_SET = new Set(ROUTE_KEYS);
 const CAPTURE_SET = new Set(PRIVACY_CAPTURE_KEYS);
 const PII_SET = new Set(PII_DETECTION_KEYS);
 const TENANT_SET = new Set(TENANT_GOVERNANCE_KEYS);
+const PERSISTENCE_SET = new Set(PERSISTENCE_GOVERNANCE_KEYS);
 const LIMIT_SCALAR_KEYS = new Set([
     "maxSpansPerTrace",
     "maxSpanAttributes",
@@ -125,6 +126,12 @@ function classifyLimits(rest) {
         return { pathClass: "editable", reason: "allowlisted" };
     }
     if (rest.length === 1 && rest[0] === "tenantGovernance") {
+        return { pathClass: "protected", reason: "container" };
+    }
+    if (rest.length === 2 && rest[0] === "persistenceGovernance" && PERSISTENCE_SET.has(rest[1])) {
+        return { pathClass: "editable", reason: "allowlisted" };
+    }
+    if (rest.length === 1 && rest[0] === "persistenceGovernance") {
         return { pathClass: "protected", reason: "container" };
     }
     return { pathClass: "unknown", reason: "unknown" };

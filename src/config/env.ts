@@ -51,7 +51,10 @@ const envSchema = z.object({
   DB_SSL_REJECT_UNAUTHORIZED: z
     .string()
     .optional()
-    .transform((value) => value !== 'false'),
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return value === 'true';
+    }),
 
   // Log Database (Primary + Replica)
   LOG_DB_PRIMARY: z.string().optional(),
@@ -94,7 +97,10 @@ const envSchema = z.object({
   LOG_DB_SSL_REJECT_UNAUTHORIZED: z
     .string()
     .optional()
-    .transform((v) => v !== 'false'),
+    .transform((value) => {
+      if (value === undefined) return undefined;
+      return value === 'true';
+    }),
 
   // ── Log DB TimescaleDB tuning ──────────────────────────────────────────
   // When enabled, connect() promotes the event tables to TimescaleDB
@@ -119,6 +125,12 @@ const envSchema = z.object({
 
   // ClickHouse (Optional)
   CLICKHOUSE_URL: z.string().optional(),
+
+  // Supabase (Log DB / Auth / Storage)
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
+  SUPABASE_SECRET_KEY: z.string().optional(),
+  SUPABASE_JWKS_URL: z.string().url().optional(),
 
   // Redis
   REDIS_URL: z.string(),

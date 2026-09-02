@@ -12,7 +12,7 @@
  */
 import { randomUUID } from 'crypto';
 
-import { pool } from '../../../../config/database.js';
+import { pool, query } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import { sendEmail } from '../../../../shared/email/mailer.js';
 import type { EmailTemplate } from '../../../../shared/email/templates.js';
@@ -37,6 +37,15 @@ export interface EnqueueOrgEmailInput {
   metadata?: Record<string, unknown>;
 }
 
+interface ClaimedOrgEmailRow {
+  id: string;
+  to_email: string;
+  subject: string;
+  html: string;
+  text: string;
+  attempts: number;
+}
+
 /**
  * Enqueue an org/project email for durable, retrying delivery.
  *
@@ -45,7 +54,7 @@ export interface EnqueueOrgEmailInput {
  */
 export async function enqueueOrgEmail(input: EnqueueOrgEmailInput): Promise<string | null> {
   const id = randomUUID();
-  const result = await pool.query<{ id: string }>(
+  const result = await query(
     `INSERT INTO organization_email_outbox
        (id, org_id, project_id, email_type, to_email, subject, html, text, max_attempts, dedupe_key, metadata)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
@@ -65,7 +74,7 @@ export async function enqueueOrgEmail(input: EnqueueOrgEmailInput): Promise<stri
       JSON.stringify(input.metadata ?? {}),
     ],
   );
-  return result.rows[0]?.id ?? null;
+  return (result.rows[0] as { id: string } | undefined)?.id ?? null;
 }
 
 /**
@@ -74,14 +83,7 @@ export async function enqueueOrgEmail(input: EnqueueOrgEmailInput): Promise<stri
  * concurrent workers never grab the same row. Returns the count sent.
  */
 export async function processOrgEmailOutbox(batchSize = 50): Promise<number> {
-  const pending = await pool.query<{
-    id: string;
-    to_email: string;
-    subject: string;
-    html: string;
-    text: string;
-    attempts: number;
-  }>(
+  const pending = await query(
     `SELECT id, to_email, subject, html, text, attempts
      FROM organization_email_outbox
      WHERE status = 'pending'
@@ -91,7 +93,9 @@ export async function processOrgEmailOutbox(batchSize = 50): Promise<number> {
      LIMIT $1
      FOR UPDATE SKIP LOCKED`,
     [batchSize],
-  );
+  ) as {
+    rows: ClaimedOrgEmailRow[];
+  };
 
   const results = await Promise.all(
     pending.rows.map(async (row) => {
@@ -102,9 +106,11 @@ export async function processOrgEmailOutbox(batchSize = 50): Promise<number> {
           html: row.html,
           text: row.text,
         });
-        await pool.query(
+        await query(
           `UPDATE organization_email_outbox
-           SET status = 'sent', sent_at = NOW()
+           SET status = 'sent',
+               sent_at = NOW(),
+               last_error = NULL
            WHERE id = $1`,
           [row.id],
         );
@@ -112,7 +118,7 @@ export async function processOrgEmailOutbox(batchSize = 50): Promise<number> {
       } catch (err) {
         const backoff = BACKOFF_SECONDS[Math.min(row.attempts, BACKOFF_SECONDS.length - 1)]!;
         log.warn({ err, id: row.id, to: row.to_email }, 'Org outbox send failed; scheduling retry');
-        await pool.query(
+        await query(
           `UPDATE organization_email_outbox
            SET attempts = attempts + 1,
                last_error = $2,

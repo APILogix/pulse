@@ -11,6 +11,10 @@ import { fileURLToPath } from 'url';
 
 import { config } from 'dotenv';
 import { Pool, type PoolConfig } from 'pg';
+import {
+  resolvePostgresSslConfig,
+  sanitizePostgresConnectionString,
+} from '../src/config/postgres-ssl.js';
 
 config();
 
@@ -229,8 +233,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  const primaryPool = new Pool({ connectionString: primaryUrl, ssl: resolvePrimarySsl(primaryUrl), max: 1 });
-  const logDbPool = new Pool({ connectionString: logDbUrl, ssl: resolveLogDbSsl(logDbUrl), max: 1 });
+  const primaryPool = new Pool({
+    connectionString: sanitizePostgresConnectionString(primaryUrl),
+    ssl: resolvePostgresSslConfig(primaryUrl, {
+      rejectUnauthorized: parseBoolean(process.env.DB_SSL_REJECT_UNAUTHORIZED),
+    }),
+    max: 1,
+  });
+  const logDbPool = new Pool({
+    connectionString: sanitizePostgresConnectionString(logDbUrl),
+    ssl: resolvePostgresSslConfig(logDbUrl, {
+      enabled: parseBoolean(process.env.LOG_DB_SSL_ENABLED),
+      rejectUnauthorized: parseBoolean(process.env.LOG_DB_SSL_REJECT_UNAUTHORIZED),
+    }),
+    max: 1,
+  });
   try {
     await assertEmptyDatabase(primaryPool, 'PrimaryDB', options.allowExisting);
     await assertEmptyDatabase(logDbPool, 'LogDB', options.allowExisting);

@@ -11,7 +11,7 @@
  * LOCKED, so it is safe to run many worker processes concurrently.
  */
 import { randomUUID } from 'crypto';
-import { pool } from '../../../../config/database.js';
+import { pool, query } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
 import { sendEmail } from '../../../../shared/email/mailer.js';
 const log = logger.child({ component: 'org-email-outbox' });
@@ -25,7 +25,7 @@ const BACKOFF_SECONDS = [60, 300, 900, 3600, 21600]; // 1m, 5m, 15m, 1h, 6h
  */
 export async function enqueueOrgEmail(input) {
     const id = randomUUID();
-    const result = await pool.query(`INSERT INTO organization_email_outbox
+    const result = await query(`INSERT INTO organization_email_outbox
        (id, org_id, project_id, email_type, to_email, subject, html, text, max_attempts, dedupe_key, metadata)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      ON CONFLICT DO NOTHING
@@ -50,7 +50,7 @@ export async function enqueueOrgEmail(input) {
  * concurrent workers never grab the same row. Returns the count sent.
  */
 export async function processOrgEmailOutbox(batchSize = 50) {
-    const pending = await pool.query(`SELECT id, to_email, subject, html, text, attempts
+    const pending = await query(`SELECT id, to_email, subject, html, text, attempts
      FROM organization_email_outbox
      WHERE status = 'pending'
        AND attempts < max_attempts
@@ -66,15 +66,17 @@ export async function processOrgEmailOutbox(batchSize = 50) {
                 html: row.html,
                 text: row.text,
             });
-            await pool.query(`UPDATE organization_email_outbox
-           SET status = 'sent', sent_at = NOW()
+            await query(`UPDATE organization_email_outbox
+           SET status = 'sent',
+               sent_at = NOW(),
+               last_error = NULL
            WHERE id = $1`, [row.id]);
             return true;
         }
         catch (err) {
             const backoff = BACKOFF_SECONDS[Math.min(row.attempts, BACKOFF_SECONDS.length - 1)];
             log.warn({ err, id: row.id, to: row.to_email }, 'Org outbox send failed; scheduling retry');
-            await pool.query(`UPDATE organization_email_outbox
+            await query(`UPDATE organization_email_outbox
            SET attempts = attempts + 1,
                last_error = $2,
                status = CASE WHEN attempts + 1 >= max_attempts THEN 'failed' ELSE 'pending' END,

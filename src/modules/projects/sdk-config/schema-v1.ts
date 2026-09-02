@@ -94,6 +94,13 @@ export const TENANT_GOVERNANCE_KEYS = [
 ] as const;
 export type TenantGovernanceKey = (typeof TENANT_GOVERNANCE_KEYS)[number];
 
+export const PERSISTENCE_GOVERNANCE_KEYS = [
+  "maxPersistPerMinute",
+  "adaptive",
+  "budgetExceededLogIntervalMs",
+] as const;
+export type PersistenceGovernanceKey = (typeof PERSISTENCE_GOVERNANCE_KEYS)[number];
+
 export const ENTITLEMENT_KEYS = [
   "customSpans",
   "customMetrics",
@@ -175,6 +182,11 @@ export interface TenantGovernance {
   windowDurationMs: number;
   criticalReserve: number;
 }
+export interface PersistenceGovernance {
+  maxPersistPerMinute: number;
+  adaptive: boolean;
+  budgetExceededLogIntervalMs: number;
+}
 export interface Limits {
   maxSpansPerTrace: number;
   maxSpanAttributes: number;
@@ -183,6 +195,7 @@ export interface Limits {
   maxQueueSize: number;
   maxMemoryMb: MaxMemoryMb;
   tenantGovernance: TenantGovernance;
+  persistenceGovernance: PersistenceGovernance;
 }
 
 export interface TransportRoute {

@@ -512,7 +512,9 @@ BEGIN
       'maxSpansPerTrace',2000,'maxSpanAttributes',128,'maxAttributeLength',4096,
       'maxPayloadSize',1048576,'maxQueueSize',10000,'maxMemoryMb','auto',
       'tenantGovernance',jsonb_build_object('enabled',false,'maxTenantsTracked',1000,
-        'quotaPerWindow',10000,'windowDurationMs',60000,'criticalReserve',100)),
+        'quotaPerWindow',10000,'windowDurationMs',60000,'criticalReserve',100),
+      'persistenceGovernance',jsonb_build_object(
+        'maxPersistPerMinute',20000,'adaptive',true,'budgetExceededLogIntervalMs',60000)),
     'killswitches',jsonb_build_object(
       'disableSDK',false,'disableTracing',false,'disableMetrics',false,'disableTransport',false,
       'disableProfiling',false,'disableErrors',false,'disableLogs',false),
@@ -666,11 +668,15 @@ BEGIN
 
   v := pulse_jsonb_pick_keys(s->'limits',ARRAY[
     'maxSpansPerTrace','maxSpanAttributes','maxAttributeLength','maxPayloadSize','maxQueueSize',
-    'maxMemoryMb','tenantGovernance']);
+    'maxMemoryMb','tenantGovernance','persistenceGovernance']);
   IF jsonb_typeof(v->'tenantGovernance')='object' THEN
     v := jsonb_set(v,'{tenantGovernance}',pulse_jsonb_pick_keys(v->'tenantGovernance',ARRAY[
       'enabled','maxTenantsTracked','quotaPerWindow','windowDurationMs','criticalReserve']),true);
   ELSE v := v-'tenantGovernance'; END IF;
+  IF jsonb_typeof(v->'persistenceGovernance')='object' THEN
+    v := jsonb_set(v,'{persistenceGovernance}',pulse_jsonb_pick_keys(v->'persistenceGovernance',ARRAY[
+      'maxPersistPerMinute','adaptive','budgetExceededLogIntervalMs']),true);
+  ELSE v := v-'persistenceGovernance'; END IF;
   result := jsonb_set(result,'{limits}',v,true);
 
   result := jsonb_set(result,'{killswitches}',pulse_jsonb_pick_keys(s->'killswitches',ARRAY[
@@ -810,7 +816,7 @@ BEGIN
      OR NOT pulse_jsonb_string_array(c#>'{privacy,scrubbing,headers}')
      OR NOT pulse_jsonb_string_array(c#>'{privacy,scrubbing,fields}')
      OR NOT pulse_jsonb_all_booleans(c#>'{privacy,piiDetection}',ARRAY['enabled','maskEmails','maskPhones','maskIPs']) THEN RETURN false; END IF;
-  IF NOT pulse_jsonb_exact_keys(c->'limits',ARRAY['maxSpansPerTrace','maxSpanAttributes','maxAttributeLength','maxPayloadSize','maxQueueSize','maxMemoryMb','tenantGovernance']) THEN RETURN false; END IF;
+  IF NOT pulse_jsonb_exact_keys(c->'limits',ARRAY['maxSpansPerTrace','maxSpanAttributes','maxAttributeLength','maxPayloadSize','maxQueueSize','maxMemoryMb','tenantGovernance','persistenceGovernance']) THEN RETURN false; END IF;
   IF NOT pulse_jsonb_number_between(c#>'{limits,maxSpansPerTrace}',1,100000,true)
      OR NOT pulse_jsonb_number_between(c#>'{limits,maxSpanAttributes}',1,1000,true)
      OR NOT pulse_jsonb_number_between(c#>'{limits,maxAttributeLength}',1,65536,true)
@@ -823,6 +829,10 @@ BEGIN
      OR NOT pulse_jsonb_number_between(c#>'{limits,tenantGovernance,quotaPerWindow}',1,100000000,true)
      OR NOT pulse_jsonb_number_between(c#>'{limits,tenantGovernance,windowDurationMs}',1000,86400000,true)
      OR NOT pulse_jsonb_number_between(c#>'{limits,tenantGovernance,criticalReserve}',0,1000000,true) THEN RETURN false; END IF;
+  IF NOT pulse_jsonb_exact_keys(c#>'{limits,persistenceGovernance}',ARRAY['maxPersistPerMinute','adaptive','budgetExceededLogIntervalMs'])
+     OR NOT pulse_jsonb_number_between(c#>'{limits,persistenceGovernance,maxPersistPerMinute}',1,1000000,true)
+     OR jsonb_typeof(c#>'{limits,persistenceGovernance,adaptive}')<>'boolean'
+     OR NOT pulse_jsonb_number_between(c#>'{limits,persistenceGovernance,budgetExceededLogIntervalMs}',1000,600000,true) THEN RETURN false; END IF;
   IF NOT pulse_jsonb_all_booleans(c->'killswitches',ARRAY['disableSDK','disableTracing','disableMetrics','disableTransport','disableProfiling','disableErrors','disableLogs']) THEN RETURN false; END IF;
   IF NOT pulse_jsonb_exact_keys(c->'runtime',ARRAY['configTtlSeconds','staleWhileRevalidate'])
      OR NOT pulse_jsonb_number_between(c#>'{runtime,configTtlSeconds}',30,86400,true)

@@ -106,6 +106,16 @@ export class LogDatabase {
       keepAlive: true,
       keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS ?? 10_000,
     });
+
+    this.pool.on('connect', (client) => {
+      client.on('error', (err: Error) => {
+        if (isExpectedServerlessDisconnect(err)) {
+          this.log.debug({ err: err.message }, 'Client LogDatabase connection closed by server (Neon/PgBouncer)');
+          return;
+        }
+        this.log.debug({ err: err.message }, 'PostgreSQL client socket error on active/checked-out LogDatabase connection');
+      });
+    });
     this.pool.on('error', (err: Error) => {
       if (isExpectedServerlessDisconnect(err)) {
         this.log.debug({ err: err.message }, 'Idle LogDatabase connection closed by server (Neon/PgBouncer)');

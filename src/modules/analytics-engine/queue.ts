@@ -15,6 +15,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { pgboss } from '../../lib/pgboss.js';
 import { env } from '../../config/env.js';
+import { ALERT_JOBS } from '../alerting/queue-names.js';
 import { AnalyticsWatermarkRepository } from './watermark.repository.js';
 import { buildAnalyticsWorkers, resolveAnalyticsConfig } from './registry.js';
 import { runCompaction } from './workers/compaction.worker.js';
@@ -28,6 +29,12 @@ export const ANALYTICS_PLATFORM_JOBS = {
   retention: 'analytics.retention',
   partitions: 'analytics.partitions',
 } as const;
+
+const ALERT_EVALUATION_JOBS = [
+  ALERT_JOBS.evaluateWindow,
+  ALERT_JOBS.evaluateOperational,
+  ALERT_JOBS.evaluateAi,
+] as const;
 
 interface MinimalJob<T> {
   id: string;
@@ -71,6 +78,7 @@ export async function registerAnalyticsEngineWorkers(
 
   for (const worker of workers) await ensureQueue(worker.queue);
   for (const queue of Object.values(ANALYTICS_PLATFORM_JOBS)) await ensureQueue(queue);
+  for (const queue of ALERT_EVALUATION_JOBS) await ensureQueue(queue);
 
   // ── Domain workers ───────────────────────────────────────────────────────
   for (const worker of workers) {
@@ -262,24 +270,24 @@ async function enqueueAlertEvaluationForAnalyticsWorker(
   const queues = alertQueuesForAnalyticsWorker(workerId);
   if (queues.length === 0) return;
   await Promise.all(queues.map(async (queue) => {
-    const bucketSeconds = queue === 'alert.evaluate.window'
+    const bucketSeconds = queue === ALERT_JOBS.evaluateWindow
       ? 5
-      : queue === 'alert.evaluate.operational' ? 30 : 300;
-  try {
-    await pgboss.send(
-      queue,
-      { organizationId, sourceWorkerId: workerId },
-      {
-        singletonKey: `${queue}:${workerId}:${organizationId}:${Math.floor(Date.now() / (bucketSeconds * 1000))}`,
-        expireInSeconds: Math.max(60, bucketSeconds * 4),
-        retryLimit: 2,
-        retryDelay: 5,
-        retryBackoff: true,
-      } as never,
-    );
-  } catch (err) {
-    log.warn({ err, workerId, organizationId, queue }, 'Alert evaluation enqueue from analytics worker failed');
-  }
+      : queue === ALERT_JOBS.evaluateOperational ? 30 : 300;
+    try {
+      await pgboss.send(
+        queue,
+        { organizationId, sourceWorkerId: workerId },
+        {
+          singletonKey: `${queue}:${workerId}:${organizationId}:${Math.floor(Date.now() / (bucketSeconds * 1000))}`,
+          expireInSeconds: Math.max(60, bucketSeconds * 4),
+          retryLimit: 2,
+          retryDelay: 5,
+          retryBackoff: true,
+        } as never,
+      );
+    } catch (err) {
+      log.warn({ err, workerId, organizationId, queue }, 'Alert evaluation enqueue from analytics worker failed');
+    }
   }));
 }
 
@@ -289,7 +297,7 @@ function alertQueuesForAnalyticsWorker(workerId: string): string[] {
     || workerId === 'analytics.errors'
     || workerId === 'analytics.crons'
   ) {
-    return ['alert.evaluate.window'];
+    return [ALERT_JOBS.evaluateWindow];
   }
   if (
     workerId === 'analytics.metrics'
@@ -298,11 +306,11 @@ function alertQueuesForAnalyticsWorker(workerId: string): string[] {
     || workerId === 'analytics.services'
     || workerId === 'analytics.endpoints'
   ) {
-    return ['alert.evaluate.operational'];
+    return [ALERT_JOBS.evaluateOperational];
   }
-  if (workerId === 'analytics.ai') return ['alert.evaluate.window', 'alert.evaluate.ai'];
+  if (workerId === 'analytics.ai') return [ALERT_JOBS.evaluateWindow, ALERT_JOBS.evaluateAi];
   if (workerId === 'analytics.releases') {
-    return ['alert.evaluate.ai'];
+    return [ALERT_JOBS.evaluateAi];
   }
   return [];
 }

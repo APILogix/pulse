@@ -19,6 +19,22 @@ const MANAGED_POSTGRES_HOST_SUFFIXES = [
 ];
 
 /**
+ * Strips sslmode/ssl query parameters from connection string so pg-connection-string
+ * does not override pool SSL options with weaker or conflicting defaults.
+ */
+export function sanitizePostgresConnectionString(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    if (url.searchParams.has('sslmode') || url.searchParams.has('ssl')) {
+      url.searchParams.delete('sslmode');
+      url.searchParams.delete('ssl');
+      return url.toString();
+    }
+  } catch {}
+  return connectionString;
+}
+
+/**
  * Resolves SSL configuration for PostgreSQL connections.
  * Automatically enables SSL for Neon, Supabase, and other managed Postgres platforms
  * while respecting explicit overrides and URL query parameters.

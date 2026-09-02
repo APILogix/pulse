@@ -1,4 +1,4 @@
-import { pool } from "../../../config/database.js";
+import { pool, withTransaction } from "../../../config/database.js";
 export function pgErr(e) {
     return typeof e === "object" && e !== null ? e : {};
 }
@@ -20,20 +20,7 @@ export function cursorPage(rows, limit, totalCount) {
 export class BaseRepository {
     db = pool;
     async withTransaction(fn) {
-        const client = await this.db.connect();
-        try {
-            await client.query("BEGIN");
-            const result = await fn(client);
-            await client.query("COMMIT");
-            return result;
-        }
-        catch (e) {
-            await client.query("ROLLBACK");
-            throw e;
-        }
-        finally {
-            client.release();
-        }
+        return withTransaction(fn, this.db);
     }
 }
 //# sourceMappingURL=base.repository.js.map

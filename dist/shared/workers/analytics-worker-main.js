@@ -120,6 +120,15 @@ async function bootstrap() {
         keepAlive: true,
         keepAliveInitialDelayMillis: env.LOG_DB_KEEPALIVE_MS,
     });
+    pool.on('connect', (client) => {
+        client.on('error', (error) => {
+            if (isExpectedServerlessDisconnect(error)) {
+                workerLogger.debug({ err: error.message }, 'Client analytics worker Log DB connection closed by server (Neon/PgBouncer)');
+                return;
+            }
+            workerLogger.debug({ err: error.message }, 'PostgreSQL client socket error on active/checked-out analytics connection');
+        });
+    });
     pool.on('error', (error) => {
         if (isExpectedServerlessDisconnect(error)) {
             workerLogger.debug({ err: error.message }, 'Idle analytics worker Log DB pool connection closed by server (Neon/PgBouncer)');
@@ -141,6 +150,7 @@ async function bootstrap() {
     let queueReady = true;
     let runtime = null;
     runtime = await registerAnalyticsEngineWorkers(pool, workerLogger);
+    let healthServerReady = false;
     const server = createServer((request, response) => {
         const url = request.url ?? '/';
         if (url.startsWith('/health')) {
@@ -172,7 +182,12 @@ async function bootstrap() {
         response.writeHead(404, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ error: 'not_found', paths: ['/health', '/metrics'] }));
     });
+    server.on('error', (err) => {
+        healthServerReady = false;
+        workerLogger.warn({ err, port: env.ANALYTICS_HEALTH_PORT }, 'Analytics worker health/metrics endpoint failed; continuing without HTTP health server');
+    });
     server.listen(env.ANALYTICS_HEALTH_PORT, () => {
+        healthServerReady = true;
         workerLogger.info({ port: env.ANALYTICS_HEALTH_PORT }, 'Analytics worker health/metrics endpoint listening');
     });
     let shuttingDown = false;
@@ -181,7 +196,8 @@ async function bootstrap() {
             return;
         shuttingDown = true;
         workerLogger.info({ signal }, 'Analytics worker shutdown signal received — draining');
-        server.close();
+        if (healthServerReady)
+            server.close();
         if (runtime)
             await runtime.stop();
         await stopPgBoss();

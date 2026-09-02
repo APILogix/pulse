@@ -56,10 +56,12 @@ export const logsResource = {
         'service', 'traceId', 'requestId',
     ],
     preferredIndexes: [
-        'idx_events_logs_level_time',
-        'idx_events_logs_endpoint_time',
-        'idx_events_logs_category_time',
-        'idx_events_logs_logger_time',
+        'idx_events_logs_org_time',
+        'idx_events_logs_org_env_time',
+        'idx_events_logs_level',
+        'idx_events_logs_endpoint',
+        'idx_events_logs_category',
+        'idx_events_logs_logger',
     ],
     errorPredicate: "level IN ('error','fatal') OR status_code >= 500",
     summary: {
