@@ -175,29 +175,29 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     loggerName: z.ZodOptional<z.ZodString>;
     logSource: z.ZodOptional<z.ZodEnum<{
         unknown: "unknown";
-        worker: "worker";
+        queue: "queue";
         framework: "framework";
         sdk: "sdk";
         console: "console";
         middleware: "middleware";
         application: "application";
+        worker: "worker";
         cron: "cron";
-        queue: "queue";
     }>>;
     logCategory: z.ZodOptional<z.ZodEnum<{
-        http: "http";
+        authorization: "authorization";
+        authentication: "authentication";
         database: "database";
         unknown: "unknown";
-        authorization: "authorization";
-        security: "security";
-        authentication: "authentication";
         custom: "custom";
+        http: "http";
+        security: "security";
         system: "system";
-        worker: "worker";
+        queue: "queue";
         business: "business";
         application: "application";
+        worker: "worker";
         cron: "cron";
-        queue: "queue";
         cache: "cache";
         runtime: "runtime";
     }>>;
@@ -236,8 +236,8 @@ export declare const eventSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     monitorName: z.ZodOptional<z.ZodString>;
     status: z.ZodEnum<{
         error: "error";
-        ok: "ok";
         timeout: "timeout";
+        ok: "ok";
         failed: "failed";
         in_progress: "in_progress";
         missed: "missed";

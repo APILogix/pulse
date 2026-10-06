@@ -24,9 +24,11 @@ import { mergeSketches, toBuffer, fromBuffer } from '../hll.js';
 import { mergeHistograms, parseHistogram, percentilesFromHistogram } from '../histogram.js';
 import { floorToWindow } from '../windows.js';
 import {
+  WINDOW_SECONDS,
   WINDOW_SOURCE,
   type WindowSize,
 } from '../types.js';
+import { WATERMARK_COLD_START_MINUTES } from '../watermark.repository.js';
 
 /** Tables that participate in the window hierarchy, with their shape. */
 export const COMPACTION_TARGETS: ReadonlyArray<{
@@ -119,6 +121,15 @@ export interface CompactionResult {
   window: WindowSize;
   rowsWritten: number;
 }
+
+const COMPACTION_LOOKBACK_BUCKETS: Record<Exclude<WindowSize, '1m'>, number> = {
+  // A cold or restarted worker can materialize a full 60-minute 1m slice in one
+  // pass. The 5m compactor must cover that whole slice or 6h/24h reads will miss
+  // older buckets until another manual backfill is run.
+  '5m': Math.ceil((WATERMARK_COLD_START_MINUTES * 60) / WINDOW_SECONDS['5m']) + 1,
+  '1h': 3,
+  '1d': 3,
+};
 
 /**
  * Compacts one table tier for a bucket range.
@@ -341,9 +352,9 @@ export async function runCompaction(
   target: Exclude<WindowSize, '1m'>,
   now = new Date(),
 ): Promise<CompactionResult[]> {
-  // Recompute a small trailing range so late data folded into the finer tier
-  // propagates upwards. Two target buckets is enough given the 1m grace window.
-  const lookbackBuckets = 3;
+  // Recompute a trailing range so late data folded into the finer tier
+  // propagates upwards.
+  const lookbackBuckets = COMPACTION_LOOKBACK_BUCKETS[target];
   const to = floorToWindow(now, target);
   const from = new Date(
     target === '1d'

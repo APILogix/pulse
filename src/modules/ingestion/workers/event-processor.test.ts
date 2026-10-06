@@ -19,13 +19,20 @@ vi.mock('../../../config/env.js', () => ({
     INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: 'on',
     INGESTION_LOG_DB_LOCK_TIMEOUT_MS: 2000,
     INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: 0,
-    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: 30000,
+    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: 0,
   },
 }));
 
 vi.mock('../../../lib/pgboss.js', () => ({
   pgboss: {
     send: mocks.pgbossSend,
+  },
+}));
+
+vi.mock('../../../lib/pgmq.js', () => ({
+  pgmq: {
+    send: mocks.pgbossSend,
+    createQueue: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -149,6 +156,32 @@ describe('EventProcessor failure and idempotency behavior', () => {
     vi.clearAllMocks();
   });
 
+  it('passes canonical confirmed error records to grouping in the writer transaction', async () => {
+    const { EventProcessor } = await import('./event-processor.js');
+    const { ErrorIngestionService } = await import('../../errors/services/error-ingestion.service.js');
+    const ingest = vi.spyOn(ErrorIngestionService.prototype, 'ingestBatch').mockResolvedValue({ inserted: 1, domainEvents: [] });
+    try {
+      const client = clientWithQueries();
+      const pool = poolWithClient(client);
+      const event = { type: 'error', eventId: '44444444-4444-4444-8444-000000000001', timestamp: Date.now(), message: 'boom', name: 'TypeError', severity: 'error' };
+      const job = payload([event], { eventType: 'error' });
+      mocks.writerWriteBatchDetailedInTransaction.mockResolvedValueOnce({
+        totalReceived: 1, totalInserted: 1, perType: { error: { received: 1, inserted: 1, durationMs: 1 } },
+        insertedErrors: [{ projectId: job.projectId, orgId: job.organizationId, environment: job.metadata.environment, event }],
+      });
+      mocks.writerAppendTelemetryOutbox.mockResolvedValueOnce(1);
+      const processor = new EventProcessor(pool, metrics() as never, logger() as never, pool);
+      await processor.process(job, 'ingest.error');
+      expect(ingest).toHaveBeenCalledWith(client, [expect.objectContaining({
+        groupParams: expect.objectContaining({ projectId: job.projectId, eventId: event.eventId, severity: 'error', occurredAt: expect.any(Date) }),
+        eventRecord: expect.objectContaining({ event_id: event.eventId, error_name: 'TypeError', message: 'boom', payload: event }),
+      })], true);
+      expect(client.query).toHaveBeenCalledWith('COMMIT');
+    } finally {
+      ingest.mockRestore();
+    }
+  });
+
   it('rolls back, releases the client, and does not bill usage when persistence fails', async () => {
     const { EventProcessor } = await import('./event-processor.js');
     const client = clientWithQueries();
@@ -164,7 +197,7 @@ describe('EventProcessor failure and idempotency behavior', () => {
 
     expect(client.query).toHaveBeenCalledWith('BEGIN');
     expect(client.query).toHaveBeenCalledWith(
-      "SET LOCAL synchronous_commit = on; SET LOCAL lock_timeout = '2000ms'; SET LOCAL idle_in_transaction_session_timeout = '30000ms'",
+      "SET LOCAL synchronous_commit = on; SET LOCAL lock_timeout = '2000ms'",
     );
     expect(client.query).toHaveBeenCalledWith('ROLLBACK');
     expect(client.query).not.toHaveBeenCalledWith('COMMIT');
@@ -209,7 +242,7 @@ describe('EventProcessor failure and idempotency behavior', () => {
     const result = await processor.process(payload([requestEvent(1), requestEvent(1)]), 'ingest.request');
 
     expect(client.query).toHaveBeenCalledWith(
-      "SET LOCAL synchronous_commit = on; SET LOCAL lock_timeout = '2000ms'; SET LOCAL idle_in_transaction_session_timeout = '30000ms'",
+      "SET LOCAL synchronous_commit = on; SET LOCAL lock_timeout = '2000ms'",
     );
     expect(client.query).toHaveBeenCalledWith('COMMIT');
     expect(mocks.usageIncrement).not.toHaveBeenCalled();
@@ -254,7 +287,7 @@ describe('EventProcessor failure and idempotency behavior', () => {
     const result = await processor.process(payload([requestEvent(1), { type: 'request', timestamp: 'not-a-date' }]), 'ingest.request');
 
     expect(mocks.pgbossSend).toHaveBeenCalledWith(
-      'ingest.dlq-intake',
+      'ingest_dlq',
       expect.objectContaining({
         sourceQueue: 'ingest.request',
         eventType: 'request',
@@ -264,7 +297,6 @@ describe('EventProcessor failure and idempotency behavior', () => {
           }),
         ]),
       }),
-      {},
     );
     expect(mocks.usageIncrement).toHaveBeenCalledWith(
       '22222222-2222-4222-8222-222222222222',
@@ -520,12 +552,11 @@ describe('EventProcessor failure and idempotency behavior', () => {
     expect(result).toMatchObject({ received: 1, validated: 0, rejected: 1, inserted: 0 });
     expect(pool.connect).not.toHaveBeenCalled();
     expect(mocks.pgbossSend).toHaveBeenCalledWith(
-      'ingest.dlq-intake',
+      'ingest_dlq',
       expect.objectContaining({
         sourceQueue: 'ingest.trace',
         payload: [expect.objectContaining({ detail: expect.stringContaining('maximum node count 10000') })],
       }),
-      {},
     );
   });
 });

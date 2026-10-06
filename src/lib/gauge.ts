@@ -15,9 +15,8 @@ type Queryable = {
 /**
  * Cross-process backpressure gauge.
  *
- * After the pg-boss cutover there is no writer-side singleton row: the gauge
- * reads the pg-boss job table directly (pending = created + retry across the
- * ingest.<type> queues), so every API process sees the same live depth. Reads
+ * Reads live queue metrics from Supabase PGMQ (pgmq.metrics_all() across the
+ * ingest_* queues), so every API process sees the same live depth. Reads
  * fail open (return null) so readiness policy decides how to react.
  */
 export class BackpressureGauge {
@@ -26,9 +25,9 @@ export class BackpressureGauge {
   async read(): Promise<GaugeState | null> {
     try {
       const result = await this.db.query(
-        `SELECT COUNT(*)::bigint AS pending_depth
-         FROM pgboss.job
-         WHERE name LIKE 'ingest.%' AND state IN ('created', 'retry')`,
+        `SELECT COALESCE(SUM(queue_length), 0)::bigint AS pending_depth
+         FROM pgmq.metrics_all()
+         WHERE queue_name LIKE 'ingest_%' OR queue_name LIKE 'ingest.%'`,
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -39,7 +38,7 @@ export class BackpressureGauge {
         lastWorkerId: null,
       };
     } catch (err) {
-      // pgboss schema not yet created (first boot) or transient error.
+      // PGMQ extension not yet created (first boot) or transient error.
       gaugeLogger.error({ err }, 'Failed to read backpressure gauge');
       return null;
     }

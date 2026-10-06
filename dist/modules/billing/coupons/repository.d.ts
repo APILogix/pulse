@@ -29,6 +29,7 @@ export interface PlanPriceRow {
     amount_minor: number;
     currency: string;
 }
+export declare const COUPON_COLUMNS = "\n  id, code, name, description, discount_type, discount_value, currency,\n  max_redemptions, redemption_count, max_redemptions_per_org,\n  first_time_customers_only, trial_only, valid_from, valid_until,\n  is_active, is_public\n";
 export declare class CouponsRepository {
     private readonly db;
     constructor(db?: Pool);

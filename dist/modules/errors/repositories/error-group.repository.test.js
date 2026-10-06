@@ -185,18 +185,83 @@ describe('ErrorGroupRepository', () => {
         expect(queries[4]?.sql).toContain('INSERT INTO telemetry_outbox');
         expect(queries[4]?.values).toContain('error_group_regressed:33333333-3333-4333-8333-333333333333:evt-newer');
     });
-    it('falls back before mutation when merged groups require redirect resolution', async () => {
+    it('resolves merged groups to their terminal effective groups using set-based recursive query', async () => {
+        const executedQueries = [];
+        const sourceGroup = groupRow({
+            id: '11111111-aaaa-4111-8111-111111111111',
+            fingerprint: 'fp-merged',
+            merged_into: '22222222-bbbb-4222-8222-222222222222',
+        });
+        const terminalGroup = groupRow({
+            id: '22222222-bbbb-4222-8222-222222222222',
+            fingerprint: 'fp-terminal',
+            merged_into: null,
+            occurrence_count: 5,
+        });
         const client = {
-            query: vi.fn(async (sql) => {
-                if (sql.includes('FOR UPDATE OF g')) {
-                    return { rows: [groupRow({ merged_into: '44444444-4444-4444-8444-444444444444' })] };
+            query: vi.fn(async (sql, values) => {
+                executedQueries.push({ sql, values: values ?? [] });
+                if (sql.includes('WITH input(project_id, fingerprint)')) {
+                    return { rows: [sourceGroup] };
+                }
+                if (sql.includes('WITH RECURSIVE merge_chain')) {
+                    return { rows: [{ ...terminalGroup, root_id: sourceGroup.id }] };
+                }
+                if (sql.startsWith('UPDATE error_groups AS g'))
+                    return { rows: [], rowCount: 1 };
+                if (sql.includes('SELECT g.*')) {
+                    return { rows: [terminalGroup] };
                 }
                 return { rows: [], rowCount: 0 };
             }),
         };
         const repository = new ErrorGroupRepository({});
-        await expect(repository.upsertGroupsBatch(client, [item()])).rejects.toThrow('BULK_ERROR_GROUP_MERGED_GROUP_FALLBACK_REQUIRED');
-        expect(client.query).toHaveBeenCalledTimes(1);
+        const result = await repository.upsertGroupsBatch(client, [
+            item({ inputIndex: 0, fingerprint: 'fp-merged' }),
+        ]);
+        expect(result).toHaveLength(1);
+        expect(result[0]?.result.id).toBe(terminalGroup.id);
+        expect(executedQueries.some((q) => q.sql.includes('WITH RECURSIVE merge_chain'))).toBe(true);
+        expect(executedQueries.some((q) => q.sql.includes('UPDATE error_groups AS g'))).toBe(true);
+    });
+    it('guarantees identical global lock acquisition order for permuted input batches', async () => {
+        const executedQueries = [];
+        const client = {
+            query: vi.fn(async (sql, values) => {
+                executedQueries.push({ sql, values: values ?? [] });
+                if (sql.includes('FOR UPDATE OF g')) {
+                    return {
+                        rows: [
+                            groupRow({ fingerprint: 'fp-alpha' }),
+                            groupRow({ fingerprint: 'fp-omega' }),
+                        ],
+                    };
+                }
+                if (sql.startsWith('UPDATE error_groups AS g'))
+                    return { rows: [], rowCount: 2 };
+                if (sql.includes('SELECT g.*')) {
+                    return {
+                        rows: [
+                            groupRow({ fingerprint: 'fp-alpha', occurrence_count: 2 }),
+                            groupRow({ fingerprint: 'fp-omega', occurrence_count: 2 }),
+                        ],
+                    };
+                }
+                return { rows: [], rowCount: 0 };
+            }),
+        };
+        const repository = new ErrorGroupRepository({});
+        // Batch 1 provides reverse alphabetical order [omega, alpha]
+        const batchReverse = [
+            item({ inputIndex: 0, fingerprint: 'fp-omega', eventId: 'evt-omega' }),
+            item({ inputIndex: 1, fingerprint: 'fp-alpha', eventId: 'evt-alpha' }),
+        ];
+        await repository.upsertGroupsBatch(client, batchReverse);
+        // Verify lock query ordered by project_id, fingerprint ASC
+        const lockQuery = executedQueries.find((q) => q.sql.includes('FOR UPDATE OF g'));
+        expect(lockQuery).toBeDefined();
+        expect(lockQuery?.sql).toContain('ORDER BY g.project_id, g.fingerprint');
+        expect(lockQuery?.values).toEqual([projectId, 'fp-alpha', projectId, 'fp-omega']);
     });
 });
 //# sourceMappingURL=error-group.repository.test.js.map

@@ -47,6 +47,8 @@ const RULE_COLS = `
   COALESCE(current_revision, 1) AS current_revision,
   evaluation_category
 `;
+export const ALERT_RULE_CONDITIONS_COLUMNS = 'id, rule_id, condition_type, condition_group_id, field_path, operator, threshold_value, lookback_minutes, aggregate_function, sub_query, is_required, order_index, created_at, updated_at';
+export const ALERT_RULE_ACTIONS_COLUMNS = 'id, rule_id, action_type, priority, order_index, connector_id, route_id, template_id, escalation_policy_id, throttle_duration_seconds, max_notifications_per_hour, action_conditions, is_active, created_at, updated_at';
 export class RulesRepository {
     db;
     bindingsForRevision;
@@ -185,20 +187,18 @@ export class RulesRepository {
         return r.rows[0] ?? null;
     }
     async getRuleConditions(ruleId) {
-        const r = await this.db.query(`SELECT * FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`, [ruleId]);
+        const r = await this.db.query(`SELECT ${ALERT_RULE_CONDITIONS_COLUMNS} FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`, [ruleId]);
         return r.rows;
     }
     async getRuleActions(ruleId) {
-        const r = await this.db.query(`SELECT * FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`, [ruleId]);
+        const r = await this.db.query(`SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`, [ruleId]);
         return r.rows;
     }
     /** Bulk-load active actions for many rules in ONE query (batch worker — no N+1). */
     async getRuleActionsByRuleIds(ruleIds) {
         if (ruleIds.length === 0)
             return [];
-        const r = await this.db.query(`SELECT * FROM alert_rule_actions
-       WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE
-       ORDER BY rule_id, order_index ASC, priority DESC`, [ruleIds]);
+        const r = await this.db.query(`SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE ORDER BY rule_id, order_index ASC, priority DESC`, [ruleIds]);
         return r.rows;
     }
     async listRules(organizationId, query) {

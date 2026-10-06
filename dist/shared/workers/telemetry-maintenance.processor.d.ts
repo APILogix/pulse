@@ -14,6 +14,13 @@
  */
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
+export declare const PARTITIONED_TABLES: readonly ["events_errors", "events_requests", "events_logs", "events_metrics", "events_spans", "events_traces", "events_messages", "events_profiles", "events_replays", "events_cron_checkins"];
+export declare const DEFAULT_RETENTION_MONTHS = 3;
+export declare function partitionName(table: string, year: number, month: number): string;
+export declare function monthBounds(year: number, month: number): {
+    from: string;
+    to: string;
+};
 export declare class TelemetryMaintenanceWorker {
     private readonly pool;
     private readonly log;

@@ -1,4 +1,4 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { pool, withTransaction } from "../../../config/database.js";
 import type { CursorPaginatedResponse } from "./types.js";
 
@@ -25,7 +25,11 @@ export function cursorPage<T extends { created_at: Date }>(
 }
 
 export class BaseRepository {
-  protected readonly db = pool;
+  protected readonly db: Pool;
+
+  constructor(db: Pool = pool) {
+    this.db = db;
+  }
 
   async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     return withTransaction(fn, this.db);

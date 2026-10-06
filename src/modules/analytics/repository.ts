@@ -21,48 +21,52 @@ interface CursorPayload {
  * UNION gives the older project-scoped API a single event list without
  * restoring the removed generic events/request_events/error_events schema.
  */
-const UNIFIED_EVENTS_SQL = `
-  SELECT id,event_id,'error'::text AS type,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text AS method,NULL::text AS url,
-         NULL::numeric AS latency_ms,message,error_name,service,trace_id,user_id
-    FROM events_errors
-  UNION ALL
-  SELECT id,event_id,'request'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,method,url,latency_ms,message,NULL::text,service,trace_id,user_id
-    FROM events_requests
-  UNION ALL
-  SELECT id,event_id,'log'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_logs
-  UNION ALL
-  SELECT id,event_id,'metric'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_metrics
-  UNION ALL
-  SELECT id,event_id,'span'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_spans
-  UNION ALL
-  SELECT id,event_id,'trace'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_traces
-  UNION ALL
-  SELECT id,event_id,'message'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_messages
-  UNION ALL
-  SELECT id,event_id,'profile'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_profiles
-  UNION ALL
-  SELECT id,event_id,'replay'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_replays
-  UNION ALL
-  SELECT id,event_id,'cron_checkin'::text,project_id,environment,occurred_at AS timestamp,
-         payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
-    FROM events_cron_checkins
-`;
+function getUnifiedEventsSql(type?: "error" | "request" | "custom"): string {
+  const errorSql = `
+    SELECT id,event_id,'error'::text AS type,project_id,environment,occurred_at,
+           payload,status_code,NULL::text AS method,NULL::text AS url,
+           NULL::numeric AS latency_ms,message,error_name,service,trace_id,user_id
+      FROM events_errors`;
+
+  const requestSql = `
+    SELECT id,event_id,'request'::text AS type,project_id,environment,occurred_at,
+           payload,status_code,method,url,latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
+      FROM events_requests`;
+
+  const customSql = [
+    `SELECT id,event_id,'log'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text AS method,NULL::text AS url,NULL::numeric AS latency_ms,message,NULL::text AS error_name,service,trace_id,user_id
+       FROM events_logs`,
+    `SELECT id,event_id,'metric'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_metrics`,
+    `SELECT id,event_id,'span'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_spans`,
+    `SELECT id,event_id,'trace'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_traces`,
+    `SELECT id,event_id,'message'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_messages`,
+    `SELECT id,event_id,'profile'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_profiles`,
+    `SELECT id,event_id,'replay'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_replays`,
+    `SELECT id,event_id,'cron_checkin'::text AS type,project_id,environment,occurred_at,
+            payload,status_code,NULL::text,NULL::text,NULL::numeric,message,NULL::text,service,trace_id,user_id
+       FROM events_cron_checkins`,
+  ].join('\nUNION ALL\n');
+
+  if (type === "error") return errorSql;
+  if (type === "request") return requestSql;
+  if (type === "custom") return customSql;
+  return `${errorSql}\nUNION ALL\n${requestSql}\nUNION ALL\n${customSql}`;
+}
+
+const UNIFIED_EVENTS_SQL = getUnifiedEventsSql();
 
 export class AnalyticsRepository {
   private readonly maxLimit = 100;
@@ -96,7 +100,8 @@ export class AnalyticsRepository {
     if (query.searchQuery) {
       params.push(`%${query.searchQuery}%`);
       const searchParam = ++index;
-      where.push(`(e.payload::text ILIKE $${searchParam} OR e.message ILIKE $${searchParam} OR e.url ILIKE $${searchParam})`);
+      // Search on top-level indexed columns; avoid serializing JSONB payload to text on every row
+      where.push(`(e.message ILIKE $${searchParam} OR e.url ILIKE $${searchParam} OR e.error_name ILIKE $${searchParam} OR e.service ILIKE $${searchParam})`);
     }
 
     const cursor = this.decodeCursor(query.cursor);
@@ -110,12 +115,13 @@ export class AnalyticsRepository {
     const limitParam = ++index;
     const order = query.sort === "asc" ? "ASC" : "DESC";
     const whereSql = where.join(" AND ");
+    const unifiedSql = getUnifiedEventsSql(query.type);
 
     return this.withProjectContext(projectId, async (client) => {
       const startedAt = Date.now();
       const result = await client.query(
-        `WITH unified_events AS (${UNIFIED_EVENTS_SQL})
-         SELECT e.id,e.event_id,e.type,e.environment,e.occurred_at,e.method,e.url,
+        `WITH unified_events AS (${unifiedSql})
+         SELECT e.id,e.event_id,e.type,e.environment,e.occurred_at,e.occurred_at AS timestamp,e.method,e.url,
                 e.status_code,e.latency_ms,e.service,e.trace_id,
                 (e.type='error' OR COALESCE(e.status_code,0) >= 500) AS has_error
            FROM unified_events e
@@ -133,7 +139,7 @@ export class AnalyticsRepository {
           eventId: row.event_id,
           type: row.type,
           environment: row.environment,
-          timestamp: row.timestamp,
+          timestamp: row.timestamp ?? row.occurred_at,
           method: row.method,
           url: row.url,
           statusCode: row.status_code,
@@ -153,7 +159,10 @@ export class AnalyticsRepository {
     return this.withProjectContext(projectId, async (client) => {
       const event = await client.query(
         `WITH unified_events AS (${UNIFIED_EVENTS_SQL})
-         SELECT * FROM unified_events
+         SELECT id, event_id, type, project_id, environment, occurred_at,
+                payload, status_code, method, url, latency_ms, message,
+                error_name, service, trace_id, user_id
+           FROM unified_events
           WHERE project_id=$1 AND id=$2
           LIMIT 1`,
         [projectId, eventId],
@@ -306,12 +315,13 @@ export class AnalyticsRepository {
       const startedAt = Date.now();
       const [items, count] = await Promise.all([
         client.query(
-          `SELECT *, total_count AS "occurrenceCount",
+          `SELECT id, organization_id, project_id, fingerprint, error_name, message_template,
+                  first_seen_at, last_seen_at, total_count, today_count, week_count, month_count,
+                  status, assigned_to, services, environments, releases, created_at, updated_at,
+                  total_count AS "occurrenceCount",
                   first_seen_at AS "firstSeenAt",
                   last_seen_at AS "lastSeenAt",
-                  last_error_name AS "lastErrorName", last_error_message AS "lastErrorMessage",
-                  highest_severity AS "highestSeverity", latest_release AS "latestRelease",
-                  is_regression AS "isRegression", (status='resolved') AS is_resolved
+                  (status='resolved') AS is_resolved
              FROM analytics_error_groups
             WHERE ${whereSql}
             ORDER BY last_seen_at DESC
@@ -368,8 +378,7 @@ export class AnalyticsRepository {
         `UPDATE analytics_error_groups
             SET ${sets.join(",")}
           WHERE project_id=$1 AND fingerprint=$2
-          RETURNING *,total_count AS occurrences,last_seen_at AS last_seen,
-                    (status='resolved') AS is_resolved`,
+          RETURNING id, organization_id, project_id, fingerprint, status, first_seen_at, last_seen_at, total_count, sample_error_message, sample_stack_trace, metadata, created_at, updated_at, total_count AS occurrences, last_seen_at AS last_seen, (status='resolved') AS is_resolved`,
         params,
       );
       return result.rows[0] ?? null;

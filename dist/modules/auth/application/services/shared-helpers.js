@@ -102,8 +102,12 @@ export async function generateBackupCodes() {
     return { plain: codes, hashed };
 }
 export function verifyBackupCodeHash(plain, hashed) {
-    // BUG-012 FIX: delegate to bcrypt.compare for constant-time verification.
+    // Synchronous fallback: delegate to bcrypt.compareSync
     return bcrypt.compareSync(plain, hashed);
+}
+export async function verifyBackupCodeHashAsync(plain, hashed) {
+    // Non-blocking async bcrypt verification offloaded to libuv threadpool
+    return bcrypt.compare(plain, hashed);
 }
 export function emailToHash(email) {
     return createHash('sha256').update(normalizeEmail(email)).digest('hex');
@@ -236,7 +240,7 @@ export async function consumeBackupCode(userId, code, ipAddress = '0.0.0.0') {
     const codes = await repository.getUnusedBackupCodes(userId);
     for (const backupCode of codes) {
         const hashedCode = typeof backupCode.code_hash === 'string' ? backupCode.code_hash : '';
-        if (verifyBackupCodeHash(normalized, hashedCode)) {
+        if (await verifyBackupCodeHashAsync(normalized, hashedCode)) {
             await repository.markBackupCodeUsed(backupCode.id, userId, ipAddress);
             return true;
         }

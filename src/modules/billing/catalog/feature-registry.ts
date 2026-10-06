@@ -253,17 +253,17 @@ export const FEATURE_REGISTRY: Readonly<Record<FeatureKey, FeatureDefinition>> =
     supportsUnlimited: true,
     description: "Maximum number of API keys per project for ingestion authentication",
   },
-  /** Total number of events that can be ingested per month */
+  /** Maximum billable credits consumed per calendar month */
   'quota.monthly_events': {
     key: 'quota.monthly_events',
-    name: "Monthly Ingested Events",
+    name: "Monthly Billable Credits",
     type: "integer",
     category: 'quota' as FeatureCategory,
     scope: 'organization' as FeatureScope,
-    unit: "events",
+    unit: "credits",
     enforcementType: 'overage' as EnforcementType,
     supportsUnlimited: true,
-    description: "Total number of events that can be ingested per month",
+    description: "Maximum billable credits consumed per calendar month",
     overageRate: 50,
     overageUnit: 1000,
     gracePercent: 10,

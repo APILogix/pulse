@@ -416,10 +416,7 @@ export class ProjectService extends BaseProjectService {
     // immediately. Revoke all keys so the secrets cannot be reactivated.
     await this.evictProjectApiKeys(projectId);
     await this.repository.withTransaction(async (client) => {
-      const keys = await this.apiKeyRepository.listActiveApiKeyRecords(projectId, undefined, client);
-      for (const key of keys) {
-        await this.apiKeyRepository.revokeApiKey(projectId, key.id, client);
-      }
+      await this.apiKeyRepository.revokeAllActiveProjectApiKeys(projectId, client);
       await this.repository.softDeleteProject(orgId, projectId, userId, client);
     });
 

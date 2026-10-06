@@ -3,6 +3,7 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_SILENCES_COLUMNS = 'id, organization_id, rule_id, created_by, comment, starts_at, ends_at, matchers, is_active, expired_at, created_at, updated_at';
 export class SilencesRepository {
     db;
     /** ADR-0006: silences are control-plane configuration (primary pool). */
@@ -32,7 +33,7 @@ export class SilencesRepository {
     // ── Silences ─────────────────────────────────────────────────────────────
     async createSilence(input) {
         const r = await this.db.query(`INSERT INTO alert_silences (organization_id, rule_id, created_by, comment, starts_at, ends_at, matchers)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [input.organizationId, input.ruleId, input.createdBy, input.comment, input.startsAt, input.endsAt, JSON.stringify(input.matchers)]);
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING ${ALERT_SILENCES_COLUMNS}`, [input.organizationId, input.ruleId, input.createdBy, input.comment, input.startsAt, input.endsAt, JSON.stringify(input.matchers)]);
         return r.rows[0];
     }
     async listSilences(organizationId, active, limit, offset) {
@@ -45,7 +46,7 @@ export class SilencesRepository {
         const where = conditions.join(' AND ');
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_silences WHERE ${where}`, params);
         params.push(limit, offset);
-        const r = await this.db.query(`SELECT * FROM alert_silences WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+        const r = await this.db.query(`SELECT ${ALERT_SILENCES_COLUMNS} FROM alert_silences WHERE ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async expireSilence(organizationId, id) {
@@ -56,10 +57,7 @@ export class SilencesRepository {
     }
     /** Active silences applicable to a rule (rule-specific or global) right now. */
     async findActiveSilences(organizationId, ruleId) {
-        const r = await this.db.query(`SELECT * FROM alert_silences
-       WHERE organization_id=$1 AND is_active=true
-         AND starts_at <= NOW() AND ends_at > NOW()
-         AND (rule_id IS NULL OR rule_id=$2)`, [organizationId, ruleId]);
+        const r = await this.db.query(`SELECT ${ALERT_SILENCES_COLUMNS} FROM alert_silences WHERE organization_id=$1 AND is_active=true AND starts_at <= NOW() AND ends_at > NOW() AND (rule_id IS NULL OR rule_id=$2)`, [organizationId, ruleId]);
         return r.rows;
     }
 }

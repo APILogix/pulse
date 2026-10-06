@@ -67,6 +67,11 @@ export const RawExplorerQuerySchema = z.object({
   isRegression: z.union([z.string(), z.boolean()]).optional(),
   regression: z.union([z.string(), z.boolean()]).optional(),
   release: z.string().optional(),
+  endpoint: z.string().optional(),
+  route: z.string().optional(),
+  sdkVersion: z.string().optional(),
+  appVersion: z.string().optional(),
+  minOccurrences: z.coerce.number().optional(),
 }).strict();
 
 /** Reject tenant and projection controls before endpoint-specific handling. */
@@ -238,9 +243,35 @@ export function buildExplorerQuery(rawInput: unknown, defaultSort: SortClause): 
     explicitFilters.push({ field: 'isRegression', op: 'eq', value: boolVal });
   }
 
+  // Service
+  if (raw.service !== undefined && raw.service.trim().length > 0) {
+    explicitFilters.push({ field: 'service', op: 'eq', value: raw.service.trim() });
+  }
+
+  // Endpoint / Route
+  const rawEndpoint = raw.endpoint ?? raw.route;
+  if (rawEndpoint !== undefined && rawEndpoint.trim().length > 0) {
+    explicitFilters.push({ field: 'endpoint', op: 'eq', value: rawEndpoint.trim() });
+  }
+
   // Release
   if (raw.release !== undefined && raw.release.trim().length > 0) {
-    explicitFilters.push({ field: 'latestRelease', op: 'eq', value: raw.release.trim() });
+    explicitFilters.push({ field: 'release', op: 'eq', value: raw.release.trim() });
+  }
+
+  // SDK Version
+  if (raw.sdkVersion !== undefined && raw.sdkVersion.trim().length > 0) {
+    explicitFilters.push({ field: 'sdkVersion', op: 'eq', value: raw.sdkVersion.trim() });
+  }
+
+  // App Version
+  if (raw.appVersion !== undefined && raw.appVersion.trim().length > 0) {
+    explicitFilters.push({ field: 'appVersion', op: 'eq', value: raw.appVersion.trim() });
+  }
+
+  // Min Occurrences
+  if (raw.minOccurrences !== undefined && !isNaN(raw.minOccurrences) && raw.minOccurrences > 0) {
+    explicitFilters.push({ field: 'occurrenceCount', op: 'gte', value: raw.minOccurrences });
   }
 
   const query: ExplorerQuery = {

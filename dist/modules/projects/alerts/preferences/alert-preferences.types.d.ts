@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { type AlertCategory } from "../subscriptions/connector-subscription.types.js";
 export declare const NotificationChannelSchema: z.ZodEnum<{
+    email: "email";
     push: "push";
     sms: "sms";
-    email: "email";
     webhook: "webhook";
     slack: "slack";
 }>;
@@ -11,10 +11,10 @@ export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
     enabled: z.ZodOptional<z.ZodBoolean>;
     severity_threshold: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     digest_mode: z.ZodOptional<z.ZodString>;
     quiet_hours: z.ZodOptional<z.ZodNullable<z.ZodUnion<readonly [z.ZodObject<{}, z.core.$strict>, z.ZodObject<{
@@ -28,9 +28,9 @@ export declare const UpdateAlertPreferenceBodySchema: z.ZodObject<{
 export type UpdateAlertPreferenceBody = z.infer<typeof UpdateAlertPreferenceBodySchema>;
 export declare const BulkSubscribeBodySchema: z.ZodObject<{
     channel: z.ZodEnum<{
+        email: "email";
         push: "push";
         sms: "sms";
-        email: "email";
         webhook: "webhook";
         slack: "slack";
     }>;

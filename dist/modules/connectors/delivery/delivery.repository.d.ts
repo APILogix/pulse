@@ -25,6 +25,7 @@ export interface RateLimitCheckResult {
     allowed: boolean;
     retryAfterMs: number;
 }
+export declare const DELIVERY_COLUMNS = "\n  id, organization_id, connector_id, route_id, notification_type, severity,\n  payload, payload_size_bytes, status, attempts, max_attempts, scheduled_at,\n  sent_at, delivered_at, failed_at, external_message_id, response_body,\n  response_status_code, error_message, error_details, next_retry_at,\n  retry_count, delivery_latency_ms, correlation_id, parent_delivery_id,\n  created_at, updated_at\n";
 export declare class DeliveryRepository {
     private readonly db;
     /**

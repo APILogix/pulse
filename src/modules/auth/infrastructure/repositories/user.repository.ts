@@ -50,13 +50,31 @@ export function toUser(row: UserDbRow | undefined | null): User | null {
   };
 }
 
+export const USER_COLUMNS = `
+  id, email, email_hash, email_verified, email_verified_at, full_name, avatar_url,
+  password_hash, last_password_change, password_history, status, status_reason,
+  is_admin, current_org_id, mfa_enabled, mfa_enforced_at, mfa_backup_codes_generated_at,
+  login_attempts, locked_until, last_login_at, last_login_ip, last_login_user_agent,
+  last_failed_login_at, last_failed_login_ip, timezone, locale, preferred_mfa_method,
+  accepted_terms_at, accepted_terms_version, accepted_privacy_at, accepted_privacy_version,
+  marketing_consent, marketing_consent_updated_at, data_processing_consent,
+  suspended_at, suspended_by, deleted_at, deleted_by, deletion_reason,
+  deletion_scheduled_at, created_at, updated_at, created_by, version
+`;
+
+export const USER_SUMMARY_COLUMNS = `
+  id, email, email_hash, email_verified, full_name, avatar_url, status, status_reason,
+  is_admin, current_org_id, mfa_enabled, timezone, locale, last_login_at, locked_until,
+  deleted_at, created_at, updated_at, version
+`;
+
 export async function findUserById(
   id: string,
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
   const result = await db.query<UserDbRow>(
-    `SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`,
+    `SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL`,
     [id],
   );
   return toUser(result.rows[0]);
@@ -68,7 +86,7 @@ export async function findUserByEmailHash(
 ): Promise<User | null> {
   const db = client || pool;
   const result = await db.query<UserDbRow>(
-    `SELECT * FROM users WHERE email_hash = $1 AND deleted_at IS NULL`,
+    `SELECT ${USER_COLUMNS} FROM users WHERE email_hash = $1 AND deleted_at IS NULL`,
     [emailHash],
   );
   return toUser(result.rows[0]);
@@ -82,7 +100,10 @@ export async function findUserByIdIncludingDeleted(
   client?: PoolClient,
 ): Promise<User | null> {
   const db = client || pool;
-  const result = await db.query<UserDbRow>(`SELECT * FROM users WHERE id = $1`, [id]);
+  const result = await db.query<UserDbRow>(
+    `SELECT ${USER_COLUMNS} FROM users WHERE id = $1`,
+    [id],
+  );
   return toUser(result.rows[0]);
 }
 
@@ -117,7 +138,7 @@ export async function createUser(
        $9, NOW(),
        TRUE
      )
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [
       data.id,
       data.email,
@@ -173,11 +194,10 @@ export async function updateUser(
   if (fields.length === 0) return findUserById(id, client);
 
   values.push(id);
-  values.push(requestingUserId);
   const result = await db.query<UserDbRow>(
     `UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
-     WHERE id = $${idx++} AND deleted_at IS NULL AND id = $${idx}
-     RETURNING *`,
+     WHERE id = $${idx++} AND deleted_at IS NULL
+     RETURNING ${USER_COLUMNS}`,
     values,
   );
   return toUser(result.rows[0]);
@@ -210,7 +230,7 @@ export async function restoreUser(
      SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL,
          status = 'active', updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NOT NULL
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id],
   );
   return toUser(result.rows[0]);
@@ -235,7 +255,7 @@ export async function suspendUser(
          suspended_by = $3,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id, reason, suspendedBy],
   );
   return toUser(result.rows[0]);
@@ -259,7 +279,7 @@ export async function unsuspendUser(
      WHERE id = $1
        AND deleted_at IS NULL
        AND status = 'suspended'
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id],
   );
   return toUser(result.rows[0]);
@@ -284,7 +304,7 @@ export async function adminLockUser(
      WHERE id = $1
        AND deleted_at IS NULL
        AND status != 'deleted'
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id, `[admin_lock:${lockedBy}] ${reason}`],
   );
   return toUser(result.rows[0]);
@@ -304,7 +324,7 @@ export async function adminUnlockUser(
          login_attempts = 0,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id],
   );
   return toUser(result.rows[0]);
@@ -350,7 +370,7 @@ export async function listUsers(
   );
 
   const usersResult = await db.query<UserDbRow>(
-    `SELECT * FROM users ${whereSql}
+    `SELECT ${USER_SUMMARY_COLUMNS} FROM users ${whereSql}
      ORDER BY created_at DESC, id DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
     [...params, limit, offset],
@@ -422,7 +442,7 @@ export async function recordLogin(
          login_attempts = 0,
          locked_until = NULL,
          updated_at = NOW()
-     WHERE id = $1`,
+     WHERE id = $1 AND deleted_at IS NULL`,
     [id, ip, userAgent],
   );
 }
@@ -443,7 +463,7 @@ export async function updateUserPassword(
          locked_until = NULL,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`,
+     RETURNING ${USER_COLUMNS}`,
     [id, passwordHash, JSON.stringify(passwordHistory)],
   );
   return toUser(result.rows[0]);

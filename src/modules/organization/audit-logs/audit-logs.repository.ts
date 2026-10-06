@@ -56,14 +56,25 @@ export class AuditLogsRepository extends BaseRepository {
     return r.rows;
   }
 
-  async purgeExpiredAuditLogs(): Promise<number> {
-    const r = await this.db.query(
-      `DELETE FROM organization_audit_logs a
-       USING organization_settings s
-       WHERE a.org_id = s.org_id
-         AND a.is_sensitive = FALSE
-         AND a.created_at < NOW() - (s.audit_log_retention_days || ' days')::interval`
-    );
-    return r.rowCount ?? 0;
+  async purgeExpiredAuditLogs(batchSize = 5000): Promise<number> {
+    let totalDeleted = 0;
+    while (true) {
+      const r = await this.db.query(
+        `DELETE FROM organization_audit_logs
+         WHERE id IN (
+           SELECT a.id
+           FROM organization_audit_logs a
+           JOIN organization_settings s ON a.org_id = s.org_id
+           WHERE a.is_sensitive = FALSE
+             AND a.created_at < NOW() - (s.audit_log_retention_days || ' days')::interval
+           LIMIT $1
+         )`,
+        [batchSize]
+      );
+      const count = r.rowCount ?? 0;
+      totalDeleted += count;
+      if (count < batchSize) break;
+    }
+    return totalDeleted;
   }
 }

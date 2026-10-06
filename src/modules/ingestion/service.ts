@@ -46,6 +46,7 @@ import {
   type SdkEventType,
 } from './pipeline/event-normalizer.js';
 import {
+  createEmptyQueueDepthSnapshot,
   enqueueIngestJobs,
   ingestQueueDepth,
   ingestQueueFor,
@@ -95,20 +96,30 @@ const QUOTA_CACHE_MAX_ENTRIES = 10_000;
 // ingest.* queue exactly once per process; races across processes are harmless.
 let provisioningPromise: Promise<void> | null = null;
 let queuesProvisioned = false;
+let lastProvisionAttemptAt = 0;
+const PROVISION_RETRY_INTERVAL_MS = 5000;
 
 function ensureIngestQueuesProvisioned(): Promise<void> {
-  if (!provisioningPromise) {
-    provisioningPromise = provisionIngestQueues()
-      .then(() => {
-        queuesProvisioned = true;
-      })
-      .catch((err) => {
-        queuesProvisioned = false;
-        provisioningPromise = null; // allow retry on the next request
-        svcLogger.error({ err }, 'ingest queue provisioning failed');
-        throw err;
-      });
+  if (queuesProvisioned) return Promise.resolve();
+  if (provisioningPromise) return provisioningPromise;
+
+  const now = Date.now();
+  if (now - lastProvisionAttemptAt < PROVISION_RETRY_INTERVAL_MS) {
+    return Promise.resolve();
   }
+  lastProvisionAttemptAt = now;
+
+  provisioningPromise = provisionIngestQueues()
+    .then(() => {
+      queuesProvisioned = true;
+    })
+    .catch((err) => {
+      queuesProvisioned = false;
+      provisioningPromise = null; // allow retry after interval
+      svcLogger.error({ err }, 'ingest queue provisioning failed');
+      throw err;
+    });
+
   return provisioningPromise;
 }
 
@@ -205,17 +216,7 @@ export class IngestionService {
   // Cached queue-depth probe so request-path backpressure stays O(1). The
   // grouped scan on pgboss.job refreshes in the background; ingestion never
   // waits on this advisory signal.
-  private cachedDepth: IngestQueueDepthSnapshot = {
-    pending: 0,
-    ready: 0,
-    deferred: 0,
-    active: 0,
-    failed: 0,
-    deadLettered: 0,
-    oldestPendingAgeMs: null,
-    perQueue: [],
-    dlqPerQueue: [],
-  };
+  private cachedDepth: IngestQueueDepthSnapshot = createEmptyQueueDepthSnapshot();
   private cachedDepthAt = 0;
   private depthRefreshPromise: Promise<void> | null = null;
 
@@ -998,6 +999,7 @@ export class IngestionService {
         deadLettered,
       },
       perQueue: depth.perQueue,
+      perEventType: depth.perEventType,
       rateLimiterEntries: 0,
       orgRateLimiterEntries: 0,
       quotaCacheEntries: this.quotaCache.size,
@@ -1309,21 +1311,14 @@ export class IngestionService {
       total: string;
       period_start: string | null;
     }>(
-      `SELECT metric.counter_type,
-              SUM(metric.value)::text AS total,
-              MAX(usage.bucket)::text AS period_start
+      `SELECT usage.counter_type,
+              SUM(usage.total_value)::text AS total,
+              MAX(usage.period_start)::text AS period_start
          FROM project_usage_realtime usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('total_bytes', usage.total_bytes::numeric),
-           ('rate_limit_usage', usage.rate_limit_usage::numeric)
-         ) metric(counter_type, value)
         WHERE usage.project_id = $1
-          ${counterType ? "AND metric.counter_type = $2" : ""}
-        GROUP BY metric.counter_type
-        ORDER BY metric.counter_type`,
+          ${counterType ? "AND usage.counter_type = $2" : ""}
+        GROUP BY usage.counter_type
+        ORDER BY usage.counter_type`,
       params,
     );
     return r.rows.map((row) => ({

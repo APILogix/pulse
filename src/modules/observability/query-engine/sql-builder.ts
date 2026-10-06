@@ -217,6 +217,54 @@ export function buildStatisticsStatement(
   return { sql, params: bag.params };
 }
 
+export interface CombinedAggregateStatement {
+  sql: string;
+  params: unknown[];
+  summaryKeys: string[];
+  statsKeys: string[];
+}
+
+/**
+ * Consolidates summary and statistics aggregates into a single SQL statement.
+ * Eliminates redundant table scans, cuts connection pool acquisition in half,
+ * and saves network round-trips over WAN to Neon.
+ */
+export function buildCombinedAggregateStatement(
+  resource: ExplorerResource,
+  ctx: QueryContext,
+  query: ExplorerQuery,
+  freeText: string[],
+): CombinedAggregateStatement | null {
+  const hasSummary = Boolean(resource.summary && Object.keys(resource.summary).length > 0);
+  const hasStats = Boolean(resource.statistics && Object.keys(resource.statistics).length > 0);
+  if (!hasSummary && !hasStats) return null;
+
+  const bag = new ParamBag();
+  const preds = buildScopePredicates(resource, ctx, query, bag, freeText);
+  const selects: string[] = [];
+  const summaryKeys: string[] = [];
+  const statsKeys: string[] = [];
+
+  if (hasSummary) {
+    for (const [name, expr] of Object.entries(resource.summary!)) {
+      if (name.includes('"')) throw new QueryValidationError('Invalid summary alias');
+      summaryKeys.push(name);
+      selects.push(`${expr} AS "s__${name}"`);
+    }
+  }
+
+  if (hasStats) {
+    for (const [name, expr] of Object.entries(resource.statistics!)) {
+      if (name.includes('"')) throw new QueryValidationError('Invalid statistics alias');
+      statsKeys.push(name);
+      selects.push(`${expr} AS "st__${name}"`);
+    }
+  }
+
+  const sql = `SELECT ${selects.join(', ')} FROM ${resource.table} WHERE ${preds.join(' AND ')}`;
+  return { sql, params: bag.params, summaryKeys, statsKeys };
+}
+
 export type TimelineInterval = 'minute' | 'hour' | 'day';
 
 /** Build a bucketed timeline (count + error count) over the filtered window. */

@@ -126,8 +126,12 @@ export function createCronsWorker(watermarks) {
                     WHERE e.organization_id = $1
                       AND e.ingested_at >= $2 AND e.ingested_at < $3
                  )
+            windowed AS (
+              SELECT organization_id, project_id, environment, monitor_slug,
+                     occurred_at, status, duration_ms, rn, prev_at
+                FROM recent
+               WHERE rn <= 20
             ),
-            windowed AS (SELECT * FROM recent WHERE rn <= 20),
             gaps AS (
               SELECT organization_id, project_id, environment, monitor_slug,
                      PERCENTILE_CONT(0.5) WITHIN GROUP (

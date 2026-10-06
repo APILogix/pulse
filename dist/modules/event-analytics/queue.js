@@ -1,56 +1,41 @@
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { logDB } from '../../config/log-database.js';
 import { EventAnalyticsRepository } from './repository.js';
 export const ANALYTICS_JOBS = {
-    rollupHourly: 'analytics.rollup-hourly',
-    errorGrouping: 'analytics.error-grouping',
-    partitionMaintain: 'analytics.partition-maintain',
+    rollupHourly: 'analytics_rollup_hourly',
+    errorGrouping: 'analytics_error_grouping',
+    partitionMaintain: 'analytics_partition_maintain',
 };
-function allJobs(arg) {
-    if (Array.isArray(arg))
-        return arg;
-    return arg ? [arg] : [];
-}
 export async function registerAnalyticsWorkers(logger) {
     const log = logger.child({ component: 'event-analytics-workers' });
     const logDbPool = logDB.getPrimaryPool();
     const repo = new EventAnalyticsRepository(logDbPool);
-    const boss = pgboss;
-    for (const name of Object.values(ANALYTICS_JOBS)) {
-        if (typeof boss.createQueue === 'function')
-            await boss.createQueue(name).catch(() => undefined);
-    }
-    // Per-org hourly rollup (refresh the trailing 2 hours to catch late events).
-    await pgboss.work(ANALYTICS_JOBS.rollupHourly, { localConcurrency: 2, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.allSettled(jobs.map(async (job) => {
-            const end = new Date();
-            const start = new Date(end.getTime() - 2 * 60 * 60 * 1000);
-            await repo.refreshHourlyRollup(job.data.orgId, start, end);
-        }));
-    }));
-    // Per-org error grouping.
-    await pgboss.work(ANALYTICS_JOBS.errorGrouping, { localConcurrency: 2, batchSize: 1 }, (async (arg) => {
-        const jobs = allJobs(arg);
-        await Promise.allSettled(jobs.map((job) => repo.refreshErrorGroups(job.data.orgId, 24)));
-    }));
-    // Partition maintenance — keep a week of daily partitions ahead.
-    await pgboss.work(ANALYTICS_JOBS.partitionMaintain, {}, (async () => {
+    await pgmq.createQueues(Object.values(ANALYTICS_JOBS), { concurrency: 4 });
+    // Per-org hourly rollup
+    const rollupWorker = new PgmqWorker(pgmq, async (msg) => {
+        const end = new Date();
+        const start = new Date(end.getTime() - 2 * 60 * 60 * 1000);
+        await repo.refreshHourlyRollup(msg.message.orgId, start, end);
+    }, { queue: ANALYTICS_JOBS.rollupHourly, batchSize: 1, concurrency: 2 });
+    // Per-org error grouping
+    const errorGroupingWorker = new PgmqWorker(pgmq, async (msg) => {
+        await repo.refreshErrorGroups(msg.message.orgId, 24);
+    }, { queue: ANALYTICS_JOBS.errorGrouping, batchSize: 1, concurrency: 2 });
+    // Partition maintenance
+    const partWorker = new PgmqWorker(pgmq, async () => {
         await logDbPool.query('SELECT create_event_partitions(7)');
         log.info('Daily partitions ensured');
-    }));
-    // ── Fan-out via cron-ish scheduling ──────────────────────────────────────
-    // Every 5 minutes: enqueue hourly rollup + error grouping for orgs with
-    // recent errors. Partition maintenance runs daily.
-    await pgboss.schedule(ANALYTICS_JOBS.partitionMaintain, '0 0 * * *', {}, {});
-    // pg-boss schedule is per-queue; we use a lightweight self-managed interval
-    // to fan out per-org jobs (kept in the worker process, unref'd).
+    }, { queue: ANALYTICS_JOBS.partitionMaintain, batchSize: 1, concurrency: 1 });
+    const workers = [rollupWorker, errorGroupingWorker, partWorker];
+    await Promise.all(workers.map((w) => w.start()));
+    // Fan-out interval
     const fanOut = async () => {
         try {
             const orgs = await repo.listOrgsWithRecentErrors(2);
             await Promise.allSettled(orgs.flatMap((orgId) => [
-                pgboss.send(ANALYTICS_JOBS.rollupHourly, { orgId }, { expireInSeconds: 600 }),
-                pgboss.send(ANALYTICS_JOBS.errorGrouping, { orgId }, { expireInSeconds: 600 }),
+                pgmq.send(ANALYTICS_JOBS.rollupHourly, { orgId }),
+                pgmq.send(ANALYTICS_JOBS.errorGrouping, { orgId }),
             ]));
             if (orgs.length > 0)
                 log.debug({ orgs: orgs.length }, 'Enqueued analytics rollups');
@@ -61,12 +46,12 @@ export async function registerAnalyticsWorkers(logger) {
     };
     const timer = setInterval(() => void fanOut(), 5 * 60 * 1000);
     timer.unref();
-    void fanOut(); // prime immediately
-    log.info('Event-analytics workers registered');
+    void fanOut();
+    log.info('Event-analytics PGMQ workers registered');
     return {
         stop: async () => {
             clearInterval(timer);
-            await pgboss.unschedule(ANALYTICS_JOBS.partitionMaintain).catch(() => undefined);
+            await Promise.all(workers.map((w) => w.stop()));
         },
     };
 }

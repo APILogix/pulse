@@ -11,9 +11,8 @@ type Queryable = {
 /**
  * Cross-process backpressure gauge.
  *
- * After the pg-boss cutover there is no writer-side singleton row: the gauge
- * reads the pg-boss job table directly (pending = created + retry across the
- * ingest.<type> queues), so every API process sees the same live depth. Reads
+ * Reads live queue metrics from Supabase PGMQ (pgmq.metrics_all() across the
+ * ingest_* queues), so every API process sees the same live depth. Reads
  * fail open (return null) so readiness policy decides how to react.
  */
 export declare class BackpressureGauge {

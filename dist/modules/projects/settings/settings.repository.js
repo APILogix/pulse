@@ -1,5 +1,11 @@
 import { pool } from "../../../config/database.js";
 import { ProjectError } from "../shared/utils.js";
+const PROJECT_SETTINGS_COLUMNS = `
+  id, project_id, organization_id, data_retention_days, sampling_rate, allowed_domains, blocked_domains,
+  pii_scrubbing_enabled, ip_collection_enabled, release_tracking_enabled, session_replay_enabled,
+  performance_monitoring_enabled, error_monitoring_enabled, log_ingestion_enabled, metric_ingestion_enabled,
+  trace_ingestion_enabled, profile_ingestion_enabled, version, created_at, updated_at
+`;
 export class SettingsRepository {
     db;
     constructor(db = pool) {
@@ -7,7 +13,7 @@ export class SettingsRepository {
     }
     async findByProjectId(projectId, client) {
         const db = client ?? this.db;
-        const result = await db.query(`SELECT * FROM project_settings WHERE project_id = $1 LIMIT 1`, [projectId]);
+        const result = await db.query(`SELECT ${PROJECT_SETTINGS_COLUMNS} FROM project_settings WHERE project_id = $1 LIMIT 1`, [projectId]);
         return result.rows[0] ? this.mapRow(result.rows[0]) : null;
     }
     async createDefault(projectId, organizationId, client) {
@@ -25,7 +31,7 @@ export class SettingsRepository {
          true, true, 1
        )
        ON CONFLICT (project_id) DO NOTHING
-       RETURNING *`, [projectId, organizationId]);
+       RETURNING ${PROJECT_SETTINGS_COLUMNS}`, [projectId, organizationId]);
         if (result.rows[0])
             return this.mapRow(result.rows[0]);
         const existing = await this.findByProjectId(projectId, client);
@@ -85,7 +91,7 @@ export class SettingsRepository {
         const result = await db.query(`UPDATE project_settings
           SET ${assignments.join(", ")}, updated_at = NOW(), version = version + 1
         WHERE project_id = $${projectIndex}${versionClause}
-        RETURNING *`, values);
+        RETURNING ${PROJECT_SETTINGS_COLUMNS}`, values);
         if (!result.rows[0]) {
             throw new ProjectError(updates.version === undefined ? "SETTINGS_NOT_FOUND" : "PROJECT_CONCURRENT_UPDATE", updates.version === undefined ? "Settings not found" : "Settings were modified concurrently", updates.version === undefined ? 404 : 409);
         }

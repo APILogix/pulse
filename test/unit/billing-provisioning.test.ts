@@ -130,7 +130,7 @@ describe('BillingProvisioningRepository', () => {
     const repository = new BillingProvisioningRepository();
 
     await expect(repository.provisionDefaultSubscription(client, 'org-1')).rejects.toThrow(
-      'Enterprise billing plan entitlement quota.ai_credits',
+      'Business billing plan entitlement quota.ai_credits',
     );
   });
 });

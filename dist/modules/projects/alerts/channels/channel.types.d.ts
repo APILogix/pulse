@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { type QuietHoursConfig } from "./quiet-hours.js";
 export declare const AlertChannelSeveritySchema: z.ZodEnum<{
+    critical: "critical";
     error: "error";
     info: "info";
     warning: "warning";
-    critical: "critical";
 }>;
 export type AlertChannelSeverity = z.infer<typeof AlertChannelSeveritySchema>;
 export declare const AlertChannelDigestModeSchema: z.ZodEnum<{
@@ -71,10 +71,10 @@ export type ToggleProjectAlertChannelBody = z.infer<typeof ToggleProjectAlertCha
 export declare const UpsertMemberAlertChannelPreferenceBodySchema: z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodObject<{
     category: z.ZodDefault<z.ZodString>;
     severityThreshold: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     enabled: z.ZodDefault<z.ZodPipe<z.ZodTransform<unknown, unknown>, z.ZodBoolean>>;
     digestMode: z.ZodDefault<z.ZodEnum<{

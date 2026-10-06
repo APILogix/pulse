@@ -29,12 +29,26 @@ const PROJECT_USAGE_TABLES: Record<UsageBucket, string> = {
   day: 'project_usage_daily',
 };
 
+export const CURRENT_USAGE_COLUMNS = `
+  organization_id, period_start, period_end, events_used, event_limit, remaining_events,
+  ai_credits_used, ai_credit_limit, remaining_ai_credits, projects_used, members_used,
+  api_keys_used, connectors_used, alert_rules_used, dashboards_used
+`;
+
+export const USAGE_DAILY_COUNTER_COLUMNS = `
+  id, organization_id, project_id, usage_date, events_count, ai_credits_used,
+  requests_count, errors_count, traces_count, spans_count, metrics_count,
+  logs_count, profiles_count, replays_count, alert_notifications_count,
+  connector_sends_count, email_sends_count, slack_sends_count, sms_sends_count,
+  webhook_sends_count, created_at, updated_at
+`;
+
 export class UsageRepository {
   constructor(private readonly db: Pool = pool) {}
 
   async getCurrentUsage(orgId: string, db: Db = this.db): Promise<CurrentUsageRow | null> {
     const result = await db.query(
-      `SELECT * FROM v_current_usage WHERE organization_id = $1`,
+      `SELECT ${CURRENT_USAGE_COLUMNS} FROM v_current_usage WHERE organization_id = $1`,
       [orgId]
     );
     return result.rows[0] || null;
@@ -54,14 +68,21 @@ export class UsageRepository {
     return result.rows[0]?.is_member === true;
   }
 
-  async incrementEventUsage(orgId: string, count: number = 1, db: Db = this.db): Promise<void> {
-    await db.query(
-      `SELECT increment_event_usage($1, $2)`,
-      [orgId, count]
-    );
+  async incrementEventUsage(orgId: string, count: number = 1, db: Db = this.db, rawCount?: number): Promise<void> {
+    if (rawCount !== undefined) {
+      await db.query(
+        `SELECT increment_event_usage($1, $2, $3)`,
+        [orgId, count, rawCount]
+      );
+    } else {
+      await db.query(
+        `SELECT increment_event_usage($1, $2)`,
+        [orgId, count]
+      );
+    }
   }
 
-  async getDailyUsageRecords(orgId: string, startDate?: Date, endDate?: Date, db: Db = this.db) {
+  async getDailyUsageRecords(orgId: string, startDate?: Date, endDate?: Date, limit = 365, db: Db = this.db) {
     const values: any[] = [orgId];
     let i = 2;
     const where = ['organization_id = $1'];
@@ -75,8 +96,9 @@ export class UsageRepository {
       values.push(endDate);
     }
 
+    values.push(limit);
     const result = await db.query(
-      `SELECT * FROM usage_daily_counters WHERE ${where.join(' AND ')} ORDER BY usage_date DESC`,
+      `SELECT ${USAGE_DAILY_COUNTER_COLUMNS} FROM usage_daily_counters WHERE ${where.join(' AND ')} ORDER BY usage_date DESC LIMIT $${i}`,
       values
     );
     return result.rows;

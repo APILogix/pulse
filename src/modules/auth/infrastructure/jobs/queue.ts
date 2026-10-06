@@ -1,35 +1,22 @@
 /**
- * Auth automation pg-boss queue wiring.
- *
- * Runs scheduled Postgres-backed housekeeping for auth-owned durable
- * automation tables. This remains Redis-free and safe across multiple worker
- * or standalone cron processes because pg-boss delivers each scheduled job to
- * exactly one consumer.
+ * Auth automation PGMQ queue wiring.
  */
 import type { FastifyBaseLogger } from 'fastify';
-
-import { pgboss } from '../../../../lib/pgboss.js';
+import { pgmq, type PgmqMessage } from '../../../../lib/pgmq.js';
+import { PgmqWorker } from '../../../../lib/pgmq-worker.js';
 import { runDailyAuthAutomation } from './cleanup.js';
 
 export const AUTH_AUTOMATION_JOBS = {
-  daily: 'auth.automation.daily',
+  daily: 'auth_automation_daily',
 } as const;
 
 export interface AuthAutomationSchedule {
-  /** Cron for the daily auth purge pass. Default: 02:15 daily. */
-  dailyCron?: string;
+  dailyIntervalMs?: number;
 }
 
 const DEFAULT_SCHEDULE: Required<AuthAutomationSchedule> = {
-  dailyCron: '15 2 * * *',
+  dailyIntervalMs: 86400_000,
 };
-
-async function safeCreateQueue(name: string): Promise<void> {
-  const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
-  if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name).catch(() => undefined);
-  }
-}
 
 export async function registerAuthAutomationWorkers(
   logger: FastifyBaseLogger,
@@ -38,28 +25,28 @@ export async function registerAuthAutomationWorkers(
   const cfg = { ...DEFAULT_SCHEDULE, ...schedule };
   const log = logger.child({ component: 'auth-automation-workers' });
 
-  await safeCreateQueue(AUTH_AUTOMATION_JOBS.daily);
+  await pgmq.createQueue(AUTH_AUTOMATION_JOBS.daily);
 
-  await pgboss.work(
-    AUTH_AUTOMATION_JOBS.daily,
-    {} as never,
-    (async () => {
+  const worker = new PgmqWorker(
+    pgmq,
+    async () => {
       await runDailyAuthAutomation(log);
-    }) as never,
+    },
+    { queue: AUTH_AUTOMATION_JOBS.daily, batchSize: 1, concurrency: 1 },
   );
+  await worker.start();
 
-  await pgboss.schedule(
-    AUTH_AUTOMATION_JOBS.daily,
-    cfg.dailyCron,
-    {},
-    {} as never,
-  );
+  const timer = setInterval(() => {
+    void pgmq.send(AUTH_AUTOMATION_JOBS.daily, {}).catch(() => {});
+  }, cfg.dailyIntervalMs);
+  timer.unref();
 
-  log.info({ ...cfg }, 'Auth automation cron registered');
+  log.info({ ...cfg }, 'Auth automation worker registered with PGMQ');
 
   return {
     stop: async () => {
-      await pgboss.unschedule(AUTH_AUTOMATION_JOBS.daily).catch(() => undefined);
+      clearInterval(timer);
+      await worker.stop();
     },
   };
 }

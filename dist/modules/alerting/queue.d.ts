@@ -1,35 +1,22 @@
 /**
- * Alerting pg-boss queue wiring (Alerting V2 Canonical Architecture).
+ * Alerting pgmq queue wiring (Alerting V2 Canonical Architecture).
  *
  * Canonical queues:
- *   - alert.telemetry-outbox-relay (relays fast telemetry outbox events)
- *   - alert.evaluate.fast          (fast path rule evaluator)
- *   - alert.evaluate.window        (periodic 5s window evaluator)
- *   - alert.evaluate.operational   (periodic 30s system metrics evaluator)
- *   - alert.evaluate.ai            (periodic 300s AI evaluator)
- *   - alert.error-group-regressed  (fast evaluation on error regressions)
- *   - alert.notification-router    (claims notification jobs & dispatches to connector queues)
- *   - alert.escalate               (snapshot escalation evaluator)
- *   - alert.escalation-sweep       (advances due escalations)
- *   - alert.auto-resolve-sweep     (closes alerts past auto_resolve_at)
- *   - alert.cleanup                (daily retention purge)
+ *   - alert_telemetry_outbox_relay (relays fast telemetry outbox events)
+ *   - alert_evaluate_fast          (fast path rule evaluator)
+ *   - alert_evaluate_window        (periodic 5s window evaluator)
+ *   - alert_evaluate_operational   (periodic 30s system metrics evaluator)
+ *   - alert_evaluate_ai            (periodic 300s AI evaluator)
+ *   - alert_error_group_regressed  (fast evaluation on error regressions)
+ *   - alert_notification_router    (claims notification jobs & dispatches to connector queues)
+ *   - alert_escalate               (snapshot escalation evaluator)
+ *   - alert_escalation_sweep       (advances due escalations)
+ *   - alert_auto_resolve_sweep     (closes alerts past auto_resolve_at)
+ *   - alert_cleanup                (daily retention purge)
  */
 import type { FastifyBaseLogger } from 'fastify';
 import type { Pool } from 'pg';
-export declare const ALERT_JOBS: {
-    readonly cleanup: "alert.cleanup";
-    readonly escalate: "alert.escalate";
-    readonly escalationSweep: "alert.escalation-sweep";
-    readonly autoResolveSweep: "alert.auto-resolve-sweep";
-    readonly evaluateFast: "alert.evaluate.fast";
-    readonly evaluateWindow: "alert.evaluate.window";
-    readonly evaluateOperational: "alert.evaluate.operational";
-    readonly evaluateAi: "alert.evaluate.ai";
-    readonly notificationRouter: "alert.notification-router";
-    readonly telemetryOutboxRelay: "alert.telemetry-outbox-relay";
-    readonly errorGroupRegressed: "alert.error-group-regressed";
-    readonly alertDomainOutboxRelay: "alert.domain-outbox-relay";
-};
+export { ALERT_JOBS, ALERT_DELIVERY_WORKER_JOBS } from './queue-names.js';
 export type AlertingWorkerGroup = 'all' | 'alert-delivery';
 export interface AlertingWorkerConfig {
     group?: AlertingWorkerGroup;
@@ -40,9 +27,8 @@ export interface AlertingWorkerConfig {
     retentionDeliveryAttemptsDays?: number;
     retentionDeadLettersDays?: number;
 }
-export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert.escalate", "alert.escalation-sweep", "alert.auto-resolve-sweep", "alert.evaluate.fast", "alert.evaluate.window", "alert.evaluate.operational", "alert.evaluate.ai", "alert.notification-router", "alert.telemetry-outbox-relay", "alert.error-group-regressed", "alert.domain-outbox-relay"];
 /**
- * Register all Alerting V2 pg-boss workers + timers. Idempotent per process.
+ * Register all Alerting V2 PGMQ workers + dispatch intervals.
  */
 export declare function registerAlertingWorkers(logger: FastifyBaseLogger, config?: AlertingWorkerConfig, _projectSubscriptionResolver?: unknown, telemetryPool?: Pool): Promise<{
     stop: () => Promise<void>;

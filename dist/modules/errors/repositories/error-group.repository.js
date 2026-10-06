@@ -1,4 +1,22 @@
 import { isReleaseEligible, normalizeSeverity, severityRank, } from '../fingerprint.js';
+export const ERROR_GROUP_COLUMNS = `
+  id, public_id, organization_id, project_id, fingerprint, fingerprint_version,
+  status, occurrence_count, first_seen_at, last_seen_at, first_event_id,
+  latest_event_id, latest_event_occurred_at, highest_severity, latest_severity,
+  regression_count, last_regressed_at, latest_release, latest_sdk_version,
+  latest_application_version, latest_environment, latest_service, resolved_at,
+  resolved_release, last_error_message, last_error_name, last_status_code,
+  last_trace_id, last_request_id, merged_into, is_merged, version, created_at, updated_at
+`;
+export const ERROR_GROUP_QUALIFIED_COLUMNS = `
+  g.id, g.public_id, g.organization_id, g.project_id, g.fingerprint, g.fingerprint_version,
+  g.status, g.occurrence_count, g.first_seen_at, g.last_seen_at, g.first_event_id,
+  g.latest_event_id, g.latest_event_occurred_at, g.highest_severity, g.latest_severity,
+  g.regression_count, g.last_regressed_at, g.latest_release, g.latest_sdk_version,
+  g.latest_application_version, g.latest_environment, g.latest_service, g.resolved_at,
+  g.resolved_release, g.last_error_message, g.last_error_name, g.last_status_code,
+  g.last_trace_id, g.last_request_id, g.merged_into, g.is_merged, g.version, g.created_at, g.updated_at
+`;
 function groupKey(projectId, fingerprint) {
     return `${projectId}\u0000${fingerprint}`;
 }
@@ -106,12 +124,7 @@ export class ErrorGroupRepository {
          JOIN input i ON i.project_id = g.project_id AND i.fingerprint = g.fingerprint
         ORDER BY g.project_id, g.fingerprint
         FOR UPDATE OF g`, keyValues);
-        if (existingRows.rows.some((row) => row.merged_into)) {
-            throw new Error('BULK_ERROR_GROUP_MERGED_GROUP_FALLBACK_REQUIRED');
-        }
-        const existingByKey = new Map();
-        for (const row of existingRows.rows)
-            existingByKey.set(groupKey(row.project_id, row.fingerprint), row);
+        const existingByKey = await this.resolveEffectiveGroupsBatch(client, existingRows.rows);
         const createdKeys = new Set();
         const newGroups = aggregateList.filter((group) => !existingByKey.has(group.key));
         if (newGroups.length > 0) {
@@ -157,11 +170,9 @@ export class ErrorGroupRepository {
              JOIN input i ON i.project_id = g.project_id AND i.fingerprint = g.fingerprint
             ORDER BY g.project_id, g.fingerprint
             FOR UPDATE OF g`, racedValues);
-                if (racedExistingRows.rows.some((row) => row.merged_into)) {
-                    throw new Error('BULK_ERROR_GROUP_MERGED_GROUP_FALLBACK_REQUIRED');
-                }
-                for (const row of racedExistingRows.rows)
-                    existingByKey.set(groupKey(row.project_id, row.fingerprint), row);
+                const racedResolved = await this.resolveEffectiveGroupsBatch(client, racedExistingRows.rows);
+                for (const [k, v] of racedResolved)
+                    existingByKey.set(k, v);
             }
         }
         const regressions = [];
@@ -242,9 +253,7 @@ export class ErrorGroupRepository {
        SELECT g.*
          FROM error_groups g
          JOIN input i ON i.project_id = g.project_id AND i.fingerprint = g.fingerprint`, keyValues);
-        const finalByKey = new Map();
-        for (const row of finalRows.rows)
-            finalByKey.set(groupKey(row.project_id, row.fingerprint), row);
+        const finalByKey = await this.resolveEffectiveGroupsBatch(client, finalRows.rows);
         const regressionByInput = new Map(regressions.map((regression) => [regression.inputIndex, regression]));
         const createdGroups = newGroups.filter((group) => createdKeys.has(group.key));
         if (createdGroups.length > 0) {
@@ -367,7 +376,7 @@ export class ErrorGroupRepository {
          $6, $6, $7, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 1
        )
        ON CONFLICT (project_id, fingerprint) DO NOTHING
-       RETURNING *`, [
+       RETURNING ${ERROR_GROUP_COLUMNS}`, [
             organizationId,
             params.projectId,
             params.fingerprint,
@@ -500,7 +509,7 @@ export class ErrorGroupRepository {
         };
     }
     async lockByFingerprint(client, projectId, fingerprint) {
-        const result = await client.query(`SELECT * FROM error_groups
+        const result = await client.query(`SELECT ${ERROR_GROUP_COLUMNS} FROM error_groups
         WHERE project_id = $1 AND fingerprint = $2
         FOR UPDATE`, [projectId, fingerprint]);
         return result.rows[0] ?? null;
@@ -512,12 +521,56 @@ export class ErrorGroupRepository {
             if (visited.has(current.id))
                 throw new Error('ERROR_GROUP_MERGE_CYCLE');
             visited.add(current.id);
-            const result = await client.query(`SELECT * FROM error_groups WHERE id = $1 FOR UPDATE`, [current.merged_into]);
+            const result = await client.query(`SELECT ${ERROR_GROUP_COLUMNS} FROM error_groups WHERE id = $1 FOR UPDATE`, [current.merged_into]);
             if (!result.rows[0])
                 throw new Error('ERROR_GROUP_MERGE_TARGET_NOT_FOUND');
             current = result.rows[0];
         }
         return current;
+    }
+    async resolveEffectiveGroupsBatch(client, rows) {
+        const directRows = rows.filter((r) => !r.merged_into);
+        const mergedRows = rows.filter((r) => !!r.merged_into);
+        const effectiveByGroupKey = new Map();
+        for (const r of directRows) {
+            effectiveByGroupKey.set(groupKey(r.project_id, r.fingerprint), r);
+        }
+        if (mergedRows.length === 0) {
+            return effectiveByGroupKey;
+        }
+        const mergedIds = mergedRows.map((r) => r.id);
+        const recursiveRes = await client.query(`WITH RECURSIVE merge_chain AS (
+         SELECT id, project_id, fingerprint, merged_into, id AS root_id, 1 AS depth
+           FROM error_groups
+          WHERE id = ANY($1::uuid[])
+
+         UNION ALL
+
+         SELECT target.id, target.project_id, target.fingerprint, target.merged_into, mc.root_id, mc.depth + 1
+           FROM error_groups target
+           JOIN merge_chain mc ON mc.merged_into = target.id
+          WHERE mc.depth < 10
+       )
+       SELECT DISTINCT ON (mc.root_id) ${ERROR_GROUP_QUALIFIED_COLUMNS}, mc.root_id
+         FROM merge_chain mc
+         JOIN error_groups g ON g.id = mc.id
+        WHERE mc.merged_into IS NULL
+        ORDER BY mc.root_id, mc.depth DESC
+        FOR UPDATE OF g`, [mergedIds]);
+        const terminalByRootId = new Map();
+        for (const row of recursiveRes.rows) {
+            terminalByRootId.set(row.root_id, row);
+        }
+        for (const source of mergedRows) {
+            const terminal = terminalByRootId.get(source.id);
+            if (terminal) {
+                effectiveByGroupKey.set(groupKey(source.project_id, source.fingerprint), terminal);
+            }
+            else {
+                effectiveByGroupKey.set(groupKey(source.project_id, source.fingerprint), source);
+            }
+        }
+        return effectiveByGroupKey;
     }
     isNewer(incomingAt, incomingId, currentAt, currentId) {
         return incomingAt > currentAt || (incomingAt.getTime() === currentAt.getTime() && incomingId > currentId);
@@ -577,7 +630,7 @@ export class ErrorGroupRepository {
         ]);
     }
     async findByFingerprint(projectId, fingerprint) {
-        const result = await this.pool.query(`SELECT * FROM error_groups WHERE project_id = $1 AND fingerprint = $2`, [projectId, fingerprint]);
+        const result = await this.pool.query(`SELECT ${ERROR_GROUP_COLUMNS} FROM error_groups WHERE project_id = $1 AND fingerprint = $2`, [projectId, fingerprint]);
         return result.rows[0] ? this.mapToDomain(result.rows[0]) : null;
     }
     async resolve(client, projectId, id, release) {

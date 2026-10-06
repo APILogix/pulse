@@ -1,11 +1,9 @@
 /**
- * Billing pg-boss queue wiring.
- *
- * Schedules are stored in Postgres and delivered to one worker, so the billing
- * jobs are safe across horizontally scaled worker and cron processes.
+ * Billing PGMQ queue wiring.
  */
 import type { FastifyBaseLogger } from 'fastify';
 import type { BillingJobConfig } from './jobs/types.js';
+export declare function billingQueueName(name: string): string;
 export declare function registerBillingJobWorkers(logger: FastifyBaseLogger, config?: BillingJobConfig): Promise<{
     stop: () => Promise<void>;
 }>;

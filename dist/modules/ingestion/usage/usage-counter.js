@@ -1,3 +1,4 @@
+import { isExpectedServerlessDisconnect, isTransientPostgresError } from '../../../config/postgres-ssl.js';
 const REALTIME_COLUMNS = {
     events: 'total_events',
     total_events: 'total_events',
@@ -23,6 +24,8 @@ export class UsageCounter {
     flushRequested = false;
     stopped = false;
     schemaReady = null;
+    // Hard bound to guarantee memory cannot grow without limit under sustained sink failure
+    static MAX_BUFFER_HARD_LIMIT = 20_000;
     constructor(pool, log, opts = {}) {
         this.pool = pool;
         this.log = log;
@@ -47,10 +50,19 @@ export class UsageCounter {
         const eventType = dimensions.eventType?.trim() || 'all';
         const key = [projectId, orgId, counterType, apiKeyId ?? '', eventType].join('\u0000');
         const existing = this.buffer.get(key);
-        if (existing)
-            existing.value += by;
-        else
-            this.buffer.set(key, { projectId, orgId, counterType, value: by, apiKeyId, eventType });
+        if (existing) {
+            existing.value = Math.round((existing.value + by) * 10000) / 10000;
+        }
+        else {
+            if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT) {
+                const oldestKey = this.buffer.keys().next().value;
+                if (oldestKey !== undefined) {
+                    this.buffer.delete(oldestKey);
+                }
+                this.log.warn({ bufferSize: this.buffer.size, hardLimit: UsageCounter.MAX_BUFFER_HARD_LIMIT }, 'UsageCounter buffer reached hard cap; evicted oldest entry to bound memory');
+            }
+            this.buffer.set(key, { projectId, orgId, counterType, value: Math.round(by * 10000) / 10000, apiKeyId, eventType });
+        }
         if (this.buffer.size >= this.bufferLimit) {
             void this.flush().catch(() => undefined);
         }
@@ -78,6 +90,24 @@ export class UsageCounter {
         this.flushPromise = tracked;
         return tracked;
     }
+    async executeWithRetry(sql, params, maxRetries = 2) {
+        let attempt = 0;
+        while (true) {
+            try {
+                return await this.pool.query(sql, params);
+            }
+            catch (err) {
+                attempt++;
+                if (attempt <= maxRetries && isTransientPostgresError(err)) {
+                    const delayMs = Math.min(2000, 150 * 2 ** (attempt - 1));
+                    this.log.debug({ attempt, maxRetries, delayMs, err: err instanceof Error ? err.message : String(err) }, 'Transient database error in UsageCounter query; retrying...');
+                    await new Promise((resolve) => setTimeout(resolve, delayMs));
+                    continue;
+                }
+                throw err;
+            }
+        }
+    }
     async flushOnce() {
         if (this.buffer.size === 0) {
             await this.runRollup();
@@ -102,12 +132,15 @@ export class UsageCounter {
                 tuples.push(`($${parameter++}, $${parameter++}, $${parameter++}, $${parameter++}, $${parameter++}, $${parameter++})`);
                 params.push(entry.projectId, entry.orgId, entry.apiKeyId, entry.eventType, entry.counterType, entry.value);
             }
-            await this.pool.query(`INSERT INTO usage_counter_staging (
+            await this.executeWithRetry(`INSERT INTO usage_counter_staging (
            project_id, org_id, api_key_id, event_type, counter_type, increment_by
          ) VALUES ${tuples.join(', ')}`, params);
         }
         catch (err) {
             for (const [key, entry] of draining) {
+                if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT && !this.buffer.has(key)) {
+                    continue; // Respect hard cap on re-buffering
+                }
                 const current = this.buffer.get(key);
                 if (current)
                     current.value += entry.value;
@@ -115,7 +148,8 @@ export class UsageCounter {
                     this.buffer.set(key, entry);
             }
             const bufferedEntries = this.buffer.size;
-            this.log.warn({
+            const isExpected = isExpectedServerlessDisconnect(err);
+            this.log[isExpected ? 'debug' : 'warn']({
                 err,
                 bufferedEntries,
                 bufferLimit: this.bufferLimit,
@@ -128,7 +162,7 @@ export class UsageCounter {
         await this.runRollup();
     }
     async ensureSchema() {
-        this.schemaReady ??= this.pool.query(`
+        this.schemaReady ??= this.executeWithRetry(`
       CREATE UNLOGGED TABLE IF NOT EXISTS usage_counter_staging (
         id BIGSERIAL PRIMARY KEY,
         project_id UUID NOT NULL,
@@ -136,7 +170,7 @@ export class UsageCounter {
         api_key_id UUID,
         event_type TEXT NOT NULL DEFAULT 'all',
         counter_type VARCHAR(64) NOT NULL,
-        increment_by BIGINT NOT NULL DEFAULT 1 CHECK (increment_by > 0),
+        increment_by NUMERIC(14, 4) NOT NULL DEFAULT 1 CHECK (increment_by > 0),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
@@ -165,7 +199,7 @@ export class UsageCounter {
             return;
         try {
             for (let i = 0; i < 20; i++) {
-                const result = await this.pool.query('SELECT flushed_count FROM flush_usage_counters()');
+                const result = await this.executeWithRetry('SELECT flushed_count FROM flush_usage_counters()');
                 if (result.rowCount === 0)
                     break;
             }
@@ -182,7 +216,7 @@ export class UsageCounter {
         const bucketClause = periodStart ? ' AND bucket = $2' : '';
         if (periodStart)
             params.push(periodStart);
-        const result = await this.pool.query(`SELECT COALESCE(SUM(${column}), 0)::text AS total_value
+        const result = await this.executeWithRetry(`SELECT COALESCE(SUM(${column}), 0)::text AS total_value
          FROM project_usage_realtime
         WHERE project_id = $1${bucketClause}`, params);
         return Number(result.rows[0]?.total_value ?? 0);

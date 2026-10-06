@@ -17,6 +17,7 @@ This hub links directly to the detailed **Architecture**, **Working & Operations
 
 ## 🔬 Performance Forensics
 
+- [Backend Startup Forensics, Pooling & Worker Upgrade Guide](./STARTUP_ROOT_CAUSE_POOLING_AND_WORKERS_GUIDE.md) — exact root-cause analysis of startup slowness (sequential cloud queries, pool exhaustion, migration verification), connection pool inventory, background worker mechanics, and future upgrade runbook.
 - [Ingestion Pipeline Performance Forensics & Optimization Record](./ingestion-performance-forensics.md) — root-cause analysis of ingestion latency (connection starvation, transaction hold time, lock ordering, write amplification), the changes implemented, and the remaining bottleneck ranking.
 
 ---

@@ -16,7 +16,13 @@ export const DRAFT_MIGRATIONS_DIR = path.resolve(
   '../../src/db/postgres/canonical_migrations_draft',
 );
 
+export const PRIMARY_MIGRATIONS_DIR = path.resolve(
+  __dirname,
+  '../../database/primarydbv2/migrations',
+);
+
 export const CANDIDATE_MIGRATION_DIRS = [
+  PRIMARY_MIGRATIONS_DIR,
   CANONICAL_SCHEMA_DIR,
   DRAFT_MIGRATIONS_DIR,
   path.resolve(__dirname, '../../src/db/postgres/canonical_migrations'),
@@ -190,11 +196,118 @@ export function migrationHasExplicitTransaction(sql: string): boolean {
   return normalized.startsWith('BEGIN;') && normalized.includes('COMMIT;');
 }
 
+export function migrationRequiresNoTransaction(sql: string): boolean {
+  return /CONCURRENTLY/i.test(sql);
+}
+
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let inString = false;
+  let inDollarQuote: string | null = null;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i];
+    const nextChar = sql[i + 1] || '';
+
+    if (inLineComment) {
+      current += char;
+      if (char === '\n') inLineComment = false;
+      continue;
+    }
+
+    if (inBlockComment) {
+      current += char;
+      if (char === '*' && nextChar === '/') {
+        current += '/';
+        i += 1;
+        inBlockComment = false;
+      }
+      continue;
+    }
+
+    if (!inString && !inDollarQuote) {
+      if (char === '-' && nextChar === '-') {
+        inLineComment = true;
+        current += '--';
+        i += 1;
+        continue;
+      }
+      if (char === '/' && nextChar === '*') {
+        inBlockComment = true;
+        current += '/*';
+        i += 1;
+        continue;
+      }
+      if (char === '$') {
+        const match = sql.slice(i).match(/^(\$[a-zA-Z0-9_]*\$)/);
+        if (match) {
+          inDollarQuote = match[1];
+          current += inDollarQuote;
+          i += inDollarQuote.length - 1;
+          continue;
+        }
+      }
+      if (char === "'") {
+        inString = true;
+        current += char;
+        continue;
+      }
+      if (char === ';') {
+        if (current.trim().length > 0) {
+          statements.push(current.trim());
+          current = '';
+        }
+        continue;
+      }
+    } else if (inString) {
+      current += char;
+      if (char === "'") {
+        if (nextChar === "'") {
+          current += "'";
+          i += 1;
+        } else {
+          inString = false;
+        }
+      }
+      continue;
+    } else if (inDollarQuote) {
+      current += char;
+      if (char === '$' && sql.slice(i).startsWith(inDollarQuote)) {
+        current += inDollarQuote.slice(1);
+        i += inDollarQuote.length - 1;
+        inDollarQuote = null;
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (current.trim().length > 0) {
+    statements.push(current.trim());
+  }
+
+  return statements;
+}
+
 export async function applyMigrationSql(
   client: PoolClient,
   filename: string,
   sql: string,
 ): Promise<void> {
+  if (migrationRequiresNoTransaction(sql)) {
+    const statements = splitSqlStatements(sql);
+    for (const stmt of statements) {
+      if (stmt.trim().length > 0) {
+        await client.query(stmt);
+      }
+    }
+    return;
+  }
+
   if (migrationHasExplicitTransaction(sql)) {
     await client.query(sql);
     return;

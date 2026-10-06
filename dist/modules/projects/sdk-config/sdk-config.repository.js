@@ -15,20 +15,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { pool } from "../../../config/database.js";
-function mapRevision(row) {
-    return {
-        revisionNo: row.revision_number,
-        requestedConfig: row.requested_config ?? {},
-        compiledSnapshot: row.compiled_snapshot,
-        canonicalSha256: row.config_hash,
-        changeType: row.change_type,
-        rolledBackToRevision: row.rolled_back_to_revision,
-    };
-}
-const REVISION_COLS = `
-  revision_number, requested_config, compiled_snapshot, config_hash,
-  change_type, rolled_back_to_revision
-`;
+import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 export class PgConfigStore {
     db;
     constructor(db = pool) {
@@ -43,7 +30,12 @@ export class PgConfigStore {
             return result;
         }
         catch (error) {
-            await client.query("ROLLBACK");
+            try {
+                await client.query("ROLLBACK");
+            }
+            catch {
+                // preserve original error
+            }
             throw error;
         }
         finally {
@@ -51,37 +43,74 @@ export class PgConfigStore {
         }
     }
     async loadCurrent(scope) {
-        const result = await this.db.query(`SELECT h.current_revision, ${REVISION_COLS}
-         FROM project_environment_sdk_configs h
-         JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
-        WHERE h.organization_id = $1 AND h.environment_id = $2`, [scope.organizationId, scope.environmentId]);
+        const headResult = await this.db.query(`SELECT current_revision, version AS draft_version
+         FROM project_environment_sdk_configs
+        WHERE organization_id = $1 AND environment_id = $2
+        LIMIT 1`, [scope.organizationId, scope.environmentId]);
+        const headRow = headResult.rows[0];
+        if (!headRow)
+            return null;
+        const revResult = await this.db.query(`SELECT revision_number, requested_config, compiled_snapshot,
+              config_hash AS canonical_sha256, change_type, rolled_back_to_revision
+         FROM project_environment_sdk_config_revisions
+        WHERE organization_id = $1 AND environment_id = $2 AND revision_number = $3
+        LIMIT 1`, [scope.organizationId, scope.environmentId, headRow.current_revision]);
+        const revRow = revResult.rows[0];
+        if (!revRow)
+            return null;
+        return {
+            head: {
+                currentRevisionNo: headRow.current_revision,
+                draftVersion: headRow.draft_version,
+            },
+            current: {
+                revisionNo: revRow.revision_number,
+                requestedConfig: revRow.requested_config,
+                compiledSnapshot: revRow.compiled_snapshot,
+                canonicalSha256: revRow.canonical_sha256,
+                changeType: revRow.change_type,
+                rolledBackToRevision: revRow.rolled_back_to_revision,
+            },
+        };
+    }
+    async loadRevision(scope, revisionNo) {
+        const result = await this.db.query(`SELECT revision_number, requested_config, compiled_snapshot,
+              config_hash AS canonical_sha256, change_type, rolled_back_to_revision
+         FROM project_environment_sdk_config_revisions
+        WHERE organization_id = $1 AND environment_id = $2 AND revision_number = $3
+        LIMIT 1`, [scope.organizationId, scope.environmentId, revisionNo]);
         const row = result.rows[0];
         if (!row)
             return null;
-        return { head: { currentRevisionNo: row.current_revision, draftVersion: 0 }, current: mapRevision(row) };
-    }
-    async loadRevision(scope, revisionNo) {
-        const result = await this.db.query(`SELECT ${REVISION_COLS}
-         FROM project_environment_sdk_config_revisions r
-         JOIN project_environment_sdk_configs h ON h.id = r.config_id
-        WHERE h.organization_id = $1 AND h.environment_id = $2 AND r.revision_number = $3`, [scope.organizationId, scope.environmentId, revisionNo]);
-        return result.rows[0] ? mapRevision(result.rows[0]) : null;
+        return {
+            revisionNo: row.revision_number,
+            requestedConfig: row.requested_config,
+            compiledSnapshot: row.compiled_snapshot,
+            canonicalSha256: row.canonical_sha256,
+            changeType: row.change_type,
+            rolledBackToRevision: row.rolled_back_to_revision,
+        };
     }
     async appendRevision(scope, input) {
-        return this.withTx(async (client) => {
-            const head = await client.query(`SELECT id, current_revision FROM project_environment_sdk_configs
-          WHERE organization_id = $1 AND environment_id = $2 FOR UPDATE`, [scope.organizationId, scope.environmentId]);
-            const headRow = head.rows[0];
-            if (!headRow)
+        const result = await this.withTx(async (client) => {
+            // Row lock the head so concurrent publishes serialize cleanly
+            const head = await client.query(`SELECT id, current_revision
+           FROM project_environment_sdk_configs
+          WHERE organization_id = $1 AND environment_id = $2
+            FOR UPDATE`, [scope.organizationId, scope.environmentId]);
+            if (!head.rows[0]) {
                 throw new Error("SDK config head not found for environment");
-            const revisionNo = headRow.current_revision + 1;
+            }
+            const revisionNo = head.rows[0].current_revision + 1;
+            const revisionId = randomUUID();
             const inserted = await client.query(`INSERT INTO project_environment_sdk_config_revisions(
-           config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_hash,
-           change_type, rolled_back_to_revision, published_by
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           id, config_id, organization_id, project_id, environment_id, revision_number,
+           requested_config, compiled_snapshot, config_hash, change_type,
+           rolled_back_to_revision, published_by
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING id`, [
-                headRow.id,
+                revisionId,
+                head.rows[0].id,
                 scope.organizationId,
                 scope.projectId,
                 scope.environmentId,
@@ -117,16 +146,12 @@ export class PgConfigStore {
                 },
             };
         });
+        // Invalidate Redis caches on successful append
+        void redisLookupCache.invalidateSdkConfig(scope.environmentId, scope.organizationId, scope.projectId, scope.environmentKey);
+        void redisLookupCache.invalidateRemoteConfig(scope.projectId, scope.environmentKey);
+        return result;
     }
     async initialize(scope, revision, createdBy) {
-        // Environments are normally provisioned with their SDK config head +
-        // revision 1 inside the application service transaction (SdkConfigProvisioner).
-        // This method backfills/repairs when a head is somehow absent and is
-        // otherwise idempotent.
-        //
-        // `published_revision_id` is NOT NULL with a DEFERRABLE INITIALLY DEFERRED FK
-        // to the revisions table, so we mint both UUIDs up front and insert the head
-        // FIRST (pointing at the revision id); the deferred FK is validated at COMMIT.
         const existing = await this.loadCurrent(scope);
         if (existing)
             return existing;
@@ -137,7 +162,7 @@ export class PgConfigStore {
            id, organization_id, project_id, environment_id, published_revision_id,
            current_revision, current_hash, schema_version, created_by, updated_by
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-         ON CONFLICT (environment_id) DO NOTHING
+         ON CONFLICT (organization_id, environment_id) DO NOTHING
          RETURNING id`, [
                 headId,
                 scope.organizationId,
@@ -166,12 +191,21 @@ export class PgConfigStore {
                 revision.canonicalSha256,
             ]);
         });
+        // Invalidate Redis caches on initialize
+        void redisLookupCache.invalidateSdkConfig(scope.environmentId, scope.organizationId, scope.projectId, scope.environmentKey);
+        void redisLookupCache.invalidateRemoteConfig(scope.projectId, scope.environmentKey);
         const created = await this.loadCurrent(scope);
         if (!created)
             throw new Error("Failed to initialize SDK config head");
         return created;
     }
     async loadCompiledByEnvironment(organizationId, environmentId) {
+        // 1. Fast-Path: Check Redis Cache
+        const cached = await redisLookupCache.getCompiledConfigByEnv(environmentId);
+        if (cached) {
+            return cached;
+        }
+        // 2. Slow-Path: Query PostgreSQL Database
         const result = await this.db.query(`SELECT r.revision_number, r.compiled_snapshot
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
@@ -180,14 +214,23 @@ export class PgConfigStore {
         WHERE h.organization_id = $1 AND h.environment_id = $2
           AND e.is_active = TRUE AND e.deleted_at IS NULL`, [organizationId, environmentId]);
         const row = result.rows[0];
-        return row
-            ? {
-                revisionNo: row.revision_number,
-                compiledSnapshot: row.compiled_snapshot,
-            }
-            : null;
+        if (!row)
+            return null;
+        const data = {
+            revisionNo: row.revision_number,
+            compiledSnapshot: row.compiled_snapshot,
+        };
+        // Populate Redis cache asynchronously
+        void redisLookupCache.setCompiledConfigByEnv(environmentId, data);
+        return data;
     }
     async loadCompiledBySdkMetadata(organizationId, projectId, environment) {
+        // 1. Fast-Path: Check Redis Cache
+        const cached = await redisLookupCache.getCompiledConfigByMeta(organizationId, projectId, environment);
+        if (cached) {
+            return cached;
+        }
+        // 2. Slow-Path: Query PostgreSQL Database
         const result = await this.db.query(`SELECT r.revision_number, h.environment_id, r.compiled_snapshot
          FROM project_environment_sdk_configs h
          JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
@@ -201,13 +244,20 @@ export class PgConfigStore {
           AND p.status = 'active' AND p.deleted_at IS NULL
           AND e.is_active = TRUE AND e.deleted_at IS NULL`, [organizationId, projectId, environment]);
         const row = result.rows[0];
-        return row
-            ? {
-                revisionNo: row.revision_number,
-                environmentId: row.environment_id,
-                compiledSnapshot: row.compiled_snapshot,
-            }
-            : null;
+        if (!row)
+            return null;
+        const data = {
+            revisionNo: row.revision_number,
+            environmentId: row.environment_id,
+            compiledSnapshot: row.compiled_snapshot,
+        };
+        // Populate Redis cache asynchronously
+        void redisLookupCache.setCompiledConfigByMeta(organizationId, projectId, environment, data);
+        void redisLookupCache.setCompiledConfigByEnv(row.environment_id, {
+            revisionNo: row.revision_number,
+            compiledSnapshot: row.compiled_snapshot,
+        });
+        return data;
     }
 }
 //# sourceMappingURL=sdk-config.repository.js.map

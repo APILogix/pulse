@@ -13,6 +13,7 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
 import { type AlertSilenceRow } from '../types.js';
+export declare const ALERT_SILENCES_COLUMNS = "id, organization_id, rule_id, created_by, comment, starts_at, ends_at, matchers, is_active, expired_at, created_at, updated_at";
 export declare class SilencesRepository {
     private readonly db;
     /** ADR-0006: silences are control-plane configuration (primary pool). */

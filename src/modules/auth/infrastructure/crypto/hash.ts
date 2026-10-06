@@ -24,7 +24,9 @@ export function generateEmailFlowToken(): string {
   return generateSecureToken(48); // EMAIL_FLOW_TOKEN_BYTES
 }
 
-export const FAKE_BCRYPT_HASH = bcrypt.hashSync(generateSecureToken(16), 12);
+// Precomputed valid bcrypt hash with cost 12. Eliminates ~514ms synchronous event-loop
+// freeze during module loading while preserving timing-safe password comparison against user enumeration.
+export const FAKE_BCRYPT_HASH = '$2b$12$wlOhNJvKxQ3Jz/fAIFtyU.ndcQfpS8fF/.2oPkIadNMBj/G5DnxWa';
 export async function timingSafeFakePasswordCompare(candidate: string): Promise<void> {
   await bcrypt.compare(candidate, FAKE_BCRYPT_HASH);
 }

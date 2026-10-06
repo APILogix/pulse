@@ -1,5 +1,10 @@
 import { pool } from '../../../config/database.js';
 import { BillingProvider, InvoiceStatus, PaymentStatus } from '../shared/types.js';
+export const INVOICE_COLUMNS = `
+  id, organization_id, subscription_id, provider, provider_invoice_id, invoice_number,
+  status, currency, subtotal_amount, tax_amount, discount_amount, total_amount,
+  amount_paid, period_start, period_end, due_at, paid_at, pdf_url, created_at
+`;
 export class InvoicesRepository {
     db;
     constructor(db = pool) {
@@ -32,16 +37,16 @@ export class InvoicesRepository {
         const total = countResult.rows[0]?.total ?? 0;
         const dataValues = [...values, options.limit, options.offset];
         const limitOffsetParams = options.status ? `LIMIT $3 OFFSET $4` : `LIMIT $2 OFFSET $3`;
-        const result = await db.query(`SELECT * FROM invoices WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`, dataValues);
+        const result = await db.query(`SELECT ${INVOICE_COLUMNS} FROM invoices WHERE ${whereClause} ORDER BY created_at DESC ${limitOffsetParams}`, dataValues);
         return { data: result.rows, total };
     }
     async getInvoiceById(orgId, invoiceId, db = this.db) {
-        const result = await db.query(`SELECT * FROM invoices WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`, [invoiceId, orgId]);
+        const result = await db.query(`SELECT ${INVOICE_COLUMNS} FROM invoices WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`, [invoiceId, orgId]);
         return result.rows[0] || null;
     }
     async getUpcomingInvoicePreview(orgId, db = this.db) {
         const result = await db.query(`WITH active_subscription AS (
-         SELECT os.*
+         SELECT os.id, os.organization_id, os.plan_id, os.billing_interval, os.current_period_end, os.status, os.created_at
          FROM organization_subscriptions os
          WHERE os.organization_id = $1
            AND os.status IN ('trialing','active','past_due')
@@ -53,7 +58,7 @@ export class InvoicesRepository {
          LIMIT 1
        ),
        price AS (
-         SELECT pp.*
+         SELECT pp.currency, pp.amount_minor, pp.is_default, pp.starts_at, pp.created_at
          FROM plan_prices pp
          JOIN active_subscription os ON os.plan_id = pp.plan_id
          WHERE pp.billing_interval = os.billing_interval
@@ -64,10 +69,10 @@ export class InvoicesRepository {
          LIMIT 1
        ),
        usage AS (
-         SELECT *
-         FROM organization_usage_current_period
-         WHERE organization_id = $1
-         ORDER BY period_end DESC
+         SELECT usage.organization_id, usage.events_used, usage.event_limit, usage.ai_credits_used, usage.ai_credit_limit, usage.overage_events, usage.overage_ai_credits
+         FROM organization_usage_current_period usage
+         WHERE usage.organization_id = $1
+         ORDER BY usage.period_end DESC
          LIMIT 1
        )
        SELECT jsonb_build_object(
@@ -102,7 +107,7 @@ export class InvoicesRepository {
         return result.rows[0]?.preview ?? null;
     }
     async getInvoiceByIdForUpdate(orgId, invoiceId, db) {
-        const result = await db.query(`SELECT * FROM invoices
+        const result = await db.query(`SELECT ${INVOICE_COLUMNS} FROM invoices
        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
        FOR UPDATE`, [invoiceId, orgId]);
         return result.rows[0] || null;
@@ -156,7 +161,7 @@ export class InvoicesRepository {
            metadata = metadata || jsonb_build_object('last_payment_id', $4::uuid),
            updated_at = NOW()
        WHERE id = $1 AND organization_id = $2
-       RETURNING *`, [invoice.id, invoice.organization_id, amountDue, paymentResult.rows[0].id]);
+       RETURNING ${INVOICE_COLUMNS}`, [invoice.id, invoice.organization_id, amountDue, paymentResult.rows[0].id]);
         if (invoice.subscription_id && invoiceResult.rows[0]?.status === InvoiceStatus.PAID) {
             await db.query(`UPDATE organization_subscriptions
          SET status = CASE WHEN status = 'past_due' THEN 'active' ELSE status END,

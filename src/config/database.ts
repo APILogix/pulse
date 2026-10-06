@@ -1,6 +1,11 @@
+import './dns.js';
 import { Pool, type PoolClient } from 'pg';
 import { env } from './env.js';
 import { logger } from './logger.js';
+import {
+  getSafePostgresConnectionMetadata,
+  withPostgresAddressFamily,
+} from './postgres-network.js';
 import {
   isExpectedServerlessDisconnect,
   isTransientPostgresError,
@@ -24,12 +29,13 @@ if (!env.DATABASE_URL) {
  * - client-side query timeout is disabled by default because it can abort healthy
  *   remote queries during cold starts or transient network latency
  */
-export const pool = new Pool({
+const primarySsl = resolvePostgresSslConfig(env.DATABASE_URL, {
+  enabled: env.DB_SSL_ENABLED,
+  rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
+});
+const primaryPoolConfig = withPostgresAddressFamily({
   connectionString: sanitizePostgresConnectionString(env.DATABASE_URL),
-  ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
-    enabled: env.DB_SSL_ENABLED,
-    rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
-  }),
+  ssl: primarySsl,
   max: env.DB_POOL_MAX,
   min: env.DB_POOL_MIN,
   idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
@@ -39,7 +45,47 @@ export const pool = new Pool({
   application_name: `api_monitoring_${env.NODE_ENV}`,
   keepAlive: true,
   keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
-});
+}, env.DB_FAMILY);
+
+export const pool = new Pool(primaryPoolConfig);
+
+// Resilient pool.query: Automatically retries on transient connection drops
+// (e.g. Neon serverless idle socket termination, PgBouncer drop, ECONNRESET).
+const rawPoolQuery = pool.query.bind(pool);
+(pool as any).query = async function (textOrConfig: any, values?: any, callback?: any) {
+  if (typeof values === 'function' || typeof callback === 'function') {
+    return (rawPoolQuery as any)(textOrConfig, values, callback);
+  }
+  const maxRetries = 3;
+  let attempt = 0;
+  while (true) {
+    try {
+      return await (rawPoolQuery as any)(textOrConfig, values);
+    } catch (err: any) {
+      attempt++;
+      if (attempt <= maxRetries && isTransientPostgresError(err)) {
+        const delayMs = 150 * attempt;
+        dbLogger.debug(
+          { attempt, maxRetries, delayMs, err: err?.message || String(err) },
+          'Transient database connection error in pool.query; retrying...',
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+};
+
+dbLogger.info(
+  getSafePostgresConnectionMetadata(env.DATABASE_URL, {
+    family: env.DB_FAMILY,
+    ssl: primarySsl,
+    poolMax: env.DB_POOL_MAX,
+    poolMin: env.DB_POOL_MIN,
+  }),
+  'Primary PostgreSQL configuration',
+);
 
 // Pool lifecycle events — only actionable events are logged.
 // 'acquire' is intentionally omitted: it fires on every query and produces
@@ -85,15 +131,29 @@ pool.on('error', (err: Error) => {
  * Should be called during bootstrap BEFORE the HTTP server starts listening.
  */
 export const connectDB = async (): Promise<void> => {
-  const client = await pool.connect();
-  try {
-    const res = await client.query('SELECT NOW() AS time, current_database() AS db');
-    dbLogger.info(
-      { db: res.rows[0]?.db, serverTime: res.rows[0]?.time },
-      'Primary database connected',
-    );
-  } finally {
-    client.release();
+  const maxRetries = 3;
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await pool.query('SELECT NOW() AS time, current_database() AS db');
+      dbLogger.info(
+        { db: res.rows[0]?.db, serverTime: res.rows[0]?.time },
+        'Primary database connected',
+      );
+      return;
+    } catch (err) {
+      attempt++;
+      if (attempt <= maxRetries && isTransientPostgresError(err)) {
+        const delayMs = 200 * attempt;
+        dbLogger.warn(
+          { attempt, maxRetries, delayMs, err: (err as any)?.message || String(err) },
+          'Transient database connection drop during connectDB; retrying...',
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw err;
+    }
   }
 };
 
@@ -103,14 +163,14 @@ export const connectDB = async (): Promise<void> => {
  * before or during connection checkout.
  * Slow queries (>1s) are logged at warn level for investigation.
  */
-export const query = async (text: string, params?: any[]) => {
+export const query = async <T extends import('pg').QueryResultRow = any>(text: string, params?: any[]): Promise<import('pg').QueryResult<T>> => {
   const maxRetries = 2;
   let attempt = 0;
 
   while (true) {
     const start = Date.now();
     try {
-      const result = await pool.query(text, params);
+      const result = await pool.query<T>(text, params);
       const duration = Date.now() - start;
 
       if (duration > 1000) {

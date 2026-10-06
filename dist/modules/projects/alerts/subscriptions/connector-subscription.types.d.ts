@@ -33,10 +33,10 @@ export declare const CreateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         deployment: "deployment";
     }>>>;
     severityThreshold: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     memberIds: z.ZodDefault<z.ZodArray<z.ZodString>>;
     channelOverrides: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
@@ -65,10 +65,10 @@ export declare const UpdateProjectConnectorSubscriptionBodySchema: z.ZodPipe<z.Z
         deployment: "deployment";
     }>>>;
     severityThreshold: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     memberIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
     channelOverrides: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;

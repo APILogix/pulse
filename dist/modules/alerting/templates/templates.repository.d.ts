@@ -13,6 +13,7 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
 import { type AlertTemplateRow } from '../types.js';
+export declare const ALERT_TEMPLATES_COLUMNS = "id, organization_id, name, template_type, content, variables_schema, default_for_severity, connector_type, is_default, sample_data, created_at, updated_at, deleted_at";
 export declare class TemplatesRepository {
     private readonly db;
     /** ADR-0006: templates are control-plane configuration. */

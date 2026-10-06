@@ -1,4 +1,5 @@
 import { logDB } from '../../config/log-database.js';
+import { pool } from '../../config/database.js';
 import { isPublicId } from '../../shared/utils/public-id-generator.js';
 import { buildDetailProjection, buildPublicProjection, projectPublicRow, } from './query-engine/index.js';
 import { errorsResource } from './resources/index.js';
@@ -283,34 +284,73 @@ export class ObservabilityRepository {
             return value;
         }
     }
+    errorGroupMatchPredicate(params, groupId, fingerprint) {
+        const isUuid = (val) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+        if (groupId && fingerprint) {
+            params.push(groupId, fingerprint);
+            const gidParam = `$${params.length - 1}`;
+            const fpParam = `$${params.length}`;
+            if (isUuid(groupId)) {
+                return ` AND (error_group_id = ${gidParam}::uuid OR error_group_id IN (SELECT id FROM error_groups WHERE organization_id = $1 AND merged_into = ${gidParam}::uuid) OR ${this.errorGroupPublicIdPredicate(gidParam)} OR fingerprint = ${fpParam})`;
+            }
+            return ` AND (error_group_id::text = ${gidParam} OR error_group_id IN (SELECT id FROM error_groups WHERE organization_id = $1 AND merged_into::text = ${gidParam}) OR ${this.errorGroupPublicIdPredicate(gidParam)} OR fingerprint = ${fpParam})`;
+        }
+        if (groupId) {
+            params.push(groupId);
+            const gidParam = `$${params.length}`;
+            if (isUuid(groupId)) {
+                return ` AND (error_group_id = ${gidParam}::uuid OR error_group_id IN (SELECT id FROM error_groups WHERE organization_id = $1 AND merged_into = ${gidParam}::uuid) OR ${this.errorGroupPublicIdPredicate(gidParam)})`;
+            }
+            return ` AND (error_group_id::text = ${gidParam} OR error_group_id IN (SELECT id FROM error_groups WHERE organization_id = $1 AND merged_into::text = ${gidParam}) OR ${this.errorGroupPublicIdPredicate(gidParam)})`;
+        }
+        if (fingerprint) {
+            params.push(fingerprint);
+            return ` AND fingerprint = $${params.length}`;
+        }
+        return '';
+    }
     /**
      * Fetch related error telemetry events from `events_errors` for an error group.
      */
     async getRelatedErrorEvents(ctx, groupId, fingerprint, limit = 50) {
         const params = [ctx.organizationId];
         let sql = `
-      SELECT id, public_id, occurred_at, message, severity, handled, route, status_code, trace_id,
-             (SELECT t.public_id FROM events_traces t WHERE t.trace_id = events_errors.trace_id LIMIT 1) AS trace_public_id
+      SELECT id, public_id, occurred_at, message, severity, handled, route, status_code, trace_id
       FROM events_errors
       WHERE organization_id = $1
     `;
-        if (groupId && fingerprint) {
-            params.push(groupId, fingerprint);
-            sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
-        }
-        else if (groupId) {
-            params.push(groupId);
-            sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
-        }
-        else if (fingerprint) {
-            params.push(fingerprint);
-            sql += ` AND fingerprint = $2`;
-        }
+        sql += this.errorGroupMatchPredicate(params, groupId, fingerprint);
         sql += this.projectPredicate(ctx, params);
         params.push(Math.max(1, Math.min(Math.trunc(limit), 100)));
         sql += ` ORDER BY occurred_at DESC LIMIT $${params.length}`;
         const result = await logDB.queryWithRetry(sql, params, { operation: 'read' });
-        return result.rows.map((r) => ({
+        const errorRows = result.rows;
+        if (errorRows.length === 0)
+            return [];
+        const traceIds = Array.from(new Set(errorRows
+            .map((r) => r.trace_id)
+            .filter((t) => typeof t === 'string' && t.length > 0)));
+        let minOccurredAt;
+        let maxOccurredAt;
+        for (const r of errorRows) {
+            if (r.occurred_at instanceof Date) {
+                if (!minOccurredAt || r.occurred_at < minOccurredAt)
+                    minOccurredAt = r.occurred_at;
+                if (!maxOccurredAt || r.occurred_at > maxOccurredAt)
+                    maxOccurredAt = r.occurred_at;
+            }
+            else if (typeof r.occurred_at === 'string') {
+                const d = new Date(r.occurred_at);
+                if (!isNaN(d.getTime())) {
+                    if (!minOccurredAt || d < minOccurredAt)
+                        minOccurredAt = d;
+                    if (!maxOccurredAt || d > maxOccurredAt)
+                        maxOccurredAt = d;
+                }
+            }
+        }
+        const tracePublicIdMap = await this.fetchTracePublicIdMap(ctx, traceIds, minOccurredAt && maxOccurredAt ? { minOccurredAt, maxOccurredAt } : undefined);
+        return errorRows.map((r) => ({
             id: r.id,
             publicId: r.public_id ?? null,
             occurredAt: r.occurred_at,
@@ -320,7 +360,7 @@ export class ObservabilityRepository {
             route: r.route ?? '',
             statusCode: r.status_code ?? 500,
             traceId: r.trace_id ?? '',
-            tracePublicId: r.trace_public_id ?? null,
+            tracePublicId: r.trace_id ? (tracePublicIdMap.get(r.trace_id) ?? null) : null,
         }));
     }
     /**
@@ -333,18 +373,7 @@ export class ObservabilityRepository {
       FROM events_errors
       WHERE organization_id = $1 AND stack_frames IS NOT NULL
     `;
-        if (groupId && fingerprint) {
-            params.push(groupId, fingerprint);
-            sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
-        }
-        else if (groupId) {
-            params.push(groupId);
-            sql += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
-        }
-        else if (fingerprint) {
-            params.push(fingerprint);
-            sql += ` AND fingerprint = $2`;
-        }
+        sql += this.errorGroupMatchPredicate(params, groupId, fingerprint);
         sql += this.projectPredicate(ctx, params);
         sql += ` ORDER BY occurred_at DESC LIMIT 1`;
         const result = await logDB.queryWithRetry(sql, params, { operation: 'read' });
@@ -376,18 +405,7 @@ export class ObservabilityRepository {
     async getErrorGroupTrends(ctx, groupId, fingerprint) {
         const params = [ctx.organizationId];
         let whereClause = `WHERE organization_id = $1`;
-        if (groupId && fingerprint) {
-            params.push(groupId, fingerprint);
-            whereClause += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')} OR fingerprint = $3)`;
-        }
-        else if (groupId) {
-            params.push(groupId);
-            whereClause += ` AND (error_group_id::text = $2 OR ${this.errorGroupPublicIdPredicate('$2')})`;
-        }
-        else if (fingerprint) {
-            params.push(fingerprint);
-            whereClause += ` AND fingerprint = $2`;
-        }
+        whereClause += this.errorGroupMatchPredicate(params, groupId, fingerprint);
         whereClause += this.projectPredicate(ctx, params);
         // 24h Hourly buckets
         const sql24h = `
@@ -396,28 +414,20 @@ export class ObservabilityRepository {
       ${whereClause} AND occurred_at >= NOW() - INTERVAL '24 hours'
       GROUP BY bucket ORDER BY bucket ASC
     `;
-        // 7d Daily buckets
-        const sql7d = `
-      SELECT date_trunc('day', occurred_at) AS bucket, COUNT(*)::int AS count
-      FROM events_errors
-      ${whereClause} AND occurred_at >= NOW() - INTERVAL '7 days'
-      GROUP BY bucket ORDER BY bucket ASC
-    `;
-        // 30d Daily buckets
+        // 30d Daily buckets (7d trend is derived from the last 7 buckets of this query, eliminating a redundant full scan)
         const sql30d = `
       SELECT date_trunc('day', occurred_at) AS bucket, COUNT(*)::int AS count
       FROM events_errors
       ${whereClause} AND occurred_at >= NOW() - INTERVAL '30 days'
       GROUP BY bucket ORDER BY bucket ASC
     `;
-        const [res24h, res7d, res30d] = await Promise.all([
+        const [res24h, res30d] = await Promise.all([
             logDB.queryWithRetry(sql24h, params, { operation: 'read' }).catch(() => ({ rows: [] })),
-            logDB.queryWithRetry(sql7d, params, { operation: 'read' }).catch(() => ({ rows: [] })),
             logDB.queryWithRetry(sql30d, params, { operation: 'read' }).catch(() => ({ rows: [] })),
         ]);
         const trend24h = (res24h.rows.length > 0 ? res24h.rows.map((r) => r.count) : Array(24).fill(0));
-        const trend7d = (res7d.rows.length > 0 ? res7d.rows.map((r) => r.count) : Array(7).fill(0));
         const trend30d = (res30d.rows.length > 0 ? res30d.rows.map((r) => r.count) : Array(7).fill(0));
+        const trend7d = (trend30d.length >= 7 ? trend30d.slice(-7) : trend30d);
         return { trend24h, trend7d, trend30d };
     }
     /**
@@ -521,19 +531,6 @@ export class ObservabilityRepository {
             SET occurrence_count = occurrence_count + $1, version = version + 1, updated_at = NOW()
           WHERE id = $2 AND organization_id = $3
           RETURNING id, organization_id, project_id, fingerprint, status, occurrence_count, version, updated_at`, [sourceOccurrences, targetGroupId, ctx.organizationId]);
-            const eventParams = [targetGroupId, sourceGroupId, ctx.organizationId];
-            let eventScope = '';
-            if (ctx.projectId) {
-                eventParams.push(ctx.projectId);
-                eventScope = ` AND project_id = $${eventParams.length}`;
-            }
-            else if (ctx.allowedProjectIds !== undefined) {
-                eventParams.push(ctx.allowedProjectIds);
-                eventScope = ` AND project_id = ANY($${eventParams.length})`;
-            }
-            await client.query(`UPDATE events_errors
-            SET error_group_id = $1
-          WHERE error_group_id = $2 AND organization_id = $3${eventScope}`, eventParams);
             await client.query(`INSERT INTO error_group_history (group_id, action, old_value, new_value, actor_id, metadata)
          VALUES ($1, 'merged', $2, $3, $4, $5),
                 ($6, 'merged', $7, $8, $4, $9)`, [
@@ -553,7 +550,7 @@ export class ObservabilityRepository {
     /**
      * Batch resolve trace public_ids for an array of trace_ids.
      */
-    async fetchTracePublicIdMap(ctx, traceIds) {
+    async fetchTracePublicIdMap(ctx, traceIds, timeRange) {
         const map = new Map();
         const cleanTraceIds = Array.from(new Set(traceIds.filter((t) => typeof t === 'string' && t.length > 0)));
         if (cleanTraceIds.length === 0)
@@ -561,45 +558,87 @@ export class ObservabilityRepository {
         const params = [ctx.organizationId, cleanTraceIds.slice(0, 200)];
         let sql = `SELECT trace_id, public_id FROM events_traces
                WHERE organization_id = $1 AND trace_id = ANY($2::text[])`;
+        if (timeRange?.minOccurredAt && timeRange?.maxOccurredAt) {
+            params.push(new Date(timeRange.minOccurredAt.getTime() - 24 * 60 * 60 * 1000));
+            sql += ` AND occurred_at >= $${params.length}`;
+            params.push(new Date(timeRange.maxOccurredAt.getTime() + 60 * 60 * 1000));
+            sql += ` AND occurred_at <= $${params.length}`;
+        }
         sql += this.projectPredicate(ctx, params);
         const rows = await this.run(sql, params);
         for (const r of rows) {
             if (r.trace_id && r.public_id)
                 map.set(r.trace_id, r.public_id);
         }
+        // Fallback: If any traces were not found within the temporal window, query without the window for just those missing traceIds
+        const missing = cleanTraceIds.filter((t) => !map.has(t));
+        if (missing.length > 0 && timeRange) {
+            const fallbackParams = [ctx.organizationId, missing.slice(0, 200)];
+            let fallbackSql = `SELECT trace_id, public_id FROM events_traces
+                         WHERE organization_id = $1 AND trace_id = ANY($2::text[])`;
+            fallbackSql += this.projectPredicate(ctx, fallbackParams);
+            const fallbackRows = await this.run(fallbackSql, fallbackParams);
+            for (const r of fallbackRows) {
+                if (r.trace_id && r.public_id)
+                    map.set(r.trace_id, r.public_id);
+            }
+        }
         return map;
     }
     /**
      * Batch resolve latest event public_ids for an array of error group IDs or public IDs.
+     * Resolves group UUIDs first via error_groups table, then queries events_errors directly
+     * using indexed error_group_id without Cartesian joins or disk-spill sorting (OBS-Q005).
      */
     async fetchLatestEventPublicIdMap(ctx, groupIds) {
         const map = new Map();
         const cleanIds = Array.from(new Set(groupIds.filter((g) => typeof g === 'string' && g.length > 0)));
         if (cleanIds.length === 0)
             return map;
-        const params = [ctx.organizationId, cleanIds.slice(0, 200)];
-        let sql = `SELECT DISTINCT ON (e.error_group_id) e.error_group_id, eg.public_id AS error_group_public_id, e.public_id
-               FROM events_errors e
-               LEFT JOIN error_groups eg
-                 ON eg.organization_id = e.organization_id
-                AND (
-                  eg.id = e.error_group_id
-                  OR (
-                    eg.fingerprint = e.fingerprint
-                    AND eg.project_id IS NOT DISTINCT FROM e.project_id
-                  )
-                )
-              WHERE e.organization_id = $1
-                AND (e.error_group_id::text = ANY($2::text[]) OR eg.public_id = ANY($2::text[]))`;
-        sql += this.projectPredicate(ctx, params, 'e');
-        sql += ` ORDER BY e.error_group_id, e.occurred_at DESC`;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const groupToPublicId = new Map();
+        const resolvedGroupUuids = new Set();
+        for (const id of cleanIds) {
+            if (uuidRegex.test(id)) {
+                resolvedGroupUuids.add(id);
+            }
+        }
+        // Step 1: Resolve error_groups mapping for requested IDs (both UUIDs and public_ids)
+        const egParams = [ctx.organizationId, cleanIds.slice(0, 200)];
+        let egSql = `SELECT id, public_id
+                 FROM error_groups
+                 WHERE organization_id = $1
+                   AND (id::text = ANY($2::text[]) OR public_id = ANY($2::text[]))`;
+        egSql += this.projectPredicate(ctx, egParams);
+        const egRows = await this.run(egSql, egParams);
+        for (const r of egRows) {
+            if (r.id) {
+                resolvedGroupUuids.add(r.id);
+                if (r.public_id) {
+                    groupToPublicId.set(r.id, r.public_id);
+                    groupToPublicId.set(r.public_id, r.id);
+                }
+            }
+        }
+        if (resolvedGroupUuids.size === 0)
+            return map;
+        // Step 2: Query events_errors directly with indexed error_group_id without any join
+        const targetUuids = Array.from(resolvedGroupUuids).slice(0, 200);
+        const params = [ctx.organizationId, targetUuids];
+        let sql = `SELECT DISTINCT ON (error_group_id) error_group_id, public_id
+               FROM events_errors
+               WHERE organization_id = $1
+                 AND error_group_id = ANY($2::uuid[])`;
+        sql += this.projectPredicate(ctx, params);
+        sql += ` ORDER BY error_group_id, occurred_at DESC`;
         const rows = await this.run(sql, params);
         for (const r of rows) {
-            if (r.public_id) {
-                if (r.error_group_id)
-                    map.set(r.error_group_id, r.public_id);
-                if (r.error_group_public_id)
-                    map.set(r.error_group_public_id, r.public_id);
+            if (r.public_id && r.error_group_id) {
+                map.set(r.error_group_id, r.public_id);
+                const pubId = groupToPublicId.get(r.error_group_id);
+                if (pubId) {
+                    map.set(pubId, r.public_id);
+                }
             }
         }
         return map;
@@ -615,11 +654,20 @@ export class ObservabilityRepository {
         if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanSlug)) {
             return cleanSlug;
         }
-        const params = [ctx.organizationId, cleanSlug];
-        const sql = `SELECT id FROM projects WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`;
+        // 1. Try LogDB project_lookup (fastest path on read database)
         try {
-            const rows = await logDB.queryWithRetry(sql, params, { operation: 'read' });
-            return rows.rows[0]?.id ?? null;
+            const res = await logDB.queryWithRetry('SELECT project_id FROM project_lookup WHERE organization_id = $1 AND slug = $2 LIMIT 1', [ctx.organizationId, cleanSlug], { operation: 'read' });
+            if (res.rows[0]?.project_id) {
+                return res.rows[0].project_id;
+            }
+        }
+        catch {
+            // Fallback below
+        }
+        // 2. Fallback to Primary DB projects table (canonical authority)
+        try {
+            const res = await pool.query('SELECT id FROM projects WHERE org_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1', [ctx.organizationId, cleanSlug]);
+            return res.rows[0]?.id ?? null;
         }
         catch {
             return null;

@@ -157,6 +157,40 @@ export function buildStatisticsStatement(resource, ctx, query, freeText) {
     const sql = `SELECT ${selects.join(', ')} FROM ${resource.table} WHERE ${preds.join(' AND ')}`;
     return { sql, params: bag.params };
 }
+/**
+ * Consolidates summary and statistics aggregates into a single SQL statement.
+ * Eliminates redundant table scans, cuts connection pool acquisition in half,
+ * and saves network round-trips over WAN to Neon.
+ */
+export function buildCombinedAggregateStatement(resource, ctx, query, freeText) {
+    const hasSummary = Boolean(resource.summary && Object.keys(resource.summary).length > 0);
+    const hasStats = Boolean(resource.statistics && Object.keys(resource.statistics).length > 0);
+    if (!hasSummary && !hasStats)
+        return null;
+    const bag = new ParamBag();
+    const preds = buildScopePredicates(resource, ctx, query, bag, freeText);
+    const selects = [];
+    const summaryKeys = [];
+    const statsKeys = [];
+    if (hasSummary) {
+        for (const [name, expr] of Object.entries(resource.summary)) {
+            if (name.includes('"'))
+                throw new QueryValidationError('Invalid summary alias');
+            summaryKeys.push(name);
+            selects.push(`${expr} AS "s__${name}"`);
+        }
+    }
+    if (hasStats) {
+        for (const [name, expr] of Object.entries(resource.statistics)) {
+            if (name.includes('"'))
+                throw new QueryValidationError('Invalid statistics alias');
+            statsKeys.push(name);
+            selects.push(`${expr} AS "st__${name}"`);
+        }
+    }
+    const sql = `SELECT ${selects.join(', ')} FROM ${resource.table} WHERE ${preds.join(' AND ')}`;
+    return { sql, params: bag.params, summaryKeys, statsKeys };
+}
 /** Build a bucketed timeline (count + error count) over the filtered window. */
 export function buildTimelineStatement(resource, ctx, query, freeText, interval) {
     const bag = new ParamBag();

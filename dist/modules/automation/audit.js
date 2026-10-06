@@ -21,6 +21,11 @@ function toAuditRow(r) {
         occurredAt: r.occurred_at,
     };
 }
+export const AUTOMATION_AUDIT_LOG_COLUMNS = `
+  id, organization_id, project_id, workflow_id, run_id, step_id, approval_id,
+  actor_user_id, actor_type, action, entity_type, entity_id, request_id,
+  ip_address, user_agent, before_state, after_state, metadata, occurred_at
+`;
 export class AutomationAuditRepository {
     db;
     constructor(db) {
@@ -36,7 +41,7 @@ export class AutomationAuditRepository {
          actor_user_id, actor_type, action, entity_type, entity_id,
          request_id, ip_address, user_agent, before_state, after_state, metadata)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::inet,$14,$15::jsonb,$16::jsonb,$17::jsonb)
-       RETURNING *`, [
+       RETURNING ${AUTOMATION_AUDIT_LOG_COLUMNS}`, [
             params.organizationId,
             params.projectId ?? null,
             params.workflowId ?? null,
@@ -83,7 +88,7 @@ export class AutomationAuditRepository {
         const countR = await db.query(`SELECT COUNT(*)::int AS total FROM automation_audit_logs WHERE ${where}`, params);
         const total = countR.rows[0]?.total ?? 0;
         const dataParams = [...params, q.limit, q.offset];
-        const dataR = await db.query(`SELECT * FROM automation_audit_logs WHERE ${where}
+        const dataR = await db.query(`SELECT ${AUTOMATION_AUDIT_LOG_COLUMNS} FROM automation_audit_logs WHERE ${where}
        ORDER BY occurred_at DESC
        LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
         return { data: dataR.rows.map(toAuditRow), total };

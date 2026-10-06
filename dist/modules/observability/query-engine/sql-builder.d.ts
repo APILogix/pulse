@@ -35,6 +35,18 @@ export declare function buildListStatement(resource: ExplorerResource, ctx: Quer
 export declare function buildSummaryStatement(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery, freeText: string[]): BuiltStatement | null;
 /** Build the statistics aggregate statement from the resource's `statistics`. */
 export declare function buildStatisticsStatement(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery, freeText: string[]): BuiltStatement | null;
+export interface CombinedAggregateStatement {
+    sql: string;
+    params: unknown[];
+    summaryKeys: string[];
+    statsKeys: string[];
+}
+/**
+ * Consolidates summary and statistics aggregates into a single SQL statement.
+ * Eliminates redundant table scans, cuts connection pool acquisition in half,
+ * and saves network round-trips over WAN to Neon.
+ */
+export declare function buildCombinedAggregateStatement(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery, freeText: string[]): CombinedAggregateStatement | null;
 export type TimelineInterval = 'minute' | 'hour' | 'day';
 /** Build a bucketed timeline (count + error count) over the filtered window. */
 export declare function buildTimelineStatement(resource: ExplorerResource, ctx: QueryContext, query: ExplorerQuery, freeText: string[], interval: TimelineInterval): BuiltStatement;

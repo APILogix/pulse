@@ -5,7 +5,46 @@ import {
   BillingFeatureDisabledError,
   BillingQuotaExceededError,
 } from '../../src/modules/billing/entitlements/errors.js';
-import type { EffectiveEntitlementRow, EntitlementsRepository } from '../../src/modules/billing/entitlements/repository.js';
+import {
+  buildEffectiveEntitlementsSql,
+  EntitlementsRepository,
+  type EffectiveEntitlementRow,
+} from '../../src/modules/billing/entitlements/repository.js';
+
+describe('EntitlementsRepository query optimization (BIL-Q011)', () => {
+  it('builds SQL with feature predicate pushdown for single and array feature lookups', () => {
+    const singleSql = buildEffectiveEntitlementsSql({ paramIndex: 2 });
+    expect(singleSql).toContain('AND bf.feature_key = $2');
+
+    const arraySql = buildEffectiveEntitlementsSql({ paramIndex: 2, isArray: true });
+    expect(arraySql).toContain('AND bf.feature_key = ANY($2::text[])');
+
+    const fullSql = buildEffectiveEntitlementsSql();
+    expect(fullSql).not.toContain('AND bf.feature_key =');
+  });
+
+  it('resolves multiple features in a single getFeaturesMap call', async () => {
+    const mockDb = {
+      query: vi.fn().mockResolvedValue({
+        rows: [
+          { organization_id: 'org-123', feature_key: 'alerting.enabled', boolean_value: true },
+          { organization_id: 'org-123', feature_key: 'quota.connectors', integer_value: 10 },
+        ],
+      }),
+    };
+
+    const repo = new EntitlementsRepository(mockDb as any);
+    const map = await repo.getFeaturesMap('org-123', ['alerting.enabled', 'quota.connectors']);
+
+    expect(mockDb.query).toHaveBeenCalledTimes(1);
+    expect(mockDb.query).toHaveBeenCalledWith(
+      expect.stringContaining('AND bf.feature_key = ANY($2::text[])'),
+      ['org-123', ['alerting.enabled', 'quota.connectors']]
+    );
+    expect(map.get('alerting.enabled')?.boolean_value).toBe(true);
+    expect(map.get('quota.connectors')?.integer_value).toBe(10);
+  });
+});
 
 describe('EntitlementsService & QuotaGuard', () => {
   let mockRepo: EntitlementsRepository;

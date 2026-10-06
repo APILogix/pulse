@@ -93,7 +93,10 @@ export class ErrorIngestionService {
         });
         this.metrics?.recordErrorLatencies(null, null, null, Date.now() - eventStart);
     }
-    async ingestBatch(client, errors) {
+    async ingestBatch(client, errors, 
+    // Only for TelemetryWriter's confirmed inserts in this same transaction.
+    // Re-inserting those rows would classify every one as a duplicate and skip grouping.
+    alreadyPersisted = false) {
         const batchStart = Date.now();
         const domainEvents = [];
         if (errors.length === 0) {
@@ -101,7 +104,11 @@ export class ErrorIngestionService {
             return { inserted: 0, domainEvents };
         }
         const insertStart = Date.now();
-        const insertedRows = await this.errorRepository.insertManyIfNew(client, errors.map(({ eventRecord }) => ({ ...eventRecord, error_group_id: null })));
+        const insertedRows = alreadyPersisted ? errors.map(({ eventRecord }) => ({
+            organizationId: eventRecord.organization_id,
+            eventId: eventRecord.event_id,
+            occurredAt: eventRecord.occurred_at,
+        })) : await this.errorRepository.insertManyIfNew(client, errors.map(({ eventRecord }) => ({ ...eventRecord, error_group_id: null })));
         this.metrics?.recordStage('error_bulk_insert', 'error', Date.now() - insertStart);
         const insertedByKey = new Map();
         for (const row of insertedRows) {

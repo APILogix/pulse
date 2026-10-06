@@ -118,19 +118,22 @@ export class ObservabilityService {
     const resource = this.resource(name);
     const query = buildExplorerQuery(rawQuery, resource.defaultSort);
 
-    if (name === 'error-groups') {
-      const projFilterIndex = query.filters.findIndex((f) => f.field === 'project' || f.field === 'projectSlug');
-      if (projFilterIndex >= 0) {
-        const val = String(query.filters[projFilterIndex]?.value ?? '');
-        if (val) {
-          const resolvedProjectId = await this.repository.resolveProjectIdFromSlug(ctx, val);
-          if (resolvedProjectId) {
-            query.filters[projFilterIndex] = { field: 'project', op: 'eq', value: resolvedProjectId };
-          } else {
-            query.filters[projFilterIndex] = { field: 'project', op: 'eq', value: '00000000-0000-0000-0000-000000000000' };
-          }
+    const projFilterIndex = query.filters.findIndex((f) => f.field === 'project' || f.field === 'projectSlug');
+    if (projFilterIndex >= 0) {
+      const val = String(query.filters[projFilterIndex]?.value ?? '').trim();
+      query.filters.splice(projFilterIndex, 1);
+
+      if (val) {
+        const resolvedProjectId = await this.repository.resolveProjectIdFromSlug(ctx, val);
+        const canAccessProject = resolvedProjectId && (
+          ctx.allowedProjectIds === undefined || ctx.allowedProjectIds.includes(resolvedProjectId)
+        );
+
+        if (canAccessProject) {
+          ctx.projectId = resolvedProjectId;
         } else {
-          query.filters.splice(projFilterIndex, 1);
+          delete ctx.projectId;
+          ctx.allowedProjectIds = [];
         }
       }
     }
@@ -274,10 +277,22 @@ export class ObservabilityService {
         }
       : (tracePubId || traceId)
       ? {
-          publicId: tracePubId ?? null,
-          traceId: traceId ?? null,
+          ...(tracePubId ? { publicId: tracePubId } : {}),
+          ...(traceId ? { traceId } : {}),
         }
       : null;
+
+    const parseJson = (val: unknown): unknown => {
+      if (!val) return null;
+      if (typeof val === 'string') {
+        try {
+          return JSON.parse(val);
+        } catch {
+          return val;
+        }
+      }
+      return val;
+    };
 
     return {
       id: rawId,
@@ -285,9 +300,9 @@ export class ObservabilityService {
       resource: name,
       entity,
       errorGroup: errorGroupObj,
-      attributes: null,
-      metadata: null,
-      payload: null,
+      attributes: parseJson(raw.attributes ?? raw.span_attributes ?? entity.attributes),
+      metadata: parseJson(raw.metadata ?? raw.event_metadata ?? entity.metadata),
+      payload: parseJson(raw.payload ?? raw.event_payload ?? entity.payload),
       trace: traceReturn,
       spanTree: bundle.spanTree,
       spans: bundle.spans,

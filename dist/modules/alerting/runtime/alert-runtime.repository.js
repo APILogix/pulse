@@ -2,6 +2,9 @@ import { assertAlertingPool } from './runtime-pool.js';
 function json(value) {
     return JSON.stringify(value ?? {});
 }
+export const ALERT_EVENTS_V2_COLUMNS = 'id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, created_at';
+export const ALERT_EVENT_STATE_COLUMNS = 'alert_key, organization_id, project_id, latest_event_id, state, severity, duplicate_count, first_seen_at, last_seen_at, last_notified_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_at, resolution_reason, auto_resolve_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, next_escalation_at, incident_id, updated_at';
+export const ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS = 'id, organization_id, project_id, alert_event_id, notification_job_id, channel_kind, connector_id, route_id, recipient_user_id, attempt_number, status, response_status_code, external_message_id, error_category, error_message, latency_ms, created_at';
 export class AlertRuntimeRepository {
     db;
     /**
@@ -74,7 +77,7 @@ export class AlertRuntimeRepository {
               $21::jsonb, $22::jsonb, $23::jsonb, $24::jsonb, $25
          FROM reserved
        ON CONFLICT DO NOTHING
-       RETURNING *`, [
+       RETURNING id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, ingested_at`, [
             input.organizationId,
             input.projectId ?? null,
             input.environment ?? null,
@@ -104,13 +107,12 @@ export class AlertRuntimeRepository {
         return result.rows[0] ?? null;
     }
     async findEventById(organizationId, id, client) {
-        const result = await this.exec(client).query(`SELECT * FROM alert_events_v2 WHERE id = $1 AND organization_id = $2
-       ORDER BY created_at DESC LIMIT 1`, [id, organizationId]);
+        const result = await this.exec(client).query(`SELECT ${ALERT_EVENTS_V2_COLUMNS} FROM alert_events_v2 WHERE id = $1 AND organization_id = $2 ORDER BY created_at DESC LIMIT 1`, [id, organizationId]);
         return result.rows[0] ?? null;
     }
     // ── alert_event_state (the ONE mutable projection) ──────────────────────────
     async getState(alertKey, client) {
-        const result = await this.exec(client).query(`SELECT * FROM alert_event_state WHERE alert_key = $1`, [alertKey]);
+        const result = await this.exec(client).query(`SELECT ${ALERT_EVENT_STATE_COLUMNS} FROM alert_event_state WHERE alert_key = $1`, [alertKey]);
         return result.rows[0] ?? null;
     }
     /**
@@ -121,7 +123,7 @@ export class AlertRuntimeRepository {
      * fire. Requires an explicit client: a lock outside a transaction is meaningless.
      */
     async lockState(client, alertKey) {
-        const result = await client.query(`SELECT * FROM alert_event_state WHERE alert_key = $1 FOR UPDATE`, [alertKey]);
+        const result = await client.query(`SELECT ${ALERT_EVENT_STATE_COLUMNS} FROM alert_event_state WHERE alert_key = $1 FOR UPDATE`, [alertKey]);
         return result.rows[0] ?? null;
     }
     /**
@@ -151,7 +153,7 @@ export class AlertRuntimeRepository {
          escalation_step_number = EXCLUDED.escalation_step_number,
          next_escalation_at     = EXCLUDED.next_escalation_at,
          incident_id            = COALESCE(EXCLUDED.incident_id, alert_event_state.incident_id)
-       RETURNING *`, [
+       RETURNING ${ALERT_EVENT_STATE_COLUMNS}`, [
             input.alertKey,
             input.organizationId,
             input.projectId ?? null,
@@ -174,7 +176,7 @@ export class AlertRuntimeRepository {
           SET duplicate_count = duplicate_count + 1,
               last_seen_at = GREATEST(last_seen_at, $2)
         WHERE alert_key = $1
-        RETURNING *`, [alertKey, seenAt]);
+        RETURNING ${ALERT_EVENT_STATE_COLUMNS}`, [alertKey, seenAt]);
         return result.rows[0] ?? null;
     }
     // ── alert_event_history_v2 (append-only) ────────────────────────────────────
@@ -619,10 +621,7 @@ export class AlertRuntimeRepository {
         return result.rowCount ?? 0;
     }
     async listDeliveryAttempts(alertEventId, limit = 200) {
-        const result = await this.db.query(`SELECT * FROM alert_delivery_attempts_v2
-        WHERE alert_event_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2`, [alertEventId, Math.max(1, Math.min(limit, 1000))]);
+        const result = await this.db.query(`SELECT ${ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS} FROM alert_delivery_attempts_v2 WHERE alert_event_id = $1 ORDER BY created_at DESC LIMIT $2`, [alertEventId, Math.max(1, Math.min(limit, 1000))]);
         return result.rows;
     }
     // ── alert_acknowledgments_v2 (append-only audit trail) ─────────────────────

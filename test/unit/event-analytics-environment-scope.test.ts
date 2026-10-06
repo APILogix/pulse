@@ -155,4 +155,26 @@ describe("event analytics environment identity", () => {
     expect(source).toContain("r.project_id=$1 AND r.trace_id=$2 AND r.environment=$3");
     expect(source).toContain("e.project_id=$1 AND e.trace_id=$2 AND e.environment=$3");
   });
+
+  it("pre-aggregates observed services per source table before UNION ALL to avoid temp memory saturation (ANL-Q009)", async () => {
+    const { repository, query } = createRepository();
+
+    await repository.listObservedServices(
+      ORG_ID,
+      { from: new Date("2026-01-01T00:00:00Z"), to: new Date("2026-01-02T00:00:00Z") },
+      PROJECT_ID,
+      ENVIRONMENT,
+      50,
+    );
+
+    expect(query).toHaveBeenCalledTimes(1);
+    const sql = compact(query.mock.calls[0]![0]);
+    expect(sql).toContain("WITH per_source AS");
+    expect(sql).toContain("FROM events_traces");
+    expect(sql).toContain("FROM events_requests");
+    expect(sql).toContain("FROM events_logs");
+    expect(sql).toContain("GROUP BY project_id, service");
+    expect(sql).toContain("SUM(s.trace_count + s.request_count + s.log_count)::bigint AS observed_event_count");
+    expect(sql).not.toContain("WITH observations AS");
+  });
 });

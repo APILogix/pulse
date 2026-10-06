@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
+import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
 import type {
   AppendRevisionInput,
   ConfigScope,
@@ -29,26 +30,15 @@ interface RevisionRow {
   revision_number: number;
   requested_config: Record<string, unknown>;
   compiled_snapshot: SchemaV1Config;
-  config_hash: string;
+  canonical_sha256: string;
   change_type: "initial" | "publish" | "rollback";
   rolled_back_to_revision: number | null;
 }
 
-function mapRevision(row: RevisionRow): RevisionRecord {
-  return {
-    revisionNo: row.revision_number,
-    requestedConfig: row.requested_config ?? {},
-    compiledSnapshot: row.compiled_snapshot,
-    canonicalSha256: row.config_hash,
-    changeType: row.change_type,
-    rolledBackToRevision: row.rolled_back_to_revision,
-  };
+interface HeadRow {
+  current_revision: number;
+  draft_version: number;
 }
-
-const REVISION_COLS = `
-  revision_number, requested_config, compiled_snapshot, config_hash,
-  change_type, rolled_back_to_revision
-`;
 
 export class PgConfigStore implements ConfigStore {
   constructor(private readonly db: Pool = pool) {}
@@ -61,7 +51,11 @@ export class PgConfigStore implements ConfigStore {
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // preserve original error
+      }
       throw error;
     } finally {
       client.release();
@@ -69,52 +63,93 @@ export class PgConfigStore implements ConfigStore {
   }
 
   async loadCurrent(scope: ConfigScope): Promise<{ head: HeadRecord; current: RevisionRecord } | null> {
-    const result = await this.db.query<RevisionRow & { current_revision: number }>(
-      `SELECT h.current_revision, ${REVISION_COLS}
-         FROM project_environment_sdk_configs h
-         JOIN project_environment_sdk_config_revisions r ON r.id = h.published_revision_id
-        WHERE h.organization_id = $1 AND h.environment_id = $2`,
+    const headResult = await this.db.query<HeadRow>(
+      `SELECT current_revision, version AS draft_version
+         FROM project_environment_sdk_configs
+        WHERE organization_id = $1 AND environment_id = $2
+        LIMIT 1`,
       [scope.organizationId, scope.environmentId],
     );
-    const row = result.rows[0];
-    if (!row) return null;
-    return { head: { currentRevisionNo: row.current_revision, draftVersion: 0 }, current: mapRevision(row) };
+    const headRow = headResult.rows[0];
+    if (!headRow) return null;
+
+    const revResult = await this.db.query<RevisionRow>(
+      `SELECT revision_number, requested_config, compiled_snapshot,
+              config_hash AS canonical_sha256, change_type, rolled_back_to_revision
+         FROM project_environment_sdk_config_revisions
+        WHERE organization_id = $1 AND environment_id = $2 AND revision_number = $3
+        LIMIT 1`,
+      [scope.organizationId, scope.environmentId, headRow.current_revision],
+    );
+    const revRow = revResult.rows[0];
+    if (!revRow) return null;
+
+    return {
+      head: {
+        currentRevisionNo: headRow.current_revision,
+        draftVersion: headRow.draft_version,
+      },
+      current: {
+        revisionNo: revRow.revision_number,
+        requestedConfig: revRow.requested_config,
+        compiledSnapshot: revRow.compiled_snapshot,
+        canonicalSha256: revRow.canonical_sha256,
+        changeType: revRow.change_type,
+        rolledBackToRevision: revRow.rolled_back_to_revision,
+      },
+    };
   }
 
   async loadRevision(scope: ConfigScope, revisionNo: number): Promise<RevisionRecord | null> {
     const result = await this.db.query<RevisionRow>(
-      `SELECT ${REVISION_COLS}
-         FROM project_environment_sdk_config_revisions r
-         JOIN project_environment_sdk_configs h ON h.id = r.config_id
-        WHERE h.organization_id = $1 AND h.environment_id = $2 AND r.revision_number = $3`,
+      `SELECT revision_number, requested_config, compiled_snapshot,
+              config_hash AS canonical_sha256, change_type, rolled_back_to_revision
+         FROM project_environment_sdk_config_revisions
+        WHERE organization_id = $1 AND environment_id = $2 AND revision_number = $3
+        LIMIT 1`,
       [scope.organizationId, scope.environmentId, revisionNo],
     );
-    return result.rows[0] ? mapRevision(result.rows[0]) : null;
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      revisionNo: row.revision_number,
+      requestedConfig: row.requested_config,
+      compiledSnapshot: row.compiled_snapshot,
+      canonicalSha256: row.canonical_sha256,
+      changeType: row.change_type,
+      rolledBackToRevision: row.rolled_back_to_revision,
+    };
   }
 
   async appendRevision(
     scope: ConfigScope,
     input: AppendRevisionInput,
   ): Promise<{ head: HeadRecord; revision: RevisionRecord }> {
-    return this.withTx(async (client) => {
+    const result = await this.withTx(async (client) => {
+      // Row lock the head so concurrent publishes serialize cleanly
       const head = await client.query<{ id: string; current_revision: number }>(
-        `SELECT id, current_revision FROM project_environment_sdk_configs
-          WHERE organization_id = $1 AND environment_id = $2 FOR UPDATE`,
+        `SELECT id, current_revision
+           FROM project_environment_sdk_configs
+          WHERE organization_id = $1 AND environment_id = $2
+            FOR UPDATE`,
         [scope.organizationId, scope.environmentId],
       );
-      const headRow = head.rows[0];
-      if (!headRow) throw new Error("SDK config head not found for environment");
-      const revisionNo = headRow.current_revision + 1;
+      if (!head.rows[0]) {
+        throw new Error("SDK config head not found for environment");
+      }
+      const revisionNo = head.rows[0].current_revision + 1;
+      const revisionId = randomUUID();
 
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO project_environment_sdk_config_revisions(
-           config_id, organization_id, project_id, environment_id, revision_number,
-           requested_config, compiled_snapshot, config_hash,
-           change_type, rolled_back_to_revision, published_by
-         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           id, config_id, organization_id, project_id, environment_id, revision_number,
+           requested_config, compiled_snapshot, config_hash, change_type,
+           rolled_back_to_revision, published_by
+         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          RETURNING id`,
         [
-          headRow.id,
+          revisionId,
+          head.rows[0].id,
           scope.organizationId,
           scope.projectId,
           scope.environmentId,
@@ -156,6 +191,20 @@ export class PgConfigStore implements ConfigStore {
         },
       };
     });
+
+    // Invalidate Redis caches on successful append
+    void redisLookupCache.invalidateSdkConfig(
+      scope.environmentId,
+      scope.organizationId,
+      scope.projectId,
+      scope.environmentKey,
+    );
+    void redisLookupCache.invalidateRemoteConfig(
+      scope.projectId,
+      scope.environmentKey,
+    );
+
+    return result;
   }
 
   async initialize(
@@ -163,14 +212,6 @@ export class PgConfigStore implements ConfigStore {
     revision: RevisionRecord,
     createdBy: string | null,
   ): Promise<{ head: HeadRecord; current: RevisionRecord }> {
-    // Environments are normally provisioned with their SDK config head +
-    // revision 1 inside the application service transaction (SdkConfigProvisioner).
-    // This method backfills/repairs when a head is somehow absent and is
-    // otherwise idempotent.
-    //
-    // `published_revision_id` is NOT NULL with a DEFERRABLE INITIALLY DEFERRED FK
-    // to the revisions table, so we mint both UUIDs up front and insert the head
-    // FIRST (pointing at the revision id); the deferred FK is validated at COMMIT.
     const existing = await this.loadCurrent(scope);
     if (existing) return existing;
 
@@ -182,7 +223,7 @@ export class PgConfigStore implements ConfigStore {
            id, organization_id, project_id, environment_id, published_revision_id,
            current_revision, current_hash, schema_version, created_by, updated_by
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
-         ON CONFLICT (environment_id) DO NOTHING
+         ON CONFLICT (organization_id, environment_id) DO NOTHING
          RETURNING id`,
         [
           headId,
@@ -216,6 +257,18 @@ export class PgConfigStore implements ConfigStore {
       );
     });
 
+    // Invalidate Redis caches on initialize
+    void redisLookupCache.invalidateSdkConfig(
+      scope.environmentId,
+      scope.organizationId,
+      scope.projectId,
+      scope.environmentKey,
+    );
+    void redisLookupCache.invalidateRemoteConfig(
+      scope.projectId,
+      scope.environmentKey,
+    );
+
     const created = await this.loadCurrent(scope);
     if (!created) throw new Error("Failed to initialize SDK config head");
     return created;
@@ -225,6 +278,13 @@ export class PgConfigStore implements ConfigStore {
     organizationId: string,
     environmentId: string,
   ): Promise<{ revisionNo: number; compiledSnapshot: SchemaV1Config } | null> {
+    // 1. Fast-Path: Check Redis Cache
+    const cached = await redisLookupCache.getCompiledConfigByEnv(environmentId);
+    if (cached) {
+      return cached;
+    }
+
+    // 2. Slow-Path: Query PostgreSQL Database
     const result = await this.db.query<{
       revision_number: number;
       compiled_snapshot: SchemaV1Config;
@@ -239,12 +299,17 @@ export class PgConfigStore implements ConfigStore {
       [organizationId, environmentId],
     );
     const row = result.rows[0];
-    return row
-      ? {
-          revisionNo: row.revision_number,
-          compiledSnapshot: row.compiled_snapshot,
-        }
-      : null;
+    if (!row) return null;
+
+    const data = {
+      revisionNo: row.revision_number,
+      compiledSnapshot: row.compiled_snapshot,
+    };
+
+    // Populate Redis cache asynchronously
+    void redisLookupCache.setCompiledConfigByEnv(environmentId, data);
+
+    return data;
   }
 
   async loadCompiledBySdkMetadata(
@@ -252,6 +317,13 @@ export class PgConfigStore implements ConfigStore {
     projectId: string,
     environment: string,
   ): Promise<{ revisionNo: number; environmentId: string; compiledSnapshot: SchemaV1Config } | null> {
+    // 1. Fast-Path: Check Redis Cache
+    const cached = await redisLookupCache.getCompiledConfigByMeta(organizationId, projectId, environment);
+    if (cached) {
+      return cached;
+    }
+
+    // 2. Slow-Path: Query PostgreSQL Database
     const result = await this.db.query<{
       revision_number: number;
       environment_id: string;
@@ -272,12 +344,21 @@ export class PgConfigStore implements ConfigStore {
       [organizationId, projectId, environment],
     );
     const row = result.rows[0];
-    return row
-      ? {
-          revisionNo: row.revision_number,
-          environmentId: row.environment_id,
-          compiledSnapshot: row.compiled_snapshot,
-        }
-      : null;
+    if (!row) return null;
+
+    const data = {
+      revisionNo: row.revision_number,
+      environmentId: row.environment_id,
+      compiledSnapshot: row.compiled_snapshot,
+    };
+
+    // Populate Redis cache asynchronously
+    void redisLookupCache.setCompiledConfigByMeta(organizationId, projectId, environment, data);
+    void redisLookupCache.setCompiledConfigByEnv(row.environment_id, {
+      revisionNo: row.revision_number,
+      compiledSnapshot: row.compiled_snapshot,
+    });
+
+    return data;
   }
 }

@@ -90,6 +90,7 @@ export declare class TelemetryWriter {
     writeBatchDetailedWithOutbox(clientOrScoped: PoolClient | ScopedEvent[], scopedParam?: ScopedEvent[]): Promise<DetailedWriteResult>;
     writeBatchDetailedInTransaction(db: Queryable, scoped: ScopedEvent[]): Promise<DetailedWriteResult>;
     private writeBatchDetailedUsing;
+    private recordSessions;
     appendTelemetryOutbox(scoped: ScopedEvent[], db?: Queryable): Promise<number>;
     private writeTyped;
     /** Best-effort event id (events_*.event_id is NOT NULL). */

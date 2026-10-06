@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALERT_JOBS } from '../../src/modules/alerting/queue-names.js';
 
-const { createQueue, schedule, send, unschedule, work } = vi.hoisted(() => ({
+const { createQueue, send, readWithPoll, setVt } = vi.hoisted(() => ({
   createQueue: vi.fn(),
-  schedule: vi.fn(),
   send: vi.fn(),
-  unschedule: vi.fn(),
-  work: vi.fn(),
+  readWithPoll: vi.fn(),
+  setVt: vi.fn(),
 }));
 
 const { buildAnalyticsWorkers, trackedOrganizations } = vi.hoisted(() => ({
@@ -14,8 +13,13 @@ const { buildAnalyticsWorkers, trackedOrganizations } = vi.hoisted(() => ({
   trackedOrganizations: vi.fn(),
 }));
 
-vi.mock('../../src/lib/pgboss.js', () => ({
-  pgboss: { createQueue, schedule, send, unschedule, work },
+vi.mock('../../src/lib/pgmq.js', () => ({
+  pgmq: {
+    createQueue,
+    send,
+    readWithPoll: readWithPoll.mockResolvedValue([]),
+    setVt,
+  },
 }));
 
 vi.mock('../../src/config/env.js', () => ({
@@ -61,16 +65,13 @@ function logger() {
 describe('analytics engine queue registration', () => {
   beforeEach(() => {
     createQueue.mockReset().mockResolvedValue(undefined);
-    schedule.mockReset().mockResolvedValue(undefined);
     send.mockReset().mockResolvedValue(undefined);
-    unschedule.mockReset().mockResolvedValue(undefined);
-    work.mockReset().mockResolvedValue(undefined);
     trackedOrganizations.mockReset().mockResolvedValue([]);
     buildAnalyticsWorkers.mockReset().mockReturnValue({
       workers: [
         {
           id: 'analytics.requests',
-          queue: 'analytics.requests',
+          queue: 'analytics_requests',
           tier: 'live',
           windowSize: '1m',
           sourceTables: ['events_requests'],
@@ -92,7 +93,7 @@ describe('analytics engine queue registration', () => {
     });
   });
 
-  it('creates alert evaluation queues used by analytics fan-out', async () => {
+  it('creates PGMQ queues used by analytics engine', async () => {
     const { registerAnalyticsEngineWorkers } = await import('../../src/modules/analytics-engine/queue.js');
     const runtime = await registerAnalyticsEngineWorkers(
       { query: vi.fn().mockResolvedValue({ rows: [] }) } as never,
@@ -102,9 +103,12 @@ describe('analytics engine queue registration', () => {
     try {
       const createdQueues = createQueue.mock.calls.map((call) => call[0]);
       expect(createdQueues).toEqual(expect.arrayContaining([
-        ALERT_JOBS.evaluateWindow,
-        ALERT_JOBS.evaluateOperational,
-        ALERT_JOBS.evaluateAi,
+        'analytics_requests',
+        'analytics_compaction_5m',
+        'analytics_compaction_1h',
+        'analytics_compaction_1d',
+        'analytics_retention',
+        'analytics_partitions',
       ]));
     } finally {
       await runtime.stop();

@@ -1,16 +1,14 @@
 /**
- * Analytics engine queue registration (pg-boss).
+ * Analytics engine queue registration (Supabase PGMQ).
  *
  * Spec: docs/analytics/06-worker-architecture.md §1 and §4
  *
- * pg-boss is used purely as job transport on the control-plane database; all
+ * PGMQ is used purely as job transport on the control-plane database; all
  * analytics DATA lives in the Log DB. Job payloads are tiny and idempotent, so a
  * duplicated delivery recomputes the same bucket to the same value.
- *
- * This module is imported ONLY by src/shared/workers/analytics-worker-main.ts.
- * It is never imported by the ingestion worker or the API process.
  */
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { env } from '../../config/env.js';
 import { ALERT_JOBS } from '../alerting/queue-names.js';
 import { AnalyticsWatermarkRepository } from './watermark.repository.js';
@@ -19,127 +17,99 @@ import { runCompaction } from './workers/compaction.worker.js';
 import { ensurePartitions, runRetention } from './workers/maintenance.worker.js';
 import { TIER_INTERVAL_MS } from './types.js';
 export const ANALYTICS_PLATFORM_JOBS = {
-    compact5m: 'analytics.compaction.5m',
-    compact1h: 'analytics.compaction.1h',
-    compact1d: 'analytics.compaction.1d',
-    retention: 'analytics.retention',
-    partitions: 'analytics.partitions',
+    compact5m: 'analytics_compaction_5m',
+    compact1h: 'analytics_compaction_1h',
+    compact1d: 'analytics_compaction_1d',
+    retention: 'analytics_retention',
+    partitions: 'analytics_partitions',
 };
-const ALERT_EVALUATION_JOBS = [
-    ALERT_JOBS.evaluateWindow,
-    ALERT_JOBS.evaluateOperational,
-    ALERT_JOBS.evaluateAi,
-];
-/** pg-boss v12 hands the handler an ARRAY of jobs. */
-function allJobs(argument) {
-    if (Array.isArray(argument))
-        return argument;
-    return argument ? [argument] : [];
-}
-async function ensureQueue(name) {
-    const boss = pgboss;
-    if (typeof boss.createQueue === 'function') {
-        await boss.createQueue(name).catch(() => undefined);
-    }
+export function analyticsQueueName(raw) {
+    return raw.replace(/\./g, '_');
 }
 /**
- * Registers every analytics worker plus the platform jobs.
- *
- * Fan-out: a self-managed interval per tier enqueues one job per (worker, org)
- * with a singleton key, so duplicate dispatches collapse instead of piling up.
- * pg-boss `schedule` is per-queue and cannot express per-org fan-out, which is
- * why the dispatcher is an interval rather than a cron entry.
+ * Registers every analytics worker plus the platform jobs using PGMQ.
  */
 export async function registerAnalyticsEngineWorkers(pool, logger) {
     const log = logger.child({ component: 'analytics-engine-queue' });
     const config = resolveAnalyticsConfig();
     const { workers, watermarks } = buildAnalyticsWorkers(pool);
-    for (const worker of workers)
-        await ensureQueue(worker.queue);
-    for (const queue of Object.values(ANALYTICS_PLATFORM_JOBS))
-        await ensureQueue(queue);
-    for (const queue of ALERT_EVALUATION_JOBS)
-        await ensureQueue(queue);
+    await pgmq.createQueues([
+        ...workers.map((worker) => analyticsQueueName(worker.queue)),
+        ...Object.values(ANALYTICS_PLATFORM_JOBS),
+    ], { concurrency: 4 });
+    const registeredWorkers = [];
     // ── Domain workers ───────────────────────────────────────────────────────
     for (const worker of workers) {
-        await pgboss.work(worker.queue, {
-            localConcurrency: Math.min(worker.concurrency, env.ANALYTICS_WORKER_CONCURRENCY),
-            batchSize: 1,
-        }, (async (argument) => {
-            const jobs = allJobs(argument);
-            for (const job of jobs) {
-                const startedAt = Date.now();
-                try {
-                    const result = await worker.run({ pool, logger: log, now: new Date(), config }, job.data);
-                    await watermarks.recordRun({
-                        workerId: worker.id,
-                        organizationId: job.data.orgId,
-                        windowSize: worker.windowSize,
-                        windowStart: new Date(job.data.windowStart),
-                        windowEnd: new Date(job.data.windowEnd),
-                        rowsRead: result.rowsRead,
-                        rowsWritten: result.rowsWritten,
-                        durationMs: Date.now() - startedAt,
-                        outcome: result.outcome,
-                        ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-                    });
-                    if (result.rowsWritten > 0) {
-                        await enqueueAlertEvaluationForAnalyticsWorker(worker.id, job.data.orgId, log);
-                    }
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    const failures = await watermarks.recordFailure(worker.id, job.data.orgId, worker.windowSize, message);
-                    await watermarks.recordRun({
-                        workerId: worker.id,
-                        organizationId: job.data.orgId,
-                        windowSize: worker.windowSize,
-                        windowStart: new Date(job.data.windowStart),
-                        windowEnd: new Date(job.data.windowEnd),
-                        rowsRead: 0,
-                        rowsWritten: 0,
-                        durationMs: Date.now() - startedAt,
-                        outcome: 'failed',
-                        errorMessage: message,
-                    });
-                    log.error({ err: error, worker: worker.id, orgId: job.data.orgId, consecutiveFailures: failures }, 'Analytics worker run failed; watermark not advanced');
-                    // Rethrow so pg-boss applies the retry policy.
-                    throw error;
+        const qName = analyticsQueueName(worker.queue);
+        const domainWorker = new PgmqWorker(pgmq, async (msg) => {
+            const jobData = msg.message;
+            const startedAt = Date.now();
+            try {
+                const result = await worker.run({ pool, logger: log, now: new Date(), config }, jobData);
+                await watermarks.recordRun({
+                    workerId: worker.id,
+                    organizationId: jobData.orgId,
+                    windowSize: worker.windowSize,
+                    windowStart: new Date(jobData.windowStart),
+                    windowEnd: new Date(jobData.windowEnd),
+                    rowsRead: result.rowsRead,
+                    rowsWritten: result.rowsWritten,
+                    durationMs: Date.now() - startedAt,
+                    outcome: result.outcome,
+                    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+                });
+                if (result.rowsWritten > 0) {
+                    await enqueueAlertEvaluationForAnalyticsWorker(worker.id, jobData.orgId, log);
                 }
             }
-        }));
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                const failures = await watermarks.recordFailure(worker.id, jobData.orgId, worker.windowSize, message);
+                await watermarks.recordRun({
+                    workerId: worker.id,
+                    organizationId: jobData.orgId,
+                    windowSize: worker.windowSize,
+                    windowStart: new Date(jobData.windowStart),
+                    windowEnd: new Date(jobData.windowEnd),
+                    rowsRead: 0,
+                    rowsWritten: 0,
+                    durationMs: Date.now() - startedAt,
+                    outcome: 'failed',
+                    errorMessage: message,
+                });
+                log.error({ err: error, worker: worker.id, orgId: jobData.orgId, consecutiveFailures: failures }, 'Analytics worker run failed; watermark not advanced');
+                throw error;
+            }
+        }, {
+            queue: qName,
+            concurrency: Math.min(worker.concurrency, env.ANALYTICS_WORKER_CONCURRENCY),
+            batchSize: 1,
+            visibilityTimeoutSeconds: 120,
+        });
+        registeredWorkers.push(domainWorker);
     }
-    // ── Platform jobs ────────────────────────────────────────────────────────
-    await pgboss.work(ANALYTICS_PLATFORM_JOBS.compact5m, {}, (async () => {
+    // ── Platform workers ─────────────────────────────────────────────────────
+    registeredWorkers.push(new PgmqWorker(pgmq, async () => {
         await runCompaction(pool, log, '5m');
-    }));
-    await pgboss.work(ANALYTICS_PLATFORM_JOBS.compact1h, {}, (async () => {
+    }, { queue: ANALYTICS_PLATFORM_JOBS.compact5m, batchSize: 1, concurrency: 1 }));
+    registeredWorkers.push(new PgmqWorker(pgmq, async () => {
         await runCompaction(pool, log, '1h');
-    }));
-    await pgboss.work(ANALYTICS_PLATFORM_JOBS.compact1d, {}, (async () => {
+    }, { queue: ANALYTICS_PLATFORM_JOBS.compact1h, batchSize: 1, concurrency: 1 }));
+    registeredWorkers.push(new PgmqWorker(pgmq, async () => {
         await runCompaction(pool, log, '1d');
-    }));
-    await pgboss.work(ANALYTICS_PLATFORM_JOBS.retention, {}, (async () => {
+    }, { queue: ANALYTICS_PLATFORM_JOBS.compact1d, batchSize: 1, concurrency: 1 }));
+    registeredWorkers.push(new PgmqWorker(pgmq, async () => {
         if (!config.retentionEnabled) {
             log.info('Analytics retention disabled by ANALYTICS_RETENTION_ENABLED=false');
             return;
         }
         await runRetention(pool, log);
-    }));
-    await pgboss.work(ANALYTICS_PLATFORM_JOBS.partitions, {}, (async () => {
+    }, { queue: ANALYTICS_PLATFORM_JOBS.retention, batchSize: 1, concurrency: 1 }));
+    registeredWorkers.push(new PgmqWorker(pgmq, async () => {
         await ensurePartitions(pool, log, 7);
-    }));
-    await pgboss.schedule(ANALYTICS_PLATFORM_JOBS.compact5m, '* * * * *', {}, {});
-    await pgboss.schedule(ANALYTICS_PLATFORM_JOBS.compact1h, '*/5 * * * *', {}, {});
-    await pgboss.schedule(ANALYTICS_PLATFORM_JOBS.compact1d, '*/15 * * * *', {}, {});
-    await pgboss.schedule(ANALYTICS_PLATFORM_JOBS.retention, '17 * * * *', {}, {});
-    await pgboss.schedule(ANALYTICS_PLATFORM_JOBS.partitions, '0 1 * * *', {}, {});
+    }, { queue: ANALYTICS_PLATFORM_JOBS.partitions, batchSize: 1, concurrency: 1 }));
+    await Promise.all(registeredWorkers.map((w) => w.start()));
     // ── Dispatcher ───────────────────────────────────────────────────────────
-    /**
-     * Active organizations = those the engine already tracks, plus any org that
-     * produced telemetry recently. The probe is bounded by the tenant/ingest index
-     * added in 04_analytics/004.
-     */
     const activeOrganizations = async () => {
         const [tracked, recent] = await Promise.all([
             watermarks.trackedOrganizations(),
@@ -164,40 +134,43 @@ export async function registerAnalyticsEngineWorkers(pool, logger) {
             const now = new Date();
             const windowStart = new Date(now.getTime() - TIER_INTERVAL_MS[tier]);
             const tierWorkers = workers.filter((worker) => worker.tier === tier);
-            await Promise.allSettled(tierWorkers.flatMap((worker) => orgs.map((orgId) => pgboss.send(worker.queue, {
-                orgId,
-                windowStart: windowStart.toISOString(),
-                windowEnd: now.toISOString(),
-            }, {
-                expireInSeconds: Math.max(60, Math.floor(TIER_INTERVAL_MS[tier] / 1_000) * 4),
-                retryLimit: worker.retryLimit,
-                retryDelay: worker.retryBackoffSeconds,
-                retryBackoff: true,
-                singletonKey: `${worker.id}:${orgId}:${Math.floor(now.getTime() / TIER_INTERVAL_MS[tier])}`,
-            }))));
+            await Promise.allSettled(tierWorkers.flatMap((worker) => orgs.map((orgId) => {
+                const q = analyticsQueueName(worker.queue);
+                return pgmq.send(q, {
+                    orgId,
+                    windowStart: windowStart.toISOString(),
+                    windowEnd: now.toISOString(),
+                });
+            })));
             log.debug({ tier, orgs: orgs.length, workers: tierWorkers.length }, 'Analytics jobs dispatched');
         }
         catch (error) {
             log.warn({ err: error, tier }, 'Analytics dispatch failed');
         }
     };
-    const timers = [];
+    const timers = [
+        setInterval(() => void pgmq.send(ANALYTICS_PLATFORM_JOBS.compact5m, {}).catch(() => { }), 60_000),
+        setInterval(() => void pgmq.send(ANALYTICS_PLATFORM_JOBS.compact1h, {}).catch(() => { }), 300_000),
+        setInterval(() => void pgmq.send(ANALYTICS_PLATFORM_JOBS.compact1d, {}).catch(() => { }), 900_000),
+        setInterval(() => void pgmq.send(ANALYTICS_PLATFORM_JOBS.retention, {}).catch(() => { }), 3600_000),
+        setInterval(() => void pgmq.send(ANALYTICS_PLATFORM_JOBS.partitions, {}).catch(() => { }), 86400_000),
+    ];
     for (const tier of ['live', 'standard', 'slow']) {
         const timer = setInterval(() => void dispatchTier(tier), TIER_INTERVAL_MS[tier]);
         timer.unref();
         timers.push(timer);
         void dispatchTier(tier);
     }
-    log.info({ workers: workers.map((worker) => worker.id), platformJobs: Object.values(ANALYTICS_PLATFORM_JOBS) }, 'Analytics engine workers registered');
+    for (const t of timers)
+        t.unref();
+    log.info({ workers: workers.map((worker) => worker.id), platformJobs: Object.values(ANALYTICS_PLATFORM_JOBS) }, 'Analytics engine PGMQ workers registered');
     return {
         workers,
         watermarks,
         stop: async () => {
             for (const timer of timers)
                 clearInterval(timer);
-            for (const queue of Object.values(ANALYTICS_PLATFORM_JOBS)) {
-                await pgboss.unschedule(queue).catch(() => undefined);
-            }
+            await Promise.all(registeredWorkers.map((w) => w.stop()));
         },
     };
 }
@@ -206,17 +179,8 @@ async function enqueueAlertEvaluationForAnalyticsWorker(workerId, organizationId
     if (queues.length === 0)
         return;
     await Promise.all(queues.map(async (queue) => {
-        const bucketSeconds = queue === ALERT_JOBS.evaluateWindow
-            ? 5
-            : queue === ALERT_JOBS.evaluateOperational ? 30 : 300;
         try {
-            await pgboss.send(queue, { organizationId, sourceWorkerId: workerId }, {
-                singletonKey: `${queue}:${workerId}:${organizationId}:${Math.floor(Date.now() / (bucketSeconds * 1000))}`,
-                expireInSeconds: Math.max(60, bucketSeconds * 4),
-                retryLimit: 2,
-                retryDelay: 5,
-                retryBackoff: true,
-            });
+            await pgmq.send(queue, { organizationId, sourceWorkerId: workerId });
         }
         catch (err) {
             log.warn({ err, workerId, organizationId, queue }, 'Alert evaluation enqueue from analytics worker failed');

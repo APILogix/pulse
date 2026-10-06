@@ -38,6 +38,8 @@ function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
 }
 
+export const ALERT_METRICS_COLUMNS = 'id, organization_id, rule_id, metric_type, value, bucket_start, bucket_end, granularity, labels, created_at';
+
 export class MetricsRepository {
   private readonly db: typeof pool;
 
@@ -84,7 +86,7 @@ export class MetricsRepository {
     if (filters.to) { params.push(filters.to); conditions.push(`bucket_start <= $${params.length}`); }
     params.push(filters.limit);
     const r = await this.db.query<AlertMetricRow>(
-      `SELECT * FROM alert_metrics WHERE ${conditions.join(' AND ')}
+      `SELECT ${ALERT_METRICS_COLUMNS} FROM alert_metrics WHERE ${conditions.join(' AND ')}
        ORDER BY bucket_start DESC LIMIT $${params.length}`, params,
     );
     return r.rows;

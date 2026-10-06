@@ -5,6 +5,6 @@ export declare class AuditLogsRepository extends BaseRepository {
     createAuditLog(entry: CreateAuditLogRecord): Promise<void>;
     listAuditLogs(orgId: string, q: CursorPaginationQuery, filters?: AuditLogFilters): Promise<CursorPaginatedResponse<AuditLogRow>>;
     exportAuditLogs(orgId: string, filters?: AuditLogFilters): Promise<AuditLogRow[]>;
-    purgeExpiredAuditLogs(): Promise<number>;
+    purgeExpiredAuditLogs(batchSize?: number): Promise<number>;
 }
 //# sourceMappingURL=audit-logs.repository.d.ts.map

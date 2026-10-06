@@ -69,6 +69,7 @@ vi.mock('./logger.js', () => ({
 vi.mock('./postgres-ssl.js', () => ({
     resolvePostgresSslConfig: () => undefined,
     isExpectedServerlessDisconnect: () => false,
+    sanitizePostgresConnectionString: (url) => url,
 }));
 const PROJECT = '11111111-2222-3333-4444-555555555555';
 const OTHER_PROJECT = '99999999-8888-7777-6666-555555555555';

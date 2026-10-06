@@ -4,6 +4,9 @@ export interface ApiKeyMapping {
     projectId: string;
     defaultEnvironmentId: string;
     allowedEnvironmentIds: string[];
+    keyId?: string;
+    allowedIps?: string[];
+    allowedEndpoints?: string[];
 }
 export interface DeliveryRequestHints {
     environmentId?: string | null;

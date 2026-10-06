@@ -148,7 +148,7 @@ describe("compiler and canonical hash", () => {
       http: true,
       https: true,
       fetch: true,
-      axios: true,
+      axios: false,
       fastify: true,
       express: true,
       graphql: true,

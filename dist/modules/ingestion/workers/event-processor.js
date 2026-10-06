@@ -13,7 +13,7 @@
  *      same identity and are dropped by the (project_id, event_id) unique
  *      indexes. normalizeEvent produces `eventId` (optional, all types) and
  *      the TelemetryWriter reads exactly that field, so we write it there.
- *   3. PERSIST via TelemetryWriter.writeBatchDetailed() — idempotent inserts
+ *   3. PERSIST via TelemetryWriter.writeBatchDetailedInTransaction() — idempotent inserts
  *      that report how many rows were ACTUALLY written.
  *   4. ERROR GROUPING (errors only, and only for rows confirmed inserted):
  *      upsert analytics_error_groups keyed (organization_id, project_id,
@@ -27,12 +27,13 @@
  */
 import { createHash, randomUUID } from 'crypto';
 import { env } from '../../../config/env.js';
-import { pgboss } from '../../../lib/pgboss.js';
+import { pgmq } from '../../../lib/pgmq.js';
 import { normalizeEvent, normalizeSdkEnvironment, parseSafeEpochMs, resolveTimestamp, } from '../pipeline/event-normalizer.js';
 import { TelemetryWriter, applyIngestionTransactionSettings, errorFingerprint, errorNameOf, } from '../pipeline/telemetry-writer.js';
 import { WriteAdmissionController, resolveWritePermits } from '../pipeline/write-admission.js';
 import { INGESTION_JOB_ABORTED, IngestionJobAbortedError, throwIfIngestionAborted, } from '../pipeline/ingestion-abort.js';
 import { UsageCounter } from '../usage/usage-counter.js';
+import { CreditWeightService } from '../usage/credit-weights.js';
 import { INGEST_DLQ_INTAKE_QUEUE, } from '../queue/ingest-queues.js';
 import { ErrorIngestionService } from '../../errors/services/error-ingestion.service.js';
 import { ErrorGroupingService } from '../../errors/services/error-grouping.service.js';
@@ -239,22 +240,6 @@ function errorCode(err) {
     const value = err.code;
     return typeof value === 'string' && value.length > 0 ? value : null;
 }
-/**
- * Identity of an event for outbox filtering: `(organization_id, event_id)`.
- *
- * Both sides of the comparison read the SAME raw values — `ScopedEvent.orgId` /
- * `event.eventId` on one side and `eventRecord.organization_id` /
- * `eventRecord.event_id` on the other, where the record fields were populated
- * from exactly those scoped fields. No truncation or normalization is applied
- * here on purpose: introducing any would risk a silent mismatch that drops
- * legitimate outbox rows (a correctness bug in alert delivery).
- *
- * NUL is the separator because it cannot appear in a UUID or an SDK event id,
- * so `(a, bc)` can never collide with `(ab, c)`.
- */
-function outboxIdentityKey(orgId, eventId) {
-    return `${orgId ?? ''}\u0000${eventId}`;
-}
 /** Raw SDK event id off a scoped event, matching what the error record stored. */
 function scopedEventId(scoped) {
     const value = scoped.event.eventId;
@@ -268,6 +253,8 @@ function ingestionFailureClass(err) {
         return 'db_lock_timeout';
     if (code === '57014')
         return 'db_statement_timeout';
+    if (code === '25P03')
+        return 'db_idle_transaction_timeout';
     if (code === '53300' || code === '08000' || code === '08003' || code === '08006')
         return 'db_connection';
     if (code && code.startsWith('23'))
@@ -277,6 +264,8 @@ function ingestionFailureClass(err) {
         return 'db_lock_timeout';
     if (message.includes('statement timeout') || message.includes('canceling statement due to statement timeout'))
         return 'db_statement_timeout';
+    if (message.includes('idle-in-transaction timeout') || message.includes('idle_in_transaction_session_timeout'))
+        return 'db_idle_transaction_timeout';
     if (message.includes('timeout') || message.includes('connection') || message.includes('econn') || message.includes('terminating connection'))
         return 'db_connection';
     if (message.includes('duplicate') || message.includes('conflict'))
@@ -289,6 +278,7 @@ export class EventProcessor {
     log;
     writer;
     usage;
+    creditWeights;
     errorIngestionService;
     /**
      * Bounds concurrent ingest transactions to the telemetry pool's real capacity.
@@ -322,6 +312,8 @@ export class EventProcessor {
             bufferLimit: env.INGESTION_USAGE_BUFFER_LIMIT,
             driveRollup: false,
         });
+        this.creditWeights = new CreditWeightService(usagePool, log);
+        this.creditWeights.start();
         const errorGroupRepo = new ErrorGroupRepository(pool);
         const errorRepo = new ErrorRepository(pool);
         const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
@@ -329,6 +321,7 @@ export class EventProcessor {
     }
     start() {
         this.usage.start();
+        void this.creditWeights.loadWeights().catch(() => { });
     }
     async stop() {
         await this.usage.stop();
@@ -399,179 +392,116 @@ export class EventProcessor {
                 event,
             });
         }
-        timings.normalizationMs = normalizationMs;
         timings.validationMs = elapsedSince(validationStartedAt);
-        // Route validation rejects to the DLQ intake queue (one message per job).
-        // If this send throws, the job fails and retries — rejects are never lost.
+        timings.normalizationMs = normalizationMs;
+        // Route rejects to the DLQ intake queue asynchronously (fire-and-forget).
         if (rejected.length > 0) {
-            throwIfIngestionAborted(signal, 'validation DLQ enqueue');
-            const dlqStartedAt = Date.now();
-            const dlq = {
+            const dlqPayload = {
                 sourceQueue: queue,
+                eventType: type ?? 'unknown',
                 organizationId: orgId,
                 projectId,
                 environment,
-                eventType: type ?? 'unknown',
-                payload: rejected,
                 failedAt: new Date().toISOString(),
-                error: `validation_failed: ${rejected.length} event(s) rejected; first: ${rejected[0]?.detail ?? 'unknown'}`,
+                error: 'validation',
+                payload: rejected,
             };
-            await pgboss.send(INGEST_DLQ_INTAKE_QUEUE, dlq, {});
-            throwIfIngestionAborted(signal, 'validation DLQ enqueue');
-            timings.dlqEnqueueMs = elapsedSince(dlqStartedAt);
+            pgmq.send(INGEST_DLQ_INTAKE_QUEUE, dlqPayload).catch((err) => {
+                this.log.error({ err, queue, count: rejected.length }, 'failed to enqueue rejected events to DLQ');
+            });
         }
-        // 3) Persist all writes for this job through one checked-out client and one transaction.
         let result = {
-            totalInserted: 0,
             totalReceived: rawEvents.length,
+            totalInserted: 0,
             perType: {},
             insertedErrors: [],
-            outboxInserted: 0,
         };
-        let errorDomainEvents = [];
         let dbQueries = 0;
         let dbQueryMs = 0;
         if (scoped.length > 0) {
-            // ── Write admission ───────────────────────────────────────────────────
-            // Wait here (in memory, FIFO, abortable by pg-boss expiry) rather
-            // than on `pool.connect()`. The permit guarantees capacity remains,
-            // while connectWithAbort also releases any checkout that arrives after
-            // cancellation. `writeAdmissionWaitMs` stays separate from real pool
-            // acquisition time so saturation remains diagnosable.
+            throwIfIngestionAborted(signal, 'write admission wait');
             await this.admission.run(async () => {
-                throwIfIngestionAborted(signal, 'database transaction');
-                const dbConnectionStartedAt = Date.now();
+                throwIfIngestionAborted(signal, 'database connection wait');
+                const connectStartedAt = Date.now();
                 const client = await connectWithAbort(this.pool, signal);
-                timings.dbConnectionWaitMs = elapsedSince(dbConnectionStartedAt);
-                let queryActive = false;
+                timings.dbConnectMs = elapsedSince(connectStartedAt);
+                let isQueryActive = false;
                 const restoreQuery = instrumentClientQueries(client, (durationMs) => {
                     dbQueries += 1;
                     dbQueryMs += durationMs;
                     this.metrics.recordDbQueryDuration(type ?? 'unknown', durationMs);
                 }, signal, (active) => {
-                    queryActive = active;
+                    isQueryActive = active;
                 });
-                const abortGuard = installPostgresAbortGuard(this.pool, client, signal, () => queryActive, this.log);
+                const abortGuard = installPostgresAbortGuard(this.pool, client, signal, () => isQueryActive, this.log);
                 let transactionOpen = false;
+                const transactionStartedAt = Date.now();
+                const errorDomainEvents = [];
                 try {
-                    throwIfIngestionAborted(signal, 'database transaction');
-                    const transactionStartedAt = Date.now();
-                    const beginStartedAt = Date.now();
                     await client.query('BEGIN');
                     transactionOpen = true;
                     await applyIngestionTransactionSettings(client);
-                    timings.beginMs = elapsedSince(beginStartedAt);
-                    if (type === 'error') {
-                        const errorPrepareStartedAt = Date.now();
-                        const errorBatch = scoped.map(s => {
-                            const e = s.event;
-                            const errorName = errorNameOf(s.event);
-                            const fingerprint = errorFingerprint(s.event, errorName);
-                            const req = e.context?.request || e.context || {};
+                    throwIfIngestionAborted(signal, 'telemetry persistence');
+                    const writeStartedAt = Date.now();
+                    result = await this.writer.writeBatchDetailedInTransaction(client, scoped);
+                    timings.writeBatchMs = elapsedSince(writeStartedAt);
+                    if (result.insertedErrors && result.insertedErrors.length > 0) {
+                        const errorIngestStartedAt = Date.now();
+                        const errorBatch = result.insertedErrors.map((scopedErr) => {
+                            const ev = scopedErr.event;
+                            const errName = errorNameOf(ev);
+                            const fp = errorFingerprint(ev);
+                            const occurredAt = new Date(resolveTimestamp(ev, { nowMs: receivedAtMs, fallbackMs: scopedErr.occurredAtMs ?? receivedAtMs }));
+                            const eventId = scopedEventId(scopedErr);
+                            const severity = str(ev.severity, 50) ?? 'error';
                             return {
                                 groupParams: {
-                                    organizationId: s.orgId,
-                                    projectId: s.projectId,
-                                    fingerprint,
-                                    fingerprintVersion: 2,
-                                    eventId: e.eventId,
-                                    severity: e.level || e.severity || 'error',
-                                    message: e.message,
-                                    errorName,
-                                    ...(typeof e.release === 'string' ? { release: e.release } : {}),
-                                    ...(typeof e.sdk?.version === 'string' ? { sdkVersion: e.sdk.version } : {}),
-                                    ...(typeof e.traceId === 'string' ? { traceId: e.traceId } : {}),
-                                    ...(typeof e.requestId === 'string' ? { requestId: e.requestId } : {}),
-                                    environment: s.environment,
-                                    service: typeof e.service === 'string' ? e.service : undefined,
-                                    occurredAt: new Date(s.occurredAtMs ?? receivedAtMs),
+                                    organizationId: scopedErr.orgId ?? '',
+                                    projectId: scopedErr.projectId,
+                                    eventId,
+                                    severity,
+                                    fingerprint: fp,
+                                    errorName: errName,
+                                    message: str(ev.message, 1000) ?? errName,
+                                    occurredAt,
+                                    environment: scopedErr.environment,
+                                    metadata: {
+                                        type: str(ev.type, 100),
+                                        handled: typeof ev.handled === 'boolean' ? ev.handled : undefined,
+                                    },
                                 },
                                 eventRecord: {
-                                    id: typeof e.id === 'string' ? e.id : randomUUID(),
-                                    organization_id: s.orgId,
-                                    project_id: s.projectId,
-                                    api_key_name: s.apiKeyName ?? '',
-                                    environment: s.environment,
-                                    event_id: e.eventId,
-                                    request_id: e.requestId ?? null,
-                                    trace_id: e.traceId ?? null,
-                                    span_id: e.spanId ?? null,
-                                    parent_span_id: e.parentSpanId ?? null,
-                                    session_id: e.sessionId ?? null,
-                                    user_id: e.userId ?? e.context?.userId ?? e.user?.id ?? null,
-                                    fingerprint,
-                                    fingerprint_version: 2,
-                                    message: e.message || errorName,
-                                    error_name: errorName,
-                                    severity: e.level || e.severity || 'error',
-                                    mechanism: e.mechanism ?? null,
-                                    handled: typeof e.handled === 'boolean' ? e.handled : null,
-                                    method: e.method ?? req.method ?? null,
-                                    route: e.route ?? req.route ?? null,
-                                    url: e.url ?? req.url ?? null,
-                                    status_code: typeof e.statusCode === 'number' ? e.statusCode : (typeof req.statusCode === 'number' ? req.statusCode : null),
-                                    status_text: e.statusText ?? req.statusText ?? null,
-                                    stack_raw: e.stack ? JSON.stringify(e.stack) : null,
-                                    breadcrumbs: e.breadcrumbs ? JSON.stringify(e.breadcrumbs) : null,
-                                    user_agent: req.headers?.['user-agent'] ?? null,
-                                    client_ip: req.headers?.['x-forwarded-for'] ?? req.ip ?? null,
-                                    service: typeof e.service === 'string' ? e.service : (typeof req.service === 'string' ? req.service : null),
-                                    release: e.release ?? e.metadata?.release ?? null,
-                                    server_name: e.serverName ?? e.metadata?.serverName ?? null,
-                                    application_name: e.applicationName ?? e.metadata?.applicationName ?? null,
-                                    application_version: e.applicationVersion ?? e.metadata?.applicationVersion ?? null,
-                                    tags: e.tags ?? {},
-                                    extra: e.extra ?? {},
-                                    metadata: e.metadata ?? {},
-                                    ai_response: e.aiResponse ?? null,
-                                    occurred_at: new Date(s.occurredAtMs ?? receivedAtMs),
-                                    payload: e
-                                }
+                                    id: randomUUID(),
+                                    event_id: eventId,
+                                    project_id: scopedErr.projectId,
+                                    organization_id: scopedErr.orgId ?? '',
+                                    fingerprint: fp,
+                                    error_name: errName,
+                                    message: str(ev.message, 1000) ?? errName,
+                                    stack_frames: ev.stack ?? [],
+                                    type: str(ev.type, 100) ?? null,
+                                    handled: typeof ev.handled === 'boolean' ? ev.handled : null,
+                                    severity,
+                                    environment: scopedErr.environment,
+                                    occurred_at: occurredAt,
+                                    payload: ev,
+                                    user_id: str(ev.userId, 255) ?? null,
+                                    session_id: str(ev.sessionId, 255) ?? null,
+                                    request_id: str(ev.requestId, 255) ?? null,
+                                    url: str(ev.url, 2048) ?? null,
+                                    metadata: typeof ev.metadata === 'object' && ev.metadata !== null ? ev.metadata : {},
+                                },
                             };
                         });
-                        timings.errorPrepareMs = elapsedSince(errorPrepareStartedAt);
-                        const insertStartedAt = Date.now();
-                        const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch);
-                        timings.insertMs = elapsedSince(insertStartedAt);
-                        result.totalInserted = errorResult.inserted;
-                        result.totalReceived = errorBatch.length;
-                        result.perType = {
-                            error: {
-                                received: errorBatch.length,
-                                inserted: errorResult.inserted,
-                                durationMs: timings.insertMs,
-                            },
-                        };
-                        errorDomainEvents = errorResult.domainEvents;
-                        if (result.totalInserted > 0) {
-                            const outboxStartedAt = Date.now();
-                            // Only events the DB actually inserted may produce outbox rows.
-                            // Previously the whole `scoped` array was passed, so a batch of
-                            // 1 new + 99 redelivered duplicates built a 100-row UNNEST payload
-                            // and attempted 100 `alert_runtime_idempotency_keys` inserts that
-                            // were guaranteed to be swallowed by ON CONFLICT DO NOTHING. That
-                            // is pure write amplification (heap + index + WAL) on the retry
-                            // path, which is exactly when the system is already under stress.
-                            // `errorResult.domainEvents` is populated once per INSERTED error,
-                            // so it is the authoritative inserted set.
-                            const insertedKeys = new Set(errorResult.domainEvents.map((domainEvent) => outboxIdentityKey(domainEvent.eventRecord.organization_id, domainEvent.eventRecord.event_id)));
-                            const insertedScoped = scoped.filter((candidate) => insertedKeys.has(outboxIdentityKey(candidate.orgId, scopedEventId(candidate))));
-                            result.outboxInserted = insertedScoped.length > 0
-                                ? await this.writer.appendTelemetryOutbox(insertedScoped, client)
-                                : 0;
-                            timings.outboxMs = elapsedSince(outboxStartedAt);
-                            timings.outboxRowsSkippedDuplicate = scoped.length - insertedScoped.length;
-                        }
+                        const errorResult = await this.errorIngestionService.ingestBatch(client, errorBatch, true);
+                        errorDomainEvents.push(...errorResult.domainEvents);
+                        timings.errorIngestionMs = elapsedSince(errorIngestStartedAt);
                     }
-                    else {
-                        const insertStartedAt = Date.now();
-                        result = await this.writer.writeBatchDetailedInTransaction(client, scoped);
-                        timings.insertMs = elapsedSince(insertStartedAt);
-                        if (result.totalInserted > 0) {
-                            const outboxStartedAt = Date.now();
-                            result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
-                            timings.outboxMs = elapsedSince(outboxStartedAt);
-                        }
+                    if (result.totalInserted > 0) {
+                        throwIfIngestionAborted(signal, 'outbox persistence');
+                        const outboxStartedAt = Date.now();
+                        result.outboxInserted = await this.writer.appendTelemetryOutbox(scoped, client);
+                        timings.outboxMs = elapsedSince(outboxStartedAt);
                     }
                     // ACK remains downstream of this durable boundary. Checking immediately
                     // before submission ensures an abort cannot interleave in JavaScript;
@@ -652,8 +582,15 @@ export class EventProcessor {
         // 5) Usage accounting (inserted rows only — duplicates are never billed).
         if (result.totalInserted > 0 && orgId && projectId) {
             const usageStartedAt = Date.now();
-            this.usage.increment(projectId, orgId, `billing:events:${type}`, result.totalInserted);
-            this.usage.increment(projectId, orgId, 'events', result.totalInserted, {
+            const weight = this.creditWeights.getWeightSync(type ?? 'unknown');
+            const weightedCredits = Math.round(result.totalInserted * weight * 10000) / 10000;
+            const rawCount = result.totalInserted;
+            // Weighted billable credits increment
+            this.usage.increment(projectId, orgId, `billing:events:${type}`, weightedCredits);
+            // Unweighted raw count increment
+            this.usage.increment(projectId, orgId, `billing:raw:${type}`, rawCount);
+            // Aggregate project usage
+            this.usage.increment(projectId, orgId, 'events', weightedCredits, {
                 apiKeyId: payload.metadata.apiKeyId || null,
                 eventType: type ?? 'all',
             });

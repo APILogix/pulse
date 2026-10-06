@@ -18,6 +18,36 @@ function shouldDestroyTransactionClient(error) {
 // ============================================================================
 // SESSION QUERIES
 // ============================================================================
+export const USER_SESSION_COLUMNS = `
+  id,
+  user_id,
+  refresh_token_hash,
+  previous_refresh_token_hash,
+  previous_refresh_rotated_at,
+  access_token_jti,
+  device_fingerprint,
+  device_name,
+  device_type,
+  ip_address,
+  ip_geo_country,
+  ip_geo_city,
+  user_agent,
+  created_at,
+  last_active_at,
+  expires_at,
+  absolute_expires_at,
+  status,
+  terminated_at,
+  terminated_by,
+  termination_reason,
+  mfa_verified_at,
+  mfa_expires_at,
+  sso_provider_id,
+  sso_provider_type,
+  login_method,
+  saml_name_id,
+  saml_session_index
+`;
 /**
  * Insert a new session row. Callers MUST pre-allocate the session UUID and
  * the SHA-256 of the issued refresh JWT so the row is created in a single
@@ -35,7 +65,7 @@ export async function createSession(data, client) {
        $6, $7, $8::inet, $9, $10,
        $11, $12, $13, $14, $15, $16, $17, $18, 'active'
      )
-     RETURNING *`, [
+     RETURNING ${USER_SESSION_COLUMNS}`, [
         data.id,
         data.user_id,
         data.refresh_token_hash,
@@ -59,12 +89,12 @@ export async function createSession(data, client) {
 }
 /**
  * Look up a session whose current OR previous refresh-token hash matches the
- * presented value. Constrained by `(id, user_id)` so we only ever return the
+ * presented value. Constrained by \`(id, user_id)\` so we only ever return the
  * exact session the JWT claims it belongs to.
  */
 export async function findSessionByAnyRefreshTokenHash(tokenHash, sessionId, userId, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM user_sessions
+    const result = await db.query(`SELECT ${USER_SESSION_COLUMNS} FROM user_sessions
      WHERE id = $2 AND user_id = $3
        AND (refresh_token_hash = $1 OR previous_refresh_token_hash = $1)
      LIMIT 1`, [tokenHash, sessionId, userId]);
@@ -78,7 +108,7 @@ export async function findSessionByAnyRefreshTokenHash(tokenHash, sessionId, use
 }
 export async function findSessionById(id, userId, client) {
     const db = client || pool;
-    let query = `SELECT * FROM user_sessions WHERE id = $1`;
+    let query = `SELECT ${USER_SESSION_COLUMNS} FROM user_sessions WHERE id = $1`;
     const params = [id];
     if (userId) {
         query += ` AND user_id = $2`;
@@ -87,11 +117,26 @@ export async function findSessionById(id, userId, client) {
     const result = await db.query(query, params);
     return result.rows[0] || null;
 }
-export async function listActiveSessionsByUser(userId, client) {
+export const USER_SESSION_SUMMARY_COLUMNS = `
+  id,
+  user_id,
+  device_name,
+  device_type,
+  ip_address,
+  ip_geo_country,
+  ip_geo_city,
+  user_agent,
+  created_at,
+  last_active_at,
+  expires_at,
+  status
+`;
+export async function listActiveSessionsByUser(userId, client, limit = 200) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM user_sessions
+    const result = await db.query(`SELECT ${USER_SESSION_SUMMARY_COLUMNS} FROM user_sessions
      WHERE user_id = $1 AND status = 'active'
-     ORDER BY last_active_at DESC`, [userId]);
+     ORDER BY last_active_at DESC
+     LIMIT $2`, [userId, limit]);
     return result.rows;
 }
 export async function listOtherActiveSessionIds(userId, currentSessionId, client) {
@@ -198,11 +243,25 @@ export async function cleanupExpiredSessions(client) {
        AND (expires_at < NOW() OR absolute_expires_at < NOW())`);
     return result.rowCount ?? 0;
 }
-export async function purgeOldRevokedSessions(olderThanDays = 90, client) {
+export async function purgeOldRevokedSessions(olderThanDays = 90, client, batchSize = 5000) {
     const db = client || pool;
-    const result = await db.query(`DELETE FROM user_sessions
-     WHERE status IN ('revoked', 'expired', 'terminated_by_admin')
-       AND COALESCE(terminated_at, expires_at) < NOW() - ($1::interval)`, [`${olderThanDays} days`]);
-    return result.rowCount ?? 0;
+    let totalDeleted = 0;
+    while (true) {
+        const result = await db.query(`DELETE FROM user_sessions
+       WHERE id IN (
+         SELECT id FROM user_sessions
+         WHERE status IN ('revoked', 'expired', 'terminated_by_admin')
+           AND (
+             (terminated_at IS NOT NULL AND terminated_at < NOW() - ($1::interval))
+             OR (terminated_at IS NULL AND expires_at < NOW() - ($1::interval))
+           )
+         LIMIT $2
+       )`, [`${olderThanDays} days`, batchSize]);
+        const count = result.rowCount ?? 0;
+        totalDeleted += count;
+        if (count < batchSize)
+            break;
+    }
+    return totalDeleted;
 }
 //# sourceMappingURL=session.repository.js.map

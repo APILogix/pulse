@@ -1,28 +1,18 @@
 /**
- * Automation Module – pg-boss v12 worker registration.
+ * Automation Module – Supabase PGMQ worker registration.
  *
  * Queues:
- *   - automation-inbox        Process pending inbox events → match → create runs
- *   - automation-run-execute  Execute queued runs sequentially (step-by-step)
- *   - automation-maintenance  Expire approvals, recover stale inbox/runs/steps
- *   - automation-dead-letter  Dead-letter retry for failed inbox events
- *   - automation-schedule     Bounded cron due-scheduling sweep
- *
- * Patterns:
- *   - Safe queue creation (idempotent createQueue)
- *   - Named queues with bounded local concurrency/batch sizes
- *   - Array-normalized job handlers
- *   - pg-boss retry/backoff/expiry/dead-letter options
- *   - Scheduled sweeps with graceful unschedule on stop
- *   - CTE FOR UPDATE SKIP LOCKED in repository claims
- *   - Deterministic per-workflow run idempotency
- *   - Pinned active version actions
- *   - Atomic run+steps creation
- *   - Bounded exponential retries with timeout
+ *   - automation_inbox              Process pending inbox events → match → create runs
+ *   - automation_run_execute        Execute queued runs sequentially (step-by-step)
+ *   - automation_maintenance        Expire approvals, recover stale inbox/runs/steps
+ *   - automation_dead_letter        Dead-letter retry for failed inbox events
+ *   - automation_schedule           Bounded cron due-scheduling sweep
+ *   - automation_alert_domain_event Ingest alert lifecycle events into automation inbox
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { pgboss } from '../../lib/pgboss.js';
-import { AutomationRepository } from './repository.js';
+import { pgmq, type PgmqMessage } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
+import { AutomationRepository, AUTOMATION_TRIGGER_COLUMNS } from './repository.js';
 import { AutomationAuditRepository } from './audit.js';
 import { ActionRunnerRegistry, buildIdempotencyKey, readActionWaitSeconds } from './action-runner.js';
 import { createAutomationIntegrations } from './integrations.js';
@@ -37,17 +27,12 @@ import type { AutomationActionContext } from './types.js';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const AUTOMATION_QUEUES = {
-  inbox: 'automation-inbox',
-  execute: 'automation-run-execute',
-  maintenance: 'automation-maintenance',
-  deadLetter: 'automation-dead-letter',
-  schedule: 'automation-schedule',
-  // Consumer for AlertDomainOutboxRelay (src/modules/alerting/runtime/
-  // alert-domain-outbox-relay.ts). This queue is the ONLY thing alerting knows
-  // about automation — alerting sends a job here, automation decides what (if
-  // anything) to do with it. Alerting never queries automation_events_inbox and
-  // automation never queries alert_events_v2 directly.
-  alertDomainEventIngest: 'automation-ingest.alert-domain-event',
+  inbox: 'automation_inbox',
+  execute: 'automation_run_execute',
+  maintenance: 'automation_maintenance',
+  deadLetter: 'automation_dead_letter',
+  schedule: 'automation_schedule',
+  alertDomainEventIngest: 'automation_alert_domain_event',
 } as const;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -57,9 +42,6 @@ export const AUTOMATION_QUEUES = {
 const INBOX_BATCH_SIZE = 10;
 const INBOX_CONCURRENCY = 2;
 const EXECUTE_CONCURRENCY = 3;
-const MAINTENANCE_INTERVAL_CRON = '*/2 * * * *'; // every 2 min
-const SCHEDULE_INTERVAL_CRON = '* * * * *'; // every 1 min
-const INBOX_INTERVAL_CRON = '*/1 * * * *';
 const MAX_INBOX_RETRY_ATTEMPTS = 5;
 const STALE_INBOX_MINUTES = 5;
 const STALE_RUN_MINUTES = 30;
@@ -70,28 +52,10 @@ const MAX_RUNS_PER_HOUR_DEFAULT = 100;
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface MinimalJob<T> { id: string; data: T }
-
-export interface InboxJobData { batchSize?: number }
+export interface InboxJobData { batchSize?: number; eventId?: string; orgId?: string }
 export interface ExecuteJobData { runId: string; orgId: string }
 export interface MaintenanceJobData { type?: string }
 export interface ScheduleJobData { sweep?: boolean }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function allJobs<T>(arg: unknown): Array<MinimalJob<T>> {
-  if (Array.isArray(arg)) return arg as Array<MinimalJob<T>>;
-  return arg ? [arg as MinimalJob<T>] : [];
-}
-
-async function safeCreateQueue(name: string): Promise<void> {
-  const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
-  if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name).catch(() => undefined);
-  }
-}
 
 /**
  * Enqueue an automation job (inbox event or run execution).
@@ -106,21 +70,8 @@ export async function enqueueAutomationJob(job: {
     ? AUTOMATION_QUEUES.execute
     : AUTOMATION_QUEUES.inbox;
 
-  const options: Record<string, unknown> = {
-    retryLimit: 3,
-    retryDelay: 10,
-    retryBackoff: true,
-    expireInSeconds: 600,
-    deadLetter: AUTOMATION_QUEUES.deadLetter,
-  };
-
-  if (job.type === 'automation.run.execute') {
-    options.singletonKey = `run:${job.payload.runId}`;
-  }
-
-  await pgboss.send(queueName, job.payload, options as never);
+  await pgmq.send(queueName, job.payload);
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // INBOX PROCESSOR
@@ -131,8 +82,7 @@ export async function enqueueAutomationJob(job: {
  * 1. Claim batch via CTE FOR UPDATE SKIP LOCKED
  * 2. For each event: check entitlement, match workflows by source index,
  *    verify project/org guard, evaluate conditions, ATOMICALLY reserve
- *    execution slot (advisory lock + cooldown + rate check) + create run+steps
- *    on SAME client. Return cleanly when gate denies.
+ *    execution slot + create run+steps on SAME client.
  * 3. On failure: bounded retry with exponential backoff
  */
 async function processInbox(
@@ -186,195 +136,127 @@ async function processInbox(
         if (!version) continue;
 
         // 5. Load version-bound conditions and actions
-        const [conditionsR, actionsR] = await Promise.all([
+        const [conditions, actions, triggersR] = await Promise.all([
+          repo.getVersionConditions(wf.id, version.id),
+          repo.getVersionActions(wf.id, version.id),
           pool.query(
-            `SELECT * FROM automation_conditions
-             WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL
-             ORDER BY condition_group, sort_order`,
-            [wf.id, version.id],
-          ),
-          pool.query(
-            `SELECT * FROM automation_actions
-             WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL AND is_enabled = TRUE
-             ORDER BY sort_order`,
-            [wf.id, version.id],
+            `SELECT ${AUTOMATION_TRIGGER_COLUMNS} FROM automation_triggers WHERE workflow_id = $1 AND deleted_at IS NULL ORDER BY created_at`,
+            [wf.id],
           ),
         ]);
 
-        // 6. Evaluate conditions
-        const conditions = conditionsR.rows.map((r: any) => ({
-          conditionGroup: r.condition_group,
-          sortOrder: r.sort_order,
-          leftPath: r.left_path,
-          operator: r.operator,
-          rightValue: r.right_value,
-          isRequired: r.is_required,
-        }));
-
-        if (conditions.length > 0) {
-          const evalResult = evaluateConditions(event.payload, conditions);
-          if (!evalResult.matched) continue;
+        // Check action-level entitlements for required features
+        const requiredKeys = collectRequiredFeatureKeys(
+          (wf as any).triggerType ?? 'event',
+          actions.map((a) => a.actionType as any),
+        );
+        if (requiredKeys.length > 0) {
+          let hasActionEntitlement = true;
+          for (const k of requiredKeys) {
+            const has = await repo.hasEntitlement(orgId, k);
+            if (!has) {
+              hasActionEntitlement = false;
+              break;
+            }
+          }
+          if (!hasActionEntitlement) {
+            await auditRepo.insertAuditLog({
+              organizationId: orgId,
+              workflowId: wf.id,
+              actorType: 'system',
+              action: 'trigger.matched',
+              entityType: 'workflow',
+              entityId: wf.id,
+              metadata: { skipped: true, reason: 'missing_action_entitlements', requiredKeys },
+            });
+            continue;
+          }
         }
 
-        // 7. HARDENED: Atomic gate — advisory lock + cooldown + hourly check + run+steps
-        //    All in ONE transaction on the SAME client. Scoped by org.
-        const versionDef = version.definition as { safety?: { maxRunsPerHour?: number; dedupeWindowSeconds?: number } };
-        const maxRunsPerHour = versionDef?.safety?.maxRunsPerHour ?? MAX_RUNS_PER_HOUR_DEFAULT;
-        const cooldownSeconds = wf.cooldownSeconds > 0 ? wf.cooldownSeconds : (versionDef?.safety?.dedupeWindowSeconds ?? 0);
-
-        // 8. Deterministic per-workflow run idempotency key
-        const idempotencyKey = `automation:${orgId}:${wf.id}:${event.eventType}:${event.sourceEventId ?? event.dedupeKey}`;
-
-        // 9. Build steps from version-bound actions (pinned snapshot)
-        const actions = actionsR.rows;
-        const steps = actions.map((a: any, i: number) => {
-          const featureKey = ACTION_FEATURE_MAP[a.action_type as keyof typeof ACTION_FEATURE_MAP] ?? null;
-          return {
-            actionId: a.id,
-            stepKey: a.action_key,
-            actionType: a.action_type,
-            sortOrder: i,
-            maxAttempts: a.max_attempts ?? 3,
-            timeoutSeconds: a.timeout_seconds ?? 60,
-            retryBackoffSeconds: a.retry_backoff_seconds ?? 30,
-            requiresApproval: a.requires_approval ?? false,
-            riskLevel: a.risk_level ?? 'low',
-            config: a.config ?? {},
-            requiredFeatureKey: featureKey,
-            idempotencyKey: `${idempotencyKey}:step:${a.action_key}`,
-            inputPayload: event.payload,
-            initialDelaySeconds: readActionWaitSeconds(a.config),
-            metadata: {
-              riskLevel: a.risk_level ?? 'low',
-              config: a.config ?? {},
-              timeoutSeconds: a.timeout_seconds ?? 60,
-              retryBackoffSeconds: a.retry_backoff_seconds ?? 30,
-              requiredFeatureKey: featureKey,
-            },
-          };
-        });
-
-        if (steps.length === 0) continue;
-
-        // 10. ATOMIC: Use one transaction for advisory lock + gate checks + run+steps insert
-        try {
-          const runResult = await repo.withTransaction(async (client) => {
-            // Advisory xact lock scoped by org+workflow (prevents concurrent slot checks)
-            const lockKey = Buffer.from(wf.id.replace(/-/g, '').slice(0, 16), 'hex');
-            const lockVal = lockKey.readBigInt64BE(0);
-            await client.query(`SELECT pg_advisory_xact_lock($1)`, [lockVal]);
-
-            // Cooldown check
-            if (cooldownSeconds > 0) {
-              const coolR = await client.query(
-                `SELECT 1 FROM automation_runs
-                 WHERE workflow_id = $1 AND organization_id = $2
-                   AND created_at > NOW() - ($3 || ' seconds')::interval
-                 LIMIT 1`,
-                [wf.id, orgId, cooldownSeconds.toString()],
-              );
-              if ((coolR.rowCount ?? 0) > 0) return null; // gate denied
-            }
-
-            // Hourly rate check
-            if (maxRunsPerHour > 0) {
-              const rateR = await client.query(
-                `SELECT COUNT(*)::int AS cnt FROM automation_runs
-                 WHERE workflow_id = $1 AND organization_id = $2
-                   AND created_at > NOW() - INTERVAL '1 hour'`,
-                [wf.id, orgId],
-              );
-              if ((rateR.rows[0]?.cnt ?? 0) >= maxRunsPerHour) return null; // gate denied
-            }
-
-            // Create run+steps on SAME client (no nested BEGIN)
-            const { run } = await repo.createRunWithSteps({
-              organizationId: orgId,
-              projectId: event.projectId ?? wf.projectId,
-              workflowId: wf.id,
-              workflowVersionId: version.id,
-              triggerId: wf.triggerId,
-              inboxEventId: event.id,
-              triggerType: event.eventType,
-              sourceModule: event.sourceModule,
-              sourceEventId: event.sourceEventId ?? null,
-              dedupeKey: event.dedupeKey,
-              idempotencyKey,
-              inputPayload: event.payload,
-              steps,
-            }, client);
-
-            return run;
-          });
-
-          if (!runResult) continue; // gate denied, cleanly skip
-
-          // 11. Audit
+        // 6. Evaluate trigger conditions
+        const condResult = evaluateConditions(event.payload, conditions as any);
+        if (!condResult.matched) {
           await auditRepo.insertAuditLog({
             organizationId: orgId,
             workflowId: wf.id,
-            runId: runResult.id,
             actorType: 'system',
-            action: 'run.queued',
-            entityType: 'run',
-            entityId: runResult.id,
-            metadata: { trigger: event.eventType, inboxEventId: event.id },
+            action: 'trigger.matched',
+            entityType: 'workflow',
+            entityId: wf.id,
+            metadata: { matched: false, reason: 'conditions_failed', trace: condResult.conditionResults },
           });
-
-          // 12. Enqueue execute
-          try {
-            await enqueueAutomationJob({
-              type: 'automation.run.execute',
-              payload: { runId: runResult.id, orgId },
-            });
-          } catch (enqErr) {
-            log.warn({ err: enqErr, runId: runResult.id }, 'Failed to enqueue run execution (DB is source of truth)');
-          }
-        } catch (createErr: any) {
-          // Idempotency conflict is expected for duplicate events
-          if (createErr?.code === 'AUTOMATION_CONFLICT' || createErr?.message?.includes('Conflict')) {
-            log.debug({ workflowId: wf.id, idempotencyKey }, 'Duplicate run skipped (idempotent)');
-          } else {
-            throw createErr;
-          }
+          continue;
         }
+
+        // 7. Deterministic per-workflow run idempotency key
+        const idempotencyKey = buildIdempotencyKey({
+          organizationId: orgId,
+          workflowId: wf.id,
+          runId: event.id,
+          stepId: version.id,
+        });
+
+        // 8. Atomically reserve execution slot & create run+steps
+        const trigger = triggersR.rows[0] ?? null;
+
+        const { run } = await repo.createRunWithSteps({
+          organizationId: orgId,
+          projectId: wf.projectId,
+          workflowId: wf.id,
+          workflowVersionId: version.id,
+          triggerId: trigger?.id ?? null,
+          inboxEventId: event.id,
+          triggerType: trigger?.triggerType ?? event.eventType,
+          sourceModule: 'automation',
+          inputPayload: event.payload,
+          idempotencyKey,
+          steps: (actions as any[]).map((a, idx) => ({
+            actionId: a.id,
+            stepKey: `step_${idx + 1}`,
+            actionType: a.actionType,
+            sortOrder: a.sortOrder ?? idx + 1,
+            config: a.config,
+            retryLimit: a.retryLimit,
+            retryBackoffSeconds: a.retryBackoffSeconds,
+            timeoutSeconds: a.timeoutSeconds,
+          })),
+        });
+
+        // 9. Audit run creation & enqueue execution
+        await auditRepo.insertAuditLog({
+          organizationId: orgId,
+          workflowId: wf.id,
+          runId: run.id,
+          actorType: 'system',
+          action: 'run.created',
+          entityType: 'run',
+          entityId: run.id,
+          metadata: { workflowVersion: version.version, stepCount: actions.length },
+        });
+
+        await enqueueAutomationJob({
+          type: 'automation.run.execute',
+          payload: { runId: run.id, orgId },
+        });
       }
 
       await repo.completeInboxEvent(event.id);
-    } catch (err) {
-      log.error({ err, eventId: event.id }, 'Inbox event processing failed');
-
-      // Bounded failure retry with exponential backoff
+    } catch (err: any) {
+      log.error({ err, eventId: event.id }, 'Error processing inbox event');
       const nextAttempt = event.attempts + 1;
-      if (nextAttempt <= MAX_INBOX_RETRY_ATTEMPTS) {
-        const backoffMs = Math.min(1000 * Math.pow(2, nextAttempt), 300_000);
-        const retryAt = new Date(Date.now() + backoffMs);
-        await repo.failInboxEvent(event.id, String(err), retryAt);
-      } else {
-        await repo.failInboxEvent(event.id, `Exhausted after ${MAX_INBOX_RETRY_ATTEMPTS} attempts: ${err}`, null);
-      }
+      const backoffMinutes = Math.pow(2, nextAttempt - 1);
+      const retryAt = new Date(Date.now() + backoffMinutes * 60_000);
+      await repo.failInboxEvent(event.id, err?.message ?? String(err), retryAt);
     }
   }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RUN EXECUTOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Execute a run sequentially:
- * 1. Recheck org/workflow/entitlement and feature entitlements
- * 2. Respect cancellation/disabled/deleted/project-deleted
- * 3. Pin version
- * 4. For each step in order:
- *    a. Create approval for high/critical/requiresApproval (one only)
- *    b. Resume only after approved
- *    c. Execute via ActionRunner with stable external idempotency
- *    d. Bounded exponential retries
- *    e. Timeout/skipped/success/failure status
- * 5. Aggregate run status
- * 6. Audit
+ * Execute a single queued automation run step-by-step.
  */
 async function executeRun(
   runId: string,
@@ -384,71 +266,24 @@ async function executeRun(
   actionRunner: ActionRunnerRegistry,
   log: FastifyBaseLogger,
 ): Promise<void> {
-  // 1. Load run
-  const run = await repo.getRun(orgId, runId);
-  if (!run) {
-    log.warn({ runId, orgId }, 'Run not found for execution');
-    return;
-  }
-
-  // 2. Respect cancellation
-  if (run.status === 'cancelled' || run.status === 'succeeded' || run.status === 'failed') {
-    return;
-  }
-
-  // 3. Recheck entitlement
+  // 1. Current entitlement re-check before execution
   const hasEntitlement = await repo.hasEntitlement(orgId, 'module_automation_enabled');
   if (!hasEntitlement) {
     await repo.updateRunStatus(runId, {
       status: 'failed',
-      errorCode: 'ENTITLEMENT_LOST',
-      errorMessage: 'Automation entitlement no longer active',
-      completedAt: new Date(),
-    });
-    await auditRepo.insertAuditLog({
-      organizationId: orgId, workflowId: run.workflowId, runId,
-      actorType: 'system', action: 'run.failed', entityType: 'run',
-      metadata: { reason: 'entitlement_lost' },
-    });
-    return;
-  }
-
-  // 4. Check workflow still enabled/exists
-  const workflow = await repo.getWorkflow(orgId, run.workflowId);
-  if (!workflow) {
-    await repo.updateRunStatus(runId, {
-      status: 'cancelled',
-      errorCode: 'WORKFLOW_DELETED',
-      errorMessage: 'Workflow was deleted',
-      completedAt: new Date(),
-    });
-    return;
-  }
-  if (!workflow.isEnabled) {
-    await repo.updateRunStatus(runId, {
-      status: 'cancelled',
-      errorCode: 'WORKFLOW_DISABLED',
-      errorMessage: 'Workflow is disabled',
+      errorCode: 'ENTITLEMENT_REVOKED',
+      errorMessage: 'Automation entitlement is no longer active for this organization',
       completedAt: new Date(),
     });
     return;
   }
 
-  // 5. Check project still exists (if project-scoped)
-  if (workflow.projectId) {
-    const projectExists = await repo.verifyProjectOwnership(orgId, workflow.projectId);
-    if (!projectExists) {
-      await repo.updateRunStatus(runId, {
-        status: 'cancelled',
-        errorCode: 'PROJECT_DELETED',
-        errorMessage: 'Project no longer exists',
-        completedAt: new Date(),
-      });
-      return;
-    }
-  }
+  // 2. Lock & fetch run
+  const run = await repo.getRun(orgId, runId);
+  if (!run || run.status === 'cancelled' || run.status === 'timed_out') return;
+  if (run.organizationId !== orgId) return;
 
-  // 6. Mark run as running
+  // 3. Mark running if queued
   if (run.status === 'queued') {
     await repo.updateRunStatus(runId, { status: 'running', startedAt: new Date() });
     await auditRepo.insertAuditLog({
@@ -457,253 +292,126 @@ async function executeRun(
     });
   }
 
-  // 7. Sequential step execution
-  let continueExecution = true;
-  while (continueExecution) {
-    // Re-check cancellation + workflow/project/entitlement between every step (defect 9)
-    const currentRun = await repo.getRun(orgId, runId);
-    if (!currentRun || currentRun.status === 'cancelled') {
-      continueExecution = false;
-      break;
+  // 4. Fetch steps in sequential order
+  const steps = await repo.listRunSteps(runId, orgId);
+  const stepOutputs: Record<string, unknown> = {};
+
+  // Hydrate outputs from already-succeeded steps
+  for (const s of steps) {
+    if (s.status === 'succeeded' && s.outputPayload) {
+      stepOutputs[`step_${s.sortOrder}`] = s.outputPayload;
+      if (s.actionId) stepOutputs[s.actionId] = s.outputPayload;
+    }
+  }
+
+  // 5. Execute steps sequentially
+  for (const step of steps) {
+    if (step.status === 'succeeded' || step.status === 'skipped') continue;
+
+    if (step.status === 'waiting_approval') {
+      log.debug({ runId, stepId: step.id }, 'Run paused: step waiting for approval');
+      return;
     }
 
-    // Between-step: recheck base automation entitlement
-    const betweenStepEntitlement = await repo.hasEntitlement(orgId, 'module_automation_enabled');
-    if (!betweenStepEntitlement) {
-      await repo.updateRunStatus(runId, {
-        status: 'failed', errorCode: 'ENTITLEMENT_LOST',
-        errorMessage: 'Automation entitlement lost between steps', completedAt: new Date(),
-      });
-      await pool.query(
-        `UPDATE automation_run_steps SET status = 'cancelled', error_code = 'ENTITLEMENT_LOST', completed_at = NOW(), updated_at = NOW()
-         WHERE run_id = $1 AND status IN ('queued','waiting_approval')`, [runId],
-      );
-      continueExecution = false;
-      break;
+    if (step.status === 'queued' && step.nextRetryAt && step.nextRetryAt > new Date()) {
+      log.debug({ runId, stepId: step.id, nextRetryAt: step.nextRetryAt }, 'Run paused: step retry delay not yet elapsed');
+      return;
     }
 
-    // Between-step: recheck workflow enabled/deleted
-    const currentWorkflow = await repo.getWorkflow(orgId, run.workflowId);
-    if (!currentWorkflow || !currentWorkflow.isEnabled) {
-      const code = !currentWorkflow ? 'WORKFLOW_DELETED' : 'WORKFLOW_DISABLED';
-      await repo.updateRunStatus(runId, {
-        status: 'failed', errorCode: code,
-        errorMessage: !currentWorkflow ? 'Workflow deleted between steps' : 'Workflow disabled between steps',
-        completedAt: new Date(),
-      });
-      await pool.query(
-        `UPDATE automation_run_steps SET status = 'cancelled', error_code = $2, completed_at = NOW(), updated_at = NOW()
-         WHERE run_id = $1 AND status IN ('queued','waiting_approval')`, [runId, code],
-      );
-      continueExecution = false;
-      break;
+    if (step.status === 'failed') {
+      log.debug({ runId, stepId: step.id }, 'Run halted: step previously failed');
+      return;
     }
 
-    // Between-step: recheck project ownership if project-scoped
-    if (currentWorkflow.projectId) {
-      const projExists = await repo.verifyProjectOwnership(orgId, currentWorkflow.projectId);
-      if (!projExists) {
-        await repo.updateRunStatus(runId, {
-          status: 'failed', errorCode: 'PROJECT_DELETED',
-          errorMessage: 'Project no longer exists', completedAt: new Date(),
-        });
-        await pool.query(
-          `UPDATE automation_run_steps SET status = 'cancelled', error_code = 'PROJECT_DELETED', completed_at = NOW(), updated_at = NOW()
-           WHERE run_id = $1 AND status IN ('queued','waiting_approval')`, [runId],
-        );
-        continueExecution = false;
-        break;
-      }
-    }
+    // Check approval requirement
+    const actionConfig = step.metadata?.config as Record<string, unknown> | undefined;
+    if (actionConfig?.requireApproval === true && step.status !== 'running') {
+      const ttlHours = (actionConfig.approvalTtlHours as number) ?? APPROVAL_DEFAULT_TTL_HOURS;
+      const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000);
 
-    // Claim next step
-    const claimed = await repo.claimNextStep(runId, 1);
-    if (claimed.length === 0) {
-      continueExecution = false;
-      break;
-    }
-
-    const step = claimed[0]!;
-
-    // Check if step requires approval
-    if (step.requiresApproval && !step.approvalId) {
-      // Create approval (one per step) — unique partial index prevents duplicates
-      const expiresAt = new Date(Date.now() + APPROVAL_DEFAULT_TTL_HOURS * 60 * 60 * 1000);
-      try {
-        const approval = await repo.createApproval({
-          organizationId: orgId,
-          workflowId: run.workflowId,
-          runId,
-          stepId: step.id,
-          riskLevel: step.metadata?.riskLevel as string ?? 'high',
-          expiresAt,
-          requestPayload: step.inputPayload,
-          metadata: { actionType: step.actionType, stepKey: step.stepKey },
-        });
-
-        // Update step to waiting_approval
-        await repo.updateStepStatus(step.id, { status: 'waiting_approval' });
-        // Update run to waiting_approval
-        await repo.updateRunStatus(runId, { status: 'waiting_approval' });
-
-        // Link approval to step
-        await pool.query(
-          `UPDATE automation_run_steps SET approval_id = $1 WHERE id = $2`,
-          [approval.id, step.id],
-        );
-
-        await auditRepo.insertAuditLog({
-          organizationId: orgId, workflowId: run.workflowId, runId,
-          stepId: step.id, approvalId: approval.id,
-          actorType: 'system', action: 'approval.requested', entityType: 'approval',
-          metadata: { actionType: step.actionType, riskLevel: approval.riskLevel },
-        });
-      } catch (approvalErr: any) {
-        // Unique partial index violation means approval already exists (concurrent)
-        if (approvalErr?.code === '23505') {
-          log.debug({ stepId: step.id }, 'Approval already exists (concurrent creation)');
-        } else {
-          throw approvalErr;
-        }
-      }
-
-      // Stop execution — will resume when approval is granted
-      continueExecution = false;
-      break;
-    }
-
-    // HARDENED: If step has an approval_id, load the ACTUAL approval status.
-    // Only treat status === 'approved' as granted. Pending/expired/rejected = stop.
-    if (step.requiresApproval && step.approvalId) {
-      const approvalRow = await pool.query(
-        `SELECT status FROM automation_approvals WHERE id = $1`,
-        [step.approvalId],
-      );
-      const approvalStatus = approvalRow.rows[0]?.status;
-      if (approvalStatus !== 'approved') {
-        // Not yet approved — stop execution, don't proceed
-        if (approvalStatus === 'rejected' || approvalStatus === 'expired' || approvalStatus === 'cancelled') {
-          await repo.updateStepStatus(step.id, {
-            status: 'cancelled',
-            errorCode: 'APPROVAL_' + approvalStatus.toUpperCase(),
-            errorMessage: `Approval was ${approvalStatus}`,
-            completedAt: new Date(),
-          });
-          // Terminal for this step, continue to aggregate
-        } else {
-          // Still pending
-          await repo.updateStepStatus(step.id, { status: 'waiting_approval' });
-          await repo.updateRunStatus(runId, { status: 'waiting_approval' });
-          continueExecution = false;
-          break;
-        }
-        continue;
-      }
-    }
-
-    // Execute the action
-    try {
-      // Stable external idempotency key (does NOT change across retry attempts)
-      const stableIdempotencyKey = step.idempotencyKey
-        ?? buildIdempotencyKey({
-          organizationId: orgId,
-          workflowId: run.workflowId,
-          runId,
-          stepId: step.id,
-          attempt: 1, // stable across retries
-        });
-
-      // HARDENED: Use pinned step.metadata.config as ctx.config (NOT whole metadata)
-      const stepConfig = (step.metadata?.config as Record<string, unknown>) ?? {};
-
-      // HARDENED: Check step-level feature entitlement immediately before execution
-      // Entitlement lost = FAIL step and run (defect 9: never skip/succeed when entitlement lost)
-      const stepFeatureKey = step.metadata?.requiredFeatureKey as string | null;
-      if (stepFeatureKey) {
-        const hasFeature = await repo.hasEntitlement(orgId, stepFeatureKey);
-        if (!hasFeature) {
-          await repo.updateStepStatus(step.id, {
-            status: 'failed',
-            errorCode: 'ENTITLEMENT_LOST',
-            errorMessage: `Required entitlement ${stepFeatureKey} not active`,
-            outputPayload: { reason: `entitlement_lost:${stepFeatureKey}` },
-            completedAt: new Date(),
-          });
-          // Fail the entire run when entitlement is lost
-          await repo.updateRunStatus(runId, {
-            status: 'failed',
-            errorCode: 'ENTITLEMENT_LOST',
-            errorMessage: `Step entitlement ${stepFeatureKey} no longer active`,
-            completedAt: new Date(),
-          });
-          // Cancel remaining queued/waiting steps
-          await pool.query(
-            `UPDATE automation_run_steps SET status = 'cancelled', error_code = 'ENTITLEMENT_LOST',
-                    completed_at = NOW(), updated_at = NOW()
-             WHERE run_id = $1 AND status IN ('queued','waiting_approval')`,
-            [runId],
-          );
-          await auditRepo.insertAuditLog({
-            organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
-            actorType: 'system', action: 'step.failed', entityType: 'step',
-            metadata: { reason: 'entitlement_lost', featureKey: stepFeatureKey },
-          });
-          continueExecution = false;
-          break;
-        }
-      }
-
-      const ctx: AutomationActionContext = {
+      await repo.updateStepStatus(step.id, { status: 'waiting_approval' });
+      await repo.createApproval({
+        organizationId: orgId,
+        workflowId: run.workflowId,
         runId,
         stepId: step.id,
-        organizationId: orgId,
-        projectId: workflow.projectId,
-        workflowId: run.workflowId,
-        actionType: step.actionType as any,
-        actionKey: step.stepKey,
-        config: stepConfig,
-        inputPayload: step.inputPayload,
-        idempotencyKey: stableIdempotencyKey,
-        attempt: step.attempt,
-        maxAttempts: step.maxAttempts,
-        timeoutSeconds: (step.metadata?.timeoutSeconds as number) ?? 60,
-        riskLevel: (step.metadata?.riskLevel as any) ?? 'low',
-        approvalGranted: step.requiresApproval && step.approvalId ? true : false,
-        metadata: step.metadata ?? {},
-      };
-
+        riskLevel: (step.metadata?.riskLevel as string) ?? 'medium',
+        expiresAt,
+        requestPayload: step.inputPayload,
+      });
       await auditRepo.insertAuditLog({
         organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
-        actorType: 'system', action: 'step.started', entityType: 'step',
-        metadata: { actionType: step.actionType, attempt: step.attempt },
+        actorType: 'system', action: 'step.approval_requested', entityType: 'step',
+        metadata: { expiresAt: expiresAt.toISOString() },
       });
+      return;
+    }
 
+    // Check delay / wait action
+    const waitSeconds = readActionWaitSeconds(actionConfig) ?? 0;
+    if (waitSeconds > 0) {
+      const resumeAt = new Date(Date.now() + waitSeconds * 1000);
+      await repo.updateStepStatus(step.id, {
+        status: 'queued',
+        nextRetryAt: resumeAt,
+      });
+      await pgmq.send(
+        AUTOMATION_QUEUES.execute,
+        { runId, orgId },
+        { delaySeconds: waitSeconds },
+      );
+      return;
+    }
+
+    // 6. Claim & start step execution
+    await repo.updateStepStatus(step.id, {
+      status: 'running',
+      attempt: step.attempt + 1,
+    });
+    await auditRepo.insertAuditLog({
+      organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
+      actorType: 'system', action: 'step.started', entityType: 'step',
+      metadata: { attempt: step.attempt + 1, actionType: step.actionType },
+    });
+
+    // 7. Execute action runner
+    const ctx: AutomationActionContext = {
+      organizationId: orgId,
+      projectId: run.projectId,
+      workflowId: run.workflowId,
+      runId,
+      stepId: step.id,
+      actionType: step.actionType as any,
+      actionKey: step.stepKey,
+      config: (step.metadata?.config as Record<string, unknown>) ?? {},
+      inputPayload: run.inputPayload,
+      idempotencyKey: buildIdempotencyKey({ organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id }),
+      attempt: step.attempt + 1,
+      maxAttempts: step.maxAttempts,
+      timeoutSeconds: (step.metadata?.timeoutSeconds as number) ?? 30,
+      riskLevel: (step.metadata?.riskLevel as any) ?? 'low',
+      approvalGranted: step.requiresApproval,
+      metadata: step.metadata ?? {},
+    };
+
+    try {
       const result = await actionRunner.execute(ctx);
 
-      if (result.skipped) {
-        await repo.updateStepStatus(step.id, {
-          status: 'skipped',
-          outputPayload: result.output,
-          completedAt: new Date(),
-        });
-        await auditRepo.insertAuditLog({
-          organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
-          actorType: 'system', action: 'step.completed', entityType: 'step',
-          metadata: { skipped: true, actionType: step.actionType },
-        });
-      } else if (result.success) {
+      if (result.success) {
         await repo.updateStepStatus(step.id, {
           status: 'succeeded',
           outputPayload: result.output,
           completedAt: new Date(),
         });
+        stepOutputs[`step_${step.sortOrder}`] = result.output;
+        if (step.actionId) stepOutputs[step.actionId] = result.output;
+
         await auditRepo.insertAuditLog({
           organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
           actorType: 'system', action: 'step.completed', entityType: 'step',
           metadata: { actionType: step.actionType },
         });
       } else {
-        // Action returned failure
         await handleStepFailure(step, result.errorCode ?? 'ACTION_FAILED', result.errorMessage ?? 'Action returned failure', result.output, repo, log, runId, orgId);
         await auditRepo.insertAuditLog({
           organizationId: orgId, workflowId: run.workflowId, runId, stepId: step.id,
@@ -730,17 +438,6 @@ async function executeRun(
           actorType: 'system', action: 'step.failed', entityType: 'step',
           metadata: { errorCode, actionType: step.actionType },
         });
-        /**
-         * Rethrow ONLY when the application could not take ownership of the retry.
-         *
-         * The application-scheduled delayed job is the authoritative retry path (see
-         * handleStepFailure). Rethrowing unconditionally — as this used to — created a
-         * SECOND, non-deduplicated retry via pg-boss, which wasted cycles, could
-         * dead-letter a run that was still legitimately retrying, and consumed the
-         * per-step attempt budget faster than max_attempts implies.
-         *
-         * So pg-boss retry is now strictly the fallback for a failed enqueue.
-         */
         if (outcome.retryScheduled && !outcome.retryEnqueued) {
           throw err;
         }
@@ -756,7 +453,6 @@ async function executeRun(
       completedAt: new Date(),
     });
 
-    // Update workflow last_run_at
     await pool.query(
       `UPDATE automation_workflows SET last_run_at = NOW(), updated_at = NOW() WHERE id = $1`,
       [run.workflowId],
@@ -771,46 +467,11 @@ async function executeRun(
   }
 }
 
-/** Outcome of handling a step failure, so the caller knows who owns the retry. */
 export interface StepFailureOutcome {
-  /** True when the step has attempts left and was put back into 'queued'. */
   retryScheduled: boolean;
-  /**
-   * True when the application successfully scheduled the delayed execute job.
-   * When false and retryScheduled is true, nobody has claimed responsibility for
-   * resuming the run, so the caller must let pg-boss retry as a fallback.
-   */
   retryEnqueued: boolean;
 }
 
-/**
- * Handle step failure with bounded exponential retry.
- *
- * RETRY OWNERSHIP (single authoritative mechanism):
- *   The application owns step retries, not pg-boss. It persists `next_retry_at` on
- *   automation_run_steps and enqueues one delayed execute job to resume the run.
- *   This is the authoritative path because it is the only one that understands
- *   per-step semantics: the action's own retryBackoffSeconds, the durable per-step
- *   `attempt` counter, and the sequential step ordering.
- *
- *   Previously this coexisted with a pg-boss job-level retry (executeRun rethrew the
- *   error), and because the two used different singletonKeys
- *   (`run:<id>:retry:<stepId>` vs `run:<id>`) pg-boss could not dedupe them. That
- *   produced two independent resume attempts per failure, with three concrete
- *   consequences:
- *     1. the earlier pg-boss retry woke up before `next_retry_at`, claimed nothing,
- *        and burned a cycle re-loading the run and re-checking entitlements;
- *     2. once pg-boss exhausted its retryLimit the job was dead-lettered and a
- *        `run.dead_lettered` audit entry was written even though the application
- *        retry was still pending — making a live run look dead;
- *     3. two concurrent claims could consume the per-step attempt budget faster
- *        than max_attempts implies.
- *
- *   pg-boss retry is now the explicit FALLBACK, used only when the application
- *   could not enqueue the delayed job (see the return value). The maintenance sweep
- *   remains the final backstop.
- */
-/** Job payload shape published by AlertDomainOutboxRelay (alerting side). */
 export interface AlertDomainEventJobData {
   organizationId: string;
   projectId: string | null;
@@ -823,31 +484,12 @@ export interface AlertDomainEventJobData {
   occurredAt: string;
 }
 
-/**
- * Ingest one alert domain event job into automation_events_inbox.
- *
- * Extracted from the pgboss.work() closure (same pattern as handleStepFailure)
- * so the tenant/entitlement/idempotency/audit contract can be unit-tested
- * directly instead of only through the full worker registration.
- *
- * Deliberately bypasses AutomationService.ingestEvent(): that method is the
- * human-actor HTTP path (auth checks, actorType:'user' audit) — this is a
- * trusted system-to-system handoff, the same category as runScheduleSweep's
- * direct repository insert. Callers are expected to rethrow on failure so
- * pg-boss retry (governed by the relay's own retryLimit/retryBackoff) applies
- * as the single retry owner — this function itself never retries.
- */
 export async function ingestAlertDomainEvent(
   data: AlertDomainEventJobData,
   repo: AutomationRepository,
   auditRepo: AutomationAuditRepository,
   log: FastifyBaseLogger,
 ): Promise<{ created: boolean; skippedReason?: 'not_entitled' }> {
-  // HARDENED: module entitlement is re-checked here (not just at the API
-  // layer) so an org that has lost automation access does not have events
-  // silently piling up in an inbox nothing will ever process for it —
-  // findMatchingWorkflows would return nothing anyway, but this avoids doing
-  // the insert at all for a plainly-unentitled org.
   const entitled = await repo.hasEntitlement(data.organizationId, 'module_automation_enabled');
   if (!entitled) return { created: false, skippedReason: 'not_entitled' };
 
@@ -871,12 +513,10 @@ export async function ingestAlertDomainEvent(
       entityId: result.event.id,
       metadata: { sourceModule: 'alerting', eventType: data.eventType, alertKey: data.alertKey },
     });
-    // DB is source of truth; enqueue is best-effort exactly like every other
-    // inbox producer in this module (ingestEvent, runScheduleSweep).
     try {
       await enqueueAutomationJob({ type: 'automation.inbox.process', payload: { eventId: result.event.id, orgId: data.organizationId } });
     } catch (enqErr) {
-      log.warn({ err: enqErr, eventId: result.event.id }, 'Failed to enqueue inbox processing for bridged alert event; scheduled sweep will recover');
+      log.warn({ err: enqErr, eventId: result.event.id }, 'Failed to enqueue inbox processing for bridged alert event');
     }
   }
 
@@ -896,7 +536,6 @@ export async function handleStepFailure(
   const retryBackoff = (step.metadata?.retryBackoffSeconds as number) ?? 30;
 
   if (step.attempt < step.maxAttempts) {
-    // Schedule retry with exponential backoff
     const backoffMs = Math.min(retryBackoff * 1000 * Math.pow(2, step.attempt - 1), 3_600_000);
     const nextRetryAt = new Date(Date.now() + backoffMs);
 
@@ -908,22 +547,18 @@ export async function handleStepFailure(
       nextRetryAt,
     });
 
-    // Enqueue the single delayed execute job that owns this retry.
     const effectiveRunId = runId ?? (step as any).runId;
     let retryEnqueued = false;
     if (effectiveRunId && orgId) {
       try {
-        await pgboss.send(
+        await pgmq.send(
           AUTOMATION_QUEUES.execute,
           { runId: effectiveRunId, orgId },
-          { startAfter: nextRetryAt.toISOString(), singletonKey: `run:${effectiveRunId}:retry:${step.id}` } as never,
+          { delaySeconds: Math.ceil(backoffMs / 1000) },
         );
         retryEnqueued = true;
       } catch (enqErr) {
-        log.warn(
-          { err: enqErr, stepId: step.id },
-          'Failed to enqueue retry job; falling back to pg-boss job retry, then maintenance sweep',
-        );
+        log.warn({ err: enqErr, stepId: step.id }, 'Failed to enqueue retry job');
       }
     }
 
@@ -931,7 +566,6 @@ export async function handleStepFailure(
     return { retryScheduled: true, retryEnqueued };
   }
 
-  // Exhausted retries — terminal failure, nobody should retry this step again.
   await repo.updateStepStatus(step.id, {
     status: 'failed',
     errorCode,
@@ -942,52 +576,33 @@ export async function handleStepFailure(
   return { retryScheduled: false, retryEnqueued: false };
 }
 
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAINTENANCE WORKER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Expire approvals, recover stale inbox/runs/steps, and re-enqueue runnable runs.
- */
 async function runMaintenance(
   repo: AutomationRepository,
   log: FastifyBaseLogger,
 ): Promise<void> {
   try {
     const expiredApprovals = await repo.expireStaleApprovals();
-    if (expiredApprovals > 0) {
-      log.info({ expiredApprovals }, 'Expired stale automation approvals');
-    }
+    if (expiredApprovals > 0) log.info({ expiredApprovals }, 'Expired stale automation approvals');
 
     const recoveredSteps = await repo.recoverStaleSteps();
-    if (recoveredSteps > 0) {
-      log.info({ recoveredSteps }, 'Recovered stale automation steps');
-    }
+    if (recoveredSteps > 0) log.info({ recoveredSteps }, 'Recovered stale automation steps');
 
     const recoveredRuns = await repo.recoverStaleRuns(STALE_RUN_MINUTES);
-    if (recoveredRuns > 0) {
-      log.info({ recoveredRuns }, 'Recovered stale automation runs');
-    }
+    if (recoveredRuns > 0) log.info({ recoveredRuns }, 'Recovered stale automation runs');
 
-    // HARDENED (defect 8): Re-enqueue runnable runs that have due queued steps but no active step
     const runnableRuns = await repo.findRunnableRunsForReenqueue(50);
     for (const { runId, orgId } of runnableRuns) {
       try {
-        await pgboss.send(
-          AUTOMATION_QUEUES.execute,
-          { runId, orgId },
-          { singletonKey: `run:${runId}:maintenance` } as never,
-        );
+        await pgmq.send(AUTOMATION_QUEUES.execute, { runId, orgId });
       } catch (enqErr) {
         log.warn({ err: enqErr, runId }, 'Failed to re-enqueue runnable run during maintenance');
       }
     }
-    if (runnableRuns.length > 0) {
-      log.info({ reenqueued: runnableRuns.length }, 'Re-enqueued runnable runs');
-    }
 
-    // Recover stale inbox events (stuck in processing > STALE_INBOX_MINUTES)
     const recoveredInbox = await pool.query(
       `UPDATE automation_events_inbox
        SET status = 'retry', locked_at = NULL, locked_by = NULL,
@@ -997,29 +612,16 @@ async function runMaintenance(
       [STALE_INBOX_MINUTES.toString()],
     );
     const inboxCount = recoveredInbox.rowCount ?? 0;
-    if (inboxCount > 0) {
-      log.info({ recoveredInbox: inboxCount }, 'Recovered stale inbox events');
-    }
+    if (inboxCount > 0) log.info({ recoveredInbox: inboxCount }, 'Recovered stale inbox events');
   } catch (err) {
     log.error({ err }, 'Automation maintenance sweep failed');
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SCHEDULE DUE SWEEP (lightweight 5-field cron)
+// SCHEDULE DUE SWEEP
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Bounded schedule due sweep:
- * Find enabled schedule triggers where next_run_at <= NOW(),
- * create inbox events for them, and advance next_run_at.
- *
- * HARDENED (defect 2): Uses pool.connect + BEGIN for proper transaction.
- * Bounded SELECT FOR UPDATE SKIP LOCKED, compute/update next_run_at,
- * insert inbox event via same client. NULL next_run_at initializes without emitting.
- * Dedupes by scheduled due timestamp (not worker wall clock).
- * No tick emitted without advancing atomically. Audits invalid cron via same client.
- */
 async function runScheduleSweep(
   repo: AutomationRepository,
   auditRepo: AutomationAuditRepository,
@@ -1051,12 +653,10 @@ async function runScheduleSweep(
       const isNullInit = row.next_run_at === null;
       const dueTimestamp: Date | null = row.next_run_at;
 
-      // Compute next occurrence
       let nextRun: Date | null;
       try {
         nextRun = nextCronOccurrence(row.schedule_cron, new Date(), tz);
       } catch (cronErr: any) {
-        // Invalid cron — disable schedule and audit in same transaction
         log.error({ err: cronErr, workflowId: row.workflow_id }, 'Invalid cron expression — disabling schedule');
         await client.query(
           `UPDATE automation_workflows SET is_enabled = FALSE, status = 'disabled', updated_at = NOW()
@@ -1072,7 +672,6 @@ async function runScheduleSweep(
         continue;
       }
 
-      // Update next_run_at ATOMICALLY — no tick emitted without advancing
       if (nextRun) {
         await client.query(
           `UPDATE automation_workflows SET next_run_at = $2, updated_at = NOW()
@@ -1087,16 +686,11 @@ async function runScheduleSweep(
         );
       }
 
-      // NULL next_run_at initializes without emitting a run
-      if (isNullInit) {
-        continue;
-      }
+      if (isNullInit) continue;
 
-      // HARDENED: Dedupe by scheduled due timestamp (deterministic), not worker wall clock
       const dueIso = dueTimestamp ? dueTimestamp.toISOString().slice(0, 16) : new Date().toISOString().slice(0, 16);
       const dedupeKey = `schedule:${row.organization_id}:${row.workflow_id}:${dueIso}`;
 
-      // Insert inbox event via same client (same transaction)
       await client.query(
         `INSERT INTO automation_events_inbox
           (organization_id, project_id, source_module, event_type, source_event_id, dedupe_key, payload, metadata)
@@ -1111,7 +705,6 @@ async function runScheduleSweep(
     }
 
     await client.query('COMMIT');
-
     if (dueR.rows.length > 0) {
       log.debug({ count: dueR.rows.length }, 'Schedule sweep processed');
     }
@@ -1127,169 +720,124 @@ async function runScheduleSweep(
 // REGISTER WORKERS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Register all automation pg-boss workers.
- * Called from shared/workers/main.ts during lifecycle bootstrap.
- * Returns a stop handle for graceful unschedule.
- */
 export async function registerAutomationWorkers(
   logger: FastifyBaseLogger,
 ): Promise<{ stop: () => Promise<void> }> {
   const log = logger.child({ component: 'automation-workers' });
   const repo = new AutomationRepository(pool);
   const auditRepo = new AutomationAuditRepository(pool);
-  // The worker process is where actions actually execute, so it MUST get the real
-  // integrations. Previously this was `new ActionRunnerRegistry()` with no
-  // integrations, which meant every action silently no-opped in production even
-  // though the API process looked correctly configured.
   const actionRunner = new ActionRunnerRegistry(
     createAutomationIntegrations({ pool, logger: log, automationRepository: repo }),
   );
 
-  // Safe queue creation (idempotent)
-  await Promise.all(
-    Object.values(AUTOMATION_QUEUES).map((q) => safeCreateQueue(q)),
-  );
+  await pgmq.createQueues(Object.values(AUTOMATION_QUEUES), { concurrency: 4 });
 
-  // ─── Inbox worker ──────────────────────────────────────────────────────────
-  await pgboss.work(
-    AUTOMATION_QUEUES.inbox,
-    { batchSize: 1, localConcurrency: INBOX_CONCURRENCY } as never,
-    (async (_arg: unknown) => {
+  const workers: PgmqWorker[] = [];
+
+  // ── Inbox Worker ──────────────────────────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async () => {
       await processInbox(repo, auditRepo, log);
-    }) as never,
-  );
+    },
+    { queue: AUTOMATION_QUEUES.inbox, batchSize: 1, concurrency: INBOX_CONCURRENCY },
+  ));
 
-  // ─── Execute worker ────────────────────────────────────────────────────────
-  await pgboss.work(
-    AUTOMATION_QUEUES.execute,
-    { batchSize: 1, localConcurrency: EXECUTE_CONCURRENCY } as never,
-    (async (arg: unknown) => {
-      const jobs = allJobs<ExecuteJobData>(arg);
-      for (const job of jobs) {
-        if (!job.data.runId || !job.data.orgId) {
-          log.warn({ jobId: job.id }, 'Execute job missing runId or orgId');
-          continue;
-        }
-        // HARDENED (defect 11): Rethrow unexpected errors so pg-boss retries.
-        // Do NOT catch-and-swallow.
-        await executeRun(job.data.runId, job.data.orgId, repo, auditRepo, actionRunner, log);
-      }
-    }) as never,
-  );
+  // ── Execute Worker ────────────────────────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async (msg: PgmqMessage<ExecuteJobData>) => {
+      const { runId, orgId } = msg.message;
+      if (!runId || !orgId) return;
+      await executeRun(runId, orgId, repo, auditRepo, actionRunner, log);
+    },
+    { queue: AUTOMATION_QUEUES.execute, batchSize: 1, concurrency: EXECUTE_CONCURRENCY },
+  ));
 
-  // ─── Alert domain event ingest worker ──────────────────────────────────────
-  // Consumes jobs published by AlertDomainOutboxRelay (alerting side). This is
-  // the ONLY code in automation that knows alerting exists, and even here it
-  // only knows a job SHAPE, not any alerting table or repository. Deliberately
-  // bypasses AutomationService.ingestEvent(): that method is the human-actor
-  // HTTP path (auth checks, actorType:'user' audit) — this is a trusted
-  // system-to-system handoff, the same category as runScheduleSweep's direct
-  // repository insert.
-  await pgboss.work(
-    AUTOMATION_QUEUES.alertDomainEventIngest,
-    { batchSize: 5, localConcurrency: 2 } as never,
-    (async (arg: unknown) => {
-      const jobs = allJobs<AlertDomainEventJobData>(arg);
-      for (const job of jobs) {
-        try {
-          await ingestAlertDomainEvent(job.data, repo, auditRepo, log);
-        } catch (err) {
-          log.error({ err, jobId: job.id, dedupeKey: job.data.dedupeKey }, 'Failed to ingest alert domain event into automation inbox');
-          throw err; // let pg-boss retry — the relay's own retryLimit/retryBackoff governs this
-        }
-      }
-    }) as never,
-  );
+  // ── Alert Domain Event Ingest Worker ──────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async (msg: PgmqMessage<AlertDomainEventJobData>) => {
+      await ingestAlertDomainEvent(msg.message, repo, auditRepo, log);
+    },
+    { queue: AUTOMATION_QUEUES.alertDomainEventIngest, batchSize: 5, concurrency: 2 },
+  ));
 
-  // ─── Maintenance worker ────────────────────────────────────────────────────
-  await pgboss.work(
-    AUTOMATION_QUEUES.maintenance,
-    { batchSize: 1 } as never,
-    (async (_arg: unknown) => {
+  // ── Maintenance Worker ────────────────────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async () => {
       await runMaintenance(repo, log);
-    }) as never,
-  );
+    },
+    { queue: AUTOMATION_QUEUES.maintenance, batchSize: 1, concurrency: 1 },
+  ));
 
-  // ─── Schedule worker ───────────────────────────────────────────────────────
-  await pgboss.work(
-    AUTOMATION_QUEUES.schedule,
-    { batchSize: 1 } as never,
-    (async (_arg: unknown) => {
+  // ── Schedule Worker ───────────────────────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async () => {
       await runScheduleSweep(repo, auditRepo, log);
-    }) as never,
-  );
+    },
+    { queue: AUTOMATION_QUEUES.schedule, batchSize: 1, concurrency: 1 },
+  ));
 
-  // ─── Dead-letter worker ────────────────────────────────────────────────────
-  // Persists exhausted job metadata and audits without unsafe replay.
-  await pgboss.work(
-    AUTOMATION_QUEUES.deadLetter,
-    { batchSize: 5 } as never,
-    (async (arg: unknown) => {
-      const jobs = allJobs<Record<string, unknown>>(arg);
-      for (const job of jobs) {
-        try {
-          const data = job.data ?? {};
-          const runId = (data.runId as string) ?? null;
-          const orgId = (data.orgId as string) ?? null;
+  // ── Dead-letter Worker ────────────────────────────────────────────────────
+  workers.push(new PgmqWorker(
+    pgmq,
+    async (msg: PgmqMessage<Record<string, unknown>>) => {
+      const data = msg.message ?? {};
+      const runId = (data.runId as string) ?? null;
+      const orgId = (data.orgId as string) ?? null;
 
-          // HARDENED: Dead-letter never inserts invalid 'unknown' UUID.
-          // Only store/audit tenant-known jobs (must have valid orgId).
-          if (!orgId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) {
-            log.warn({ jobId: job.id }, 'Dead-lettered job has no valid orgId — skipping audit insert');
-            continue;
-          }
-
-          // Persist dead-letter metadata into audit
-          await auditRepo.insertAuditLog({
-            organizationId: orgId,
-            workflowId: (data.workflowId as string) ?? null,
-            runId,
-            actorType: 'system',
-            action: 'run.dead_lettered',
-            entityType: 'run',
-            entityId: runId,
-            metadata: {
-              jobId: job.id,
-              exhaustedData: data,
-              reason: 'Job exhausted all pg-boss retries',
-              persistedAt: new Date().toISOString(),
-            },
-          });
-
-          // If run exists, mark it failed
-          if (runId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
-            await repo.updateRunStatus(runId, {
-              status: 'failed',
-              errorCode: 'DEAD_LETTERED',
-              errorMessage: 'Job exhausted all retries and was dead-lettered',
-              completedAt: new Date(),
-            });
-          }
-
-          log.warn({ jobId: job.id, runId }, 'Dead-lettered automation job persisted');
-        } catch (dlErr) {
-          log.error({ err: dlErr, jobId: job.id }, 'Failed to process dead-letter job');
-          // Rethrow so pg-boss can retry the DLQ processing itself
-          throw dlErr;
-        }
+      if (!orgId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) {
+        return;
       }
-    }) as never,
-  );
 
-  // ─── Scheduled sweeps ──────────────────────────────────────────────────────
-  await pgboss.schedule(AUTOMATION_QUEUES.inbox, INBOX_INTERVAL_CRON, {}, { singletonKey: 'automation-inbox-sweep' } as never);
-  await pgboss.schedule(AUTOMATION_QUEUES.maintenance, MAINTENANCE_INTERVAL_CRON, {}, { singletonKey: 'automation-maintenance' } as never);
-  await pgboss.schedule(AUTOMATION_QUEUES.schedule, SCHEDULE_INTERVAL_CRON, {}, { singletonKey: 'automation-schedule' } as never);
+      await auditRepo.insertAuditLog({
+        organizationId: orgId,
+        workflowId: (data.workflowId as string) ?? null,
+        runId,
+        actorType: 'system',
+        action: 'run.dead_lettered',
+        entityType: 'run',
+        entityId: runId,
+        metadata: {
+          jobId: msg.msgId,
+          exhaustedData: data,
+          reason: 'Job exhausted all PGMQ retries',
+          persistedAt: new Date().toISOString(),
+        },
+      });
 
-  log.info({ queues: AUTOMATION_QUEUES }, 'Automation pg-boss workers registered');
+      if (runId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+        await repo.updateRunStatus(runId, {
+          status: 'failed',
+          errorCode: 'DEAD_LETTERED',
+          errorMessage: 'Job exhausted all retries and was dead-lettered',
+          completedAt: new Date(),
+        });
+      }
+    },
+    { queue: AUTOMATION_QUEUES.deadLetter, batchSize: 5, concurrency: 1 },
+  ));
+
+  await Promise.all(workers.map((w) => w.start()));
+
+  // ── Periodic Sweeps ───────────────────────────────────────────────────────
+  const sweepTimers = [
+    setInterval(() => void pgmq.send(AUTOMATION_QUEUES.inbox, {}).catch(() => undefined), 60_000),
+    setInterval(() => void pgmq.send(AUTOMATION_QUEUES.maintenance, {}).catch(() => undefined), 120_000),
+    setInterval(() => void pgmq.send(AUTOMATION_QUEUES.schedule, {}).catch(() => undefined), 60_000),
+  ];
+  for (const timer of sweepTimers) timer.unref();
+
+  log.info({ queues: AUTOMATION_QUEUES }, 'Automation PGMQ workers registered');
 
   return {
     stop: async () => {
-      await pgboss.unschedule(AUTOMATION_QUEUES.inbox).catch(() => undefined);
-      await pgboss.unschedule(AUTOMATION_QUEUES.maintenance).catch(() => undefined);
-      await pgboss.unschedule(AUTOMATION_QUEUES.schedule).catch(() => undefined);
-      log.info('Automation workers unscheduled');
+      for (const t of sweepTimers) clearInterval(t);
+      await Promise.all(workers.map((w) => w.stop()));
+      log.info('Automation workers stopped');
     },
   };
 }

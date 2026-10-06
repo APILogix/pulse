@@ -10,7 +10,6 @@ export interface UserAccountRow {
     locale: string;
     marketing_emails: boolean | null;
     product_updates: boolean | null;
-    password_hash: string | null;
     mfa_enabled: boolean;
 }
 export interface MfaSummaryRow {
@@ -27,11 +26,23 @@ export interface SecurityActivityRow {
     created_at: Date;
 }
 export declare function getUserAccount(userId: string): Promise<UserAccountRow | null>;
+export declare function getUserPasswordHash(userId: string): Promise<string | null>;
 export declare function getVerifiedMfaDevices(userId: string): Promise<MfaSummaryRow[]>;
 export declare function countBackupCodes(userId: string): Promise<number>;
 export declare function countActiveSessions(userId: string): Promise<number>;
 export declare function countTrustedDevices(userId: string): Promise<number>;
 export declare function countPasskeys(userId: string): Promise<number>;
+export interface AccountSecurityCounts {
+    backupCodesRemaining: number;
+    activeSessions: number;
+    trustedDevices: number;
+    passkeys: number;
+}
+/**
+ * Consolidates security overview counts into a single database query to prevent
+ * connection pool exhaustion spikes on account settings views (USR-Q021).
+ */
+export declare function getAccountSecurityCounts(userId: string): Promise<AccountSecurityCounts>;
 export declare function getRecentActivity(userId: string): Promise<SecurityActivityRow[]>;
 export declare function updateUserProfile(userId: string, data: {
     display_name: string;

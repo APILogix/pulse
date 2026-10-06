@@ -187,8 +187,13 @@ export async function generateBackupCodes(): Promise<{
 }
 
 export function verifyBackupCodeHash(plain: string, hashed: string): boolean {
-  // BUG-012 FIX: delegate to bcrypt.compare for constant-time verification.
+  // Synchronous fallback: delegate to bcrypt.compareSync
   return bcrypt.compareSync(plain, hashed);
+}
+
+export async function verifyBackupCodeHashAsync(plain: string, hashed: string): Promise<boolean> {
+  // Non-blocking async bcrypt verification offloaded to libuv threadpool
+  return bcrypt.compare(plain, hashed);
 }
 
 
@@ -377,7 +382,7 @@ export async function consumeBackupCode(
 
   for (const backupCode of codes) {
     const hashedCode = typeof backupCode.code_hash === 'string' ? backupCode.code_hash : '';
-    if (verifyBackupCodeHash(normalized, hashedCode)) {
+    if (await verifyBackupCodeHashAsync(normalized, hashedCode)) {
       await repository.markBackupCodeUsed(backupCode.id, userId, ipAddress);
       return true;
     }

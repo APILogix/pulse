@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { pgboss } from '../../../lib/pgboss.js';
+import { pgmq } from '../../../lib/pgmq.js';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
 import { decryptConfigAsync } from '../secrets/secret.service.js';
@@ -152,7 +152,7 @@ export class NotificationDispatcher {
     }
     async enqueueConnectorFailureAlert(row, deliveryId, errorMessage, log) {
         try {
-            await pgboss.send('alert.evaluate.fast', {
+            await pgmq.send('alert_evaluate_fast', {
                 organizationId: row.organization_id,
                 projectId: row.project_id,
                 signals: [{
@@ -167,11 +167,6 @@ export class NotificationDispatcher {
                             errorMessage,
                         },
                     }],
-            }, {
-                singletonKey: `connector-open-circuit:${row.id}:${Math.floor(Date.now() / 30_000)}`,
-                expireInSeconds: 60,
-                retryLimit: 1,
-                retryDelay: 5,
             });
         }
         catch (err) {

@@ -33,7 +33,8 @@ export async function startOrgEmailWorker() {
         return;
     isRunning = true;
     workerLogger.info('Starting org email polling worker...');
-    pollOrgEmailOutbox();
+    // Start polling immediately when commanded by the lifecycle coordinator
+    void pollOrgEmailOutbox();
 }
 /** Stops the org email worker polling loop cleanly. */
 export function stopOrgEmailWorker() {

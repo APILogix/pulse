@@ -26,6 +26,7 @@ import type {
 } from "./shared/types.js";
 
 export * from "./shared/types.js";
+export { ORGANIZATION_DEFAULTS } from "./shared/constants.js";
 
 // ═══════════════════════════════════════════════════
 // ENUMS — Match PostgreSQL enum types exactly

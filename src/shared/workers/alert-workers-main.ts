@@ -1,9 +1,12 @@
-import { Pool } from 'pg';
+import '../../config/dns.js';
+import { type Pool } from 'pg';
+import { closeDatabase, pool as canonicalPrimaryPool } from '../../config/database.js';
 import { env } from '../../config/env.js';
+import { logProcessConnectionBudget } from '../../config/connection-budget.js';
 import { logger } from '../../config/logger.js';
 import { logDB } from '../../config/log-database.js';
-import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../config/postgres-ssl.js';
-import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
+import { retryConfiguredStartupOperation } from '../../config/startup-retry.js';
+import { pgmq } from '../../lib/pgmq.js';
 import { AlertRuntimeRepository } from '../../modules/alerting/runtime/alert-runtime.repository.js';
 import { AlertConfigRepository } from '../../modules/alerting/config/alert-config.repository.js';
 import { registerAlertingWorkers } from '../../modules/alerting/queue.js';
@@ -14,8 +17,6 @@ const log = logger.child({ component: 'alert-workers' });
 export interface AlertWorkerProcessDependencies {
   primaryPool?: Pool;
   logDatabase?: typeof logDB;
-  startQueue?: typeof startPgBoss;
-  stopQueue?: typeof stopPgBoss;
   registerConnectors?: typeof startConnectorMonitor;
   registerAlerting?: typeof registerAlertingWorkers;
   assertRuntimePool?: () => Promise<void>;
@@ -27,24 +28,22 @@ export interface AlertWorkerProcessDependencies {
 export class AlertWorkerProcess {
   private readonly primaryPool: Pool;
   private readonly logDatabase: typeof logDB;
-  private readonly startQueue: typeof startPgBoss;
-  private readonly stopQueue: typeof stopPgBoss;
   private readonly registerConnectors: typeof startConnectorMonitor;
   private readonly registerAlerting: typeof registerAlertingWorkers;
   private readonly assertRuntimePool: () => Promise<void>;
   private readonly assertConfigPool: () => Promise<void>;
   private readonly exit: (code: number) => never;
   private readonly installSignals: boolean;
+  private readonly hasCustomPool: boolean;
   private connectorWorkers: { stop: () => Promise<void> } | null = null;
   private alertingWorkers: { stop: () => Promise<void> } | null = null;
   private shuttingDown = false;
   private signalHandlersInstalled = false;
 
   constructor(dependencies: AlertWorkerProcessDependencies = {}) {
-    this.primaryPool = dependencies.primaryPool ?? createPrimaryPool();
+    this.hasCustomPool = Boolean(dependencies.primaryPool);
+    this.primaryPool = dependencies.primaryPool ?? canonicalPrimaryPool;
     this.logDatabase = dependencies.logDatabase ?? logDB;
-    this.startQueue = dependencies.startQueue ?? startPgBoss;
-    this.stopQueue = dependencies.stopQueue ?? stopPgBoss;
     this.registerConnectors = dependencies.registerConnectors ?? startConnectorMonitor;
     this.registerAlerting = dependencies.registerAlerting ?? registerAlertingWorkers;
     this.assertRuntimePool = dependencies.assertRuntimePool
@@ -61,34 +60,51 @@ export class AlertWorkerProcess {
 
   async start(): Promise<void> {
     try {
-      await this.primaryPool.query('SELECT 1');
-      await this.logDatabase.connect();
+      logProcessConnectionBudget('alert-worker', log);
+      await retryConfiguredStartupOperation(
+        'alert worker primary database',
+        () => this.primaryPool.query('SELECT 1'),
+        log,
+      );
+      await retryConfiguredStartupOperation(
+        'alert worker log database',
+        () => this.logDatabase.connect(),
+        log,
+      );
       await this.assertRuntimePool();
       await this.assertConfigPool();
-      await this.startQueue();
 
-      this.connectorWorkers = await this.registerConnectors(log, {
-        group: 'alert-delivery',
-        strictQueueCreation: true,
-      });
-      this.alertingWorkers = await this.registerAlerting(
-        log,
-        {
+      // Pre-load all existing queue metadata once to eliminate sequential DDL round-trips
+      if (!this.hasCustomPool) {
+        await pgmq.ensureKnownQueuesLoaded().catch(() => {});
+      }
+
+      const [connectors, alerting] = await Promise.all([
+        this.registerConnectors(log, {
           group: 'alert-delivery',
           strictQueueCreation: true,
-        },
-        undefined,
-        this.logDatabase.getPrimaryPool(),
-      );
+        }),
+        this.registerAlerting(
+          log,
+          {
+            group: 'alert-delivery',
+            strictQueueCreation: true,
+          },
+          undefined,
+          this.logDatabase.getPrimaryPool(),
+        ),
+      ]);
+      this.connectorWorkers = connectors;
+      this.alertingWorkers = alerting;
 
       if (this.installSignals) this.installSignalHandlers();
       process.send?.('ready');
       log.info(
         {
           alertQueues: 'evaluation, routing, escalation',
-          connectorQueues: 'v2 transport, legacy transport, delivery retry',
+          connectorQueues: 'v2 transport, delivery retry',
         },
-        '[alert-workers] Alert worker group ready',
+        '[alert-workers] Alert worker group ready with Supabase PGMQ',
       );
     } catch (error) {
       log.fatal({ error }, '[alert-workers] Failed to start alert worker group');
@@ -107,54 +123,34 @@ export class AlertWorkerProcess {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
     log.info({ signal }, '[alert-workers] Shutdown signal received — draining workers');
+    const deadline = setTimeout(() => {
+      log.fatal({ signal }, '[alert-workers] Shutdown deadline exceeded');
+      this.exit(code || 1);
+    }, env.SHUTDOWN_TIMEOUT_MS);
+    deadline.unref();
+
     try {
-      if (this.connectorWorkers) await this.connectorWorkers.stop();
-      if (this.alertingWorkers) await this.alertingWorkers.stop();
-      await this.stopQueue();
-      await this.logDatabase.close();
-      await this.primaryPool.end();
+      const stopResults = await Promise.allSettled([
+        this.connectorWorkers?.stop(),
+        this.alertingWorkers?.stop(),
+      ].filter((operation): operation is Promise<void> => operation !== undefined));
+      const closeResults = await Promise.allSettled([
+        ...(!this.hasCustomPool ? [pgmq.close()] : []),
+        this.logDatabase.close(),
+        this.hasCustomPool ? this.primaryPool.end() : closeDatabase(),
+      ]);
+      if ([...stopResults, ...closeResults].some((result) => result.status === 'rejected')) {
+        code = code || 1;
+      }
     } catch (error) {
       log.error({ error }, '[alert-workers] Error during shutdown');
       code = code || 1;
     } finally {
+      clearTimeout(deadline);
       log.info('[alert-workers] Alert worker group stopped');
       this.exit(code);
     }
   }
-}
-
-function createPrimaryPool(): Pool {
-  const primaryPool = new Pool({
-    connectionString: env.DATABASE_URL,
-    ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
-      enabled: env.DB_SSL_ENABLED,
-      rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
-    }),
-    max: env.DB_POOL_MAX,
-    min: env.DB_POOL_MIN,
-    idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
-    connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
-    application_name: `pulse_alert_workers_${env.NODE_ENV}`,
-    keepAlive: true,
-    keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
-  });
-  primaryPool.on('connect', (client) => {
-    client.on('error', (error: Error) => {
-      if (isExpectedServerlessDisconnect(error)) {
-        log.debug({ error: error.message }, '[alert-workers] Client primary pool connection closed');
-        return;
-      }
-      log.debug({ error: error.message }, '[alert-workers] PostgreSQL client socket error on active/checked-out connection');
-    });
-  });
-  primaryPool.on('error', (error: Error) => {
-    if (isExpectedServerlessDisconnect(error)) {
-      log.debug({ error: error.message }, '[alert-workers] Idle primary pool connection closed');
-      return;
-    }
-    log.error({ error }, '[alert-workers] Primary pool error');
-  });
-  return primaryPool;
 }
 
 const entryPoint = process.argv[1] ?? '';

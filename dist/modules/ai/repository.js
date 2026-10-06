@@ -610,8 +610,26 @@ export class AIRepository {
         });
     }
     async releaseStaleReservations() {
-        const result = await this.db.query(`SELECT ai_release_stale_reservations() AS released_count`);
-        return Number(result.rows[0]?.released_count ?? 0);
+        try {
+            const result = await this.db.query(`SELECT ai_release_stale_reservations() AS released_count`);
+            return Number(result.rows[0]?.released_count ?? 0);
+        }
+        catch (err) {
+            if (err?.code === '42883') {
+                // Fallback: stored function not defined in DB yet; run equivalent inline SQL
+                const fallback = await this.db.query(`
+          WITH stale AS (
+            DELETE FROM ai_credit_reservations
+            WHERE status = 'pending'
+              AND created_at < NOW() - INTERVAL '15 minutes'
+            RETURNING tenant_id, amount
+          )
+          SELECT COUNT(*)::text AS count FROM stale;
+        `);
+                return Number(fallback.rows[0]?.count ?? 0);
+            }
+            throw err;
+        }
     }
     async markRequestFailed(requestId, tenantId, status) {
         await this.db.query(`UPDATE ai_requests SET status=$3 WHERE request_id=$1 AND tenant_id=$2`, [requestId, tenantId, status]);

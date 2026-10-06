@@ -38,6 +38,8 @@ function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
 }
 
+export const ALERT_ROUTING_RULES_COLUMNS = 'id, organization_id, name, description, priority, conditions, target_connector_ids, target_route_ids, fallback_connector_ids, template_id, is_active, created_at, updated_at, deleted_at';
+
 export class RoutingRepository {
   private readonly db: typeof pool;
 
@@ -79,7 +81,7 @@ export class RoutingRepository {
         `INSERT INTO alert_routing_rules
            (organization_id, name, description, priority, conditions, target_connector_ids,
             target_route_ids, fallback_connector_ids, template_id, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ${ALERT_ROUTING_RULES_COLUMNS}`,
         [
           input.organizationId, input.name, input.description, input.priority,
           JSON.stringify(input.conditions), input.targetConnectorIds, input.targetRouteIds,
@@ -95,7 +97,7 @@ export class RoutingRepository {
 
   async listRoutingRules(organizationId: string): Promise<AlertRoutingRuleRow[]> {
     const r = await this.db.query<AlertRoutingRuleRow>(
-      `SELECT * FROM alert_routing_rules WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY priority DESC, created_at DESC`,
+      `SELECT ${ALERT_ROUTING_RULES_COLUMNS} FROM alert_routing_rules WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY priority DESC, created_at DESC`,
       [organizationId],
     );
     return r.rows;
@@ -103,7 +105,7 @@ export class RoutingRepository {
 
   async findRoutingRule(organizationId: string, id: string): Promise<AlertRoutingRuleRow | null> {
     const r = await this.db.query<AlertRoutingRuleRow>(
-      `SELECT * FROM alert_routing_rules WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
+      `SELECT ${ALERT_ROUTING_RULES_COLUMNS} FROM alert_routing_rules WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
     );
     return r.rows[0] ?? null;
   }

@@ -23,6 +23,12 @@ export interface PaymentMethodRow {
   updated_at: Date;
 }
 
+export const PAYMENT_METHOD_COLUMNS = `
+  id, organization_id, provider, provider_payment_method_id, type,
+  last4, brand, expiry_month, expiry_year, is_default, is_active,
+  billing_details, metadata, created_at, updated_at
+`;
+
 export class PaymentMethodsRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -51,7 +57,7 @@ export class PaymentMethodsRepository {
       : 'organization_id = $1 AND is_active = TRUE';
     const countResult = await db.query(`SELECT COUNT(*)::int AS total FROM payment_methods WHERE ${where}`, [orgId]);
     const result = await db.query(
-      `SELECT *
+      `SELECT ${PAYMENT_METHOD_COLUMNS}
          FROM payment_methods
         WHERE ${where}
         ORDER BY is_default DESC, created_at DESC
@@ -76,7 +82,7 @@ export class PaymentMethodsRepository {
          organization_id, provider, provider_payment_method_id, type, last4, brand,
          expiry_month, expiry_year, is_default, billing_details, metadata
        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING *`,
+       RETURNING ${PAYMENT_METHOD_COLUMNS}`,
       [
         orgId,
         body.provider,
@@ -96,7 +102,7 @@ export class PaymentMethodsRepository {
 
   async setDefault(orgId: string, paymentMethodId: string, db: PoolClient): Promise<PaymentMethodRow | null> {
     const existing = await db.query(
-      `SELECT * FROM payment_methods
+      `SELECT ${PAYMENT_METHOD_COLUMNS} FROM payment_methods
         WHERE id = $1 AND organization_id = $2 AND is_active = TRUE
         FOR UPDATE`,
       [paymentMethodId, orgId],
@@ -114,7 +120,7 @@ export class PaymentMethodsRepository {
       `UPDATE payment_methods
           SET is_default = TRUE, updated_at = NOW()
         WHERE id = $1 AND organization_id = $2
-        RETURNING *`,
+        RETURNING ${PAYMENT_METHOD_COLUMNS}`,
       [paymentMethodId, orgId],
     );
     return result.rows[0] ?? null;
@@ -125,7 +131,7 @@ export class PaymentMethodsRepository {
       `UPDATE payment_methods
           SET is_active = FALSE, is_default = FALSE, updated_at = NOW()
         WHERE id = $1 AND organization_id = $2 AND is_active = TRUE
-        RETURNING *`,
+        RETURNING ${PAYMENT_METHOD_COLUMNS}`,
       [paymentMethodId, orgId],
     );
     return result.rows[0] ?? null;

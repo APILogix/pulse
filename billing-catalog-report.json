@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-30T12:17:15.811Z",
+  "timestamp": "2026-10-02T07:48:12.089Z",
   "totalPlans": 5,
   "totalFeatures": 102,
   "totalEntitlementsChecked": 510,
@@ -13,10 +13,18 @@
     "email",
     "sms"
   ],
-  "issues": [],
-  "isValid": true,
+  "issues": [
+    {
+      "severity": "error",
+      "code": "INVALID_INTEGER_VALUE",
+      "message": "Quota 'quota.monthly_events' is integer, but plan 'enterprise' has non-integer value.",
+      "planKey": "enterprise",
+      "featureKey": "quota.monthly_events"
+    }
+  ],
+  "isValid": false,
   "summary": {
-    "errorsCount": 0,
+    "errorsCount": 1,
     "warningsCount": 0,
     "monotonicityPassed": true,
     "matrixCompletenessPercent": 100

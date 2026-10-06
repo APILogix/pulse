@@ -9,6 +9,11 @@ export declare const _testEncryptionCache: {
  */
 export declare function encrypt(plaintext: string, secret: string): string;
 /**
+ * Encrypt a UTF-8 string asynchronously using libuv threadpool scrypt offloading,
+ * protecting the main event loop from CPU-bound key derivation delays.
+ */
+export declare function encryptAsync(plaintext: string, secret: string): Promise<string>;
+/**
  * Decrypt a string produced by `encrypt`. Throws on tamper detection or
  * format mismatch. Callers should treat any thrown error as data corruption
  * or a key-mismatch and refuse to proceed.

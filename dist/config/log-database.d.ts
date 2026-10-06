@@ -1,4 +1,6 @@
+import './dns.js';
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
+import { type PostgresHealthFailure } from './postgres-network.js';
 export type DbOperation = 'read' | 'write';
 export interface QueryOptions {
     /** Max retry attempts (default: env.LOG_RETRIES). */
@@ -23,12 +25,6 @@ export interface PoolStats {
     total: number;
     idle: number;
     waiting: number;
-}
-export interface LogEvent {
-    project_id: string;
-    type: string;
-    timestamp: Date;
-    payload: Record<string, unknown>;
 }
 /**
  * LogDatabaseManager — enterprise-grade dual-pool manager for the dedicated log
@@ -56,6 +52,7 @@ export interface LogEvent {
 declare class LogDatabaseManager {
     private primaryPool;
     private replicaPool;
+    private replicaHealthy;
     private isShuttingDown;
     private timescaleReady;
     constructor();
@@ -78,17 +75,12 @@ declare class LogDatabaseManager {
         primary: Date;
         replica?: Date;
     }>;
+    /** Preserve the connection failure while explaining IPv6-only endpoint configuration. */
+    private connectStartupPool;
     /**
      * Ensure the TimescaleDB extension is available on the log database.
-     *
-     * Table-level hypertable provisioning (chunking, compression, retention) for
-     * the analytics event tables lives in the schema migrations where those
-     * tables are defined (migrations2/004), not here — that keeps DDL in one
-     * authoritative place. This method only guarantees the extension exists so
-     * the log DB is ready to host hypertables.
-     *
-     * Fully non-fatal: if TimescaleDB is unavailable the log DB simply runs as
-     * plain PostgreSQL.
+     * Hypertable provisioning lives in migrations2/004. Extension failures are
+     * non-fatal: the log database continues using plain PostgreSQL.
      */
     initializeTimescale(): Promise<void>;
     /** True once TimescaleDB hypertables have been provisioned. */
@@ -191,16 +183,6 @@ declare class LogDatabaseManager {
         timeout?: number;
     }): Promise<T>;
     /**
-     * High-throughput batch insert of raw events plus their specialized rows.
-     *
-     * Uses set-based `UNNEST` inserts (one statement per table regardless of
-     * batch size) inside a single transaction with an unbounded statement timeout
-     * so large batches never get killed mid-flight.
-     */
-    batchInsertEvents(events: LogEvent[]): Promise<void>;
-    private insertRequests;
-    private insertErrors;
-    /**
      * Health check for load-balancer / readiness probes. Verifies primary and,
      * when configured, replica connectivity. A failed replica is non-fatal (reads
      * fall back to primary) and is reported but does not flip `healthy`.
@@ -209,6 +191,7 @@ declare class LogDatabaseManager {
         healthy: boolean;
         primary?: Date;
         replica?: Date;
+        failure?: PostgresHealthFailure;
     }>;
     /** Live pool utilization, useful for metrics dashboards and capacity alerts. */
     getPoolStats(): {

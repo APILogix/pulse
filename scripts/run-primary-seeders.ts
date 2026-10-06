@@ -1,20 +1,23 @@
+import '../src/config/dns.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { config } from 'dotenv';
 import { Pool, type PoolClient, type PoolConfig } from 'pg';
+import {
+  getSafePostgresConnectionTarget,
+  parsePostgresAddressFamily,
+  withPostgresAddressFamily,
+} from '../src/config/postgres-network.js';
+import { resolvePostgresSslConfig, sanitizePostgresConnectionString } from '../src/config/postgres-ssl.js';
 
 config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_SEEDERS_DIR = path.resolve(
   __dirname,
-  '../src/db/postgres/primary_db_draft/20_seeders',
-);
-const ENTERPRISE_BILLING_TEMP_TABLE_PATH = path.resolve(
-  __dirname,
-  '../src/db/postgres/primary_db_draft/16_security/001_create_tmp_enterprise_billing_feature_seed.sql',
+  '../database/primarydbv2/seeds',
 );
 
 interface CliOptions {
@@ -171,17 +174,6 @@ async function runSeederFile(
   }
 }
 
-async function bootstrapSeederSession(client: PoolClient): Promise<void> {
-  try {
-    const sql = (await fs.readFile(ENTERPRISE_BILLING_TEMP_TABLE_PATH, 'utf8')).replace(/^\uFEFF/, '');
-    if (sql.trim().length === 0) return;
-    console.log('Preparing seeder session: tmp_enterprise_billing_feature_seed');
-    await client.query(sql);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw err;
-  }
-}
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
@@ -198,21 +190,34 @@ async function main(): Promise<void> {
     return;
   }
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error('DATABASE_URL is not set');
+  function toDirectPostgresUrl(urlString: string): string {
+    try {
+      const url = new URL(urlString);
+      if (url.hostname.endsWith('.neon.tech') && url.hostname.includes('-pooler')) {
+        url.hostname = url.hostname.replace('-pooler', '');
+        return url.toString();
+      }
+    } catch {}
+    return urlString;
   }
 
-  const pool = new Pool({
-    connectionString,
+  const rawUrl = process.env.DATABASE_URL;
+  if (!rawUrl) {
+    throw new Error('DATABASE_URL is not set');
+  }
+  const connectionString = toDirectPostgresUrl(rawUrl);
+
+  const pool = new Pool(withPostgresAddressFamily({
+    connectionString: sanitizePostgresConnectionString(connectionString),
     max: 1,
-    ssl: resolveSsl(connectionString),
-  });
+    connectionTimeoutMillis: 30000,
+    ssl: resolvePostgresSslConfig(connectionString),
+  }, parsePostgresAddressFamily(process.env.DB_FAMILY)));
 
   const client = await pool.connect();
   try {
-    console.log('Applying seeders to:', redactConnectionString(connectionString));
-    await bootstrapSeederSession(client);
+    const target = getSafePostgresConnectionTarget(connectionString);
+    console.log('Applying seeders to:', `${target.host}:${target.port}/${target.database}`);
     for (const file of files) {
       await runSeederFile(client, file, options);
     }

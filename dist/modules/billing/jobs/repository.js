@@ -1290,9 +1290,9 @@ export class BillingJobsRepository {
                    SUM(integer_value) FILTER (WHERE feature_key IN ('ai_credits', 'module_ai_insights_monthly_credits'))
                  ) AS ai_credit_limit
           FROM (
-            SELECT * FROM plan_entitlements
+            SELECT organization_id, feature_key, integer_value FROM plan_entitlements
             UNION ALL
-            SELECT * FROM addon_entitlements
+            SELECT organization_id, feature_key, integer_value FROM addon_entitlements
           ) all_entitlements
           GROUP BY organization_id
         ),

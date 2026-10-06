@@ -71,6 +71,22 @@ export declare class WorkerMetrics {
     private readonly errorGroupUpsertMs;
     private readonly errorTransactionMs;
     private readonly errorDomainEventMs;
+    private readonly poolAcquireMs;
+    private readonly poolAcquireTimeouts;
+    private readonly transactionMs;
+    private readonly transactionCommitMs;
+    private readonly transactionRollbacks;
+    private readonly longTransactions;
+    private readonly querySlowCount;
+    private readonly queryErrors;
+    private readonly lockWaitMs;
+    private readonly lockWaits;
+    private readonly deadlocks;
+    private readonly queuePollMs;
+    private readonly queueMessagesFetched;
+    private readonly queueEmptyPolls;
+    private readonly queueVisibilityTimeouts;
+    private readonly startupPhaseMs;
     private observe;
     recordProcessed(queue: string, type: string, eventsReceived: number, inserted: number, rejected: number, processingMs: number, e2eMsVal: number | null, batchBytes?: number): void;
     recordStage(stage: string, type: string, ms: number): void;
@@ -101,6 +117,16 @@ export declare class WorkerMetrics {
      */
     setWriteAdmission(inFlight: number, queued: number): void;
     recordErrorLatencies(lookup: number | null, upsert: number | null, transaction: number | null, domain: number | null): void;
+    recordPoolAcquire(pool: string, durationMs: number): void;
+    recordPoolAcquireTimeout(pool: string): void;
+    recordTransaction(op: string, durationMs: number, committed: boolean, commitDurationMs?: number): void;
+    recordDbQuery(op: string, durationMs: number, isSlow?: boolean): void;
+    recordDbQueryError(op: string, reason?: string): void;
+    recordLockWait(table: string, durationMs: number): void;
+    recordDeadlock(table: string): void;
+    recordQueuePoll(queue: string, durationMs: number, messagesFetched: number): void;
+    recordVisibilityTimeoutFailure(queue: string): void;
+    recordStartupPhase(phase: string, durationMs: number): void;
     recordRollupSuccess(stats: RollupRunStats): void;
     recordRollupFailure(durationMs: number): void;
     /** Render the Prometheus text exposition format (v0.0.4). */

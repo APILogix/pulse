@@ -9,6 +9,20 @@ vi.mock("../../../src/config/database.js", () => ({
     connect,
     query,
   },
+  withTransaction: async (fn: any) => {
+    const client = await connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
 }));
 
 const baseInvite = {

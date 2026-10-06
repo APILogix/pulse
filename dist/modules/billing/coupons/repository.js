@@ -1,5 +1,11 @@
 import { pool } from '../../../config/database.js';
 import { CouponDiscountType } from '../shared/types.js';
+export const COUPON_COLUMNS = `
+  id, code, name, description, discount_type, discount_value, currency,
+  max_redemptions, redemption_count, max_redemptions_per_org,
+  first_time_customers_only, trial_only, valid_from, valid_until,
+  is_active, is_public
+`;
 export class CouponsRepository {
     db;
     constructor(db = pool) {
@@ -22,26 +28,25 @@ export class CouponsRepository {
         }
     }
     async getCouponByCode(code, db = this.db) {
-        const result = await db.query(`SELECT * FROM coupons 
+        const result = await db.query(`SELECT ${COUPON_COLUMNS} FROM coupons 
        WHERE code = $1 AND deleted_at IS NULL AND is_active = TRUE`, [code.toUpperCase()]);
         return result.rows[0] || null;
     }
     async getCouponByCodeForUpdate(code, db) {
-        const result = await db.query(`SELECT * FROM coupons 
+        const result = await db.query(`SELECT ${COUPON_COLUMNS} FROM coupons 
        WHERE code = $1 AND deleted_at IS NULL AND is_active = TRUE
        FOR UPDATE`, [code.toUpperCase()]);
         return result.rows[0] || null;
     }
     async isCouponApplicableToPlan(couponId, planId, db = this.db) {
-        const result = await db.query(`SELECT 1 FROM coupon_applicable_plans 
-       WHERE coupon_id = $1 AND plan_id = $2`, [couponId, planId]);
-        // If the table is empty for this coupon, maybe it applies to all? 
-        // Usually yes, let's assume it applies to all if no rows exist in coupon_applicable_plans for this coupon.
-        const hasRestrictions = await db.query(`SELECT 1 FROM coupon_applicable_plans WHERE coupon_id = $1 LIMIT 1`, [couponId]);
-        if (hasRestrictions.rows.length === 0) {
+        const result = await db.query(`SELECT 
+         EXISTS(SELECT 1 FROM coupon_applicable_plans WHERE coupon_id = $1) AS has_restrictions,
+         EXISTS(SELECT 1 FROM coupon_applicable_plans WHERE coupon_id = $1 AND plan_id = $2) AS is_applicable`, [couponId, planId]);
+        const row = result.rows[0];
+        if (!row || !row.has_restrictions) {
             return true; // No restrictions
         }
-        return result.rows.length > 0;
+        return Boolean(row.is_applicable);
     }
     async getActiveSubscriptionForCoupon(orgId, db = this.db) {
         const result = await db.query(`SELECT id, plan_id, billing_interval, status

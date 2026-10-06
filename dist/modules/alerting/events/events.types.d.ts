@@ -57,10 +57,10 @@ export declare const IngestEventSchema: z.ZodObject<{
     ruleId: z.ZodOptional<z.ZodString>;
     projectId: z.ZodOptional<z.ZodString>;
     severity: z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>;
     source: z.ZodString;
     sourceId: z.ZodOptional<z.ZodString>;
@@ -89,10 +89,10 @@ export declare const ListEventsQuerySchema: z.ZodObject<{
         silenced: "silenced";
     }>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     source: z.ZodOptional<z.ZodString>;
     ruleId: z.ZodOptional<z.ZodString>;

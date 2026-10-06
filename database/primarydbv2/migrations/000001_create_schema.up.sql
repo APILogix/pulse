@@ -1,5 +1,5 @@
 -- Clean PostgreSQL primary database baseline.
--- Generated from canonical_migrations_draft and historical migrations.
+-- Generated from modular schema domain sources with latest indexes and migrations.
 
 -- ============================================================
 -- Source: 00_extensions/001_extensions.sql
@@ -841,6 +841,20 @@ END $$;
 ALTER TYPE alert_category ADD VALUE IF NOT EXISTS 'all';
 
 -- ============================================================
+-- Source: 03_reference/001_create_telemetry_event_types.sql
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS telemetry_event_types (
+  id SMALLSERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO telemetry_event_types(name)
+VALUES ('__all__'), ('request'), ('error'), ('log'), ('metric'), ('span'), ('trace'), ('message'), ('profile'), ('replay'), ('cron_checkin')
+ON CONFLICT (name) DO NOTHING;
+
+-- ============================================================
 -- Source: 04_user/001_create_auth_email_outbox.sql
 -- ============================================================
 
@@ -991,6 +1005,10 @@ CREATE INDEX IF NOT EXISTS idx_users_deletion_requested
   ON users(deletion_requested_at)
   WHERE deletion_requested_at IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_users_lower_email
+  ON users(lower(email))
+  WHERE deleted_at IS NULL;
+
 -- ============================================================
 -- Source: 04_user/001_create_user_mfa_devices.sql
 -- ============================================================
@@ -1114,6 +1132,9 @@ CREATE INDEX IF NOT EXISTS idx_email_verifications_cleanup
   ON email_verifications(expires_at)
   WHERE verified_at IS NULL;
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_email_verifications_user_email_purpose
+  ON email_verifications(user_id, email, purpose);
+
 -- ============================================================
 -- Source: 04_user/001_create_security_events.sql
 -- ============================================================
@@ -1180,9 +1201,6 @@ CREATE INDEX IF NOT EXISTS idx_backup_codes_user_unused
   ON user_backup_codes(user_id, created_at)
   WHERE used_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_user_backup_codes_user_id
-  ON user_backup_codes(user_id);
-
 -- ============================================================
 -- Source: 04_user/001_create_user_linked_identities.sql
 -- ============================================================
@@ -1216,6 +1234,9 @@ CREATE INDEX IF NOT EXISTS idx_linked_identities_user_active
 CREATE INDEX IF NOT EXISTS idx_linked_identities_provider_subject_active
   ON user_linked_identities(provider, provider_subject)
   WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_linked_identities_user_all
+  ON user_linked_identities (user_id, linked_at DESC);
 
 -- ============================================================
 -- Source: 04_user/001_create_user_preferences.sql
@@ -1313,8 +1334,9 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_active
 CREATE INDEX IF NOT EXISTS idx_sessions_cleanup
   ON user_sessions(expires_at) WHERE status = 'active';
 
-CREATE INDEX IF NOT EXISTS idx_sessions_purge
-  ON user_sessions(terminated_at) WHERE terminated_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_user_sessions_purge
+  ON user_sessions (status, terminated_at, expires_at)
+  WHERE status IN ('revoked', 'expired', 'terminated_by_admin');
 
 CREATE INDEX IF NOT EXISTS idx_sessions_saml_name_id
   ON user_sessions(saml_name_id) WHERE saml_name_id IS NOT NULL;
@@ -1322,6 +1344,10 @@ CREATE INDEX IF NOT EXISTS idx_sessions_saml_name_id
 CREATE INDEX IF NOT EXISTS idx_user_sessions_sso_provider
   ON user_sessions(sso_provider_id, sso_provider_type)
   WHERE sso_provider_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active_last_active
+  ON user_sessions (user_id, last_active_at DESC)
+  WHERE status = 'active';
 
 -- ============================================================
 -- Source: 04_user/001_create_user_trusted_devices.sql
@@ -1357,10 +1383,6 @@ CREATE INDEX IF NOT EXISTS idx_trusted_devices_user_active
   ON user_trusted_devices(user_id, expires_at DESC)
   WHERE revoked_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_user_trusted_devices_user_id
-  ON user_trusted_devices(user_id)
-  WHERE revoked_at IS NULL;
-
 -- ============================================================
 -- Source: 05_organization/001_create_organizations.sql
 -- ============================================================
@@ -1377,31 +1399,15 @@ CREATE TABLE IF NOT EXISTS organizations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
   slug VARCHAR(255) NOT NULL,
-  description TEXT,
   logo_url TEXT,
-  website_url TEXT,
-  industry VARCHAR(100),
-  company_size VARCHAR(50),
-  country VARCHAR(100),
-  timezone VARCHAR(100) DEFAULT 'UTC',
-  billing_email VARCHAR(255),
-  support_email VARCHAR(255),
+  timezone VARCHAR(100) NOT NULL DEFAULT 'Asia/Kolkata',
   owner_user_id UUID NOT NULL REFERENCES users(id),
   created_by UUID REFERENCES users(id),
   status org_status NOT NULL DEFAULT 'trialing',
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  billing_address JSONB,
-  tax_id VARCHAR(50),
-  tax_id_type VARCHAR(20)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_org_slug_active
-  ON organizations(slug) WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_orgs_owner
-  ON organizations(owner_user_id) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_orgs_status
   ON organizations(status) WHERE deleted_at IS NULL;
@@ -1412,6 +1418,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_owner
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_organizations_active_slug
   ON organizations(slug)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_organizations_owner_active
+  ON organizations (owner_user_id)
   WHERE deleted_at IS NULL;
 
 -- ============================================================
@@ -1523,6 +1533,10 @@ CREATE INDEX IF NOT EXISTS idx_org_audit_sensitive
 CREATE INDEX IF NOT EXISTS idx_org_audit_metadata_gin
   ON organization_audit_logs USING GIN (metadata);
 
+CREATE INDEX IF NOT EXISTS idx_org_audit_logs_purge
+  ON organization_audit_logs (org_id, is_sensitive, created_at)
+  WHERE is_sensitive = FALSE;
+
 -- ============================================================
 -- Source: 05_organization/001_create_organization_email_outbox.sql
 -- ============================================================
@@ -1596,8 +1610,8 @@ CREATE TABLE IF NOT EXISTS organization_invitations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_invite
-  ON organization_invitations(org_id, email)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_org_invitations_pending_lower_email
+  ON organization_invitations(org_id, lower(email))
   WHERE status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_org_invitations_token
@@ -1677,10 +1691,6 @@ CREATE TABLE IF NOT EXISTS organization_scim_tokens (
   rotated_at TIMESTAMPTZ,
   grace_period_ends_at TIMESTAMPTZ
 );
-
-CREATE INDEX IF NOT EXISTS idx_scim_tokens_org
-  ON organization_scim_tokens(org_id)
-  WHERE revoked_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_scim_tokens_org_token_active
   ON organization_scim_tokens(org_id, token_hash)
@@ -1831,10 +1841,6 @@ CREATE TABLE IF NOT EXISTS organization_sso_providers (
 
 CREATE INDEX IF NOT EXISTS idx_sso_providers_org
   ON organization_sso_providers(org_id);
-
-CREATE INDEX IF NOT EXISTS idx_sso_providers_active_domain_type
-  ON organization_sso_providers(provider_type, LOWER(domain))
-  WHERE is_active = TRUE AND domain IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_sso_providers_active_entity_id
   ON organization_sso_providers(entity_id)
@@ -2129,10 +2135,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_id_org
 CREATE UNIQUE INDEX IF NOT EXISTS uq_projects_active_slug
   ON projects(org_id, lower(slug)) WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_projects_org_active
-  ON projects(org_id)
-  WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_projects_public_id ON projects (public_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_org_slug_active
@@ -2229,7 +2231,7 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   public_key VARCHAR(64) NOT NULL UNIQUE,
   secret_hash TEXT,
   key_type api_key_type NOT NULL DEFAULT 'read_write',
-  is_active BOOLEAN NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   rotated_from_key_id UUID REFERENCES project_api_keys(id) ON DELETE SET NULL,
   rotated_at TIMESTAMPTZ,
   rotated_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -2238,23 +2240,23 @@ CREATE TABLE IF NOT EXISTS project_api_keys (
   rotation_version INTEGER NOT NULL DEFAULT 1,
   grace_period_ends_at TIMESTAMPTZ,
   revoked_reason TEXT,
-  auto_rotate_enabled BOOLEAN NOT NULL,
+  auto_rotate_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   auto_rotate_days INTEGER,
   last_used_ip INET,
-  usage_count BIGINT NOT NULL,
-  error_count BIGINT NOT NULL,
-  rate_limit_per_second INTEGER NOT NULL,
-  rate_limit_per_minute INTEGER NOT NULL,
-  rate_limit_per_hour INTEGER NOT NULL,
-  permissions JSONB NOT NULL,
-  allowed_endpoints TEXT[] NOT NULL,
-  blocked_endpoints TEXT[] NOT NULL,
+  usage_count BIGINT NOT NULL DEFAULT 0,
+  error_count BIGINT NOT NULL DEFAULT 0,
+  rate_limit_per_second INTEGER NOT NULL DEFAULT 0,
+  rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+  rate_limit_per_hour INTEGER NOT NULL DEFAULT 0,
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+  allowed_endpoints TEXT[] NOT NULL DEFAULT '{}',
+  blocked_endpoints TEXT[] NOT NULL DEFAULT '{}',
   allowed_sdks TEXT[] NOT NULL DEFAULT '{}',
   allowed_origins TEXT[] NOT NULL DEFAULT '{}',
   allowed_ips INET[] NOT NULL DEFAULT '{}',
   allowed_domains TEXT[] NOT NULL DEFAULT '{}',
   allowed_event_types TEXT[] NOT NULL DEFAULT '{}',
-  metadata JSONB NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   version INTEGER NOT NULL DEFAULT 1,
   sampling_rules JSONB NOT NULL DEFAULT '{}',
   feature_flags JSONB NOT NULL DEFAULT '{}',
@@ -2280,11 +2282,6 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_revoked_cleanup
   ON project_api_keys(revoked_at, deleted_at)
   WHERE deleted_at IS NULL;
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_api_keys_public_key
-  ON project_api_keys(public_key) WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_project_api_keys_public_key ON project_api_keys(public_key) WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_project_api_keys_tenant_env ON project_api_keys(organization_id, project_id, environment_id) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_project_api_keys_lifecycle ON project_api_keys(status, expires_at, grace_period_ends_at) WHERE deleted_at IS NULL;
@@ -2293,25 +2290,51 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_env
   ON project_api_keys(environment_id)
   WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_public_key
-  ON project_api_keys(public_key)
-  WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_active_env
-  ON project_api_keys(project_id, environment_id, status)
-  WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_api_keys_rotation
   ON project_api_keys(rotated_from_key_id)
   WHERE rotated_from_key_id IS NOT NULL AND deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_project_api_keys_env_active
+  ON project_api_keys (project_id, environment_id, status)
+  WHERE deleted_at IS NULL;
+
+-- ============================================================
+-- Source: 06_project/001_create_api_key_usage_daily.sql
+-- ============================================================
+
+-- Physical retained fact for billing and long-range API-key usage.
+
+CREATE TABLE IF NOT EXISTS api_key_usage_daily (
+  api_key_id UUID NOT NULL REFERENCES project_api_keys(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  environment_id UUID REFERENCES project_environments(id) ON DELETE SET NULL,
+  bucket TIMESTAMPTZ NOT NULL,
+  event_type_id SMALLINT NOT NULL REFERENCES telemetry_event_types(id),
+  request_count BIGINT NOT NULL DEFAULT 0,
+  accepted_event_count BIGINT NOT NULL DEFAULT 0,
+  error_event_count BIGINT NOT NULL DEFAULT 0,
+  ingestion_failure_count BIGINT NOT NULL DEFAULT 0,
+  accepted_bytes BIGINT NOT NULL DEFAULT 0,
+  rate_limited_request_count BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (api_key_id, bucket, event_type_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_daily_project
+  ON api_key_usage_daily(project_id, bucket DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_daily_org
+  ON api_key_usage_daily(organization_id, bucket DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_key_usage_daily_env
+  ON api_key_usage_daily(environment_id, bucket DESC)
+  WHERE environment_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 06_project/001_create_api_key_usage_minute.sql
 -- ============================================================
 
--- Normalized final definition for api_key_usage_minute.
--- Canonical/historical sources include:
--- - migrations/003_project_module_refactor.sql
+-- Normalized final definition for per-key minute usage.
 
 CREATE TABLE IF NOT EXISTS api_key_usage_minute (
   api_key_id UUID NOT NULL REFERENCES project_api_keys(id) ON DELETE CASCADE,
@@ -2319,15 +2342,14 @@ CREATE TABLE IF NOT EXISTS api_key_usage_minute (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   environment_id UUID REFERENCES project_environments(id) ON DELETE SET NULL,
   bucket TIMESTAMPTZ NOT NULL,
-  event_type VARCHAR(50) NOT NULL DEFAULT '__all__',
-  requests BIGINT NOT NULL DEFAULT 0,
-  events BIGINT NOT NULL DEFAULT 0,
-  errors BIGINT NOT NULL DEFAULT 0,
-  latency_ms_p50 NUMERIC,
-  latency_ms_p95 NUMERIC,
-  latency_ms_p99 NUMERIC,
-  rate_limited BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (api_key_id, bucket, event_type)
+  event_type_id SMALLINT NOT NULL REFERENCES telemetry_event_types(id),
+  request_count BIGINT NOT NULL DEFAULT 0,
+  accepted_event_count BIGINT NOT NULL DEFAULT 0,
+  error_event_count BIGINT NOT NULL DEFAULT 0,
+  ingestion_failure_count BIGINT NOT NULL DEFAULT 0,
+  accepted_bytes BIGINT NOT NULL DEFAULT 0,
+  rate_limited_request_count BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (api_key_id, bucket, event_type_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_key_usage_minute_project
@@ -2371,6 +2393,10 @@ CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_tenant_time
 
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_old_key
   ON project_api_key_rotations(old_key_id,initiated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_grace_lookup
+  ON project_api_key_rotations(old_key_id,grace_ends_at DESC)
+  WHERE state = 'grace_period' AND grace_ends_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_project_api_key_rotations_new_key
   ON project_api_key_rotations(new_key_id) WHERE new_key_id IS NOT NULL;
@@ -2590,12 +2616,6 @@ CREATE TABLE IF NOT EXISTS project_members (
   UNIQUE (project_id, user_id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_project_members_project_user_unique
-  ON project_members(project_id, user_id);
-
-CREATE INDEX IF NOT EXISTS idx_project_members_project
-  ON project_members(project_id);
-
 CREATE INDEX IF NOT EXISTS idx_project_members_user
   ON project_members(user_id);
 
@@ -2679,9 +2699,6 @@ CREATE TABLE IF NOT EXISTS project_releases (
   updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_project_releases_project
-  ON project_releases(project_id);
-
 CREATE INDEX IF NOT EXISTS idx_project_releases_version
   ON project_releases(project_id, version);
 
@@ -2725,9 +2742,6 @@ CREATE TABLE IF NOT EXISTS project_settings (
   profile_ingestion_enabled BOOLEAN NOT NULL DEFAULT true,
   version INTEGER NOT NULL DEFAULT 1
 );
-
-CREATE INDEX IF NOT EXISTS idx_project_settings_project
-  ON project_settings(project_id);
 
 CREATE INDEX IF NOT EXISTS idx_project_settings_org
   ON project_settings(organization_id);
@@ -2886,12 +2900,6 @@ CREATE TABLE IF NOT EXISTS project_usage_hourly (
   PRIMARY KEY (project_id, bucket)
 );
 
-CREATE INDEX IF NOT EXISTS idx_usage_hourly_project_bucket
-  ON project_usage_hourly(project_id, bucket_hour DESC);
-
-CREATE INDEX IF NOT EXISTS idx_usage_hourly_org_bucket
-  ON project_usage_hourly(organization_id, bucket_hour DESC);
-
 CREATE INDEX IF NOT EXISTS idx_project_usage_hourly_project_bucket
   ON project_usage_hourly(project_id, bucket DESC);
 
@@ -2975,6 +2983,252 @@ CREATE TABLE IF NOT EXISTS project_usage_monthly (
 
 CREATE INDEX IF NOT EXISTS idx_project_usage_monthly_org
   ON project_usage_monthly(organization_id, year_month);
+
+-- ============================================================
+-- Source: 06_project/002_fix_project_members_invitation_columns.sql
+-- ============================================================
+
+-- Repair project_members for draft databases created before invitation audit
+-- columns were folded into the normalized table definition.
+-- Required by project member invitation flows and ProjectService.ensureProjectOwner,
+-- which sets invited_by, invited_at, and joined_at when creating owner memberships.
+
+
+ALTER TABLE project_members
+  ADD COLUMN IF NOT EXISTS invited_by UUID,
+  ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS joined_at TIMESTAMPTZ DEFAULT NOW();
+
+UPDATE project_members
+SET
+  invited_by = COALESCE(invited_by, added_by_user_id),
+  invited_at = COALESCE(invited_at, added_at),
+  joined_at = COALESCE(joined_at, added_at, created_at, NOW())
+WHERE invited_by IS NULL
+   OR invited_at IS NULL
+   OR joined_at IS NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'project_members'::regclass
+      AND c.contype = 'f'
+      AND pg_get_constraintdef(c.oid) LIKE 'FOREIGN KEY (invited_by)%'
+  ) THEN
+    ALTER TABLE project_members
+      ADD CONSTRAINT fk_project_members_invited_by
+      FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- ============================================================
+-- Source: 06_project/003_fix_project_defaults_provisioning_function.sql
+-- ============================================================
+
+-- Repair stale project provisioning trigger functions that inserted only
+-- project_id and organization_id into project_settings.
+--
+-- project_settings has NOT NULL defaults; the trigger must provide explicit
+-- defaults so older live databases do not fail before application-level
+-- provisioning can continue.
+
+ALTER TABLE project_settings
+  ALTER COLUMN data_retention_days SET DEFAULT 10,
+  ALTER COLUMN sampling_rate SET DEFAULT 1.00000,
+  ALTER COLUMN allowed_domains SET DEFAULT '{}'::text[],
+  ALTER COLUMN blocked_domains SET DEFAULT '{}'::text[],
+  ALTER COLUMN pii_scrubbing_enabled SET DEFAULT true,
+  ALTER COLUMN ip_collection_enabled SET DEFAULT true,
+  ALTER COLUMN release_tracking_enabled SET DEFAULT true,
+  ALTER COLUMN session_replay_enabled SET DEFAULT false,
+  ALTER COLUMN performance_monitoring_enabled SET DEFAULT true,
+  ALTER COLUMN error_monitoring_enabled SET DEFAULT true,
+  ALTER COLUMN log_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN metric_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN trace_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN profile_ingestion_enabled SET DEFAULT true,
+  ALTER COLUMN version SET DEFAULT 1;
+
+UPDATE project_settings
+SET
+  data_retention_days = COALESCE(data_retention_days, 10),
+  sampling_rate = COALESCE(sampling_rate, 1.00000),
+  allowed_domains = COALESCE(allowed_domains, '{}'::text[]),
+  blocked_domains = COALESCE(blocked_domains, '{}'::text[]),
+  pii_scrubbing_enabled = COALESCE(pii_scrubbing_enabled, true),
+  ip_collection_enabled = COALESCE(ip_collection_enabled, true),
+  release_tracking_enabled = COALESCE(release_tracking_enabled, true),
+  session_replay_enabled = COALESCE(session_replay_enabled, false),
+  performance_monitoring_enabled = COALESCE(performance_monitoring_enabled, true),
+  error_monitoring_enabled = COALESCE(error_monitoring_enabled, true),
+  log_ingestion_enabled = COALESCE(log_ingestion_enabled, true),
+  metric_ingestion_enabled = COALESCE(metric_ingestion_enabled, true),
+  trace_ingestion_enabled = COALESCE(trace_ingestion_enabled, true),
+  profile_ingestion_enabled = COALESCE(profile_ingestion_enabled, true),
+  version = COALESCE(version, 1)
+WHERE data_retention_days IS NULL
+   OR sampling_rate IS NULL
+   OR allowed_domains IS NULL
+   OR blocked_domains IS NULL
+   OR pii_scrubbing_enabled IS NULL
+   OR ip_collection_enabled IS NULL
+   OR release_tracking_enabled IS NULL
+   OR session_replay_enabled IS NULL
+   OR performance_monitoring_enabled IS NULL
+   OR error_monitoring_enabled IS NULL
+   OR log_ingestion_enabled IS NULL
+   OR metric_ingestion_enabled IS NULL
+   OR trace_ingestion_enabled IS NULL
+   OR profile_ingestion_enabled IS NULL
+   OR version IS NULL;
+
+-- Project defaults are provisioned explicitly in application-level transactions
+-- (ProjectService.createProject). Clean up any legacy database triggers or functions.
+DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects;
+DROP FUNCTION IF EXISTS provision_project_schema_defaults();
+
+-- ============================================================
+-- Source: 06_project/004_repair_api_key_usage_rollups.sql
+-- ============================================================
+
+-- Idempotent repair for databases that were created before normalized
+-- API-key usage facts and monthly/hourly views existed.
+
+DO $$
+DECLARE
+  all_event_type_id SMALLINT;
+BEGIN
+  SELECT id INTO all_event_type_id FROM telemetry_event_types WHERE name = '__all__';
+
+  IF to_regclass('public.api_key_usage_minute') IS NOT NULL THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'requests'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'request_count'
+    ) THEN
+      ALTER TABLE api_key_usage_minute RENAME COLUMN requests TO request_count;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'events'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'accepted_event_count'
+    ) THEN
+      ALTER TABLE api_key_usage_minute RENAME COLUMN events TO accepted_event_count;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'errors'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'error_event_count'
+    ) THEN
+      ALTER TABLE api_key_usage_minute RENAME COLUMN errors TO error_event_count;
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'rate_limited'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'rate_limited_request_count'
+    ) THEN
+      ALTER TABLE api_key_usage_minute RENAME COLUMN rate_limited TO rate_limited_request_count;
+    END IF;
+
+    ALTER TABLE api_key_usage_minute
+      ADD COLUMN IF NOT EXISTS event_type_id SMALLINT,
+      ADD COLUMN IF NOT EXISTS request_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS accepted_event_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS error_event_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS ingestion_failure_count BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS accepted_bytes BIGINT NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS rate_limited_request_count BIGINT NOT NULL DEFAULT 0;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'bytes_ingested'
+    ) THEN
+      UPDATE api_key_usage_minute
+         SET accepted_bytes = COALESCE(accepted_bytes, bytes_ingested, 0);
+    END IF;
+
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'api_key_usage_minute' AND column_name = 'event_type'
+    ) THEN
+      INSERT INTO telemetry_event_types(name)
+      SELECT DISTINCT event_type
+        FROM api_key_usage_minute
+       WHERE event_type IS NOT NULL
+      ON CONFLICT (name) DO NOTHING;
+
+      UPDATE api_key_usage_minute m
+         SET event_type_id = t.id
+        FROM telemetry_event_types t
+       WHERE t.name = m.event_type
+         AND m.event_type_id IS NULL;
+    END IF;
+
+    UPDATE api_key_usage_minute
+       SET event_type_id = all_event_type_id
+     WHERE event_type_id IS NULL;
+
+    ALTER TABLE api_key_usage_minute
+      ALTER COLUMN event_type_id SET NOT NULL,
+      ALTER COLUMN request_count SET NOT NULL,
+      ALTER COLUMN accepted_event_count SET NOT NULL,
+      ALTER COLUMN error_event_count SET NOT NULL,
+      ALTER COLUMN ingestion_failure_count SET NOT NULL,
+      ALTER COLUMN accepted_bytes SET NOT NULL,
+      ALTER COLUMN rate_limited_request_count SET NOT NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS api_key_usage_daily (
+  api_key_id UUID NOT NULL REFERENCES project_api_keys(id) ON DELETE CASCADE,
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  environment_id UUID REFERENCES project_environments(id) ON DELETE SET NULL,
+  bucket TIMESTAMPTZ NOT NULL,
+  event_type_id SMALLINT NOT NULL REFERENCES telemetry_event_types(id),
+  request_count BIGINT NOT NULL DEFAULT 0,
+  accepted_event_count BIGINT NOT NULL DEFAULT 0,
+  error_event_count BIGINT NOT NULL DEFAULT 0,
+  ingestion_failure_count BIGINT NOT NULL DEFAULT 0,
+  accepted_bytes BIGINT NOT NULL DEFAULT 0,
+  rate_limited_request_count BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (api_key_id, bucket, event_type_id)
+);
+
+INSERT INTO api_key_usage_daily (
+  api_key_id, project_id, organization_id, environment_id, bucket, event_type_id,
+  request_count, accepted_event_count, error_event_count, ingestion_failure_count,
+  accepted_bytes, rate_limited_request_count
+)
+SELECT
+  api_key_id,
+  project_id,
+  organization_id,
+  environment_id,
+  date_trunc('day', bucket),
+  event_type_id,
+  SUM(request_count)::bigint,
+  SUM(accepted_event_count)::bigint,
+  SUM(error_event_count)::bigint,
+  SUM(ingestion_failure_count)::bigint,
+  SUM(accepted_bytes)::bigint,
+  SUM(rate_limited_request_count)::bigint
+FROM api_key_usage_minute
+GROUP BY api_key_id, project_id, organization_id, environment_id, date_trunc('day', bucket), event_type_id
+ON CONFLICT (api_key_id, bucket, event_type_id) DO NOTHING;
 
 -- ============================================================
 -- Source: 07_billing/001_create_billing_features.sql
@@ -3149,6 +3403,72 @@ ON ai_usage_logs_2026_07
 USING GIN (metadata);
 
 -- ============================================================
+-- Source: 07_billing/001_create_coupons.sql
+-- ============================================================
+
+-- Normalized final definition for coupons.
+-- Canonical/historical sources include:
+-- - canonical_migrations_draft/11_billing/016_coupons.sql
+-- - migrations/002_create_all_ordered.sql
+-- - migrations/002_create_all.sql
+-- - canonical_migrations_draft/03_org_identity/001_fixed_tables.sql
+
+CREATE TABLE IF NOT EXISTS coupons
+(
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code VARCHAR(50) NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  description TEXT,
+  discount_type billing_coupon_discount_type NOT NULL,
+  discount_value NUMERIC(12,2) NOT NULL
+  CHECK (discount_value > 0),
+  currency CHAR(3),
+  max_redemptions INTEGER
+  CHECK (max_redemptions IS NULL OR max_redemptions > 0),
+  redemption_count INTEGER NOT NULL DEFAULT 0
+  CHECK (redemption_count >= 0),
+  max_redemptions_per_org INTEGER NOT NULL DEFAULT 1
+  CHECK (max_redemptions_per_org > 0),
+  first_time_customers_only BOOLEAN NOT NULL DEFAULT FALSE,
+  trial_only BOOLEAN NOT NULL DEFAULT FALSE,
+  valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  valid_until TIMESTAMPTZ,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  is_public BOOLEAN NOT NULL DEFAULT FALSE,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ,
+  CONSTRAINT uq_coupon_code UNIQUE(code),
+  CONSTRAINT chk_coupon_window
+  CHECK(valid_until IS NULL OR valid_until > valid_from),
+  CONSTRAINT chk_percentage_value
+  CHECK (
+  discount_type <> 'percentage'
+  OR (discount_value > 0 AND discount_value <= 100)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_coupons_active
+ON coupons(is_active, valid_until)
+WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_coupons_public
+ON coupons(is_public)
+WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_coupons_validity
+ON coupons(valid_from, valid_until)
+WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_coupons_redemptions
+ON coupons(redemption_count);
+
+CREATE INDEX IF NOT EXISTS gin_coupons_metadata
+ON coupons
+USING GIN(metadata);
+
+-- ============================================================
 -- Source: 07_billing/001_create_plans.sql
 -- ============================================================
 
@@ -3268,6 +3588,11 @@ CREATE INDEX IF NOT EXISTS idx_org_subscriptions_org
 ON organization_subscriptions(organization_id, created_at DESC)
 WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_org_subscriptions_live_latest
+ON organization_subscriptions(organization_id, created_at DESC)
+WHERE status IN ('trialing','active','past_due')
+AND deleted_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_org_subscriptions_plan
 ON organization_subscriptions(plan_id)
 WHERE deleted_at IS NULL;
@@ -3280,6 +3605,10 @@ AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_org_subscriptions_status
 ON organization_subscriptions(status)
 WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_org_subscriptions_active_current
+  ON organization_subscriptions (organization_id, current_period_end DESC)
+  WHERE status IN ('trialing', 'active') AND deleted_at IS NULL;
 
 -- ============================================================
 -- Source: 07_billing/001_create_invoices.sql
@@ -3437,72 +3766,6 @@ ON payments
 USING GIN(metadata);
 
 -- ============================================================
--- Source: 07_billing/001_create_coupons.sql
--- ============================================================
-
--- Normalized final definition for coupons.
--- Canonical/historical sources include:
--- - canonical_migrations_draft/11_billing/016_coupons.sql
--- - migrations/002_create_all_ordered.sql
--- - migrations/002_create_all.sql
--- - canonical_migrations_draft/03_org_identity/001_fixed_tables.sql
-
-CREATE TABLE IF NOT EXISTS coupons
-(
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code VARCHAR(50) NOT NULL,
-  name VARCHAR(150) NOT NULL,
-  description TEXT,
-  discount_type billing_coupon_discount_type NOT NULL,
-  discount_value NUMERIC(12,2) NOT NULL
-  CHECK (discount_value > 0),
-  currency CHAR(3),
-  max_redemptions INTEGER
-  CHECK (max_redemptions IS NULL OR max_redemptions > 0),
-  redemption_count INTEGER NOT NULL DEFAULT 0
-  CHECK (redemption_count >= 0),
-  max_redemptions_per_org INTEGER NOT NULL DEFAULT 1
-  CHECK (max_redemptions_per_org > 0),
-  first_time_customers_only BOOLEAN NOT NULL DEFAULT FALSE,
-  trial_only BOOLEAN NOT NULL DEFAULT FALSE,
-  valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  valid_until TIMESTAMPTZ,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  is_public BOOLEAN NOT NULL DEFAULT FALSE,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at TIMESTAMPTZ,
-  CONSTRAINT uq_coupon_code UNIQUE(code),
-  CONSTRAINT chk_coupon_window
-  CHECK(valid_until IS NULL OR valid_until > valid_from),
-  CONSTRAINT chk_percentage_value
-  CHECK (
-  discount_type <> 'percentage'
-  OR (discount_value > 0 AND discount_value <= 100)
-  )
-);
-
-CREATE INDEX IF NOT EXISTS idx_coupons_active
-ON coupons(is_active, valid_until)
-WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_coupons_public
-ON coupons(is_public)
-WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_coupons_validity
-ON coupons(valid_from, valid_until)
-WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_coupons_redemptions
-ON coupons(redemption_count);
-
-CREATE INDEX IF NOT EXISTS gin_coupons_metadata
-ON coupons
-USING GIN(metadata);
-
--- ============================================================
 -- Source: 07_billing/001_create_billing_audit_logs.sql
 -- ============================================================
 
@@ -3639,6 +3902,34 @@ USING GIN(previous_state);
 CREATE INDEX IF NOT EXISTS gin_bal_default_new
 ON billing_audit_logs_default
 USING GIN(new_state);
+
+-- ============================================================
+-- Source: 07_billing/001_create_billing_event_credit_weights.sql
+-- ============================================================
+
+-- Normalized final definition for billing_event_credit_weights.
+-- Canonical source: database/primarydbv2/migrations/000005_weighted_event_credit_billing.up.sql
+
+CREATE TABLE IF NOT EXISTS billing_event_credit_weights (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type      VARCHAR(64) NOT NULL UNIQUE,
+    credit_weight   NUMERIC(8,4) NOT NULL,
+    description     TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for querying active event credit weights
+CREATE INDEX IF NOT EXISTS idx_billing_event_credit_weights_active
+    ON billing_event_credit_weights (is_active)
+    WHERE is_active = true;
+
+COMMENT ON TABLE billing_event_credit_weights IS 
+'Stores the credit cost per telemetry event type for weighted credit consumption';
+
+COMMENT ON COLUMN billing_event_credit_weights.credit_weight IS 
+'Multiplier converting one raw event of this type into billable credits';
 
 -- ============================================================
 -- Source: 07_billing/001_create_billing_webhook_events.sql
@@ -4033,7 +4324,8 @@ CREATE TABLE IF NOT EXISTS organization_usage_current_period
   ON DELETE SET NULL,
   period_start TIMESTAMPTZ NOT NULL,
   period_end   TIMESTAMPTZ NOT NULL,
-  events_used              BIGINT NOT NULL DEFAULT 0,
+  events_used              NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  raw_events_count         BIGINT NOT NULL DEFAULT 0,
   ai_credits_used          BIGINT NOT NULL DEFAULT 0,
   projects_used            INTEGER NOT NULL DEFAULT 0,
   members_used             INTEGER NOT NULL DEFAULT 0,
@@ -4072,6 +4364,7 @@ CREATE TABLE IF NOT EXISTS organization_usage_current_period
   CONSTRAINT chk_non_negative
   CHECK (
   events_used >= 0
+  AND raw_events_count >= 0
   AND ai_credits_used >= 0
   AND projects_used >= 0
   AND members_used >= 0
@@ -4515,6 +4808,7 @@ CREATE TABLE IF NOT EXISTS usage_daily_counters_default
 CREATE TABLE IF NOT EXISTS connector_configs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
   provider VARCHAR(50) NOT NULL,
   name VARCHAR(255) NOT NULL,
   description TEXT,
@@ -4554,6 +4848,10 @@ CREATE INDEX IF NOT EXISTS idx_connector_org
 ON connector_configs (organization_id)
 WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_connector_project
+ON connector_configs (project_id)
+WHERE deleted_at IS NULL AND project_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_connector_provider
 ON connector_configs (provider)
 WHERE deleted_at IS NULL;
@@ -4575,9 +4873,9 @@ ON connector_configs (last_successful_delivery_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_configs_tenant_id
   ON connector_configs(id, organization_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_configs_org_name_active
-    ON connector_configs(organization_id, name)
-    WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_connector_configs_org_provider_status
+  ON connector_configs (organization_id, provider, status)
+  WHERE deleted_at IS NULL;
 
 -- ============================================================
 -- Source: 08_connector/001_create_connector_audit_logs.sql
@@ -5055,13 +5353,7 @@ CREATE TABLE IF NOT EXISTS project_connector_subscriptions (
   UNIQUE (project_id, connector_id)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_project_connector_subscription ON project_connector_subscriptions(project_id,connector_id) WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_project_connector_subscriptions_route ON project_connector_subscriptions(organization_id,project_id,enabled,severity_threshold) WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_project_connector_subs_project
-  ON project_connector_subscriptions(project_id)
-  WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_project_connector_subs_connector
   ON project_connector_subscriptions(connector_id)
@@ -5070,6 +5362,17 @@ CREATE INDEX IF NOT EXISTS idx_project_connector_subs_connector
 CREATE INDEX IF NOT EXISTS idx_project_connector_subs_enabled
   ON project_connector_subscriptions(project_id, enabled)
   WHERE enabled = TRUE AND deleted_at IS NULL;
+
+-- ============================================================
+-- Source: 08_connector/002_add_connector_configs_project_id.sql
+-- ============================================================
+
+ALTER TABLE connector_configs
+  ADD COLUMN IF NOT EXISTS project_id UUID REFERENCES projects(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_connector_project
+  ON connector_configs (project_id)
+  WHERE deleted_at IS NULL AND project_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 10_notification/001_create_notification_routes.sql
@@ -5142,6 +5445,33 @@ CREATE INDEX IF NOT EXISTS idx_templates_org_type
   WHERE deleted_at IS NULL;
 
 -- ============================================================
+-- Source: 09_alerting/001_create_alert_escalation_policies.sql
+-- ============================================================
+
+-- Normalized final definition for alert_escalation_policies.
+-- Canonical/historical sources include:
+-- - canonical_migrations_draft/08_alerting/009_create_alert_escalation_policies.up.sql
+-- - migrations/002_create_all_ordered.sql
+-- - migrations/002_create_all.sql
+
+CREATE TABLE IF NOT EXISTS alert_escalation_policies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  repeat_interval_minutes INTEGER,
+  max_repeats INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_escalation_policy_name_per_org
+  ON alert_escalation_policies(organization_id, lower(name))
+  WHERE deleted_at IS NULL;
+
+-- ============================================================
 -- Source: 09_alerting/001_create_alert_rules.sql
 -- ============================================================
 
@@ -5192,10 +5522,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rule_name_per_org
   ON alert_rules(organization_id, lower(name))
   WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_alert_rules_org
-  ON alert_rules(organization_id)
-  WHERE deleted_at IS NULL;
-
 CREATE INDEX IF NOT EXISTS idx_alert_rules_org_eval_cat
   ON alert_rules(organization_id, evaluation_category)
   WHERE deleted_at IS NULL AND enabled = TRUE;
@@ -5219,37 +5545,6 @@ CREATE INDEX IF NOT EXISTS idx_alert_rules_eval_due
 CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rules_preset_scope
   ON alert_rules(organization_id, project_id, preset_key) NULLS NOT DISTINCT
   WHERE preset_key IS NOT NULL AND deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_alert_rules_org_project_active
-    ON alert_rules(organization_id, project_id)
-    WHERE deleted_at IS NULL;
-
--- ============================================================
--- Source: 09_alerting/001_create_alert_escalation_policies.sql
--- ============================================================
-
--- Normalized final definition for alert_escalation_policies.
--- Canonical/historical sources include:
--- - canonical_migrations_draft/08_alerting/009_create_alert_escalation_policies.up.sql
--- - migrations/002_create_all_ordered.sql
--- - migrations/002_create_all.sql
-
-CREATE TABLE IF NOT EXISTS alert_escalation_policies (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  repeat_interval_minutes INTEGER,
-  max_repeats INTEGER NOT NULL DEFAULT 0,
-  is_active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at TIMESTAMPTZ
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_escalation_policy_name_per_org
-  ON alert_escalation_policies(organization_id, lower(name))
-  WHERE deleted_at IS NULL;
 
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_events.sql
@@ -5347,6 +5642,9 @@ CREATE INDEX IF NOT EXISTS idx_alert_events_escalation_policy
 
 CREATE INDEX IF NOT EXISTS idx_alert_events_org_project_status
   ON alert_events(organization_id, project_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_alert_events_org_fingerprint_status
+  ON alert_events (organization_id, fingerprint, status, created_at DESC);
 
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_acknowledgments.sql
@@ -5507,6 +5805,9 @@ CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_batch
 CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_org_created
   ON alert_delivery_attempts(organization_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event_created
+  ON alert_delivery_attempts (event_id, created_at DESC);
+
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_escalation_steps.sql
 -- ============================================================
@@ -5564,6 +5865,279 @@ CREATE INDEX IF NOT EXISTS idx_alert_event_history_event
 
 CREATE INDEX IF NOT EXISTS idx_alert_event_history_org
   ON alert_event_history(organization_id, created_at DESC);
+
+-- ============================================================
+-- Source: 09_alerting/001_create_alert_rule_bindings.sql
+-- ============================================================
+
+-- Normalized final definition for alert_rule_bindings.
+-- Canonical/historical sources include:
+-- - canonical_migrations_draft/08_alerting/020_create_alert_rule_bindings.up.sql
+
+CREATE TABLE IF NOT EXISTS alert_rule_bindings (
+  id                            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  rule_id                       UUID NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+  scope_type                    alert_scope_type NOT NULL,
+  scope_level                   SMALLINT NOT NULL,
+  project_id                    UUID REFERENCES projects(id) ON DELETE CASCADE,
+  environment                   VARCHAR(64),
+  service                       VARCHAR(255),
+  endpoint                      VARCHAR(500),
+  mode                          alert_binding_mode NOT NULL DEFAULT 'inherit',
+  enabled                       BOOLEAN NOT NULL DEFAULT TRUE,
+  priority                      INTEGER NOT NULL DEFAULT 100,
+  severity                      alert_severity,
+  cooldown_seconds              INTEGER CHECK (cooldown_seconds IS NULL OR cooldown_seconds >= 0),
+  deduplication_window_seconds  INTEGER CHECK (deduplication_window_seconds IS NULL OR deduplication_window_seconds >= 0),
+  auto_resolve_after_minutes    INTEGER CHECK (auto_resolve_after_minutes IS NULL OR auto_resolve_after_minutes > 0),
+  evaluation_interval_seconds   INTEGER CHECK (evaluation_interval_seconds IS NULL OR evaluation_interval_seconds > 0),
+  consecutive_breaches          INTEGER CHECK (consecutive_breaches IS NULL OR consecutive_breaches >= 1),
+  threshold_overrides           JSONB NOT NULL DEFAULT '{}'::jsonb,
+  action_mode                   alert_action_merge_mode NOT NULL DEFAULT 'inherit',
+  requested_channels            JSONB,
+  recipient_overrides           JSONB,
+  escalation_policy_id          UUID REFERENCES alert_escalation_policies(id) ON DELETE SET NULL,
+  notes                         TEXT,
+  created_by                    UUID REFERENCES users(id) ON DELETE SET NULL,
+  updated_by                    UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at                    TIMESTAMPTZ,
+  CONSTRAINT ck_alert_rule_binding_scope_shape CHECK (
+  (scope_type = 'organization' AND scope_level = 0
+  AND project_id IS NULL AND environment IS NULL AND service IS NULL AND endpoint IS NULL) OR
+  (scope_type = 'project' AND scope_level = 1
+  AND project_id IS NOT NULL AND environment IS NULL AND service IS NULL AND endpoint IS NULL) OR
+  (scope_type = 'environment' AND scope_level = 2
+  AND project_id IS NOT NULL AND environment IS NOT NULL AND service IS NULL AND endpoint IS NULL) OR
+  (scope_type = 'service' AND scope_level = 3
+  AND project_id IS NOT NULL AND service IS NOT NULL AND endpoint IS NULL) OR
+  (scope_type = 'endpoint' AND scope_level = 4
+  AND project_id IS NOT NULL AND endpoint IS NOT NULL)
+  ),
+  CONSTRAINT ck_alert_rule_binding_environment CHECK (
+  environment IS NULL OR (
+  char_length(environment) BETWEEN 1 AND 64
+  AND environment ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'
+  )
+  ),
+  CONSTRAINT ck_alert_rule_binding_threshold_overrides CHECK (
+  jsonb_typeof(threshold_overrides) = 'object'
+  ),
+  CONSTRAINT ck_alert_rule_binding_requested_channels CHECK (
+  requested_channels IS NULL OR jsonb_typeof(requested_channels) = 'array'
+  ),
+  CONSTRAINT ck_alert_rule_binding_recipient_overrides CHECK (
+  recipient_overrides IS NULL OR jsonb_typeof(recipient_overrides) = 'object'
+  )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rule_binding_scope
+  ON alert_rule_bindings (rule_id, scope_type, project_id, environment, service, endpoint)
+  NULLS NOT DISTINCT
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_resolve
+  ON alert_rule_bindings (organization_id, rule_id, scope_level DESC)
+  WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_project
+  ON alert_rule_bindings (project_id, scope_level DESC)
+  WHERE deleted_at IS NULL AND project_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_escalation
+  ON alert_rule_bindings (escalation_policy_id)
+  WHERE deleted_at IS NULL AND escalation_policy_id IS NOT NULL;
+
+-- ============================================================
+-- Source: 09_alerting/001_create_alert_incidents.sql
+-- ============================================================
+
+-- Normalized final definition for alert_incidents.
+--
+-- Incidents are APPLICATION/CONTROL-PLANE state and are therefore owned by the
+-- PRIMARY database (ADR-0006). The Log DB keeps telemetry, evidence, and the
+-- high-volume alert event facts; it must not be the authoritative incident store.
+--
+-- NAME COLLISION (deliberate, documented):
+--   database/migrations/logdb/06_alert_runtime/005_incidents_preferences.up.sql
+--   creates a table also called `alert_incidents` in the LOG DB. That table is
+--   dead schema - no TypeScript reads or writes it - and it is unusable for this
+--   purpose for two reasons:
+--     1. it has no project_id, so incidents cannot be scoped to a project;
+--     2. it declares a FULL `UNIQUE (organization_id, fingerprint)`, which
+--        permanently blocks a SECOND incident for the same fingerprint after the
+--        first one resolves. Recurrence is a core requirement, so a full unique
+--        constraint is simply wrong here (see uq_alert_incident_active below).
+--   The Log DB copy is slated for removal; it still has an inbound FK from
+--   alert_correlation_groups, so removing it is a separate, sequenced migration.
+--
+-- WRITE-VOLUME NOTE (ingestion safety):
+--   Rows here are created per DISTINCT ALERT IDENTITY (fingerprint), never per
+--   telemetry event. Repeated matches update `last_seen_at`/`occurrence_count` on
+--   an existing row instead of inserting. Explicit autovacuum parameters are set
+--   at the bottom so this table's churn cannot starve autovacuum workers that
+--   `pgboss.job` (also in this database) depends on.
+
+-- Incident lifecycle states. Intentionally a small, closed vocabulary rather
+-- than reusing the 8-value alert_event_status: an incident is an operational
+-- occurrence with exactly three meaningful terminal-facing states.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'alert_incident_status') THEN
+    CREATE TYPE alert_incident_status AS ENUM ('open', 'acknowledged', 'resolved');
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS alert_incidents (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Tenancy. project_id is REQUIRED product semantics: the global incident list
+  -- must be filterable by project, and incident authorization is project-scoped.
+  -- Nullable only to represent a genuinely organization-level rule with no
+  -- project scope; the fingerprint encodes the project either way.
+  organization_id       UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id            UUID REFERENCES projects(id) ON DELETE CASCADE,
+  environment           VARCHAR(64),
+
+  -- Provenance: which rule, at which revision, produced this incident.
+  rule_id               UUID REFERENCES alert_rules(id) ON DELETE SET NULL,
+  rule_revision         INTEGER,
+  binding_id            UUID REFERENCES alert_rule_bindings(id) ON DELETE SET NULL,
+
+  -- Canonical alert identity from alertIdentityHash(). Already encodes
+  -- org + project + environment + rule + policy revision + grouping dimensions,
+  -- which is why the active-uniqueness index below does not need to repeat them.
+  fingerprint           VARCHAR(255) NOT NULL,
+  -- Human-readable grouping key ('global', or 'route=/users/:id|service=api').
+  dimension_key         VARCHAR(500) NOT NULL DEFAULT 'global',
+
+  status                alert_incident_status NOT NULL DEFAULT 'open',
+  severity              alert_severity NOT NULL DEFAULT 'warning',
+  title                 VARCHAR(500) NOT NULL,
+
+  -- Grouping dimensions promoted to columns because the incident list filters
+  -- and sorts on them at the database level.
+  service               VARCHAR(255),
+  route                 VARCHAR(500),
+
+  -- Latest evaluation snapshot. Enough for the incident list/detail to render
+  -- "current vs threshold" without querying the Log DB. NOT a telemetry dump.
+  observed_value        NUMERIC(20,6),
+  threshold_value       NUMERIC(20,6),
+
+  occurrence_count      INTEGER NOT NULL DEFAULT 1 CHECK (occurrence_count > 0),
+
+  started_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  acknowledged_at       TIMESTAMPTZ,
+  acknowledged_by       UUID REFERENCES users(id) ON DELETE SET NULL,
+  assigned_to           UUID REFERENCES users(id) ON DELETE SET NULL,
+
+  resolved_at           TIMESTAMPTZ,
+  resolved_by           UUID REFERENCES users(id) ON DELETE SET NULL,
+  resolution_reason     VARCHAR(100),
+
+  labels                JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  -- Lifecycle integrity: a state and its timestamp cannot disagree. These are
+  -- the DB-level guard against a partially-applied transition.
+  CONSTRAINT ck_alert_incident_resolved_shape CHECK (
+    (status = 'resolved' AND resolved_at IS NOT NULL)
+    OR (status <> 'resolved' AND resolved_at IS NULL)
+  ),
+  CONSTRAINT ck_alert_incident_acknowledged_shape CHECK (
+    status <> 'acknowledged' OR acknowledged_at IS NOT NULL
+  ),
+  CONSTRAINT ck_alert_incident_labels CHECK (jsonb_typeof(labels) = 'object')
+);
+
+-- ── Active-incident uniqueness (Phase 6) ────────────────────────────────────
+-- THE correctness backstop. Repeated evaluations of the same logical alert must
+-- not create duplicate ACTIVE incidents, and application-level
+-- "SELECT then INSERT" is race-prone by construction.
+--
+-- PARTIAL on active statuses so that:
+--   * at most ONE open/acknowledged incident exists per (org, fingerprint);
+--   * unlimited RESOLVED history is retained, so a later breach legitimately
+--     creates a NEW incident (recurrence). A full UNIQUE would forbid this -
+--     that is the bug in the Log DB copy of this table.
+--
+-- fingerprint already encodes project/environment/rule/revision/dimensions, so
+-- (organization_id, fingerprint) is the minimal correct key. organization_id is
+-- kept as the leading column for tenant-scoped index locality.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_incident_active
+  ON alert_incidents (organization_id, fingerprint)
+  WHERE status IN ('open', 'acknowledged');
+
+-- ── Query-driven indexes (Phase 5 / Phase 24) ───────────────────────────────
+-- Every index below maps to a specific query this feature actually issues. No
+-- index exists merely because a column exists.
+
+-- Default incident list: tenant-scoped, newest first, optional status filter.
+-- Serves `GET /alerts/incidents` with and without ?status=.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_org_status_started
+  ON alert_incidents (organization_id, status, started_at DESC);
+
+-- Project-scoped list, the most common filtered view in the UI, and the
+-- project-scoped authorization check.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_org_project_started
+  ON alert_incidents (organization_id, project_id, started_at DESC);
+
+-- "Active incidents" widgets (overview page counts, rule health) and the
+-- resolve-by-fingerprint path in the evaluator. Partial: only active rows are
+-- ever queried this way, which keeps the index small on a table whose bulk is
+-- resolved history.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_active_lookup
+  ON alert_incidents (organization_id, fingerprint, status)
+  WHERE status IN ('open', 'acknowledged');
+
+-- Per-rule incident counts + "last triggered" on the Alert Rules page.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_rule
+  ON alert_incidents (rule_id, started_at DESC)
+  WHERE rule_id IS NOT NULL;
+
+-- Severity facet on the incident list, and critical-incident overview counts.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_org_severity_started
+  ON alert_incidents (organization_id, severity, started_at DESC);
+
+-- `sortBy=lastSeenAt` (the other supported sort) and the recency feed.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_org_last_seen
+  ON alert_incidents (organization_id, last_seen_at DESC);
+
+-- "Resolved today" / MTTR-style overview metrics over a bounded window.
+CREATE INDEX IF NOT EXISTS idx_alert_incidents_org_resolved
+  ON alert_incidents (organization_id, resolved_at DESC)
+  WHERE resolved_at IS NOT NULL;
+
+-- Deliberately NOT indexed:
+--   environment, service, route, assigned_to, dimension_key
+-- These are low-selectivity secondary facets that always co-occur with
+-- organization_id, so the leading composite indexes above already restrict the
+-- scan to a small tenant slice. Add them only if EXPLAIN on real data shows a
+-- problem; each costs write amplification on an alerting write path.
+
+-- ── Autovacuum (ingestion safety) ───────────────────────────────────────────
+-- Active incidents are updated repeatedly (last_seen_at/occurrence_count), so
+-- this table produces dead tuples out of proportion to its row count. Tighter
+-- per-table thresholds keep its bloat local and stop it from monopolising the
+-- shared autovacuum workers that pgboss.job (same database) relies on.
+ALTER TABLE alert_incidents SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.05
+);
+
+COMMENT ON TABLE alert_incidents IS
+  'Authoritative incident lifecycle (PRIMARY db). One ACTIVE row per canonical alert fingerprint, enforced by uq_alert_incident_active; resolved rows are retained so recurrence creates a new incident.';
+COMMENT ON COLUMN alert_incidents.fingerprint IS
+  'Canonical alert identity from alertIdentityHash(): org:project:env:rule:policy:dimensionKey.';
+COMMENT ON COLUMN alert_incidents.occurrence_count IS
+  'Number of matched evaluations folded into this incident. Incremented on reuse, never by inserting a new row.';
 
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_metrics.sql
@@ -5702,90 +6276,6 @@ CREATE INDEX IF NOT EXISTS idx_alert_rule_actions_rule
 CREATE INDEX IF NOT EXISTS idx_alert_rule_actions_connector
   ON alert_rule_actions(connector_id)
   WHERE connector_id IS NOT NULL;
-
--- ============================================================
--- Source: 09_alerting/001_create_alert_rule_bindings.sql
--- ============================================================
-
--- Normalized final definition for alert_rule_bindings.
--- Canonical/historical sources include:
--- - canonical_migrations_draft/08_alerting/020_create_alert_rule_bindings.up.sql
-
-CREATE TABLE IF NOT EXISTS alert_rule_bindings (
-  id                            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  organization_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  rule_id                       UUID NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
-  scope_type                    alert_scope_type NOT NULL,
-  scope_level                   SMALLINT NOT NULL,
-  project_id                    UUID REFERENCES projects(id) ON DELETE CASCADE,
-  environment                   VARCHAR(64),
-  service                       VARCHAR(255),
-  endpoint                      VARCHAR(500),
-  mode                          alert_binding_mode NOT NULL DEFAULT 'inherit',
-  enabled                       BOOLEAN NOT NULL DEFAULT TRUE,
-  priority                      INTEGER NOT NULL DEFAULT 100,
-  severity                      alert_severity,
-  cooldown_seconds              INTEGER CHECK (cooldown_seconds IS NULL OR cooldown_seconds >= 0),
-  deduplication_window_seconds  INTEGER CHECK (deduplication_window_seconds IS NULL OR deduplication_window_seconds >= 0),
-  auto_resolve_after_minutes    INTEGER CHECK (auto_resolve_after_minutes IS NULL OR auto_resolve_after_minutes > 0),
-  evaluation_interval_seconds   INTEGER CHECK (evaluation_interval_seconds IS NULL OR evaluation_interval_seconds > 0),
-  consecutive_breaches          INTEGER CHECK (consecutive_breaches IS NULL OR consecutive_breaches >= 1),
-  threshold_overrides           JSONB NOT NULL DEFAULT '{}'::jsonb,
-  action_mode                   alert_action_merge_mode NOT NULL DEFAULT 'inherit',
-  requested_channels            JSONB,
-  recipient_overrides           JSONB,
-  escalation_policy_id          UUID REFERENCES alert_escalation_policies(id) ON DELETE SET NULL,
-  notes                         TEXT,
-  created_by                    UUID REFERENCES users(id) ON DELETE SET NULL,
-  updated_by                    UUID REFERENCES users(id) ON DELETE SET NULL,
-  created_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at                    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at                    TIMESTAMPTZ,
-  CONSTRAINT ck_alert_rule_binding_scope_shape CHECK (
-  (scope_type = 'organization' AND scope_level = 0
-  AND project_id IS NULL AND environment IS NULL AND service IS NULL AND endpoint IS NULL) OR
-  (scope_type = 'project' AND scope_level = 1
-  AND project_id IS NOT NULL AND environment IS NULL AND service IS NULL AND endpoint IS NULL) OR
-  (scope_type = 'environment' AND scope_level = 2
-  AND project_id IS NOT NULL AND environment IS NOT NULL AND service IS NULL AND endpoint IS NULL) OR
-  (scope_type = 'service' AND scope_level = 3
-  AND project_id IS NOT NULL AND service IS NOT NULL AND endpoint IS NULL) OR
-  (scope_type = 'endpoint' AND scope_level = 4
-  AND project_id IS NOT NULL AND endpoint IS NOT NULL)
-  ),
-  CONSTRAINT ck_alert_rule_binding_environment CHECK (
-  environment IS NULL OR (
-  char_length(environment) BETWEEN 1 AND 64
-  AND environment ~ '^[A-Za-z0-9][A-Za-z0-9._-]*$'
-  )
-  ),
-  CONSTRAINT ck_alert_rule_binding_threshold_overrides CHECK (
-  jsonb_typeof(threshold_overrides) = 'object'
-  ),
-  CONSTRAINT ck_alert_rule_binding_requested_channels CHECK (
-  requested_channels IS NULL OR jsonb_typeof(requested_channels) = 'array'
-  ),
-  CONSTRAINT ck_alert_rule_binding_recipient_overrides CHECK (
-  recipient_overrides IS NULL OR jsonb_typeof(recipient_overrides) = 'object'
-  )
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_rule_binding_scope
-  ON alert_rule_bindings (rule_id, scope_type, project_id, environment, service, endpoint)
-  NULLS NOT DISTINCT
-  WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_resolve
-  ON alert_rule_bindings (organization_id, rule_id, scope_level DESC)
-  WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_project
-  ON alert_rule_bindings (project_id, scope_level DESC)
-  WHERE deleted_at IS NULL AND project_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_alert_rule_bindings_escalation
-  ON alert_rule_bindings (escalation_policy_id)
-  WHERE deleted_at IS NULL AND escalation_policy_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_rule_conditions.sql
@@ -6573,6 +7063,10 @@ CREATE INDEX IF NOT EXISTS idx_project_alert_channels_active ON project_alert_ch
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_project_alert_channel_default ON project_alert_channels(project_id,channel_type) WHERE is_default AND enabled AND deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_project_alert_channels_org_proj_enabled
+  ON project_alert_channels (organization_id, project_id, enabled)
+  WHERE deleted_at IS NULL;
+
 -- ============================================================
 -- Source: 09_alerting/001_create_project_alert_thresholds.sql
 -- ============================================================
@@ -6641,6 +7135,120 @@ CREATE TABLE IF NOT EXISTS project_member_alert_channel_preferences (
 
 CREATE INDEX IF NOT EXISTS idx_member_alert_preferences_delivery
   ON project_member_alert_channel_preferences(project_id,user_id,enabled,severity_threshold) WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_member_alert_prefs_lookup
+  ON project_member_alert_channel_preferences (organization_id, project_id, user_id, project_alert_channel_id)
+  WHERE deleted_at IS NULL;
+
+-- ============================================================
+-- Source: 09_alerting/002_create_alert_incident_events.sql
+-- ============================================================
+
+-- Normalized final definition for alert_incident_events.
+--
+-- FILENAME PREFIX IS LOAD-BEARING: this file is `002_`, not `001_`.
+-- run-primary-draft-folder.ts applies a folder's .sql files in LEXICOGRAPHIC
+-- order. As `001_create_alert_incident_events.sql` this sorted BEFORE
+-- `001_create_alert_incidents.sql` ('_' = 0x5F < 's' = 0x73), so the FK below
+-- referenced a table that did not exist yet and the run failed with
+-- 42P01 relation "alert_incidents" does not exist.
+-- Any table with an FK to another table in this same folder must sort after it.
+--
+-- Durable incident LIFECYCLE timeline, co-located with alert_incidents in the
+-- PRIMARY database.
+--
+-- WHY THIS TABLE EXISTS (and is not just a read of the Log DB):
+--   The incident timeline was previously reconstructed from
+--   `alert_event_history_v2` in the Log DB. That table is
+--   `PARTITION BY RANGE (created_at)` and the Log DB's stated policy is that
+--   "continuously growing event, usage, runtime, audit ... tables are
+--   range-partitioned to support retention pruning"
+--   (logdb/00_shared/001_foundation.up.sql). So incident timelines would be
+--   silently pruned out from under resolved incidents - the exact failure mode
+--   that put alert_incidents in the primary database in the first place.
+--   Postmortems, MTTR analysis, and compliance review all need the lifecycle of
+--   an incident to outlive telemetry retention.
+--
+-- SCOPE - deliberately narrow:
+--   Only LIFECYCLE transitions live here (opened, breach re-observed,
+--   acknowledged, assigned, resolved, escalated, notification-created). These
+--   are a handful of rows per incident, so the table is low-volume and durable.
+--   High-volume per-retry delivery attempts stay in the Log DB
+--   (`alert_delivery_attempts_v2`), where partition pruning is correct: an
+--   individual SMTP retry is evidence, not lifecycle. The incident detail view
+--   therefore reads lifecycle from here (authoritative) and delivery attempts
+--   from the Log DB (best-effort enrichment).
+--
+-- INGESTION SAFETY: written only from the alert worker process and from the
+-- incident API, never from the ingestion request path. Volume is bounded by
+-- incident count, not telemetry count.
+
+CREATE TABLE IF NOT EXISTS alert_incident_events (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  incident_id       UUID NOT NULL REFERENCES alert_incidents(id) ON DELETE CASCADE,
+  -- Denormalized tenancy so the activity feed can filter by tenant/project
+  -- without joining alert_incidents on every row.
+  organization_id   UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id        UUID REFERENCES projects(id) ON DELETE CASCADE,
+
+  /* Lifecycle event kind. Free-form VARCHAR rather than an enum because new
+     lifecycle events are additive and should not require a type migration; the
+     CHECK keeps it a closed set that is cheap to extend. */
+  kind              VARCHAR(48) NOT NULL,
+  actor_type        VARCHAR(16) NOT NULL DEFAULT 'worker',
+  actor_user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+
+  /* Small structured detail (occurrence count, observed value, reason).
+     NOT a telemetry payload - evidence stays in the Log DB. */
+  detail            JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+  occurred_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT ck_alert_incident_event_kind CHECK (kind IN (
+    'incident_opened',
+    'condition_still_breaching',
+    'incident_acknowledged',
+    'incident_assigned',
+    'incident_resolved',
+    'incident_reopened',
+    'incident_escalated',
+    'notification_created',
+    'notification_suppressed'
+  )),
+  CONSTRAINT ck_alert_incident_event_actor CHECK (
+    actor_type IN ('worker', 'user', 'system', 'api')
+  ),
+  CONSTRAINT ck_alert_incident_event_detail CHECK (jsonb_typeof(detail) = 'object')
+);
+
+-- ── Query-driven indexes ────────────────────────────────────────────────────
+
+-- Per-incident timeline, newest first. The incident detail page's only query.
+CREATE INDEX IF NOT EXISTS idx_alert_incident_events_incident
+  ON alert_incident_events (incident_id, occurred_at DESC);
+
+-- Global Activity feed: tenant-scoped, newest first, optional kind filter.
+CREATE INDEX IF NOT EXISTS idx_alert_incident_events_org_occurred
+  ON alert_incident_events (organization_id, occurred_at DESC);
+
+-- Project-filtered activity feed.
+CREATE INDEX IF NOT EXISTS idx_alert_incident_events_org_project_occurred
+  ON alert_incident_events (organization_id, project_id, occurred_at DESC)
+  WHERE project_id IS NOT NULL;
+
+-- Deliberately NOT indexed: kind, actor_type, actor_user_id. They are
+-- low-selectivity facets that always co-occur with organization_id, so the
+-- composites above already restrict the scan to a small tenant slice.
+
+ALTER TABLE alert_incident_events SET (
+  autovacuum_vacuum_scale_factor = 0.1,
+  autovacuum_analyze_scale_factor = 0.1
+);
+
+COMMENT ON TABLE alert_incident_events IS
+  'Durable incident lifecycle timeline (PRIMARY db). Outlives Log DB telemetry retention. Lifecycle only - per-retry delivery attempts remain in alert_delivery_attempts_v2.';
 
 -- ============================================================
 -- Source: 11_observability/001_create_backpressure_gauge.sql
@@ -6760,11 +7368,7 @@ CREATE INDEX IF NOT EXISTS idx_errors_trace ON errors(project_id, trace_id) WHER
 
 CREATE INDEX IF NOT EXISTS idx_errors_project_time ON errors(project_id, timestamp DESC);
 
-CREATE INDEX IF NOT EXISTS idx_legacy_errors_fingerprint ON errors(project_id, fingerprint, timestamp DESC);
-
 CREATE INDEX IF NOT EXISTS idx_errors_unresolved ON errors(project_id, timestamp DESC) WHERE resolved_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_legacy_errors_trace ON errors(project_id, trace_id) WHERE trace_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 11_observability/001_create_errors_default.sql
@@ -7284,6 +7888,26 @@ CREATE INDEX IF NOT EXISTS idx_spans_brin_time
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_events_spans_project_event
   ON events_spans(project_id, event_id) NULLS NOT DISTINCT;
+
+CREATE INDEX IF NOT EXISTS idx_spans_trace_time_asc
+  ON events_spans(organization_id, trace_id, timestamp ASC)
+  WHERE trace_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_spans_span_id
+  ON events_spans(organization_id, span_id)
+  WHERE span_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_spans_slow_db
+  ON events_spans(organization_id, db_system, duration_ms DESC, timestamp DESC)
+  WHERE db_system IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_spans_db_collection
+  ON events_spans(organization_id, db_collection, timestamp DESC)
+  WHERE db_collection IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_spans_session_time
+  ON events_spans(organization_id, session_id, timestamp DESC)
+  WHERE session_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 11_observability/001_create_events_traces.sql
@@ -7813,13 +8437,7 @@ CREATE INDEX IF NOT EXISTS idx_requests_trace ON requests(project_id, trace_id) 
 
 CREATE INDEX IF NOT EXISTS idx_requests_project_time ON requests(project_id, timestamp DESC);
 
-CREATE INDEX IF NOT EXISTS idx_legacy_requests_status ON requests(project_id, status_code, timestamp DESC) WHERE status_code >= 400;
-
 CREATE INDEX IF NOT EXISTS idx_requests_latency ON requests(project_id, latency_ms, timestamp DESC);
-
-CREATE INDEX IF NOT EXISTS idx_legacy_requests_route ON requests(project_id, route, timestamp DESC) WHERE route IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_legacy_requests_trace ON requests(project_id, trace_id) WHERE trace_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 11_observability/001_create_requests_default.sql
@@ -7909,10 +8527,6 @@ CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(project_id, trace_id, timest
 
 CREATE INDEX IF NOT EXISTS idx_spans_parent ON spans(project_id, parent_span_id) WHERE parent_span_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_legacy_spans_trace ON spans(project_id, trace_id, timestamp DESC);
-
-CREATE INDEX IF NOT EXISTS idx_legacy_spans_parent ON spans(project_id, parent_span_id) WHERE parent_span_id IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_spans_project_time ON spans(project_id, timestamp DESC);
 
 CREATE INDEX IF NOT EXISTS idx_spans_attrs_gin ON spans USING GIN (attributes);
@@ -7988,7 +8602,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS usage_counter_staging (
   project_id UUID NOT NULL,
   org_id UUID NOT NULL,
   counter_type VARCHAR(64) NOT NULL,
-  increment_by BIGINT NOT NULL DEFAULT 1 CHECK (increment_by > 0),
+  increment_by NUMERIC(14, 4) NOT NULL DEFAULT 1 CHECK (increment_by > 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   api_key_id UUID,
   event_type TEXT NOT NULL DEFAULT 'all'
@@ -8058,6 +8672,296 @@ CREATE TABLE IF NOT EXISTS ai_prompt_templates (
 CREATE INDEX IF NOT EXISTS idx_ai_prompt_templates_active
   ON ai_prompt_templates (ai_mode)
   WHERE status = 'active';
+
+-- ============================================================
+-- Source: 13_ai/002_create_ai_requests_responses.sql
+-- ============================================================
+
+-- AI Requests, Responses, Feedback, Jobs, and Cache for PrimaryDB
+CREATE TABLE IF NOT EXISTS ai_requests (
+  request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  ai_mode TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  input_hash TEXT,
+  cache_key TEXT,
+  model_route TEXT,
+  provider TEXT,
+  latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+  prompt_tokens INTEGER CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0),
+  completion_tokens INTEGER CHECK (completion_tokens IS NULL OR completion_tokens >= 0),
+  status TEXT,
+  confidence INTEGER CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 100)),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_requests_tenant_time
+  ON ai_requests (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_tenant_mode
+  ON ai_requests (tenant_id, ai_mode);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_cache_key
+  ON ai_requests (cache_key)
+  WHERE cache_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ai_responses (
+  response_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID NOT NULL REFERENCES ai_requests(request_id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  ai_mode TEXT NOT NULL,
+  answer JSONB,
+  confidence INTEGER CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 100)),
+  citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+  credit_action JSONB,
+  status TEXT,
+  prompt_template_version TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_responses_request
+  ON ai_responses (request_id);
+CREATE INDEX IF NOT EXISTS idx_ai_responses_tenant_time
+  ON ai_responses (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_responses_tenant_mode
+  ON ai_responses (tenant_id, ai_mode);
+
+CREATE TABLE IF NOT EXISTS ai_feedback (
+  feedback_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_id UUID REFERENCES ai_requests(request_id) ON DELETE SET NULL,
+  response_id UUID REFERENCES ai_responses(response_id) ON DELETE SET NULL,
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  rating INTEGER CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+  helpful BOOLEAN,
+  correction TEXT,
+  comment TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_response
+  ON ai_feedback (response_id);
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_tenant_time
+  ON ai_feedback (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_jobs (
+  job_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  ai_mode TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
+  input_hash TEXT,
+  input_ciphertext TEXT,
+  idempotency_key TEXT,
+  response_id UUID REFERENCES ai_responses(response_id) ON DELETE SET NULL,
+  model_route TEXT,
+  pgboss_job_id TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  error TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  priority INTEGER NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_tenant_status
+  ON ai_jobs (tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_tenant_time
+  ON ai_jobs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_jobs_pgboss
+  ON ai_jobs (pgboss_job_id)
+  WHERE pgboss_job_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ai_cache (
+  cache_key TEXT PRIMARY KEY,
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  ai_mode TEXT NOT NULL,
+  response_id UUID REFERENCES ai_responses(response_id) ON DELETE SET NULL,
+  ttl_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (ttl_seconds >= 0),
+  etag TEXT,
+  hits INTEGER NOT NULL DEFAULT 0 CHECK (hits >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ,
+  invalidated_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_cache_tenant_mode
+  ON ai_cache (tenant_id, ai_mode);
+CREATE INDEX IF NOT EXISTS idx_ai_cache_expiry
+  ON ai_cache (expires_at)
+  WHERE invalidated_at IS NULL;
+
+-- ============================================================
+-- Source: 13_ai/003_create_ai_conversations_chat.sql
+-- ============================================================
+
+-- AI Conversations, Chat Requests, Messages, and Tool Calls for PrimaryDB
+CREATE TABLE IF NOT EXISTS ai_conversations (
+  conversation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(160) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  deleted_at TIMESTAMPTZ,
+  UNIQUE (conversation_id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_chat_requests (
+  request_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL,
+  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  idempotency_key TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('processing','success','failed')),
+  response JSONB,
+  provider VARCHAR(50),
+  model VARCHAR(100),
+  prompt_tokens INTEGER NOT NULL DEFAULT 0 CHECK (prompt_tokens >= 0),
+  completion_tokens INTEGER NOT NULL DEFAULT 0 CHECK (completion_tokens >= 0),
+  latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+  completed_at TIMESTAMPTZ,
+  usage_logged_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (conversation_id, tenant_id)
+    REFERENCES ai_conversations(conversation_id, tenant_id) ON DELETE CASCADE,
+  UNIQUE (tenant_id, idempotency_key),
+  UNIQUE (request_id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_conversation_messages (
+  message_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL,
+  request_id UUID,
+  role VARCHAR(20) NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (tenant_id, request_id, role),
+  FOREIGN KEY (conversation_id, tenant_id)
+    REFERENCES ai_conversations(conversation_id, tenant_id) ON DELETE CASCADE,
+  FOREIGN KEY (request_id, tenant_id)
+    REFERENCES ai_chat_requests(request_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ai_tool_calls (
+  invocation_id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  request_id UUID NOT NULL,
+  tool_name VARCHAR(100) NOT NULL,
+  project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+  arguments JSONB NOT NULL,
+  result JSONB,
+  duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+  status VARCHAR(20) NOT NULL CHECK (status IN ('success','failed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  FOREIGN KEY (request_id, tenant_id)
+    REFERENCES ai_chat_requests(request_id, tenant_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_tenant_user
+  ON ai_conversations (tenant_id, user_id, updated_at DESC) WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ai_chat_requests_pending_usage
+  ON ai_chat_requests (completed_at) WHERE status = 'success' AND usage_logged_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation_time
+  ON ai_conversation_messages (tenant_id, conversation_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_tool_calls_request
+  ON ai_tool_calls (tenant_id, request_id, created_at);
+
+-- ============================================================
+-- Source: 13_ai/004_create_ai_knowledge_and_evaluations.sql
+-- ============================================================
+
+-- Knowledge Documents, Chunks, Evaluations, Reports, and Usage Receipts for PrimaryDB
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+  document_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  source_type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  uri TEXT,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  checksum TEXT NOT NULL,
+  access_control JSONB NOT NULL DEFAULT '{}'::jsonb,
+  service_tags TEXT[] NOT NULL DEFAULT '{}',
+  environment_tags TEXT[] NOT NULL DEFAULT '{}',
+  status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','deleted')),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE NULLS NOT DISTINCT (tenant_id, source_type, checksum)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+  chunk_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  document_id UUID NOT NULL REFERENCES knowledge_documents(document_id) ON DELETE CASCADE,
+  tenant_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL CHECK (chunk_index >= 0),
+  content_summary TEXT NOT NULL,
+  embedding VECTOR(1536),
+  access_control JSONB NOT NULL DEFAULT '{}'::jsonb,
+  tags JSONB NOT NULL DEFAULT '{}'::jsonb,
+  confidence_weight NUMERIC(4,3) NOT NULL DEFAULT 1 CHECK (confidence_weight BETWEEN 0 AND 1),
+  search_vector TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', content_summary)) STORED,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (document_id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_tenant_status
+  ON knowledge_documents (tenant_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_tenant
+  ON knowledge_chunks (tenant_id, document_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_fts
+  ON knowledge_chunks USING GIN (search_vector);
+
+CREATE TABLE IF NOT EXISTS ai_evaluations (
+  evaluation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  response_id UUID NOT NULL REFERENCES ai_responses(response_id) ON DELETE CASCADE,
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  ai_mode TEXT NOT NULL,
+  correctness_score NUMERIC(5,2) CHECK (correctness_score BETWEEN 0 AND 100),
+  groundedness_score NUMERIC(5,2) CHECK (groundedness_score BETWEEN 0 AND 100),
+  safety_score NUMERIC(5,2) CHECK (safety_score BETWEEN 0 AND 100),
+  evaluator TEXT NOT NULL,
+  dataset_version TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ai_reports (
+  report_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  response_id UUID REFERENCES ai_responses(response_id) ON DELETE SET NULL,
+  report_type TEXT NOT NULL,
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'queued',
+  summary JSONB,
+  storage_uri TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  generated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (period_end > period_start)
+);
+
+CREATE TABLE IF NOT EXISTS ai_usage_receipts (
+  tenant_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  request_id UUID NOT NULL,
+  feature_key VARCHAR(100) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_id, request_id, feature_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_evaluations_tenant_mode
+  ON ai_evaluations (tenant_id, ai_mode, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_reports_tenant_period
+  ON ai_reports (tenant_id, period_start DESC);
 
 -- ============================================================
 -- Source: 14_automation/001_create_automation_workflows.sql
@@ -8133,6 +9037,10 @@ CREATE INDEX IF NOT EXISTS idx_automation_workflows_tags
 
 CREATE INDEX IF NOT EXISTS idx_automation_workflows_metadata
   ON automation_workflows USING GIN (metadata);
+
+CREATE INDEX IF NOT EXISTS idx_automation_workflows_org_updated
+  ON automation_workflows (organization_id, is_enabled, status, updated_at DESC)
+  WHERE deleted_at IS NULL;
 
 -- ============================================================
 -- Source: 14_automation/001_create_automation_workflow_versions.sql
@@ -8462,6 +9370,321 @@ CREATE INDEX IF NOT EXISTS idx_automation_triggers_config
   ON automation_triggers USING GIN (config);
 
 -- ============================================================
+-- Source: 14_automation/002_create_automation_runtime.sql
+-- ============================================================
+
+-- =============================================================================
+-- Automation RUNTIME tables (PRIMARY database).
+--
+-- ROOT CAUSE THIS FIXES:
+--   These four tables were previously created only in the LOG database
+--   (database/migrations/logdb/08_automation_runtime/001_automation_runtime.up.sql)
+--   as generic 16-column stubs that did not match the application code at all.
+--   The application's AutomationRepository is constructed with the PRIMARY pool
+--   (src/modules/automation/automation.module.ts -> new AutomationRepository(pool)),
+--   and claimNextStep() JOINs automation_run_steps -> automation_runs ->
+--   automation_workflows -> automation_actions. Those control-plane tables live in
+--   the PRIMARY database, so a cross-database join is impossible: the runtime
+--   tables MUST live here in PRIMARY alongside them.
+--
+--   Result before this migration: every inbox insert / claim / run creation /
+--   step claim failed with "relation does not exist" against PRIMARY.
+--
+-- Column definitions below are derived directly from the SQL and row mappers in
+-- src/modules/automation/repository.ts (toInboxEvent/toRun/toStep) and
+-- src/modules/automation/audit.ts (toAuditRow), so the schema and code agree.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- Inbox status enum (no pre-existing enum covered these values).
+-- Values are exactly those written by repository.ts:
+--   insertInboxEvent -> 'pending'
+--   claimInboxEvents -> 'processing'
+--   completeInboxEvent -> 'processed'
+--   failInboxEvent -> 'retry' | 'failed'
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'automation_inbox_status') THEN
+    CREATE TYPE automation_inbox_status AS ENUM ('pending', 'processing', 'processed', 'retry', 'failed');
+  END IF;
+END $$;
+
+-- -----------------------------------------------------------------------------
+-- automation_events_inbox — durable trigger inbox (transactional outbox pattern).
+-- Written by insertInboxEvent(); consumed by claimInboxEvents() with SKIP LOCKED.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS automation_events_inbox (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Nullable: repository.ts supports platform/system events with no org, and
+  -- looks them up with `organization_id IS NOT DISTINCT FROM $2`.
+  organization_id UUID NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source_module VARCHAR(80) NOT NULL,
+  event_type VARCHAR(120) NOT NULL,
+  source_event_id VARCHAR(200),
+  dedupe_key VARCHAR(300) NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  headers JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status automation_inbox_status NOT NULL DEFAULT 'pending',
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_at TIMESTAMPTZ,
+  locked_by VARCHAR(120),
+  processed_at TIMESTAMPTZ,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMPTZ,
+  last_error TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  CONSTRAINT chk_inbox_attempts_non_negative CHECK (attempts >= 0)
+);
+
+-- Required by `ON CONFLICT (organization_id, dedupe_key) DO NOTHING` in
+-- insertInboxEvent(). NULLS NOT DISTINCT (PG15+) is essential: without it two
+-- system events (organization_id IS NULL) sharing a dedupe_key would BOTH insert,
+-- silently breaking deduplication for platform-scoped events.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_automation_events_inbox_org_dedupe
+  ON automation_events_inbox (organization_id, dedupe_key) NULLS NOT DISTINCT;
+
+-- Serves the claimInboxEvents() ordering (ORDER BY received_at ASC) while
+-- excluding already-terminal rows, which are the vast majority over time.
+CREATE INDEX IF NOT EXISTS idx_automation_events_inbox_claimable
+  ON automation_events_inbox (received_at)
+  WHERE status IN ('pending', 'retry', 'processing');
+
+-- Supports the retry-due predicate branch of the claim query.
+CREATE INDEX IF NOT EXISTS idx_automation_events_inbox_retry_due
+  ON automation_events_inbox (next_retry_at)
+  WHERE status = 'retry';
+
+CREATE INDEX IF NOT EXISTS idx_automation_events_inbox_org_received
+  ON automation_events_inbox (organization_id, received_at DESC);
+
+-- -----------------------------------------------------------------------------
+-- automation_runs — one row per triggered workflow execution.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID NULL REFERENCES projects(id) ON DELETE SET NULL,
+  workflow_id UUID NOT NULL REFERENCES automation_workflows(id) ON DELETE CASCADE,
+  workflow_version_id UUID NULL REFERENCES automation_workflow_versions(id) ON DELETE SET NULL,
+  trigger_id UUID NULL REFERENCES automation_triggers(id) ON DELETE SET NULL,
+  inbox_event_id UUID NULL REFERENCES automation_events_inbox(id) ON DELETE SET NULL,
+  status automation_run_status NOT NULL DEFAULT 'queued',
+  trigger_type VARCHAR(120) NOT NULL,
+  source_module VARCHAR(80) NOT NULL,
+  source_event_id VARCHAR(200),
+  dedupe_key VARCHAR(300),
+  -- NOT NULL + UNIQUE: createRunWithSteps() always supplies this and relies on a
+  -- unique violation (mapped to AutomationConflictError) to make run creation
+  -- effectively-once for a given (org, workflow, eventType, sourceEventId).
+  idempotency_key VARCHAR(300) NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0,
+  queued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  output_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_code VARCHAR(80),
+  error_message TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_run_max_attempts_positive CHECK (max_attempts > 0),
+  CONSTRAINT chk_run_attempt_positive CHECK (attempt > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_automation_runs_idempotency_key
+  ON automation_runs (idempotency_key);
+
+-- Cooldown + hourly rate-limit gate in workers.ts processInbox():
+--   WHERE workflow_id = $1 AND organization_id = $2 AND created_at > NOW() - interval
+CREATE INDEX IF NOT EXISTS idx_automation_runs_workflow_org_created
+  ON automation_runs (workflow_id, organization_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_automation_runs_org_created
+  ON automation_runs (organization_id, created_at DESC);
+
+-- Stale-run recovery sweep scans non-terminal runs only.
+CREATE INDEX IF NOT EXISTS idx_automation_runs_active
+  ON automation_runs (status, updated_at)
+  WHERE status IN ('queued', 'running', 'waiting_approval');
+
+CREATE INDEX IF NOT EXISTS idx_automation_runs_expiry
+  ON automation_runs (expires_at)
+  WHERE expires_at IS NOT NULL AND status IN ('queued', 'running');
+
+
+
+-- -----------------------------------------------------------------------------
+-- automation_run_steps — ordered action steps within a run.
+-- Claimed sequentially by claimNextStep() (FOR UPDATE OF s SKIP LOCKED).
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS automation_run_steps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id UUID NOT NULL REFERENCES automation_runs(id) ON DELETE CASCADE,
+  workflow_id UUID NOT NULL REFERENCES automation_workflows(id) ON DELETE CASCADE,
+  action_id UUID NULL REFERENCES automation_actions(id) ON DELETE SET NULL,
+  step_key VARCHAR(100) NOT NULL,
+  action_type VARCHAR(120) NOT NULL,
+  status automation_step_status NOT NULL DEFAULT 'queued',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  next_retry_at TIMESTAMPTZ,
+  timeout_at TIMESTAMPTZ,
+  requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
+  approval_id UUID NULL REFERENCES automation_approvals(id) ON DELETE SET NULL,
+  idempotency_key VARCHAR(300),
+  input_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  output_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_code VARCHAR(80),
+  error_message TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_step_max_attempts_positive CHECK (max_attempts > 0),
+  CONSTRAINT chk_step_attempt_positive CHECK (attempt > 0),
+  CONSTRAINT chk_step_sort_order_non_negative CHECK (sort_order >= 0)
+);
+
+-- Matches `ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL`
+-- in createRunWithSteps(). The predicate must match the statement exactly.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_automation_run_steps_idempotency_key
+  ON automation_run_steps (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+-- claimNextStep() orders by sort_order within a run and checks lower-order blockers.
+CREATE INDEX IF NOT EXISTS idx_automation_run_steps_run_order
+  ON automation_run_steps (run_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS idx_automation_run_steps_claimable
+  ON automation_run_steps (run_id, sort_order)
+  WHERE status IN ('queued', 'running');
+
+CREATE INDEX IF NOT EXISTS idx_automation_run_steps_timeout
+  ON automation_run_steps (timeout_at)
+  WHERE status = 'running' AND timeout_at IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_automation_run_steps_approval
+  ON automation_run_steps (approval_id)
+  WHERE approval_id IS NOT NULL;
+
+
+
+-- -----------------------------------------------------------------------------
+-- automation_audit_logs — immutable, append-only audit trail.
+--
+-- `action` is VARCHAR, deliberately NOT the pre-existing automation_audit_action
+-- enum: that enum uses underscore labels ('run_queued') while the application
+-- emits dotted values ('run.queued', 'run.dead_lettered' — the latter not present
+-- in the enum at all). Typing this column as that enum would make every audit
+-- insert fail. The app-layer AUDIT_ACTIONS union is the source of truth, and
+-- keeping this VARCHAR avoids a migration for every new audit action.
+--
+-- FKs use ON DELETE SET NULL (never CASCADE) so deleting a workflow can never
+-- erase its audit history.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS automation_audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  project_id UUID NULL REFERENCES projects(id) ON DELETE SET NULL,
+  workflow_id UUID NULL REFERENCES automation_workflows(id) ON DELETE SET NULL,
+  run_id UUID NULL REFERENCES automation_runs(id) ON DELETE SET NULL,
+  step_id UUID NULL REFERENCES automation_run_steps(id) ON DELETE SET NULL,
+  approval_id UUID NULL REFERENCES automation_approvals(id) ON DELETE SET NULL,
+  actor_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+  actor_type VARCHAR(40) NOT NULL DEFAULT 'user',
+  action VARCHAR(100) NOT NULL,
+  entity_type VARCHAR(60) NOT NULL,
+  entity_id UUID,
+  request_id VARCHAR(120),
+  ip_address INET,
+  user_agent TEXT,
+  before_state JSONB,
+  after_state JSONB,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- listAuditLogs() filters by org and orders by occurred_at DESC.
+CREATE INDEX IF NOT EXISTS idx_automation_audit_logs_org_occurred
+  ON automation_audit_logs (organization_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_automation_audit_logs_workflow
+  ON automation_audit_logs (workflow_id, occurred_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_automation_audit_logs_run
+  ON automation_audit_logs (run_id);
+
+CREATE INDEX IF NOT EXISTS idx_automation_audit_logs_action
+  ON automation_audit_logs (action, occurred_at DESC);
+
+-- ============================================================
+-- Source: 14_automation/003_remove_unbacked_automation_templates.sql
+-- ============================================================
+
+-- =============================================================================
+-- Remove the three platform automation templates whose purpose depends on an
+-- entity that does not exist in this product.
+--
+-- WHY (evidence in docs/automationv2/24-action-inventory-and-decisions.md):
+--   release-health-guard              uses release.guard.warn, which is a duplicate
+--                                     of notification.send; its release.health_degraded
+--                                     trigger also has no producer.
+--   open-runbook-for-critical-service uses runbook.open; a live search for runbook%
+--                                     tables returned NO TABLES — there is no runbook
+--                                     entity anywhere in the schema or codebase.
+--   uptime-failure-status-page-draft  uses status_page.update; status_page% returned
+--                                     NO TABLES, and there is no `uptime` module in
+--                                     src/modules either, so it is doubly unbacked.
+--
+--   All three reference action types that have been removed from ACTION_TYPES, so a
+--   workflow created from these templates would now be rejected at validation time.
+--   Leaving the templates in place would offer users a starting point that cannot be
+--   saved, let alone executed.
+--
+-- SAFETY:
+--   Deletes are keyed on template_key AND scope='platform', so an organization's own
+--   templates are never touched. Ordering removes version rows before template rows
+--   to respect the FK. Guarded so any tenant-authored workflow already created from a
+--   template is unaffected: automation_workflows.template_id is ON DELETE SET NULL,
+--   and no live workflows existed at the time this was written (automation_workflows
+--   was empty), so no user work is lost.
+--
+-- Idempotent: safe to re-run; deletes simply match zero rows the second time.
+-- =============================================================================
+
+BEGIN;
+
+DELETE FROM automation_template_versions
+ WHERE template_id IN (
+   SELECT id FROM automation_templates
+    WHERE scope = 'platform'
+      AND template_key IN (
+        'release-health-guard',
+        'open-runbook-for-critical-service',
+        'uptime-failure-status-page-draft'
+      )
+ );
+
+DELETE FROM automation_templates
+ WHERE scope = 'platform'
+   AND template_key IN (
+     'release-health-guard',
+     'open-runbook-for-critical-service',
+     'uptime-failure-status-page-draft'
+   );
+
+COMMIT;
+
+-- ============================================================
 -- Source: 15_analytics/001_create_analytics_alerts.sql
 -- ============================================================
 
@@ -8535,9 +9758,6 @@ CREATE TABLE IF NOT EXISTS analytics_daily_rollup (
   CONSTRAINT analytics_daily_rollup_unique UNIQUE (organization_id, project_id, bucket_date)
 );
 
-CREATE INDEX IF NOT EXISTS idx_daily_rollup_org_date
-  ON analytics_daily_rollup(organization_id, project_id, bucket_date DESC);
-
 -- ============================================================
 -- Source: 15_analytics/001_create_analytics_dashboards.sql
 -- ============================================================
@@ -8601,9 +9821,6 @@ CREATE TABLE IF NOT EXISTS analytics_error_groups (
   CONSTRAINT analytics_error_groups_unique UNIQUE (organization_id, project_id, fingerprint)
 );
 
-CREATE INDEX IF NOT EXISTS idx_error_groups_org_fingerprint
-  ON analytics_error_groups(organization_id, project_id, fingerprint);
-
 CREATE INDEX IF NOT EXISTS idx_error_groups_org_status
   ON analytics_error_groups(organization_id, status, last_seen_at DESC);
 
@@ -8649,9 +9866,6 @@ CREATE TABLE IF NOT EXISTS analytics_hourly_rollup (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT analytics_hourly_rollup_unique UNIQUE (organization_id, project_id, bucket_hour)
 );
-
-CREATE INDEX IF NOT EXISTS idx_hourly_rollup_org_hour
-  ON analytics_hourly_rollup(organization_id, project_id, bucket_hour DESC);
 
 -- ============================================================
 -- Source: 15_analytics/001_create_analytics_performance_summary.sql
@@ -8805,9 +10019,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_org
 CREATE INDEX IF NOT EXISTS idx_audit_logs_project
   ON audit_logs(project_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_audit_logs_action
-  ON audit_logs(action, created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
   ON audit_logs(created_at DESC);
 
@@ -8817,10 +10028,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_actor_type_id_time
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_time_brin
   ON audit_logs USING BRIN (created_at);
-
-CREATE INDEX IF NOT EXISTS idx_audit_logs_request
-  ON audit_logs(request_id)
-  WHERE request_id IS NOT NULL;
 
 -- ============================================================
 -- Source: 16_security/001_create_feature_dependencies.sql
@@ -8852,6 +10059,7 @@ CREATE INDEX IF NOT EXISTS idx_feature_dependencies_depends_on ON feature_depend
 -- Canonical/historical sources include:
 -- - canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
 
+DROP TABLE IF EXISTS tmp_enterprise_billing_feature_seed;
 CREATE TEMP TABLE IF NOT EXISTS tmp_enterprise_billing_feature_seed
 (
   feature_key     VARCHAR(100) PRIMARY KEY,
@@ -8908,12 +10116,46 @@ FULL OUTER JOIN (
     counter_type,
     date_trunc('hour', created_at) AS period_start,
     SUM(increment_by) AS unflushed_value
-  FROM usage_counter_staging
-  GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
+FROM usage_counter_staging
+GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
 ) s
   ON p.project_id = s.project_id
  AND p.counter_type = s.counter_type
  AND p.period_start = s.period_start;
+
+CREATE OR REPLACE VIEW api_key_usage_hourly AS
+SELECT
+  api_key_id,
+  project_id,
+  organization_id,
+  environment_id,
+  date_trunc('hour', bucket) AS bucket,
+  event_type_id,
+  SUM(request_count)::bigint AS request_count,
+  SUM(accepted_event_count)::bigint AS accepted_event_count,
+  SUM(error_event_count)::bigint AS error_event_count,
+  SUM(ingestion_failure_count)::bigint AS ingestion_failure_count,
+  SUM(accepted_bytes)::bigint AS accepted_bytes,
+  SUM(rate_limited_request_count)::bigint AS rate_limited_request_count
+FROM api_key_usage_minute
+GROUP BY api_key_id, project_id, organization_id, environment_id, date_trunc('hour', bucket), event_type_id;
+
+CREATE OR REPLACE VIEW api_key_usage_monthly AS
+SELECT
+  api_key_id,
+  project_id,
+  organization_id,
+  environment_id,
+  date_trunc('month', bucket) AS bucket,
+  event_type_id,
+  SUM(request_count)::bigint AS request_count,
+  SUM(accepted_event_count)::bigint AS accepted_event_count,
+  SUM(error_event_count)::bigint AS error_event_count,
+  SUM(ingestion_failure_count)::bigint AS ingestion_failure_count,
+  SUM(accepted_bytes)::bigint AS accepted_bytes,
+  SUM(rate_limited_request_count)::bigint AS rate_limited_request_count
+FROM api_key_usage_daily
+GROUP BY api_key_id, project_id, organization_id, environment_id, date_trunc('month', bucket), event_type_id;
 
 -- Source: canonical_migrations_draft/19_automation/014_automation_indexes_and_views.sql
 CREATE OR REPLACE VIEW v_automation_workflow_summaries AS
@@ -9314,7 +10556,7 @@ RETURNS TABLE(flushed_project_id UUID, flushed_count BIGINT) AS $$
 BEGIN
   RETURN QUERY
   WITH batch AS (
-    SELECT id, project_id, org_id, counter_type, increment_by, created_at
+    SELECT id, project_id, org_id, api_key_id, event_type, counter_type, increment_by, created_at
     FROM usage_counter_staging
     WHERE created_at < NOW() - INTERVAL '5 seconds'
     ORDER BY id
@@ -9332,6 +10574,29 @@ BEGIN
     FROM batch
     GROUP BY project_id, org_id, counter_type, date_trunc('hour', created_at)
   ),
+  keyed AS (
+    SELECT
+      b.project_id,
+      b.org_id,
+      b.api_key_id,
+      k.environment_id,
+      COALESCE(t.id, fallback.id) AS event_type_id,
+      date_trunc('minute', b.created_at) AS minute_bucket,
+      date_trunc('day', b.created_at) AS day_bucket,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'requests') AS request_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'events') AS accepted_event_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'errors') AS error_event_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'ingestion_failures') AS ingestion_failure_count,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'bytes_ingested') AS accepted_bytes,
+      SUM(b.increment_by) FILTER (WHERE b.counter_type = 'rate_limited') AS rate_limited_request_count
+    FROM batch b
+    JOIN project_api_keys k ON k.id = b.api_key_id
+    LEFT JOIN telemetry_event_types t ON t.name = b.event_type
+    JOIN telemetry_event_types fallback ON fallback.name = '__all__'
+    WHERE b.api_key_id IS NOT NULL
+    GROUP BY b.project_id, b.org_id, b.api_key_id, k.environment_id, COALESCE(t.id, fallback.id),
+             date_trunc('minute', b.created_at), date_trunc('day', b.created_at)
+  ),
   upserted AS (
     INSERT INTO project_usage
       (project_id, org_id, counter_type, period_start, period_end, value, updated_at)
@@ -9339,6 +10604,47 @@ BEGIN
     FROM aggregated
     ON CONFLICT (project_id, counter_type, period_start)
     DO UPDATE SET value = project_usage.value + EXCLUDED.value, updated_at = NOW()
+    RETURNING project_id
+  ),
+  upserted_api_minute AS (
+    INSERT INTO api_key_usage_minute (
+      api_key_id, project_id, organization_id, environment_id, bucket, event_type_id,
+      request_count, accepted_event_count, error_event_count, ingestion_failure_count,
+      accepted_bytes, rate_limited_request_count
+    )
+    SELECT
+      api_key_id, project_id, org_id, environment_id, minute_bucket, event_type_id,
+      COALESCE(request_count, 0), COALESCE(accepted_event_count, 0), COALESCE(error_event_count, 0),
+      COALESCE(ingestion_failure_count, 0), COALESCE(accepted_bytes, 0), COALESCE(rate_limited_request_count, 0)
+    FROM keyed
+    ON CONFLICT (api_key_id, bucket, event_type_id) DO UPDATE SET
+      request_count = api_key_usage_minute.request_count + EXCLUDED.request_count,
+      accepted_event_count = api_key_usage_minute.accepted_event_count + EXCLUDED.accepted_event_count,
+      error_event_count = api_key_usage_minute.error_event_count + EXCLUDED.error_event_count,
+      ingestion_failure_count = api_key_usage_minute.ingestion_failure_count + EXCLUDED.ingestion_failure_count,
+      accepted_bytes = api_key_usage_minute.accepted_bytes + EXCLUDED.accepted_bytes,
+      rate_limited_request_count = api_key_usage_minute.rate_limited_request_count + EXCLUDED.rate_limited_request_count
+    RETURNING project_id
+  ),
+  upserted_api_daily AS (
+    INSERT INTO api_key_usage_daily (
+      api_key_id, project_id, organization_id, environment_id, bucket, event_type_id,
+      request_count, accepted_event_count, error_event_count, ingestion_failure_count,
+      accepted_bytes, rate_limited_request_count
+    )
+    SELECT
+      api_key_id, project_id, org_id, environment_id, day_bucket, event_type_id,
+      COALESCE(SUM(request_count), 0), COALESCE(SUM(accepted_event_count), 0), COALESCE(SUM(error_event_count), 0),
+      COALESCE(SUM(ingestion_failure_count), 0), COALESCE(SUM(accepted_bytes), 0), COALESCE(SUM(rate_limited_request_count), 0)
+    FROM keyed
+    GROUP BY api_key_id, project_id, org_id, environment_id, day_bucket, event_type_id
+    ON CONFLICT (api_key_id, bucket, event_type_id) DO UPDATE SET
+      request_count = api_key_usage_daily.request_count + EXCLUDED.request_count,
+      accepted_event_count = api_key_usage_daily.accepted_event_count + EXCLUDED.accepted_event_count,
+      error_event_count = api_key_usage_daily.error_event_count + EXCLUDED.error_event_count,
+      ingestion_failure_count = api_key_usage_daily.ingestion_failure_count + EXCLUDED.ingestion_failure_count,
+      accepted_bytes = api_key_usage_daily.accepted_bytes + EXCLUDED.accepted_bytes,
+      rate_limited_request_count = api_key_usage_daily.rate_limited_request_count + EXCLUDED.rate_limited_request_count
     RETURNING project_id
   ),
   deleted AS (
@@ -9426,6 +10732,71 @@ $$;
 -- Source: migrations/002_create_all.sql
 CREATE OR REPLACE FUNCTION increment_event_usage(
     p_organization_id UUID,
+    p_weighted_credits NUMERIC,
+    p_raw_count BIGINT DEFAULT 1
+)
+RETURNS TABLE(
+    events_used NUMERIC,
+    event_limit BIGINT,
+    overage_events NUMERIC,
+    raw_events_count BIGINT,
+    is_over_limit BOOLEAN
+) AS $$
+DECLARE
+    v_events_used NUMERIC;
+    v_event_limit BIGINT;
+    v_overage_events NUMERIC;
+    v_raw_events_count BIGINT;
+BEGIN
+    UPDATE organization_usage_current_period
+    SET
+        events_used = organization_usage_current_period.events_used + p_weighted_credits,
+        raw_events_count = organization_usage_current_period.raw_events_count + p_raw_count,
+        overage_events = GREATEST(0, (organization_usage_current_period.events_used + p_weighted_credits) - organization_usage_current_period.event_limit),
+        last_event_at = NOW(),
+        updated_at = NOW()
+    WHERE organization_id = p_organization_id
+      AND (period_start IS NULL OR NOW() BETWEEN period_start AND period_end)
+    RETURNING
+        organization_usage_current_period.events_used,
+        organization_usage_current_period.event_limit,
+        organization_usage_current_period.overage_events,
+        organization_usage_current_period.raw_events_count
+    INTO v_events_used, v_event_limit, v_overage_events, v_raw_events_count;
+
+    IF NOT FOUND THEN
+        UPDATE organization_usage_current_period
+        SET
+            events_used = organization_usage_current_period.events_used + p_weighted_credits,
+            raw_events_count = organization_usage_current_period.raw_events_count + p_raw_count,
+            overage_events = GREATEST(0, (organization_usage_current_period.events_used + p_weighted_credits) - organization_usage_current_period.event_limit),
+            last_event_at = NOW(),
+            updated_at = NOW()
+        WHERE organization_id = p_organization_id
+        RETURNING
+            organization_usage_current_period.events_used,
+            organization_usage_current_period.event_limit,
+            organization_usage_current_period.overage_events,
+            organization_usage_current_period.raw_events_count
+        INTO v_events_used, v_event_limit, v_overage_events, v_raw_events_count;
+    END IF;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No usage record found for organization %', p_organization_id;
+    END IF;
+
+    RETURN QUERY SELECT
+        v_events_used,
+        v_event_limit,
+        v_overage_events,
+        v_raw_events_count,
+        (v_events_used > v_event_limit);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Backward-compatible overload for legacy calls with single count
+CREATE OR REPLACE FUNCTION increment_event_usage(
+    p_organization_id UUID,
     p_count BIGINT DEFAULT 1
 )
 RETURNS VOID
@@ -9433,6 +10804,7 @@ LANGUAGE SQL
 AS $$
 UPDATE organization_usage_current_period
 SET events_used = events_used + p_count,
+    raw_events_count = raw_events_count + p_count,
     last_event_at = NOW(),
     updated_at = NOW()
 WHERE organization_id = p_organization_id;
@@ -10006,13 +11378,15 @@ $$;
 CREATE OR REPLACE FUNCTION remaining_event_quota(
     p_organization_id UUID
 )
-RETURNS BIGINT
+RETURNS NUMERIC
 LANGUAGE SQL
 STABLE
 AS $$
-SELECT GREATEST(event_limit - events_used,0)
+SELECT GREATEST(event_limit - events_used, 0)::NUMERIC
 FROM organization_usage_current_period
-WHERE organization_id = p_organization_id;
+WHERE organization_id = p_organization_id
+ORDER BY period_end DESC
+LIMIT 1;
 $$;
 
 -- Source: migrations/002_create_all.sql
@@ -10059,6 +11433,106 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+
+-- Functions for weighted event credit accounting (migration 000005)
+DROP FUNCTION IF EXISTS increment_event_usage(UUID, NUMERIC, BIGINT);
+DROP FUNCTION IF EXISTS increment_event_usage(UUID, BIGINT);
+DROP FUNCTION IF EXISTS increment_event_usage(UUID);
+DROP FUNCTION IF EXISTS remaining_event_quota(UUID);
+
+CREATE OR REPLACE FUNCTION increment_event_usage(
+    p_organization_id UUID,
+    p_weighted_credits NUMERIC,
+    p_raw_count BIGINT DEFAULT 1
+)
+RETURNS TABLE(
+    events_used NUMERIC,
+    event_limit BIGINT,
+    overage_events NUMERIC,
+    raw_events_count BIGINT,
+    is_over_limit BOOLEAN
+) AS $$
+DECLARE
+    v_events_used NUMERIC;
+    v_event_limit BIGINT;
+    v_overage_events NUMERIC;
+    v_raw_events_count BIGINT;
+BEGIN
+    UPDATE organization_usage_current_period
+    SET
+        events_used = organization_usage_current_period.events_used + p_weighted_credits,
+        raw_events_count = organization_usage_current_period.raw_events_count + p_raw_count,
+        overage_events = GREATEST(0, (organization_usage_current_period.events_used + p_weighted_credits) - organization_usage_current_period.event_limit),
+        last_event_at = NOW(),
+        updated_at = NOW()
+    WHERE organization_id = p_organization_id
+      AND (period_start IS NULL OR NOW() BETWEEN period_start AND period_end)
+    RETURNING
+        organization_usage_current_period.events_used,
+        organization_usage_current_period.event_limit,
+        organization_usage_current_period.overage_events,
+        organization_usage_current_period.raw_events_count
+    INTO v_events_used, v_event_limit, v_overage_events, v_raw_events_count;
+
+    IF NOT FOUND THEN
+        UPDATE organization_usage_current_period
+        SET
+            events_used = organization_usage_current_period.events_used + p_weighted_credits,
+            raw_events_count = organization_usage_current_period.raw_events_count + p_raw_count,
+            overage_events = GREATEST(0, (organization_usage_current_period.events_used + p_weighted_credits) - organization_usage_current_period.event_limit),
+            last_event_at = NOW(),
+            updated_at = NOW()
+        WHERE organization_id = p_organization_id
+        RETURNING
+            organization_usage_current_period.events_used,
+            organization_usage_current_period.event_limit,
+            organization_usage_current_period.overage_events,
+            organization_usage_current_period.raw_events_count
+        INTO v_events_used, v_event_limit, v_overage_events, v_raw_events_count;
+    END IF;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No usage record found for organization %', p_organization_id;
+    END IF;
+
+    RETURN QUERY SELECT
+        v_events_used,
+        v_event_limit,
+        v_overage_events,
+        v_raw_events_count,
+        (v_events_used > v_event_limit);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION increment_event_usage(
+    p_organization_id UUID,
+    p_count BIGINT DEFAULT 1
+)
+RETURNS VOID
+LANGUAGE SQL
+AS $$
+UPDATE organization_usage_current_period
+SET events_used = events_used + p_count,
+    raw_events_count = raw_events_count + p_count,
+    last_event_at = NOW(),
+    updated_at = NOW()
+WHERE organization_id = p_organization_id;
+$$;
+
+CREATE OR REPLACE FUNCTION remaining_event_quota(
+    p_organization_id UUID
+)
+RETURNS NUMERIC
+LANGUAGE SQL
+STABLE
+AS $$
+SELECT GREATEST(event_limit - events_used, 0)::NUMERIC
+FROM organization_usage_current_period
+WHERE organization_id = p_organization_id
+ORDER BY period_end DESC
+LIMIT 1;
+$$;
+
 -- ============================================================
 -- Source: 17_functions/900_deferred_foreign_keys.sql
 -- ============================================================
@@ -10078,21 +11552,24 @@ ALTER TABLE users
   FOREIGN KEY (current_org_id) REFERENCES organizations(id) ON DELETE SET NULL;
 
 -- ============================================================
-
 -- Source: 20_seeders/001_04_projects_007_create_project_environments.sql
--- Source: canonical_migrations_draft/04_projects/007_create_project_environments.up.sql
-INSERT INTO project_environments (project_id, organization_id, name, slug, type, description, is_default, color)
-SELECT p.id, p.org_id, v.name, v.slug, v.type::project_environment_type, v.description, v.is_default, v.color
-FROM projects p CROSS JOIN (VALUES
-  ('Production','production','production','Production telemetry',true,'#16A34A'),
-  ('Staging','staging','staging','Pre-production telemetry',false,'#D97706'),
-  ('Development','development','development','Development telemetry',false,'#2563EB'),
-  ('Testing','testing','testing','Quality assurance and automated testing telemetry',false,'#7C3AED'),
-  ('Preview','preview','preview','Short-lived preview deployment telemetry',false,'#DB2777')
-) AS v(name,slug,type,description,is_default,color)
-WHERE NOT EXISTS (SELECT 1 FROM project_environments e WHERE e.project_id=p.id AND e.slug=v.slug AND e.deleted_at IS NULL);
+-- ============================================================
 
+-- Source: canonical_migrations_draft/04_projects/007_create_project_environments.up.sql
+-- Backfill the single default Production environment for any project lacking an active environment.
+INSERT INTO project_environments (project_id, organization_id, name, slug, type, description, is_default, is_active, color)
+SELECT p.id, p.org_id, 'Production', 'production', 'production'::project_environment_type, 'Production telemetry', TRUE, TRUE, '#16A34A'
+FROM projects p
+WHERE NOT EXISTS (
+  SELECT 1 FROM project_environments e
+  WHERE e.project_id = p.id AND e.slug = 'production' AND e.deleted_at IS NULL
+)
+AND p.deleted_at IS NULL;
+
+-- ============================================================
 -- Source: 20_seeders/002_04_projects_012_create_project_alerting_and_routing.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/04_projects/012_create_project_alerting_and_routing.up.sql
 INSERT INTO project_notification_preferences(organization_id,project_id,category)
 SELECT org_id,id,'all' FROM projects ON CONFLICT DO NOTHING;
@@ -10117,7 +11594,10 @@ FROM projects p CROSS JOIN (VALUES
 ) t(threshold_key,metric_name,severity,threshold_value,threshold_unit)
 WHERE NOT EXISTS(SELECT 1 FROM project_alert_thresholds x WHERE x.project_id=p.id AND x.environment_id IS NULL AND x.threshold_key=t.threshold_key AND x.deleted_at IS NULL);
 
+-- ============================================================
 -- Source: 20_seeders/003_08_alerting_025_backfill_rule_bindings.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/08_alerting/025_backfill_rule_bindings.up.sql
 INSERT INTO alert_rule_bindings (
   organization_id, rule_id, scope_type, scope_level,
@@ -10168,898 +11648,61 @@ FROM alert_rules r
 WHERE r.deleted_at IS NULL
 ON CONFLICT (rule_id, revision) DO NOTHING;
 
--- Source: 20_seeders/004_11_billing_004_billing_features.sql
--- Source: canonical_migrations_draft/11_billing/004_billing_features.sql
-INSERT INTO billing_features
-(feature_key,feature_name,category,value_type,sort_order)
+-- ============================================================
+-- Source: 20_seeders/004_11_billing_catalog_plans_and_prices.sql
+-- ============================================================
+
+-- =============================================================================
+-- Seeder File: 004_11_billing_catalog_plans_and_prices.sql
+-- Description: Seeds JSON-derived subscription plans and plan prices
+-- Catalog Version: 2.0
+-- Source: billing_catalog_response.preview.json
+-- =============================================================================
+
+WITH plan_seed(key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order) AS (
 VALUES
-('monthly_events','Monthly Events','limits','integer',1),
-('projects','Projects','limits','integer',2),
-('organization_members','Organization Members','limits','integer',3),
-('api_keys','API Keys','limits','integer',4),
-('connectors','Connectors','limits','integer',5),
-('alert_rules','Alert Rules','limits','integer',6),
-('dashboards','Dashboards','limits','integer',7),
-('retention_days','Retention Days','limits','integer',8),
-('ai_credits','AI Credits','limits','integer',9),
-
-('request_capture','Request Capture','monitoring','boolean',100),
-('error_tracking','Error Tracking','monitoring','boolean',101),
-('distributed_tracing','Distributed Tracing','monitoring','boolean',102),
-('performance_monitoring','Performance Monitoring','monitoring','boolean',103),
-('metrics','Metrics','monitoring','boolean',104),
-('logs','Logs','monitoring','boolean',105),
-('session_replay','Session Replay','monitoring','boolean',106),
-('cpu_profiling','CPU Profiling','monitoring','boolean',107),
-('cron_monitoring','Cron Monitoring','monitoring','boolean',108),
-
-('in_app_alerts','In App Alerts','alerts','boolean',200),
-('email_alerts','Email Alerts','alerts','boolean',201),
-('slack_connector','Slack Connector','integrations','boolean',202),
-('discord_connector','Discord Connector','integrations','boolean',203),
-('teams_connector','Teams Connector','integrations','boolean',204),
-('webhook_connector','Webhook Connector','integrations','boolean',205),
-
-('ai_chat','AI Chat','ai','boolean',300),
-('ai_error_explanation','AI Error Explanation','ai','boolean',301),
-('ai_root_cause','AI Root Cause Analysis','ai','boolean',302),
-('ai_trace_analysis','AI Trace Analysis','ai','boolean',303),
-('ai_log_summary','AI Log Summary','ai','boolean',304),
-
-('custom_dashboards','Custom Dashboards','dashboard','boolean',400),
-('saved_views','Saved Views','dashboard','boolean',401),
-
-('sso','Single Sign-On','security','boolean',500),
-('scim','SCIM Provisioning','security','boolean',501),
-('audit_logs','Audit Logs','security','boolean',502),
-('ip_allowlist','IP Allowlist','security','boolean',503)
-
-ON CONFLICT (feature_key) DO NOTHING;
-
--- Source: 20_seeders/005_11_billing_005_plan_feature_entitlements.sql
--- Source: canonical_migrations_draft/11_billing/005_plan_feature_entitlements.sql
-WITH plan AS (
-    SELECT id
-    FROM plans
-    WHERE key = 'free'
-      AND is_active = TRUE
-      AND deleted_at IS NULL
-    LIMIT 1
-),
-vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
-VALUES
-    ('monthly_events', NULL::boolean, 5000::bigint, NULL::numeric, NULL::text),
-    ('projects', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
-    ('organization_members', NULL::boolean, 3::bigint, NULL::numeric, NULL::text),
-    ('api_keys', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
-    ('connectors', NULL::boolean, 0::bigint, NULL::numeric, NULL::text),
-    ('alert_rules', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
-    ('dashboards', NULL::boolean, 1::bigint, NULL::numeric, NULL::text),
-    ('retention_days', NULL::boolean, 7::bigint, NULL::numeric, NULL::text),
-    ('ai_credits', NULL::boolean, 0::bigint, NULL::numeric, NULL::text),
-    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('distributed_tracing', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('performance_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('metrics', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('session_replay', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cpu_profiling', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cron_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('email_alerts', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('slack_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('discord_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('teams_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('webhook_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_chat', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_error_explanation', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_root_cause', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_trace_analysis', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_log_summary', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('custom_dashboards', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('saved_views', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('audit_logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
+  ('free', 1, 'Free', 'free'::billing_plan_tier, 'Perfect for personal projects, prototypes and evaluation. One organization per user.', 0, TRUE, TRUE, FALSE, 'starter', NULL, 1),
+  ('starter', 1, 'Starter', 'starter'::billing_plan_tier, 'Production-ready observability for small teams. One organization per user.', 14, TRUE, TRUE, FALSE, 'growth', 'Popular', 2),
+  ('growth', 1, 'Growth', 'growth'::billing_plan_tier, 'Scaling teams requiring advanced observability and AI capabilities. One organization per user.', 14, TRUE, TRUE, FALSE, 'business', 'Recommended', 3),
+  ('business', 1, 'Business', 'business'::billing_plan_tier, 'Enterprise-ready monitoring with governance, security and automation. One organization per user.', 14, TRUE, TRUE, FALSE, 'enterprise', 'Best Value', 4),
+  ('enterprise', 1, 'Enterprise', 'enterprise'::billing_plan_tier, 'Custom enterprise deployment with unlimited scale and dedicated support. One organization per user.', 30, FALSE, TRUE, TRUE, NULL, NULL, 5)
 )
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
-SELECT
-    plan.id,
-    billing_features.id,
-    vals.boolean_value,
-    vals.integer_value,
-    vals.decimal_value,
-    vals.string_value
-FROM plan
-JOIN vals ON TRUE
-JOIN billing_features
-  ON billing_features.feature_key = vals.feature_key
- AND billing_features.deleted_at IS NULL
-ON CONFLICT (plan_id, feature_id) DO NOTHING;
-
--- Source: canonical_migrations_draft/11_billing/005_plan_feature_entitlements.sql
-WITH plan AS (
-    SELECT id
-    FROM plans
-    WHERE key = 'starter'
-      AND is_active = TRUE
-      AND deleted_at IS NULL
-    LIMIT 1
-),
-vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
-VALUES
-    ('monthly_events', NULL::boolean, 100000::bigint, NULL::numeric, NULL::text),
-    ('projects', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
-    ('organization_members', NULL::boolean, 10::bigint, NULL::numeric, NULL::text),
-    ('api_keys', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
-    ('connectors', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
-    ('alert_rules', NULL::boolean, 10::bigint, NULL::numeric, NULL::text),
-    ('dashboards', NULL::boolean, 5::bigint, NULL::numeric, NULL::text),
-    ('retention_days', NULL::boolean, 30::bigint, NULL::numeric, NULL::text),
-    ('ai_credits', NULL::boolean, 1000::bigint, NULL::numeric, NULL::text),
-    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('session_replay', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cpu_profiling', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cron_monitoring', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('teams_connector', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_root_cause', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_trace_analysis', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_log_summary', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('audit_logs', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
-SELECT
-    plan.id,
-    billing_features.id,
-    vals.boolean_value,
-    vals.integer_value,
-    vals.decimal_value,
-    vals.string_value
-FROM plan
-JOIN vals ON TRUE
-JOIN billing_features
-  ON billing_features.feature_key = vals.feature_key
- AND billing_features.deleted_at IS NULL
-ON CONFLICT (plan_id, feature_id) DO NOTHING;
-
--- Source: canonical_migrations_draft/11_billing/005_plan_feature_entitlements.sql
-WITH plan AS (
-    SELECT id
-    FROM plans
-    WHERE key = 'growth'
-      AND is_active = TRUE
-      AND deleted_at IS NULL
-    LIMIT 1
-),
-vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
-VALUES
-    ('monthly_events', NULL::boolean, 1000000::bigint, NULL::numeric, NULL::text),
-    ('projects', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
-    ('organization_members', NULL::boolean, 50::bigint, NULL::numeric, NULL::text),
-    ('api_keys', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
-    ('connectors', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
-    ('alert_rules', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
-    ('dashboards', NULL::boolean, 25::bigint, NULL::numeric, NULL::text),
-    ('retention_days', NULL::boolean, 90::bigint, NULL::numeric, NULL::text),
-    ('ai_credits', NULL::boolean, 10000::bigint, NULL::numeric, NULL::text),
-    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('sso', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ip_allowlist', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text)
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
-SELECT
-    plan.id,
-    billing_features.id,
-    vals.boolean_value,
-    vals.integer_value,
-    vals.decimal_value,
-    vals.string_value
-FROM plan
-JOIN vals ON TRUE
-JOIN billing_features
-  ON billing_features.feature_key = vals.feature_key
- AND billing_features.deleted_at IS NULL
-ON CONFLICT (plan_id, feature_id) DO NOTHING;
-
--- Source: canonical_migrations_draft/11_billing/005_plan_feature_entitlements.sql
-WITH plan AS (
-    SELECT id
-    FROM plans
-    WHERE key = 'business'
-      AND is_active = TRUE
-      AND deleted_at IS NULL
-    LIMIT 1
-),
-vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
-VALUES
-    ('monthly_events', NULL::boolean, 5000000::bigint, NULL::numeric, NULL::text),
-    ('projects', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
-    ('organization_members', NULL::boolean, 250::bigint, NULL::numeric, NULL::text),
-    ('api_keys', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
-    ('connectors', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
-    ('alert_rules', NULL::boolean, 500::bigint, NULL::numeric, NULL::text),
-    ('dashboards', NULL::boolean, 100::bigint, NULL::numeric, NULL::text),
-    ('retention_days', NULL::boolean, 180::bigint, NULL::numeric, NULL::text),
-    ('ai_credits', NULL::boolean, 50000::bigint, NULL::numeric, NULL::text),
-    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('sso', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('scim', FALSE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ip_allowlist', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text)
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
-SELECT
-    plan.id,
-    billing_features.id,
-    vals.boolean_value,
-    vals.integer_value,
-    vals.decimal_value,
-    vals.string_value
-FROM plan
-JOIN vals ON TRUE
-JOIN billing_features
-  ON billing_features.feature_key = vals.feature_key
- AND billing_features.deleted_at IS NULL
-ON CONFLICT (plan_id, feature_id) DO NOTHING;
-
--- Source: canonical_migrations_draft/11_billing/005_plan_feature_entitlements.sql
-WITH plan AS (
-    SELECT id
-    FROM plans
-    WHERE key = 'enterprise'
-      AND is_active = TRUE
-      AND deleted_at IS NULL
-    LIMIT 1
-),
-vals(feature_key, boolean_value, integer_value, decimal_value, string_value) AS (
-VALUES
-    ('monthly_events', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('projects', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('organization_members', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('api_keys', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('connectors', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('alert_rules', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('dashboards', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('retention_days', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('ai_credits', NULL::boolean, -1::bigint, NULL::numeric, NULL::text),
-    ('request_capture', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('error_tracking', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('distributed_tracing', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('performance_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('metrics', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('session_replay', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cpu_profiling', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('cron_monitoring', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('in_app_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('email_alerts', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('slack_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('discord_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('teams_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('webhook_connector', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_chat', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_error_explanation', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_root_cause', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_trace_analysis', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ai_log_summary', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('custom_dashboards', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('saved_views', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('sso', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('scim', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('audit_logs', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text),
-    ('ip_allowlist', TRUE::boolean, NULL::bigint, NULL::numeric, NULL::text)
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value)
-SELECT
-    plan.id,
-    billing_features.id,
-    vals.boolean_value,
-    vals.integer_value,
-    vals.decimal_value,
-    vals.string_value
-FROM plan
-JOIN vals ON TRUE
-JOIN billing_features
-  ON billing_features.feature_key = vals.feature_key
- AND billing_features.deleted_at IS NULL
-ON CONFLICT (plan_id, feature_id) DO NOTHING;
-
--- Source: 20_seeders/006_11_billing_025_billing_seed.sql
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
 INSERT INTO plans
-    (key, version, name, tier, description, trial_days, is_active, is_public, sort_order)
-VALUES
-    ('free', 1, 'Free', 'free', 'For solo developers and small side projects. 5,000 events/month.', 0, TRUE, TRUE, 1),
-    ('starter', 1, 'Starter', 'starter', 'For small teams getting serious about observability. 100K events/month.', 14, TRUE, TRUE, 2),
-    ('growth', 1, 'Growth', 'growth', 'For growing teams that need scale and intelligence. 1M events/month.', 14, TRUE, TRUE, 3),
-    ('business', 1, 'Business', 'business', 'For engineering teams demanding performance and control. 5M events/month.', 14, TRUE, TRUE, 4),
-    ('enterprise', 1, 'Enterprise', 'enterprise', 'For organizations requiring maximum scale, security, and customization. Custom pricing.', 30, TRUE, FALSE, 5)
+  (key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order)
+SELECT key, version, name, tier, description, trial_days, is_public, is_active, is_customizable, next_plan_key, badge, sort_order
+FROM plan_seed
 ON CONFLICT (key, version) DO UPDATE
 SET name = EXCLUDED.name,
     tier = EXCLUDED.tier,
     description = EXCLUDED.description,
     trial_days = EXCLUDED.trial_days,
-    is_active = EXCLUDED.is_active,
     is_public = EXCLUDED.is_public,
-    sort_order = EXCLUDED.sort_order,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
-WITH price_seed(plan_key, provider, billing_interval, currency, amount_minor, is_default) AS (
-VALUES
-    ('starter', 'stripe', 'monthly', 'USD', 2900::bigint, TRUE),
-    ('starter', 'stripe', 'annual', 'USD', 29000::bigint, FALSE),
-    ('growth', 'stripe', 'monthly', 'USD', 9900::bigint, TRUE),
-    ('growth', 'stripe', 'annual', 'USD', 99000::bigint, FALSE),
-    ('business', 'stripe', 'monthly', 'USD', 29900::bigint, TRUE),
-    ('business', 'stripe', 'annual', 'USD', 299000::bigint, FALSE)
-)
-INSERT INTO plan_prices
-    (plan_id, provider, billing_interval, currency, amount_minor, provider_price_id, is_default, starts_at, ends_at, metadata)
-SELECT
-    p.id,
-    ps.provider::billing_provider_type,
-    ps.billing_interval::billing_interval_type,
-    ps.currency,
-    ps.amount_minor,
-    NULL::text,
-    ps.is_default,
-    '-infinity'::timestamptz,
-    NULL::timestamptz,
-    '{}'::jsonb
-FROM price_seed ps
-JOIN plans p
-  ON p.key = ps.plan_key
- AND p.version = 1
- AND p.deleted_at IS NULL
-ON CONFLICT (plan_id, provider, billing_interval, currency, starts_at) DO UPDATE
-SET amount_minor = EXCLUDED.amount_minor,
-    provider_price_id = EXCLUDED.provider_price_id,
-    is_default = EXCLUDED.is_default,
-    ends_at = EXCLUDED.ends_at,
-    metadata = EXCLUDED.metadata,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
-WITH feature_seed(feature_key, category, value_type, module, is_module_root, sort_order) AS (
-VALUES
-    ('monthly_events', 'limits', 'integer', NULL, FALSE, 1),
-    ('limit_projects_max', 'limits', 'integer', NULL, FALSE, 2),
-    ('limit_members_max', 'limits', 'integer', NULL, FALSE, 3),
-    ('limit_api_keys_max', 'limits', 'integer', NULL, FALSE, 4),
-    ('limit_connectors_max', 'limits', 'integer', NULL, FALSE, 5),
-    ('limit_alert_rules_max', 'limits', 'integer', NULL, FALSE, 6),
-    ('limit_workflows_max', 'limits', 'integer', NULL, FALSE, 7),
-    ('limit_dashboards_max', 'limits', 'integer', NULL, FALSE, 8),
-    ('limit_environments_max', 'limits', 'integer', NULL, FALSE, 9),
-    ('module_error_tracking_enabled', 'monitoring', 'boolean', 'error_tracking', TRUE, 100),
-    ('module_error_tracking_retention_days', 'monitoring', 'integer', 'error_tracking', FALSE, 101),
-    ('module_error_tracking_features_issue_grouping', 'monitoring', 'boolean', 'error_tracking', FALSE, 102),
-    ('module_error_tracking_features_release_tracking', 'monitoring', 'boolean', 'error_tracking', FALSE, 103),
-    ('module_error_tracking_features_source_maps', 'monitoring', 'boolean', 'error_tracking', FALSE, 104),
-    ('module_error_tracking_features_breadcrumbs', 'monitoring', 'boolean', 'error_tracking', FALSE, 105),
-    ('module_error_tracking_features_user_feedback', 'monitoring', 'boolean', 'error_tracking', FALSE, 106),
-    ('module_distributed_tracing_enabled', 'monitoring', 'boolean', 'distributed_tracing', TRUE, 110),
-    ('module_distributed_tracing_retention_days', 'monitoring', 'integer', 'distributed_tracing', FALSE, 111),
-    ('module_distributed_tracing_features_trace_view', 'monitoring', 'boolean', 'distributed_tracing', FALSE, 112),
-    ('module_distributed_tracing_features_span_details', 'monitoring', 'boolean', 'distributed_tracing', FALSE, 113),
-    ('module_distributed_tracing_features_performance_insights', 'monitoring', 'boolean', 'distributed_tracing', FALSE, 114),
-    ('module_distributed_tracing_features_distributed_correlation', 'monitoring', 'boolean', 'distributed_tracing', FALSE, 115),
-    ('module_logging_enabled', 'monitoring', 'boolean', 'logging', TRUE, 120),
-    ('module_logging_retention_days', 'monitoring', 'integer', 'logging', FALSE, 121),
-    ('module_logging_features_log_search', 'monitoring', 'boolean', 'logging', FALSE, 122),
-    ('module_logging_features_log_patterns', 'monitoring', 'boolean', 'logging', FALSE, 123),
-    ('module_logging_features_structured_parsing', 'monitoring', 'boolean', 'logging', FALSE, 124),
-    ('module_logging_features_live_tail', 'monitoring', 'boolean', 'logging', FALSE, 125),
-    ('module_metrics_enabled', 'monitoring', 'boolean', 'metrics', TRUE, 130),
-    ('module_metrics_retention_days', 'monitoring', 'integer', 'metrics', FALSE, 131),
-    ('module_metrics_features_custom_dashboards', 'monitoring', 'boolean', 'metrics', FALSE, 132),
-    ('module_metrics_features_metric_alerts', 'monitoring', 'boolean', 'metrics', FALSE, 133),
-    ('module_metrics_features_derived_metrics', 'monitoring', 'boolean', 'metrics', FALSE, 134),
-    ('module_metrics_features_metric_export', 'monitoring', 'boolean', 'metrics', FALSE, 135),
-    ('module_profiling_enabled', 'monitoring', 'boolean', 'profiling', TRUE, 140),
-    ('module_profiling_retention_days', 'monitoring', 'integer', 'profiling', FALSE, 141),
-    ('module_profiling_features_flame_graphs', 'monitoring', 'boolean', 'profiling', FALSE, 142),
-    ('module_profiling_features_differential_profiling', 'monitoring', 'boolean', 'profiling', FALSE, 143),
-    ('module_profiling_features_code_hotspots', 'monitoring', 'boolean', 'profiling', FALSE, 144),
-    ('module_session_replay_enabled', 'monitoring', 'boolean', 'session_replay', TRUE, 150),
-    ('module_session_replay_retention_days', 'monitoring', 'integer', 'session_replay', FALSE, 151),
-    ('module_session_replay_features_rrweb_playback', 'monitoring', 'boolean', 'session_replay', FALSE, 152),
-    ('module_session_replay_features_rage_clicks', 'monitoring', 'boolean', 'session_replay', FALSE, 153),
-    ('module_session_replay_features_dead_clicks', 'monitoring', 'boolean', 'session_replay', FALSE, 154),
-    ('module_session_replay_features_privacy_masking', 'monitoring', 'boolean', 'session_replay', FALSE, 155),
-    ('module_cron_monitoring_enabled', 'monitoring', 'boolean', 'cron_monitoring', TRUE, 160),
-    ('module_cron_monitoring_features_job_scheduling', 'monitoring', 'boolean', 'cron_monitoring', FALSE, 161),
-    ('module_cron_monitoring_features_missed_job_detection', 'monitoring', 'boolean', 'cron_monitoring', FALSE, 162),
-    ('module_cron_monitoring_features_job_duration_tracking', 'monitoring', 'boolean', 'cron_monitoring', FALSE, 163),
-    ('module_uptime_monitoring_enabled', 'monitoring', 'boolean', 'uptime_monitoring', TRUE, 170),
-    ('module_uptime_monitoring_features_synthetic_checks', 'monitoring', 'boolean', 'uptime_monitoring', FALSE, 171),
-    ('module_uptime_monitoring_features_multi_region', 'monitoring', 'boolean', 'uptime_monitoring', FALSE, 172),
-    ('module_uptime_monitoring_features_ssl_monitoring', 'monitoring', 'boolean', 'uptime_monitoring', FALSE, 173),
-    ('module_uptime_monitoring_features_status_page', 'monitoring', 'boolean', 'uptime_monitoring', FALSE, 174),
-    ('module_ai_insights_enabled', 'ai', 'boolean', 'ai_insights', TRUE, 200),
-    ('module_ai_insights_monthly_credits', 'ai', 'integer', 'ai_insights', FALSE, 201),
-    ('module_ai_insights_features_error_explanation', 'ai', 'boolean', 'ai_insights', FALSE, 202),
-    ('module_ai_insights_features_root_cause_analysis', 'ai', 'boolean', 'ai_insights', FALSE, 203),
-    ('module_ai_insights_features_stack_trace_analysis', 'ai', 'boolean', 'ai_insights', FALSE, 204),
-    ('module_ai_insights_features_trace_analysis', 'ai', 'boolean', 'ai_insights', FALSE, 205),
-    ('module_ai_insights_features_span_analysis', 'ai', 'boolean', 'ai_insights', FALSE, 206),
-    ('module_ai_insights_features_suggested_fixes', 'ai', 'boolean', 'ai_insights', FALSE, 207),
-    ('module_ai_insights_features_sql_optimization', 'ai', 'boolean', 'ai_insights', FALSE, 208),
-    ('module_ai_insights_features_log_summary', 'ai', 'boolean', 'ai_insights', FALSE, 209),
-    ('module_ai_insights_features_deployment_correlation', 'ai', 'boolean', 'ai_insights', FALSE, 210),
-    ('module_ai_insights_features_incident_summary', 'ai', 'boolean', 'ai_insights', FALSE, 211),
-    ('module_ai_insights_features_weekly_report', 'ai', 'boolean', 'ai_insights', FALSE, 212),
-    ('module_ai_insights_features_chat_assistant', 'ai', 'boolean', 'ai_insights', FALSE, 213),
-    ('module_alerting_enabled', 'alerts', 'boolean', 'alerting', TRUE, 300),
-    ('module_alerting_features_basic_email', 'alerts', 'boolean', 'alerting', FALSE, 301),
-    ('module_alerting_features_multi_channel', 'alerts', 'boolean', 'alerting', FALSE, 302),
-    ('module_alerting_features_escalation_policies', 'alerts', 'boolean', 'alerting', FALSE, 303),
-    ('module_alerting_features_deduplication', 'alerts', 'boolean', 'alerting', FALSE, 304),
-    ('module_alerting_features_silencing', 'alerts', 'boolean', 'alerting', FALSE, 305),
-    ('module_alerting_features_throttling', 'alerts', 'boolean', 'alerting', FALSE, 306),
-    ('module_alerting_features_custom_alert_rules', 'alerts', 'boolean', 'alerting', FALSE, 307),
-    ('module_connectors_enabled', 'integrations', 'boolean', 'connectors', TRUE, 400),
-    ('module_connectors_features_sync_audit_logs', 'integrations', 'boolean', 'connectors', FALSE, 401),
-    ('module_connectors_features_multi_channel_per_alert', 'integrations', 'boolean', 'connectors', FALSE, 402),
-    ('module_connectors_features_connector_slack', 'integrations', 'boolean', 'connectors', FALSE, 403),
-    ('module_connectors_features_connector_discord', 'integrations', 'boolean', 'connectors', FALSE, 404),
-    ('module_connectors_features_connector_pagerduty', 'integrations', 'boolean', 'connectors', FALSE, 405),
-    ('module_connectors_features_connector_teams', 'integrations', 'boolean', 'connectors', FALSE, 406),
-    ('module_connectors_features_connector_webhook', 'integrations', 'boolean', 'connectors', FALSE, 407),
-    ('module_connectors_features_connector_email', 'integrations', 'boolean', 'connectors', FALSE, 408),
-    ('module_analytics_enabled', 'dashboard', 'boolean', 'analytics', TRUE, 500),
-    ('module_analytics_level', 'dashboard', 'string', 'analytics', FALSE, 501),
-    ('module_analytics_features_real_time', 'dashboard', 'boolean', 'analytics', FALSE, 502),
-    ('module_analytics_features_custom_dashboards', 'dashboard', 'boolean', 'analytics', FALSE, 503),
-    ('module_analytics_features_data_export', 'dashboard', 'boolean', 'analytics', FALSE, 504),
-    ('module_analytics_features_advanced_filtering', 'dashboard', 'boolean', 'analytics', FALSE, 505),
-    ('module_analytics_features_comparative_analysis', 'dashboard', 'boolean', 'analytics', FALSE, 506),
-    ('module_analytics_features_trend_forecasting', 'dashboard', 'boolean', 'analytics', FALSE, 507),
-    ('module_analytics_features_custom_reports', 'dashboard', 'boolean', 'analytics', FALSE, 508),
-    ('module_sdk_enabled', 'monitoring', 'boolean', 'sdk', TRUE, 600),
-    ('module_sdk_auto_instrumentation', 'monitoring', 'string', 'sdk', FALSE, 601),
-    ('module_sdk_offline_queue', 'monitoring', 'boolean', 'sdk', FALSE, 602),
-    ('module_sdk_remote_control', 'monitoring', 'boolean', 'sdk', FALSE, 603),
-    ('module_sdk_sampling_error_rate', 'monitoring', 'decimal', 'sdk', FALSE, 604),
-    ('module_sdk_sampling_trace_rate', 'monitoring', 'decimal', 'sdk', FALSE, 605),
-    ('module_sdk_sampling_remotely_configurable', 'monitoring', 'boolean', 'sdk', FALSE, 606),
-    ('module_enterprise_enabled', 'security', 'boolean', 'enterprise', TRUE, 700),
-    ('module_enterprise_features_sso', 'security', 'boolean', 'enterprise', FALSE, 701),
-    ('module_enterprise_features_scim', 'security', 'boolean', 'enterprise', FALSE, 702),
-    ('module_enterprise_features_audit_logs', 'security', 'boolean', 'enterprise', FALSE, 703),
-    ('module_enterprise_features_custom_retention', 'security', 'boolean', 'enterprise', FALSE, 704),
-    ('module_enterprise_features_custom_domains', 'security', 'boolean', 'enterprise', FALSE, 705),
-    ('module_enterprise_features_private_networking', 'security', 'boolean', 'enterprise', FALSE, 706),
-    ('module_enterprise_features_priority_queue', 'security', 'boolean', 'enterprise', FALSE, 707),
-    ('module_enterprise_features_dedicated_workers', 'security', 'boolean', 'enterprise', FALSE, 708),
-    ('module_enterprise_sla', 'security', 'string', 'enterprise', FALSE, 709),
-    ('module_enterprise_data_residency', 'security', 'string', 'enterprise', FALSE, 710),
-    ('module_support_level', 'organization', 'string', 'support', TRUE, 800),
-    ('module_support_response_time', 'organization', 'string', 'support', FALSE, 801),
-    ('module_support_dedicated_manager', 'organization', 'boolean', 'support', FALSE, 802),
-    ('module_support_onboarding', 'organization', 'boolean', 'support', FALSE, 803)
-)
-INSERT INTO billing_features
-    (feature_key, feature_name, description, category, value_type, module, is_module_root, sort_order, is_billable, is_public, metadata)
-SELECT
-    fs.feature_key,
-    initcap(replace(fs.feature_key, '_', ' ')),
-    NULL::text,
-    fs.category::billing_feature_category,
-    fs.value_type::billing_feature_value_type,
-    fs.module,
-    fs.is_module_root,
-    fs.sort_order,
-    TRUE,
-    TRUE,
-    '{}'::jsonb
-FROM feature_seed fs
-ON CONFLICT (feature_key) DO UPDATE
-SET feature_name = EXCLUDED.feature_name,
-    category = EXCLUDED.category,
-    value_type = EXCLUDED.value_type,
-    module = EXCLUDED.module,
-    is_module_root = EXCLUDED.is_module_root,
-    sort_order = EXCLUDED.sort_order,
-    is_billable = EXCLUDED.is_billable,
-    is_public = EXCLUDED.is_public,
-    metadata = EXCLUDED.metadata,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
-WITH plan_scope AS (
-    SELECT id, key
-    FROM plans
-    WHERE key IN ('free', 'starter', 'growth', 'business', 'enterprise')
-      AND version = 1
-      AND deleted_at IS NULL
-),
-feature_scope AS (
-    SELECT id, feature_key, value_type
-    FROM billing_features
-    WHERE feature_key IN (
-        'monthly_events','limit_projects_max','limit_members_max','limit_api_keys_max','limit_connectors_max','limit_alert_rules_max','limit_workflows_max','limit_dashboards_max','limit_environments_max',
-        'module_error_tracking_enabled','module_error_tracking_retention_days','module_error_tracking_features_issue_grouping','module_error_tracking_features_release_tracking','module_error_tracking_features_source_maps','module_error_tracking_features_breadcrumbs','module_error_tracking_features_user_feedback',
-        'module_distributed_tracing_enabled','module_distributed_tracing_retention_days','module_distributed_tracing_features_trace_view','module_distributed_tracing_features_span_details','module_distributed_tracing_features_performance_insights','module_distributed_tracing_features_distributed_correlation',
-        'module_logging_enabled','module_logging_retention_days','module_logging_features_log_search','module_logging_features_log_patterns','module_logging_features_structured_parsing','module_logging_features_live_tail',
-        'module_metrics_enabled','module_metrics_retention_days','module_metrics_features_custom_dashboards','module_metrics_features_metric_alerts','module_metrics_features_derived_metrics','module_metrics_features_metric_export',
-        'module_profiling_enabled','module_profiling_retention_days','module_profiling_features_flame_graphs','module_profiling_features_differential_profiling','module_profiling_features_code_hotspots',
-        'module_session_replay_enabled','module_session_replay_retention_days','module_session_replay_features_rrweb_playback','module_session_replay_features_rage_clicks','module_session_replay_features_dead_clicks','module_session_replay_features_privacy_masking',
-        'module_cron_monitoring_enabled','module_cron_monitoring_features_job_scheduling','module_cron_monitoring_features_missed_job_detection','module_cron_monitoring_features_job_duration_tracking',
-        'module_uptime_monitoring_enabled','module_uptime_monitoring_features_synthetic_checks','module_uptime_monitoring_features_multi_region','module_uptime_monitoring_features_ssl_monitoring','module_uptime_monitoring_features_status_page',
-        'module_ai_insights_enabled','module_ai_insights_monthly_credits','module_ai_insights_features_error_explanation','module_ai_insights_features_root_cause_analysis','module_ai_insights_features_stack_trace_analysis','module_ai_insights_features_trace_analysis','module_ai_insights_features_span_analysis','module_ai_insights_features_suggested_fixes','module_ai_insights_features_sql_optimization','module_ai_insights_features_log_summary','module_ai_insights_features_deployment_correlation','module_ai_insights_features_incident_summary','module_ai_insights_features_weekly_report','module_ai_insights_features_chat_assistant',
-        'module_alerting_enabled','module_alerting_features_basic_email','module_alerting_features_multi_channel','module_alerting_features_escalation_policies','module_alerting_features_deduplication','module_alerting_features_silencing','module_alerting_features_throttling','module_alerting_features_custom_alert_rules',
-        'module_connectors_enabled','module_connectors_features_sync_audit_logs','module_connectors_features_multi_channel_per_alert','module_connectors_features_connector_slack','module_connectors_features_connector_discord','module_connectors_features_connector_pagerduty','module_connectors_features_connector_teams','module_connectors_features_connector_webhook','module_connectors_features_connector_email',
-        'module_analytics_enabled','module_analytics_level','module_analytics_features_real_time','module_analytics_features_custom_dashboards','module_analytics_features_data_export','module_analytics_features_advanced_filtering','module_analytics_features_comparative_analysis','module_analytics_features_trend_forecasting','module_analytics_features_custom_reports',
-        'module_sdk_enabled','module_sdk_auto_instrumentation','module_sdk_offline_queue','module_sdk_remote_control','module_sdk_sampling_error_rate','module_sdk_sampling_trace_rate','module_sdk_sampling_remotely_configurable',
-        'module_enterprise_enabled','module_enterprise_features_sso','module_enterprise_features_scim','module_enterprise_features_audit_logs','module_enterprise_features_custom_retention','module_enterprise_features_custom_domains','module_enterprise_features_private_networking','module_enterprise_features_priority_queue','module_enterprise_features_dedicated_workers','module_enterprise_sla','module_enterprise_data_residency',
-        'module_support_level','module_support_response_time','module_support_dedicated_manager','module_support_onboarding'
-    )
-      AND deleted_at IS NULL
-),
-entitlement_values AS (
-    SELECT
-        p.id AS plan_id,
-        f.id AS feature_id,
-        CASE WHEN f.value_type = 'boolean' THEN
-            CASE
-                WHEN p.key = 'enterprise' THEN TRUE
-                WHEN p.key = 'business' THEN f.feature_key <> 'module_enterprise_features_private_networking' AND f.feature_key <> 'module_support_dedicated_manager'
-                WHEN p.key = 'growth' THEN f.feature_key = ANY(ARRAY[
-                    'module_error_tracking_enabled','module_error_tracking_features_issue_grouping','module_error_tracking_features_release_tracking','module_error_tracking_features_source_maps','module_error_tracking_features_breadcrumbs','module_error_tracking_features_user_feedback',
-                    'module_distributed_tracing_enabled','module_distributed_tracing_features_trace_view','module_distributed_tracing_features_span_details','module_distributed_tracing_features_performance_insights','module_distributed_tracing_features_distributed_correlation',
-                    'module_logging_enabled','module_logging_features_log_search','module_logging_features_log_patterns','module_logging_features_structured_parsing','module_logging_features_live_tail',
-                    'module_metrics_enabled','module_metrics_features_custom_dashboards','module_metrics_features_metric_alerts','module_metrics_features_derived_metrics',
-                    'module_profiling_enabled','module_profiling_features_flame_graphs','module_profiling_features_differential_profiling',
-                    'module_session_replay_enabled','module_session_replay_features_rrweb_playback','module_session_replay_features_rage_clicks','module_session_replay_features_dead_clicks','module_session_replay_features_privacy_masking',
-                    'module_cron_monitoring_enabled','module_cron_monitoring_features_job_scheduling','module_cron_monitoring_features_missed_job_detection','module_cron_monitoring_features_job_duration_tracking',
-                    'module_uptime_monitoring_enabled','module_uptime_monitoring_features_synthetic_checks','module_uptime_monitoring_features_multi_region','module_uptime_monitoring_features_ssl_monitoring','module_uptime_monitoring_features_status_page',
-                    'module_ai_insights_enabled','module_ai_insights_features_error_explanation','module_ai_insights_features_root_cause_analysis','module_ai_insights_features_stack_trace_analysis','module_ai_insights_features_trace_analysis','module_ai_insights_features_suggested_fixes','module_ai_insights_features_log_summary','module_ai_insights_features_deployment_correlation','module_ai_insights_features_incident_summary',
-                    'module_alerting_enabled','module_alerting_features_basic_email','module_alerting_features_multi_channel','module_alerting_features_escalation_policies','module_alerting_features_deduplication','module_alerting_features_silencing','module_alerting_features_throttling','module_alerting_features_custom_alert_rules',
-                    'module_connectors_enabled','module_connectors_features_sync_audit_logs','module_connectors_features_multi_channel_per_alert','module_connectors_features_connector_slack','module_connectors_features_connector_discord','module_connectors_features_connector_pagerduty','module_connectors_features_connector_teams','module_connectors_features_connector_webhook','module_connectors_features_connector_email',
-                    'module_analytics_enabled','module_analytics_features_real_time','module_analytics_features_custom_dashboards','module_analytics_features_data_export','module_analytics_features_advanced_filtering','module_analytics_features_comparative_analysis',
-                    'module_sdk_enabled','module_sdk_offline_queue','module_sdk_remote_control','module_sdk_sampling_remotely_configurable',
-                    'module_enterprise_enabled','module_enterprise_features_audit_logs','module_enterprise_features_priority_queue',
-                    'module_support_onboarding'
-                ])
-                WHEN p.key = 'starter' THEN f.feature_key = ANY(ARRAY[
-                    'module_error_tracking_enabled','module_error_tracking_features_issue_grouping','module_error_tracking_features_release_tracking','module_error_tracking_features_source_maps','module_error_tracking_features_breadcrumbs','module_error_tracking_features_user_feedback',
-                    'module_distributed_tracing_enabled','module_distributed_tracing_features_trace_view','module_distributed_tracing_features_span_details','module_distributed_tracing_features_performance_insights',
-                    'module_logging_enabled','module_logging_features_log_search','module_logging_features_log_patterns','module_logging_features_structured_parsing',
-                    'module_metrics_enabled','module_metrics_features_metric_alerts',
-                    'module_ai_insights_enabled','module_ai_insights_features_error_explanation','module_ai_insights_features_stack_trace_analysis','module_ai_insights_features_log_summary',
-                    'module_alerting_enabled','module_alerting_features_basic_email','module_alerting_features_multi_channel','module_alerting_features_deduplication','module_alerting_features_silencing','module_alerting_features_throttling','module_alerting_features_custom_alert_rules',
-                    'module_connectors_enabled','module_connectors_features_sync_audit_logs','module_connectors_features_multi_channel_per_alert','module_connectors_features_connector_slack','module_connectors_features_connector_discord','module_connectors_features_connector_webhook','module_connectors_features_connector_email',
-                    'module_analytics_enabled','module_analytics_features_real_time','module_analytics_features_advanced_filtering',
-                    'module_sdk_enabled','module_sdk_offline_queue','module_sdk_remote_control','module_sdk_sampling_remotely_configurable',
-                    'module_enterprise_enabled','module_enterprise_features_audit_logs'
-                ])
-                WHEN p.key = 'free' THEN f.feature_key = ANY(ARRAY[
-                    'module_error_tracking_enabled','module_error_tracking_features_issue_grouping','module_error_tracking_features_breadcrumbs',
-                    'module_distributed_tracing_enabled','module_distributed_tracing_features_trace_view',
-                    'module_logging_enabled','module_logging_features_log_search','module_logging_features_structured_parsing',
-                    'module_metrics_enabled',
-                    'module_alerting_enabled','module_alerting_features_basic_email',
-                    'module_connectors_enabled','module_connectors_features_connector_email',
-                    'module_sdk_enabled'
-                ])
-                ELSE FALSE
-            END
-        END AS boolean_value,
-        CASE WHEN f.value_type = 'integer' THEN
-            CASE f.feature_key
-                WHEN 'monthly_events' THEN CASE p.key WHEN 'free' THEN 5000 WHEN 'starter' THEN 100000 WHEN 'growth' THEN 1000000 WHEN 'business' THEN 5000000 ELSE -1 END
-                WHEN 'limit_projects_max' THEN CASE p.key WHEN 'free' THEN 3 WHEN 'starter' THEN 10 WHEN 'growth' THEN 25 WHEN 'business' THEN 50 ELSE -1 END
-                WHEN 'limit_members_max' THEN CASE p.key WHEN 'free' THEN 1 WHEN 'starter' THEN 5 WHEN 'growth' THEN 20 WHEN 'business' THEN 100 ELSE -1 END
-                WHEN 'limit_api_keys_max' THEN CASE p.key WHEN 'free' THEN 2 WHEN 'starter' THEN 10 WHEN 'growth' THEN 25 WHEN 'business' THEN 100 ELSE -1 END
-                WHEN 'limit_connectors_max' THEN CASE p.key WHEN 'free' THEN 1 WHEN 'starter' THEN 3 WHEN 'growth' THEN 10 WHEN 'business' THEN 50 ELSE -1 END
-                WHEN 'limit_alert_rules_max' THEN CASE p.key WHEN 'free' THEN 5 WHEN 'starter' THEN 25 WHEN 'growth' THEN 100 WHEN 'business' THEN 500 ELSE -1 END
-                WHEN 'limit_workflows_max' THEN CASE p.key WHEN 'free' THEN 0 WHEN 'starter' THEN 5 WHEN 'growth' THEN 25 WHEN 'business' THEN 200 ELSE -1 END
-                WHEN 'limit_dashboards_max' THEN CASE p.key WHEN 'free' THEN 1 WHEN 'starter' THEN 5 WHEN 'growth' THEN 25 WHEN 'business' THEN 100 ELSE -1 END
-                WHEN 'limit_environments_max' THEN CASE p.key WHEN 'free' THEN 2 WHEN 'starter' THEN 5 WHEN 'growth' THEN 10 WHEN 'business' THEN 25 ELSE -1 END
-                WHEN 'module_error_tracking_retention_days' THEN CASE p.key WHEN 'free' THEN 7 WHEN 'starter' THEN 30 WHEN 'growth' THEN 60 WHEN 'business' THEN 90 ELSE -1 END
-                WHEN 'module_distributed_tracing_retention_days' THEN CASE p.key WHEN 'free' THEN 3 WHEN 'starter' THEN 14 WHEN 'growth' THEN 30 WHEN 'business' THEN 30 ELSE -1 END
-                WHEN 'module_logging_retention_days' THEN CASE p.key WHEN 'free' THEN 3 WHEN 'starter' THEN 14 WHEN 'growth' THEN 30 WHEN 'business' THEN 30 ELSE -1 END
-                WHEN 'module_metrics_retention_days' THEN CASE p.key WHEN 'free' THEN 7 WHEN 'starter' THEN 30 WHEN 'growth' THEN 90 WHEN 'business' THEN 365 ELSE -1 END
-                WHEN 'module_profiling_retention_days' THEN CASE p.key WHEN 'free' THEN 0 WHEN 'starter' THEN 0 WHEN 'growth' THEN 14 WHEN 'business' THEN 30 ELSE -1 END
-                WHEN 'module_session_replay_retention_days' THEN CASE p.key WHEN 'free' THEN 0 WHEN 'starter' THEN 0 WHEN 'growth' THEN 14 WHEN 'business' THEN 30 ELSE -1 END
-                WHEN 'module_ai_insights_monthly_credits' THEN CASE p.key WHEN 'free' THEN 0 WHEN 'starter' THEN 500 WHEN 'growth' THEN 2500 WHEN 'business' THEN 10000 ELSE -1 END
-            END::bigint
-        END AS integer_value,
-        CASE WHEN f.value_type = 'decimal' THEN
-            CASE f.feature_key
-                WHEN 'module_sdk_sampling_error_rate' THEN 1.0
-                WHEN 'module_sdk_sampling_trace_rate' THEN CASE p.key WHEN 'free' THEN 0.1 WHEN 'starter' THEN 0.2 WHEN 'growth' THEN 0.3 WHEN 'business' THEN 0.5 ELSE 1.0 END
-            END::numeric(20,6)
-        END AS decimal_value,
-        CASE WHEN f.value_type = 'string' THEN
-            CASE f.feature_key
-                WHEN 'module_analytics_level' THEN CASE p.key WHEN 'free' THEN 'none' WHEN 'starter' THEN 'basic' WHEN 'growth' THEN 'advanced' WHEN 'business' THEN 'advanced' ELSE 'enterprise' END
-                WHEN 'module_sdk_auto_instrumentation' THEN CASE p.key WHEN 'free' THEN 'basic' WHEN 'starter' THEN 'advanced' WHEN 'growth' THEN 'advanced' WHEN 'business' THEN 'pro' ELSE 'pro' END
-                WHEN 'module_enterprise_sla' THEN CASE p.key WHEN 'free' THEN NULL::text WHEN 'starter' THEN '99.5%' WHEN 'growth' THEN '99.9%' WHEN 'business' THEN '99.95%' ELSE 'custom' END
-                WHEN 'module_enterprise_data_residency' THEN CASE p.key WHEN 'free' THEN NULL::text WHEN 'starter' THEN 'US' WHEN 'growth' THEN 'US,EU' WHEN 'business' THEN 'US,EU,APAC' ELSE 'custom' END
-                WHEN 'module_support_level' THEN CASE p.key WHEN 'free' THEN 'community' WHEN 'starter' THEN 'standard' WHEN 'growth' THEN 'priority' WHEN 'business' THEN 'business' ELSE 'enterprise' END
-                WHEN 'module_support_response_time' THEN CASE p.key WHEN 'free' THEN NULL::text WHEN 'starter' THEN '48h' WHEN 'growth' THEN '24h' WHEN 'business' THEN '4h' ELSE '1h' END
-            END
-        END AS string_value
-    FROM plan_scope p
-    CROSS JOIN feature_scope f
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value, metadata)
-SELECT
-    plan_id,
-    feature_id,
-    boolean_value,
-    integer_value,
-    decimal_value,
-    string_value,
-    '{}'::jsonb
-FROM entitlement_values
-ON CONFLICT (plan_id, feature_id) DO UPDATE
-SET boolean_value = EXCLUDED.boolean_value,
-    integer_value = EXCLUDED.integer_value,
-    decimal_value = EXCLUDED.decimal_value,
-    string_value = EXCLUDED.string_value,
-    metadata = EXCLUDED.metadata,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
-WITH addon_seed(key, name, description, category, target_module, target_feature_key, available_in_tiers, not_available_in_tiers, is_active, sort_order) AS (
-VALUES
-    ('session_replay', 'Session Replay', 'Record and replay user sessions', 'module', 'session_replay', 'module_session_replay_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 1),
-    ('profiling', 'Profiling', 'CPU and memory profiling', 'module', 'profiling', 'module_profiling_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 2),
-    ('cron_monitoring', 'Cron Monitoring', 'Monitor scheduled job execution', 'module', 'cron_monitoring', 'module_cron_monitoring_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 3),
-    ('uptime_monitoring', 'Uptime Monitoring', 'Synthetic checks and status pages', 'module', 'uptime_monitoring', 'module_uptime_monitoring_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 4),
-    ('ai_credits', 'AI Credits Pack', 'Additional AI analysis credits', 'capacity', 'ai_insights', 'module_ai_insights_monthly_credits', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 5),
-    ('extra_events', 'Extra Events', 'Additional monthly event volume', 'capacity', NULL, 'monthly_events', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 6),
-    ('extra_projects', 'Extra Projects', 'Add more projects', 'capacity', NULL, 'limit_projects_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 7),
-    ('extra_members', 'Extra Members', 'Add more team members', 'capacity', NULL, 'limit_members_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 8),
-    ('extra_connectors', 'Extra Connectors', 'Add more alert connectors', 'capacity', NULL, 'limit_connectors_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 9),
-    ('extra_alert_rules', 'Extra Alert Rules', 'Add more custom alert rules', 'capacity', NULL, 'limit_alert_rules_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 10),
-    ('extended_retention', 'Extended Retention', 'Extend data retention period', 'capacity', NULL, NULL, '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 11),
-    ('private_networking', 'Private Networking', 'VPC peering and private endpoints', 'enterprise_feature', 'enterprise', 'module_enterprise_features_private_networking', '{business}'::billing_plan_tier[], '{free,starter,growth,enterprise}'::billing_plan_tier[], TRUE, 12),
-    ('custom_domains', 'Custom Domains', 'Use your own domain', 'enterprise_feature', 'enterprise', 'module_enterprise_features_custom_domains', '{growth,business}'::billing_plan_tier[], '{free,starter,enterprise}'::billing_plan_tier[], TRUE, 13)
-)
-INSERT INTO addons
-    (key, name, description, category, target_module, target_feature_id, available_in_tiers, not_available_in_tiers, is_active, sort_order, metadata)
-SELECT
-    a.key,
-    a.name,
-    a.description,
-    a.category,
-    a.target_module,
-    bf.id,
-    a.available_in_tiers,
-    a.not_available_in_tiers,
-    a.is_active,
-    a.sort_order,
-    '{}'::jsonb
-FROM addon_seed a
-LEFT JOIN billing_features bf
-  ON bf.feature_key = a.target_feature_key
- AND bf.deleted_at IS NULL
-ON CONFLICT (key) DO UPDATE
-SET name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    category = EXCLUDED.category,
-    target_module = EXCLUDED.target_module,
-    target_feature_id = EXCLUDED.target_feature_id,
-    available_in_tiers = EXCLUDED.available_in_tiers,
-    not_available_in_tiers = EXCLUDED.not_available_in_tiers,
     is_active = EXCLUDED.is_active,
-    sort_order = EXCLUDED.sort_order,
-    metadata = EXCLUDED.metadata,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/025_billing_seed.sql
-WITH addon_price_seed(addon_key, provider, billing_interval, currency, amount_minor, pricing_model, unit_quantity, unit_label, is_default) AS (
-VALUES
-    ('session_replay', 'stripe', 'monthly', 'USD', 2900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('profiling', 'stripe', 'monthly', 'USD', 1900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('cron_monitoring', 'stripe', 'monthly', 'USD', 1500::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('uptime_monitoring', 'stripe', 'monthly', 'USD', 2500::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('ai_credits', 'stripe', 'monthly', 'USD', 1000::bigint, 'per_unit', 1000::integer, 'credits', TRUE),
-    ('extra_events', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 100000::integer, 'events', TRUE),
-    ('extra_projects', 'stripe', 'monthly', 'USD', 1000::bigint, 'per_unit', 5::integer, 'projects', TRUE),
-    ('extra_members', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 5::integer, 'members', TRUE),
-    ('extra_connectors', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 5::integer, 'connectors', TRUE),
-    ('extra_alert_rules', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 25::integer, 'rules', TRUE),
-    ('extended_retention', 'stripe', 'monthly', 'USD', 2000::bigint, 'per_unit', 30::integer, 'days', TRUE),
-    ('private_networking', 'stripe', 'monthly', 'USD', 19900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('custom_domains', 'stripe', 'monthly', 'USD', 4900::bigint, 'per_unit', 1::integer, 'domain', TRUE)
-),
-resolved_addon_prices AS (
-    SELECT
-        a.id AS addon_id,
-        aps.provider::billing_provider_type AS provider,
-        aps.billing_interval::billing_interval_type AS billing_interval,
-        aps.currency,
-        aps.amount_minor,
-        NULL::text AS provider_price_id,
-        aps.pricing_model,
-        aps.unit_quantity,
-        aps.unit_label,
-        aps.is_default,
-        '-infinity'::timestamptz AS starts_at,
-        NULL::timestamptz AS ends_at
-    FROM addon_price_seed aps
-    JOIN addons a
-      ON a.key = aps.addon_key
-),
-updated_addon_prices AS (
-    UPDATE addon_prices ap
-    SET amount_minor = rap.amount_minor,
-        provider_price_id = rap.provider_price_id,
-        pricing_model = rap.pricing_model,
-        unit_quantity = rap.unit_quantity,
-        unit_label = rap.unit_label,
-        is_default = rap.is_default,
-        ends_at = rap.ends_at,
-        updated_at = NOW()
-    FROM resolved_addon_prices rap
-    WHERE ap.addon_id = rap.addon_id
-      AND ap.provider = rap.provider
-      AND ap.billing_interval = rap.billing_interval
-      AND ap.currency = rap.currency
-    RETURNING ap.addon_id, ap.provider, ap.billing_interval, ap.currency
-)
-INSERT INTO addon_prices
-    (addon_id, provider, billing_interval, currency, amount_minor, provider_price_id, pricing_model, unit_quantity, unit_label, is_default, starts_at, ends_at)
-SELECT
-    rap.addon_id,
-    rap.provider,
-    rap.billing_interval,
-    rap.currency,
-    rap.amount_minor,
-    rap.provider_price_id,
-    rap.pricing_model,
-    rap.unit_quantity,
-    rap.unit_label,
-    rap.is_default,
-    rap.starts_at,
-    rap.ends_at
-FROM resolved_addon_prices rap
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM updated_addon_prices uap
-    WHERE uap.addon_id = rap.addon_id
-      AND uap.provider = rap.provider
-      AND uap.billing_interval = rap.billing_interval
-      AND uap.currency = rap.currency
-)
-ON CONFLICT (addon_id, provider, billing_interval, currency, starts_at) DO UPDATE
-SET amount_minor = EXCLUDED.amount_minor,
-    provider_price_id = EXCLUDED.provider_price_id,
-    pricing_model = EXCLUDED.pricing_model,
-    unit_quantity = EXCLUDED.unit_quantity,
-    unit_label = EXCLUDED.unit_label,
-    is_default = EXCLUDED.is_default,
-    ends_at = EXCLUDED.ends_at,
-    updated_at = NOW();
-
--- Source: 20_seeders/007_11_billing_026_enterprise_module_billing_seed.sql
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
-INSERT INTO plans
-    (key, version, name, tier, description, trial_days, is_active, is_public, sort_order)
-VALUES
-    ('free', 1, 'Free', 'free', 'Single-organization starter tier for development and evaluation.', 0, TRUE, TRUE, 1),
-    ('starter', 1, 'Starter', 'starter', 'Single-organization tier for small production teams.', 14, TRUE, TRUE, 2),
-    ('growth', 1, 'Growth', 'growth', 'Single-organization tier for growing teams with advanced observability.', 14, TRUE, TRUE, 3),
-    ('business', 1, 'Business', 'business', 'Single-organization tier for security, scale, and operational control.', 14, TRUE, TRUE, 4),
-    ('enterprise', 1, 'Enterprise', 'enterprise', 'Single-organization custom tier for maximum scale, governance, and support.', 30, TRUE, FALSE, 5)
-ON CONFLICT (key, version) DO UPDATE
-SET name = EXCLUDED.name,
-    tier = EXCLUDED.tier,
-    description = EXCLUDED.description,
-    trial_days = EXCLUDED.trial_days,
-    is_active = EXCLUDED.is_active,
-    is_public = EXCLUDED.is_public,
+    is_customizable = EXCLUDED.is_customizable,
+    next_plan_key = EXCLUDED.next_plan_key,
+    badge = EXCLUDED.badge,
     sort_order = EXCLUDED.sort_order,
     deleted_at = NULL,
     updated_at = NOW();
 
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
 WITH price_seed(plan_key, provider, billing_interval, currency, amount_minor, is_default, metadata) AS (
 VALUES
-    ('starter', 'stripe', 'monthly', 'USD', 2900::bigint, TRUE,  '{"display":"$29/mo","catalog":"enterprise-module-v1"}'::jsonb),
-    ('starter', 'stripe', 'annual',  'USD', 29000::bigint, FALSE, '{"display":"$290/yr","catalog":"enterprise-module-v1"}'::jsonb),
-    ('growth',  'stripe', 'monthly', 'USD', 9900::bigint, TRUE,  '{"display":"$99/mo","catalog":"enterprise-module-v1"}'::jsonb),
-    ('growth',  'stripe', 'annual',  'USD', 99000::bigint, FALSE, '{"display":"$990/yr","catalog":"enterprise-module-v1"}'::jsonb),
-    ('business','stripe', 'monthly', 'USD', 29900::bigint, TRUE,  '{"display":"$299/mo","catalog":"enterprise-module-v1"}'::jsonb),
-    ('business','stripe', 'annual',  'USD', 299000::bigint, FALSE,'{"display":"$2990/yr","catalog":"enterprise-module-v1"}'::jsonb)
+  ('free', 'system'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 0, TRUE, '{"display":"$0/mo","recommended":false}'::jsonb),
+  ('free', 'system'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 0, FALSE, '{"display":"$0/year","discount":"2 months free"}'::jsonb),
+  ('starter', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 1500, TRUE, '{"display":"$15/mo","recommended":false}'::jsonb),
+  ('starter', 'stripe'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 15000, FALSE, '{"display":"$150/year","discount":"2 months free"}'::jsonb),
+  ('growth', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 4900, TRUE, '{"display":"$49/mo","recommended":true}'::jsonb),
+  ('growth', 'stripe'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 49000, FALSE, '{"display":"$490/year","discount":"2 months free"}'::jsonb),
+  ('business', 'stripe'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 14900, TRUE, '{"display":"$149/mo","recommended":false}'::jsonb),
+  ('business', 'stripe'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 149000, FALSE, '{"display":"$1490/year","discount":"2 months free"}'::jsonb),
+  ('enterprise', 'system'::billing_provider_type, 'monthly'::billing_interval_type, 'USD', 0, TRUE, '{"display":"Contact Sales","contactSales":true}'::jsonb),
+  ('enterprise', 'system'::billing_provider_type, 'annual'::billing_interval_type, 'USD', 0, FALSE, '{"display":"Contact Sales","contactSales":true}'::jsonb)
 )
 INSERT INTO plan_prices
-    (plan_id, provider, billing_interval, currency, amount_minor, provider_price_id, is_default, starts_at, ends_at, metadata)
-SELECT
-    p.id,
-    ps.provider::billing_provider_type,
-    ps.billing_interval::billing_interval_type,
-    ps.currency,
-    ps.amount_minor,
-    NULL::text,
-    ps.is_default,
-    '-infinity'::timestamptz,
-    NULL::timestamptz,
-    ps.metadata
+  (plan_id, provider, billing_interval, currency, amount_minor, provider_price_id, is_default, starts_at, ends_at, metadata)
+SELECT p.id, ps.provider, ps.billing_interval, ps.currency, ps.amount_minor, NULL::text, ps.is_default, '-infinity'::timestamptz, NULL::timestamptz, ps.metadata
 FROM price_seed ps
-JOIN plans p
-  ON p.key = ps.plan_key
- AND p.version = 1
- AND p.deleted_at IS NULL
+JOIN plans p ON p.key = ps.plan_key AND p.version = 1 AND p.deleted_at IS NULL
 ON CONFLICT (plan_id, provider, billing_interval, currency, starts_at) DO UPDATE
 SET amount_minor = EXCLUDED.amount_minor,
     provider_price_id = EXCLUDED.provider_price_id,
@@ -11069,2334 +11712,748 @@ SET amount_minor = EXCLUDED.amount_minor,
     deleted_at = NULL,
     updated_at = NOW();
 
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
-INSERT INTO tmp_enterprise_billing_feature_seed
-    (feature_key, feature_name, description, category, value_type, module, is_module_root, sort_order,
-     free_value, starter_value, growth_value, business_value, enterprise_value, metadata)
+-- ============================================================
+-- Source: 20_seeders/005_11_billing_catalog_features.sql
+-- ============================================================
+
+-- =============================================================================
+-- Seeder File: 005_11_billing_catalog_features.sql
+-- Description: Seeds JSON-derived billing feature registry
+-- Catalog Version: 2.0
+-- Source: billing_catalog_response.preview.json
+-- =============================================================================
+
+WITH feature_seed(feature_key, feature_name, description, category, value_type, module, usage_behavior, configuration, is_public, is_module_root, sort_order, metadata) AS (
 VALUES
--- Core limits and reset policies.
-('limit_organizations_max','Organizations','Maximum organizations per account. Product policy is single organization only.','limits','integer','organization',FALSE,1,'1','1','1','1','1','{"frontendGroup":"limits","reset":"never","enforcement":"account"}'),
-('monthly_events','Monthly Events','Total accepted events per billing period.','limits','integer','limits',FALSE,2,'5000','100000','1000000','5000000','-1','{"frontendGroup":"limits","reset":"monthly","meter":"events"}'),
-('limit_projects_max','Projects','Maximum active projects.','limits','integer','projects',FALSE,3,'3','10','25','50','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_members_max','Members','Maximum organization members.','limits','integer','organization',FALSE,4,'1','5','20','100','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_api_keys_max','API Keys','Maximum active API keys.','limits','integer','sdk',FALSE,5,'2','10','25','100','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_connectors_max','Connectors','Maximum configured alert and workflow connectors.','limits','integer','connectors',FALSE,6,'1','3','10','50','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_alert_rules_max','Alert Rules','Maximum active alert rules.','limits','integer','alerting',FALSE,7,'5','25','100','500','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_workflows_max','Workflows','Maximum automation workflows.','limits','integer','automation',FALSE,8,'0','5','25','200','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_dashboards_max','Dashboards','Maximum custom dashboards.','limits','integer','analytics',FALSE,9,'1','5','25','100','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_environments_max','Environments','Maximum environments per organization.','limits','integer','projects',FALSE,10,'2','5','10','25','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_releases_max','Releases','Maximum tracked releases per month.','limits','integer','version_management',FALSE,11,'3','25','100','500','-1','{"frontendGroup":"limits","reset":"monthly"}'),
-('limit_monitors_max','Monitors','Maximum uptime and cron monitors.','limits','integer','monitoring',FALSE,12,'5','50','250','1000','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_status_pages_max','Status Pages','Maximum public or private status pages.','limits','integer','uptime_monitoring',FALSE,13,'0','1','5','20','-1','{"frontendGroup":"limits","reset":"never"}'),
-('limit_saved_views_max','Saved Views','Maximum saved operational views.','limits','integer','analytics',FALSE,14,'3','25','100','500','-1','{"frontendGroup":"limits","reset":"never"}'),
-
--- Error tracking.
-('module_error_tracking_enabled','Error Tracking','Capture, group, and triage application errors.','monitoring','boolean','error_tracking',TRUE,100,'true','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_retention_days','Error Retention Days','Retention window for error events.','monitoring','integer','error_tracking',FALSE,101,'7','30','60','90','-1','{"frontendGroup":"errorTracking","reset":"rolling"}'),
-('module_error_tracking_features_issue_grouping','Issue Grouping','Automatic grouping of related errors.','monitoring','boolean','error_tracking',FALSE,102,'true','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_release_tracking','Release Tracking','Associate errors with releases and deploys.','monitoring','boolean','error_tracking',FALSE,103,'false','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_source_maps','Source Maps','Upload and resolve source maps.','monitoring','boolean','error_tracking',FALSE,104,'false','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_breadcrumbs','Breadcrumbs','Show user and system breadcrumbs before errors.','monitoring','boolean','error_tracking',FALSE,105,'true','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_user_feedback','User Feedback','Collect user feedback attached to issues.','monitoring','boolean','error_tracking',FALSE,106,'false','true','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_ownership','Issue Ownership','Route issues using ownership rules.','monitoring','boolean','error_tracking',FALSE,107,'false','false','true','true','true','{"frontendGroup":"errorTracking"}'),
-('module_error_tracking_features_suspect_commits','Suspect Commits','Correlate errors with commits and deploys.','monitoring','boolean','error_tracking',FALSE,108,'false','false','true','true','true','{"frontendGroup":"errorTracking"}'),
-
--- Distributed tracing.
-('module_distributed_tracing_enabled','Distributed Tracing','Trace requests across services.','monitoring','boolean','distributed_tracing',TRUE,120,'true','true','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_retention_days','Trace Retention Days','Retention window for trace data.','monitoring','integer','distributed_tracing',FALSE,121,'3','14','30','30','-1','{"frontendGroup":"tracing","reset":"rolling"}'),
-('module_distributed_tracing_features_trace_view','Trace View','Waterfall trace visualization.','monitoring','boolean','distributed_tracing',FALSE,122,'true','true','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_features_span_details','Span Details','Detailed span attributes and timings.','monitoring','boolean','distributed_tracing',FALSE,123,'false','true','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_features_performance_insights','Performance Insights','Highlight slow paths and bottlenecks.','monitoring','boolean','distributed_tracing',FALSE,124,'false','true','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_features_distributed_correlation','Distributed Correlation','Correlate traces with logs, errors, metrics, and deploys.','monitoring','boolean','distributed_tracing',FALSE,125,'false','false','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_features_service_map','Service Map','Topology map generated from traces.','monitoring','boolean','distributed_tracing',FALSE,126,'false','false','true','true','true','{"frontendGroup":"tracing"}'),
-('module_distributed_tracing_features_sampling_controls','Trace Sampling Controls','Configure trace sampling from the product.','monitoring','boolean','distributed_tracing',FALSE,127,'false','false','true','true','true','{"frontendGroup":"tracing"}'),
-
--- Logging.
-('module_logging_enabled','Logging','Ingest, search, and analyze structured logs.','monitoring','boolean','logging',TRUE,140,'true','true','true','true','true','{"frontendGroup":"logging"}'),
-('module_logging_retention_days','Log Retention Days','Retention window for logs.','monitoring','integer','logging',FALSE,141,'3','14','30','30','-1','{"frontendGroup":"logging","reset":"rolling"}'),
-('module_logging_features_log_search','Log Search','Search ingested logs.','monitoring','boolean','logging',FALSE,142,'true','true','true','true','true','{"frontendGroup":"logging"}'),
-('module_logging_features_log_patterns','Log Patterns','Detect and group recurring log patterns.','monitoring','boolean','logging',FALSE,143,'false','true','true','true','true','{"frontendGroup":"logging"}'),
-('module_logging_features_structured_parsing','Structured Parsing','Parse JSON and structured log fields.','monitoring','boolean','logging',FALSE,144,'true','true','true','true','true','{"frontendGroup":"logging"}'),
-('module_logging_features_live_tail','Live Tail','Stream logs in near real time.','monitoring','boolean','logging',FALSE,145,'false','false','true','true','true','{"frontendGroup":"logging"}'),
-('module_logging_features_sensitive_data_scrubbing','Sensitive Data Scrubbing','Scrub configured sensitive fields from logs.','monitoring','boolean','logging',FALSE,146,'false','false','true','true','true','{"frontendGroup":"logging"}'),
-
--- Metrics and profiling.
-('module_metrics_enabled','Metrics','Collect and query operational metrics.','monitoring','boolean','metrics',TRUE,160,'true','true','true','true','true','{"frontendGroup":"metrics"}'),
-('module_metrics_retention_days','Metrics Retention Days','Retention window for metrics.','monitoring','integer','metrics',FALSE,161,'7','30','90','365','-1','{"frontendGroup":"metrics","reset":"rolling"}'),
-('module_metrics_features_custom_dashboards','Metric Dashboards','Build dashboards from metric queries.','monitoring','boolean','metrics',FALSE,162,'false','false','true','true','true','{"frontendGroup":"metrics"}'),
-('module_metrics_features_metric_alerts','Metric Alerts','Trigger alerts from metric thresholds.','monitoring','boolean','metrics',FALSE,163,'false','true','true','true','true','{"frontendGroup":"metrics"}'),
-('module_metrics_features_derived_metrics','Derived Metrics','Create metrics from formulas and transforms.','monitoring','boolean','metrics',FALSE,164,'false','false','true','true','true','{"frontendGroup":"metrics"}'),
-('module_metrics_features_metric_export','Metric Export','Export metrics to external destinations.','monitoring','boolean','metrics',FALSE,165,'false','false','true','true','true','{"frontendGroup":"metrics"}'),
-('module_metrics_features_cardinality_management','Cardinality Management','Control high-cardinality metric dimensions.','monitoring','boolean','metrics',FALSE,166,'false','false','true','true','true','{"frontendGroup":"metrics"}'),
-('module_profiling_enabled','Profiling','CPU and memory profiling.','monitoring','boolean','profiling',TRUE,180,'false','false','true','true','true','{"frontendGroup":"profiling"}'),
-('module_profiling_retention_days','Profiling Retention Days','Retention window for profiles.','monitoring','integer','profiling',FALSE,181,'0','0','14','30','-1','{"frontendGroup":"profiling","reset":"rolling"}'),
-('module_profiling_features_flame_graphs','Flame Graphs','Inspect CPU and memory flame graphs.','monitoring','boolean','profiling',FALSE,182,'false','false','true','true','true','{"frontendGroup":"profiling"}'),
-('module_profiling_features_differential_profiling','Differential Profiling','Compare profiles across releases.','monitoring','boolean','profiling',FALSE,183,'false','false','true','true','true','{"frontendGroup":"profiling"}'),
-('module_profiling_features_code_hotspots','Code Hotspots','Surface expensive functions and code paths.','monitoring','boolean','profiling',FALSE,184,'false','false','true','true','true','{"frontendGroup":"profiling"}'),
-
--- Session replay, cron, and uptime monitoring.
-('module_session_replay_enabled','Session Replay','Record and replay browser sessions.','monitoring','boolean','session_replay',TRUE,200,'false','false','true','true','true','{"frontendGroup":"sessionReplay"}'),
-('module_session_replay_retention_days','Replay Retention Days','Retention window for session replays.','monitoring','integer','session_replay',FALSE,201,'0','0','14','30','-1','{"frontendGroup":"sessionReplay","reset":"rolling"}'),
-('module_session_replay_features_rrweb_playback','Replay Playback','Replay captured browser sessions.','monitoring','boolean','session_replay',FALSE,202,'false','false','true','true','true','{"frontendGroup":"sessionReplay"}'),
-('module_session_replay_features_rage_clicks','Rage Clicks','Detect repeated frustrated clicks.','monitoring','boolean','session_replay',FALSE,203,'false','false','true','true','true','{"frontendGroup":"sessionReplay"}'),
-('module_session_replay_features_dead_clicks','Dead Clicks','Detect ineffective interactions.','monitoring','boolean','session_replay',FALSE,204,'false','false','true','true','true','{"frontendGroup":"sessionReplay"}'),
-('module_session_replay_features_privacy_masking','Privacy Masking','Mask sensitive user data in recordings.','monitoring','boolean','session_replay',FALSE,205,'false','false','true','true','true','{"frontendGroup":"sessionReplay"}'),
-('module_cron_monitoring_enabled','Cron Monitoring','Monitor recurring jobs and schedules.','monitoring','boolean','cron_monitoring',TRUE,220,'false','true','true','true','true','{"frontendGroup":"cronMonitoring"}'),
-('module_cron_monitoring_features_job_scheduling','Job Scheduling','Register expected schedules for background jobs.','monitoring','boolean','cron_monitoring',FALSE,221,'false','true','true','true','true','{"frontendGroup":"cronMonitoring"}'),
-('module_cron_monitoring_features_missed_job_detection','Missed Job Detection','Detect missing executions.','monitoring','boolean','cron_monitoring',FALSE,222,'false','true','true','true','true','{"frontendGroup":"cronMonitoring"}'),
-('module_cron_monitoring_features_job_duration_tracking','Job Duration Tracking','Track runtime and overrun behavior.','monitoring','boolean','cron_monitoring',FALSE,223,'false','true','true','true','true','{"frontendGroup":"cronMonitoring"}'),
-('module_uptime_monitoring_enabled','Uptime Monitoring','Synthetic uptime checks and status pages.','monitoring','boolean','uptime_monitoring',TRUE,240,'false','true','true','true','true','{"frontendGroup":"uptimeMonitoring"}'),
-('module_uptime_monitoring_features_synthetic_checks','Synthetic Checks','Run HTTP synthetic monitors.','monitoring','boolean','uptime_monitoring',FALSE,241,'false','true','true','true','true','{"frontendGroup":"uptimeMonitoring"}'),
-('module_uptime_monitoring_features_multi_region','Multi-region Checks','Run checks from multiple regions.','monitoring','boolean','uptime_monitoring',FALSE,242,'false','false','true','true','true','{"frontendGroup":"uptimeMonitoring"}'),
-('module_uptime_monitoring_features_ssl_monitoring','SSL Monitoring','Track certificate expiry and TLS health.','monitoring','boolean','uptime_monitoring',FALSE,243,'false','true','true','true','true','{"frontendGroup":"uptimeMonitoring"}'),
-('module_uptime_monitoring_features_status_page','Status Page','Publish service status pages.','monitoring','boolean','uptime_monitoring',FALSE,244,'false','false','true','true','true','{"frontendGroup":"uptimeMonitoring"}'),
-
--- Version and incident management.
-('module_version_management_enabled','Version Management','Track releases, deploys, and release health.','projects','boolean','version_management',TRUE,300,'true','true','true','true','true','{"frontendGroup":"versionManagement"}'),
-('module_version_management_features_deploy_tracking','Deploy Tracking','Track deploys by environment and project.','projects','boolean','version_management',FALSE,301,'true','true','true','true','true','{"frontendGroup":"versionManagement"}'),
-('module_version_management_features_release_health','Release Health','Monitor regressions after release.','projects','boolean','version_management',FALSE,302,'false','true','true','true','true','{"frontendGroup":"versionManagement"}'),
-('module_version_management_features_regression_detection','Regression Detection','Detect release regressions from telemetry.','projects','boolean','version_management',FALSE,303,'false','false','true','true','true','{"frontendGroup":"versionManagement"}'),
-('module_version_management_features_changelog_annotations','Changelog Annotations','Annotate dashboards and incidents with release notes.','projects','boolean','version_management',FALSE,304,'false','false','true','true','true','{"frontendGroup":"versionManagement"}'),
-('module_version_management_features_release_gates','Release Gates','Block or warn on unhealthy release gates.','projects','boolean','version_management',FALSE,305,'false','false','false','true','true','{"frontendGroup":"versionManagement"}'),
-('module_incident_management_enabled','Incident Management','Create and manage operational incidents.','alerts','boolean','incident_management',TRUE,320,'false','true','true','true','true','{"frontendGroup":"incidentManagement"}'),
-('module_incident_management_features_timelines','Incident Timelines','Build incident timelines from telemetry and actions.','alerts','boolean','incident_management',FALSE,321,'false','true','true','true','true','{"frontendGroup":"incidentManagement"}'),
-('module_incident_management_features_root_cause','Root Cause Analysis','Correlate incidents with telemetry and deploys.','alerts','boolean','incident_management',FALSE,322,'false','false','true','true','true','{"frontendGroup":"incidentManagement"}'),
-('module_incident_management_features_postmortems','Postmortems','Create postmortems from incidents.','alerts','boolean','incident_management',FALSE,323,'false','false','true','true','true','{"frontendGroup":"incidentManagement"}'),
-('module_incident_management_features_on_call_routing','On-call Routing','Route incidents to escalation targets.','alerts','boolean','incident_management',FALSE,324,'false','false','false','true','true','{"frontendGroup":"incidentManagement"}'),
-
--- AI insights.
-('module_ai_insights_enabled','AI Insights','AI-powered analysis across errors, traces, logs, and incidents.','ai','boolean','ai_insights',TRUE,400,'false','true','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_monthly_credits','AI Credits','Monthly AI analysis credits.','ai','integer','ai_insights',FALSE,401,'0','500','2500','10000','-1','{"frontendGroup":"aiInsights","reset":"monthly","meter":"ai_credits"}'),
-('module_ai_insights_features_error_explanation','Error Explanation','Explain errors using context and stack traces.','ai','boolean','ai_insights',FALSE,402,'false','true','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_root_cause_analysis','Root Cause Analysis','Suggest likely causes across telemetry.','ai','boolean','ai_insights',FALSE,403,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_stack_trace_analysis','Stack Trace Analysis','Analyze stack traces and source context.','ai','boolean','ai_insights',FALSE,404,'false','true','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_trace_analysis','Trace Analysis','Analyze traces and latency bottlenecks.','ai','boolean','ai_insights',FALSE,405,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_span_analysis','Span Analysis','Analyze individual spans and attributes.','ai','boolean','ai_insights',FALSE,406,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_suggested_fixes','Suggested Fixes','Generate fix recommendations.','ai','boolean','ai_insights',FALSE,407,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_sql_optimization','SQL Optimization','Analyze slow SQL from traces.','ai','boolean','ai_insights',FALSE,408,'false','false','false','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_log_summary','Log Summary','Summarize log clusters and incidents.','ai','boolean','ai_insights',FALSE,409,'false','true','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_deployment_correlation','Deployment Correlation','Correlate telemetry changes with deploys.','ai','boolean','ai_insights',FALSE,410,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_incident_summary','Incident Summary','Generate incident summaries.','ai','boolean','ai_insights',FALSE,411,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_weekly_report','Weekly Report','Generate weekly engineering health reports.','ai','boolean','ai_insights',FALSE,412,'false','false','false','true','true','{"frontendGroup":"aiInsights"}'),
-('module_ai_insights_features_chat_assistant','Chat Assistant','Ask questions across telemetry.','ai','boolean','ai_insights',FALSE,413,'false','false','true','true','true','{"frontendGroup":"aiInsights"}'),
-
--- Alerting and connectors.
-('module_alerting_enabled','Alerting','Rules, notifications, deduplication, and escalation.','alerts','boolean','alerting',TRUE,500,'true','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_basic_email','Email Alerts','Send email alerts.','alerts','boolean','alerting',FALSE,501,'true','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_multi_channel','Multi-channel Alerts','Send alerts through multiple channels.','alerts','boolean','alerting',FALSE,502,'false','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_escalation_policies','Escalation Policies','Escalate unresolved alerts.','alerts','boolean','alerting',FALSE,503,'false','false','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_deduplication','Alert Deduplication','Deduplicate repeated alerts.','alerts','boolean','alerting',FALSE,504,'false','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_silencing','Alert Silencing','Silence alerts by rule and time window.','alerts','boolean','alerting',FALSE,505,'false','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_throttling','Alert Throttling','Throttle noisy alert streams.','alerts','boolean','alerting',FALSE,506,'false','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_alerting_features_custom_alert_rules','Custom Alert Rules','Create custom alert rules.','alerts','boolean','alerting',FALSE,507,'false','true','true','true','true','{"frontendGroup":"alerting"}'),
-('module_connectors_enabled','Connectors','Integrations for notifications and workflows.','integrations','boolean','connectors',TRUE,540,'true','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_sync_audit_logs','Connector Audit Sync','Sync connector activity into audit logs.','integrations','boolean','connectors',FALSE,541,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_multi_channel_per_alert','Multiple Channels Per Alert','Attach multiple connectors to an alert rule.','integrations','boolean','connectors',FALSE,542,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_slack','Slack Connector','Send alerts to Slack.','integrations','boolean','connectors',FALSE,543,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_discord','Discord Connector','Send alerts to Discord.','integrations','boolean','connectors',FALSE,544,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_pagerduty','PagerDuty Connector','Send alerts to PagerDuty.','integrations','boolean','connectors',FALSE,545,'false','false','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_teams','Teams Connector','Send alerts to Microsoft Teams.','integrations','boolean','connectors',FALSE,546,'false','false','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_webhook','Webhook Connector','Send alerts to webhooks.','integrations','boolean','connectors',FALSE,547,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_email','Email Connector','Send alerts to email destinations.','integrations','boolean','connectors',FALSE,548,'true','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_github','GitHub Connector','Create or update GitHub issues.','integrations','boolean','connectors',FALSE,549,'false','true','true','true','true','{"frontendGroup":"connectors"}'),
-('module_connectors_features_connector_jira','Jira Connector','Create or update Jira issues.','integrations','boolean','connectors',FALSE,550,'false','false','true','true','true','{"frontendGroup":"connectors"}'),
-
--- Analytics, SDK, and automation.
-('module_analytics_enabled','Analytics','Dashboards, saved views, reports, and exports.','dashboard','boolean','analytics',TRUE,600,'true','true','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_level','Analytics Level','Analytics capability level.','dashboard','string','analytics',FALSE,601,'basic','standard','advanced','advanced','enterprise','{"frontendGroup":"analytics"}'),
-('module_analytics_features_real_time','Real-time Analytics','Refresh dashboards in near real time.','dashboard','boolean','analytics',FALSE,602,'false','true','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_custom_dashboards','Custom Dashboards','Create custom dashboards.','dashboard','boolean','analytics',FALSE,603,'false','true','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_data_export','Data Export','Export analytics data.','dashboard','boolean','analytics',FALSE,604,'false','false','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_advanced_filtering','Advanced Filtering','Use advanced filters in analytics views.','dashboard','boolean','analytics',FALSE,605,'false','true','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_comparative_analysis','Comparative Analysis','Compare segments and time windows.','dashboard','boolean','analytics',FALSE,606,'false','false','true','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_trend_forecasting','Trend Forecasting','Forecast operational trends.','dashboard','boolean','analytics',FALSE,607,'false','false','false','true','true','{"frontendGroup":"analytics"}'),
-('module_analytics_features_custom_reports','Custom Reports','Create custom scheduled reports.','dashboard','boolean','analytics',FALSE,608,'false','false','false','true','true','{"frontendGroup":"analytics"}'),
-('module_sdk_enabled','SDK Controls','SDK ingestion and remote controls.','monitoring','boolean','sdk',TRUE,640,'true','true','true','true','true','{"frontendGroup":"sdk"}'),
-('module_sdk_auto_instrumentation','Auto Instrumentation','SDK auto instrumentation level.','monitoring','string','sdk',FALSE,641,'basic','advanced','advanced','pro','pro','{"frontendGroup":"sdk"}'),
-('module_sdk_offline_queue','Offline Queue','Buffer telemetry offline.','monitoring','boolean','sdk',FALSE,642,'false','true','true','true','true','{"frontendGroup":"sdk"}'),
-('module_sdk_remote_control','Remote SDK Control','Remotely configure SDK behavior.','monitoring','boolean','sdk',FALSE,643,'false','true','true','true','true','{"frontendGroup":"sdk"}'),
-('module_sdk_sampling_error_rate','Error Sample Rate','Maximum error sampling rate.','monitoring','decimal','sdk',FALSE,644,'1.0','1.0','1.0','1.0','1.0','{"frontendGroup":"sdk"}'),
-('module_sdk_sampling_trace_rate','Trace Sample Rate','Maximum trace sampling rate.','monitoring','decimal','sdk',FALSE,645,'0.1','0.2','0.3','0.5','1.0','{"frontendGroup":"sdk"}'),
-('module_sdk_sampling_remotely_configurable','Remote Sampling','Configure SDK sampling remotely.','monitoring','boolean','sdk',FALSE,646,'false','true','true','true','true','{"frontendGroup":"sdk"}'),
-('module_sdk_version_pinning','SDK Version Pinning','Pin allowed SDK versions.','monitoring','boolean','sdk',FALSE,647,'false','false','true','true','true','{"frontendGroup":"sdk"}'),
-('module_automation_enabled','Automation','Workflow automation for operational actions.','integrations','boolean','automation',TRUE,680,'false','true','true','true','true','{"frontendGroup":"automation"}'),
-('module_automation_features_webhooks','Workflow Webhooks','Trigger workflows through webhooks.','integrations','boolean','automation',FALSE,681,'false','true','true','true','true','{"frontendGroup":"automation"}'),
-('module_automation_features_scheduled_workflows','Scheduled Workflows','Run workflows on schedules.','integrations','boolean','automation',FALSE,682,'false','false','true','true','true','{"frontendGroup":"automation"}'),
-('module_automation_features_approval_steps','Approval Steps','Require approvals in workflows.','integrations','boolean','automation',FALSE,683,'false','false','false','true','true','{"frontendGroup":"automation"}'),
-
--- Security, enterprise controls, support, and billing operations.
-('module_enterprise_enabled','Enterprise Controls','Governance, security, and infrastructure controls.','security','boolean','enterprise',TRUE,800,'false','false','false','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_sso','SSO','SAML or OIDC single sign-on.','security','boolean','enterprise',FALSE,801,'false','false','false','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_scim','SCIM','SCIM user and group provisioning.','security','boolean','enterprise',FALSE,802,'false','false','false','false','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_audit_logs','Audit Logs','Organization audit logs.','security','boolean','enterprise',FALSE,803,'false','false','true','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_custom_retention','Custom Retention','Custom retention policies.','security','boolean','enterprise',FALSE,804,'false','false','false','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_custom_domains','Custom Domains','Custom domains for status pages and shared views.','security','boolean','enterprise',FALSE,805,'false','false','true','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_private_networking','Private Networking','VPC peering and private endpoints.','security','boolean','enterprise',FALSE,806,'false','false','false','false','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_priority_queue','Priority Queue','Priority ingestion and processing queue.','security','boolean','enterprise',FALSE,807,'false','false','true','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_dedicated_workers','Dedicated Workers','Dedicated processing workers.','security','boolean','enterprise',FALSE,808,'false','false','false','false','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_ip_allowlist','IP Allowlist','Restrict access by IP allowlist.','security','boolean','enterprise',FALSE,809,'false','false','false','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_custom_roles','Custom Roles','Create custom RBAC roles.','security','boolean','enterprise',FALSE,810,'false','false','true','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_features_data_export_controls','Data Export Controls','Govern export permissions and destinations.','security','boolean','enterprise',FALSE,811,'false','false','false','true','true','{"frontendGroup":"enterprise"}'),
-('module_enterprise_sla','SLA','Service level agreement.','security','string','enterprise',FALSE,812,'none','99.5%','99.9%','99.95%','custom','{"frontendGroup":"enterprise"}'),
-('module_enterprise_data_residency','Data Residency','Allowed data residency regions.','security','string','enterprise',FALSE,813,'US','US','US,EU','US,EU,APAC','custom','{"frontendGroup":"enterprise"}'),
-('module_support_level','Support Level','Support tier.','organization','string','support',TRUE,900,'community','standard','priority','business','enterprise','{"frontendGroup":"support"}'),
-('module_support_response_time','Support Response Time','Target first response time.','organization','string','support',FALSE,901,'best_effort','48h','24h','4h','1h','{"frontendGroup":"support"}'),
-('module_support_dedicated_manager','Dedicated Success Manager','Assigned success manager.','organization','boolean','support',FALSE,902,'false','false','false','false','true','{"frontendGroup":"support"}'),
-('module_support_onboarding','Onboarding','Assisted onboarding access.','organization','boolean','support',FALSE,903,'false','true','true','true','true','{"frontendGroup":"support"}'),
-('module_billing_ops_enabled','Billing Operations','Invoices, payment methods, coupons, and budget controls.','organization','boolean','billing_ops',TRUE,940,'false','true','true','true','true','{"frontendGroup":"billingOps"}'),
-('module_billing_ops_invoice_history','Invoice History','Access invoice history.','organization','boolean','billing_ops',FALSE,941,'false','true','true','true','true','{"frontendGroup":"billingOps"}'),
-('module_billing_ops_payment_methods','Payment Methods','Manage payment methods.','organization','boolean','billing_ops',FALSE,942,'false','true','true','true','true','{"frontendGroup":"billingOps"}'),
-('module_billing_ops_coupons','Coupons','Apply eligible coupons.','organization','boolean','billing_ops',FALSE,943,'false','false','true','true','true','{"frontendGroup":"billingOps"}'),
-('module_billing_ops_cost_alerts','Cost Alerts','Alert when projected usage spend crosses thresholds.','organization','boolean','billing_ops',FALSE,944,'false','false','true','true','true','{"frontendGroup":"billingOps"}');
-
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
+  ('organization.enabled', 'Organization Management', 'Create and manage your organization workspace', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'organization', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 1, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('organization.max_orgs_per_user', 'Max Organizations Per User', 'Maximum number of organizations a single user can create or join', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'organization', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"organizations","scope":"user"}'::jsonb, TRUE, FALSE, 2, '{"catalog":"billing-preview-v2","scope":"user","unit":"organizations","supportsUnlimited":false}'::jsonb),
+  ('projects.enabled', 'Projects Platform', 'Create projects to isolate different services or environments', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'projects', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 3, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.projects', 'Projects Quota', 'Maximum number of projects per organization', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"projects","scope":"organization"}'::jsonb, TRUE, FALSE, 4, '{"catalog":"billing-preview-v2","scope":"organization","unit":"projects","supportsUnlimited":true}'::jsonb),
+  ('quota.members', 'Team Members Quota', 'Maximum number of team members per organization', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"members","scope":"organization"}'::jsonb, TRUE, FALSE, 5, '{"catalog":"billing-preview-v2","scope":"organization","unit":"members","supportsUnlimited":true}'::jsonb),
+  ('quota.environments', 'Environments Quota', 'Maximum number of environments per project (e.g., dev, staging, prod)', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"environments","scope":"project"}'::jsonb, TRUE, FALSE, 6, '{"catalog":"billing-preview-v2","scope":"project","unit":"environments","supportsUnlimited":true}'::jsonb),
+  ('quota.api_keys', 'API Keys Quota', 'Maximum number of API keys per project for ingestion authentication', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"api_keys","scope":"project"}'::jsonb, TRUE, FALSE, 7, '{"catalog":"billing-preview-v2","scope":"project","unit":"api_keys","supportsUnlimited":true}'::jsonb),
+  ('quota.monthly_events', 'Monthly Billable Credits', 'Maximum billable credits consumed per calendar month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 8, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":true}'::jsonb),
+  ('quota.requests_per_second', 'Rate Limit (RPS)', 'Maximum sustained ingestion rate per second', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'throttle'::billing_usage_behavior, '{"enforcementType":"throttle","unit":"requests/sec","scope":"organization"}'::jsonb, TRUE, FALSE, 9, '{"catalog":"billing-preview-v2","scope":"organization","unit":"requests/sec","supportsUnlimited":true}'::jsonb),
+  ('sdk.enabled', 'SDK Ingestion', 'Use official SDKs to send data to the platform', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 10, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.remote_config', 'SDK Remote Config', 'Update SDK behavior remotely without redeploying', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 11, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.retry', 'SDK Exponential Retry', 'Automatic retry with exponential backoff on failed ingestion', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 12, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.batching', 'SDK Batching', 'Batch multiple events into a single network request for efficiency', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 13, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.offline_queue', 'SDK Offline Queue', 'Queue events locally when network is unavailable and send when back online', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 14, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('sdk.dynamic_sampling', 'SDK Dynamic Sampling', 'Dynamically adjust sampling rates based on server-side configuration', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'sdk', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 15, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.sdk_batch_queue_size', 'SDK Batch Max Queue Size', 'Maximum number of events the SDK will hold in memory before flushing', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"events","scope":"project"}'::jsonb, TRUE, FALSE, 16, '{"catalog":"billing-preview-v2","scope":"project","unit":"events","supportsUnlimited":true}'::jsonb),
+  ('quota.sdk_offline_queue_limit', 'SDK Offline Queue Limit', 'Maximum number of events the SDK will queue when offline', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"events","scope":"project"}'::jsonb, TRUE, FALSE, 17, '{"catalog":"billing-preview-v2","scope":"project","unit":"events","supportsUnlimited":true}'::jsonb),
+  ('privacy.data_scrubbing', 'PII Data Scrubbing', 'Automatically scrub personally identifiable information from events', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 18, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('privacy.capture_headers', 'Capture HTTP Headers', 'Capture and store HTTP headers with each event', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 19, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('privacy.capture_body', 'Capture HTTP Body', 'Capture and store HTTP request/response bodies', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 20, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('privacy.capture_ip', 'Capture Client IP', 'Capture and store client IP addresses', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'privacy', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"project"}'::jsonb, TRUE, FALSE, 21, '{"catalog":"billing-preview-v2","scope":"project","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('error_tracking.enabled', 'Error Tracking', 'Track and aggregate application errors and exceptions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'error_tracking', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 22, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('tracing.enabled', 'Distributed Tracing', 'Trace requests across services to identify latency bottlenecks', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'tracing', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 23, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('logging.enabled', 'Structured Logging', 'Ingest and search structured log data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'logging', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 24, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('metrics.enabled', 'Custom Metrics', 'Ingest custom time-series metrics and build dashboards', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'metrics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 25, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('profiling.enabled', 'Continuous Profiling', 'Profile CPU and memory usage in production with minimal overhead', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'profiling', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 26, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('replay.enabled', 'Session Replay', 'Record and replay user sessions to reproduce issues', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'replay', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 27, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('uptime.enabled', 'Uptime & Cron Monitoring', 'Monitor endpoint uptime and cron job execution', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'uptime', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 28, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('cron_monitoring.enabled', 'Cron Job Monitoring', 'Dedicated cron job heartbeat monitoring with alerting on missed runs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'cron_monitoring', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 29, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.retention_days', 'Default Retention Days', 'Default data retention period for all event types', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 30, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.log_retention_days', 'Log Retention Days', 'Retention period for structured log data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 31, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.metric_retention_days', 'Metric Retention Days', 'Retention period for custom metrics', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 32, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.profile_retention_days', 'Profile Retention Days', 'Retention period for continuous profiling data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 33, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.replay_retention_days', 'Session Replay Retention Days', 'Retention period for session replay recordings', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 34, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.trace_retention_days', 'Trace Retention Days', 'Retention period for distributed trace data', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 35, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('quota.audit_log_retention_days', 'Audit Log Retention Days', 'Retention period for security audit logs', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"days","scope":"organization"}'::jsonb, TRUE, FALSE, 36, '{"catalog":"billing-preview-v2","scope":"organization","unit":"days","supportsUnlimited":true}'::jsonb),
+  ('alerting.enabled', 'Alerting Platform', 'Create and manage alerts based on metric thresholds and event patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 37, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.rules', 'Alert Rules Feature', 'Define alert rules with custom conditions and thresholds', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 38, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.routing.enabled', 'Advanced Alert Routing', 'Route alerts to different teams or channels based on severity or source', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 39, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.composite', 'Composite Alerts', 'Combine multiple conditions into a single composite alert', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 40, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.escalation_policies', 'Escalation Policies', 'Automatically escalate unacknowledged alerts through predefined chains', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 41, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.on_call', 'On-Call Schedules', 'Manage on-call rotations and schedules for incident response', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 42, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.incident_timeline', 'Incident Timeline', 'Track incident lifecycle from detection to resolution with timeline view', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 43, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.managed_email_fallback', 'Managed Email Fallback', 'Send alert notifications via managed email delivery when primary channels fail', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 44, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('alerting.ai_alert', 'AI Alert Insights', 'AI-powered alert correlation, noise reduction, and intelligent grouping', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'alerting', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 45, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.alert_rules', 'Organization Alert Rules Quota', 'Maximum number of alert rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 46, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.project_alert_rules', 'Project Alert Rules Quota', 'Maximum number of alert rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 47, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.alert_channels', 'Alert Channels Quota', 'Maximum number of alert notification channels', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"organization"}'::jsonb, TRUE, FALSE, 48, '{"catalog":"billing-preview-v2","scope":"organization","unit":"channels","supportsUnlimited":true}'::jsonb),
+  ('quota.notification_channels', 'Notification Channels Quota', 'Maximum number of general notification channels', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"organization"}'::jsonb, TRUE, FALSE, 49, '{"catalog":"billing-preview-v2","scope":"organization","unit":"channels","supportsUnlimited":true}'::jsonb),
+  ('quota.project_notification_channels', 'Project Notification Channels Quota', 'Maximum number of notification channels per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"channels","scope":"project"}'::jsonb, TRUE, FALSE, 50, '{"catalog":"billing-preview-v2","scope":"project","unit":"channels","supportsUnlimited":true}'::jsonb),
+  ('quota.routing_rules', 'Routing Rules Quota', 'Maximum number of alert routing rules at organization level', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 51, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.project_routing_rules', 'Project Routing Rules Quota', 'Maximum number of routing rules per project', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"project"}'::jsonb, TRUE, FALSE, 52, '{"catalog":"billing-preview-v2","scope":"project","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('quota.daily_alerts', 'Daily Alert Notifications', 'Maximum number of alert notifications sent per day', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 53, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
+  ('quota.monthly_alerts', 'Monthly Alert Notifications', 'Maximum number of alert notifications sent per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"notifications","scope":"organization"}'::jsonb, TRUE, FALSE, 54, '{"catalog":"billing-preview-v2","scope":"organization","unit":"notifications","supportsUnlimited":true}'::jsonb),
+  ('quota.connector_sends', 'Monthly Connector Sends', 'Maximum number of messages sent through integration connectors per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'overage'::billing_usage_behavior, '{"enforcementType":"overage","unit":"sends","scope":"organization"}'::jsonb, TRUE, FALSE, 55, '{"catalog":"billing-preview-v2","scope":"organization","unit":"sends","supportsUnlimited":true}'::jsonb),
+  ('automation.enabled', 'Automation Platform', 'Automate workflows triggered by events, alerts, or schedules', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'automation', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 56, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.automation_rules', 'Automation Rules Quota', 'Maximum number of automation rules', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"rules","scope":"organization"}'::jsonb, TRUE, FALSE, 57, '{"catalog":"billing-preview-v2","scope":"organization","unit":"rules","supportsUnlimited":true}'::jsonb),
+  ('dashboards.enabled', 'Dashboards Platform', 'Create and share dashboards to visualize metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 58, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.custom_dashboards', 'Custom Dashboards', 'Build fully custom dashboards with drag-and-drop widgets', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 59, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.custom_widgets', 'Custom Widgets', 'Create custom visualization widgets for dashboards', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 60, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.embeds', 'Dashboard Embeds', 'Embed dashboards in external applications via iframe', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 61, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.public_links', 'Public Dashboard Links', 'Share dashboards via public read-only URLs without authentication', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 62, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('dashboards.scheduled_reports', 'Scheduled Reports', 'Schedule automated dashboard report generation and delivery', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'dashboards', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 63, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.dashboards', 'Dashboards Quota', 'Maximum number of custom dashboards', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"dashboards","scope":"organization"}'::jsonb, TRUE, FALSE, 64, '{"catalog":"billing-preview-v2","scope":"organization","unit":"dashboards","supportsUnlimited":true}'::jsonb),
+  ('quota.monthly_reports', 'Monthly Report Generation Limit', 'Maximum number of scheduled reports generated per month', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"reports","scope":"organization"}'::jsonb, TRUE, FALSE, 65, '{"catalog":"billing-preview-v2","scope":"organization","unit":"reports","supportsUnlimited":true}'::jsonb),
+  ('analytics.explorer', 'Analytics Explorer', 'Ad-hoc query interface for exploring events and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 66, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('analytics.query_builder', 'Analytics Query Builder', 'Visual query builder for complex analytics without writing code', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'analytics', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 67, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.enabled', 'AI Insights Platform', 'AI-powered analysis and insights across your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 68, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.summaries', 'AI Incident & Log Summaries', 'Auto-generate human-readable summaries of incidents and log patterns', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 69, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.root_cause_analysis', 'AI Root Cause Analysis', 'AI-assisted identification of incident root causes across traces and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 70, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.anomaly_detection', 'AI Anomaly Detection', 'Automatically detect anomalous patterns in metrics and logs', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 71, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.forecasting', 'AI Metric Forecasting', 'Predict future metric trends and capacity needs using historical data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 72, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('ai.incident_copilot', 'AI Incident Copilot', 'Real-time AI assistant during incident response with suggested actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'ai', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 73, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.ai_credits', 'Monthly AI Credits', 'Monthly quota of AI processing credits for insights, summaries, and analysis', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"credits","scope":"organization"}'::jsonb, TRUE, FALSE, 74, '{"catalog":"billing-preview-v2","scope":"organization","unit":"credits","supportsUnlimited":true}'::jsonb),
+  ('integrations.enabled', 'Integrations Platform', 'Connect external tools and services to your observability data', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 75, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.rest_api', 'REST API Access', 'Full REST API access for programmatic data ingestion and querying', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 76, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.connectors', 'Connector Instances Quota', 'Maximum number of active connector instances', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"connectors","scope":"organization"}'::jsonb, TRUE, FALSE, 77, '{"catalog":"billing-preview-v2","scope":"organization","unit":"connectors","supportsUnlimited":true}'::jsonb),
+  ('quota.integrations', 'Integrations Quota', 'Maximum number of third-party integrations configured', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"integrations","scope":"organization"}'::jsonb, TRUE, FALSE, 78, '{"catalog":"billing-preview-v2","scope":"organization","unit":"integrations","supportsUnlimited":true}'::jsonb),
+  ('integrations.email', 'Email Connector', 'Send notifications and reports via email', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 79, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.webhook', 'Webhook Connector', 'Send event data to custom HTTP endpoints', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 80, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.slack', 'Slack Connector', 'Send alerts and summaries to Slack channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 81, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.discord', 'Discord Connector', 'Send alerts and summaries to Discord channels', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 82, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.microsoft_teams', 'Microsoft Teams Connector', 'Send alerts and summaries to Microsoft Teams', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 83, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.pagerduty', 'PagerDuty Connector', 'Trigger and manage PagerDuty incidents from alerts', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 84, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.sms', 'SMS Connector', 'Send critical alert notifications via SMS', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 85, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.github', 'GitHub Integration', 'Link errors to GitHub issues and track code changes', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 86, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.gitlab', 'GitLab Integration', 'Link errors to GitLab issues and track merge requests', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 87, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.bitbucket', 'Bitbucket Integration', 'Link errors to Bitbucket issues and track commits', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 88, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.jira', 'Jira Integration', 'Create and update Jira tickets from alerts and incidents', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 89, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('integrations.terraform', 'Terraform Provider', 'Manage resources via official Terraform provider', 'integration'::billing_feature_category, 'boolean'::billing_feature_value_type, 'integrations', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 90, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.enabled', 'Enterprise Security', 'Enterprise-grade security controls and compliance features', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 91, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.audit_logs', 'Audit Logs', 'Immutable audit logs of all administrative actions', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 92, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.sso', 'SAML 2.0 & OIDC SSO', 'Single sign-on via SAML 2.0 and OpenID Connect', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 93, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.scim', 'SCIM 2.0 User Provisioning', 'Automated user provisioning and deprovisioning via SCIM', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 94, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('security.custom_roles', 'Custom RBAC Roles', 'Define custom role-based access control policies', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'security', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 95, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('quota.service_accounts', 'Service Accounts Quota', 'Maximum number of API service accounts for automated access', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"accounts","scope":"organization"}'::jsonb, TRUE, FALSE, 96, '{"catalog":"billing-preview-v2","scope":"organization","unit":"accounts","supportsUnlimited":true}'::jsonb),
+  ('quota.custom_roles', 'Custom Roles Quota', 'Maximum number of custom RBAC roles', 'quota'::billing_feature_category, 'integer'::billing_feature_value_type, 'quota', 'hard_limit'::billing_usage_behavior, '{"enforcementType":"hard_limit","unit":"roles","scope":"organization"}'::jsonb, TRUE, FALSE, 97, '{"catalog":"billing-preview-v2","scope":"organization","unit":"roles","supportsUnlimited":true}'::jsonb),
+  ('support.dedicated', 'Dedicated Support', 'Access to dedicated customer success manager and priority support queue', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 98, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('support.sla', 'Support SLA', 'Guaranteed response time for support tickets (e.g., 99.9% uptime SLA)', 'feature'::billing_feature_category, 'string'::billing_feature_value_type, 'support', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"string","scope":"organization"}'::jsonb, TRUE, FALSE, 99, '{"catalog":"billing-preview-v2","scope":"organization","unit":"string","supportsUnlimited":false}'::jsonb),
+  ('deployment.custom', 'Custom Deployment', 'On-premise, VPC, or private cloud deployment options', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'deployment', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 100, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('compliance.hipaa', 'HIPAA Compliance', 'HIPAA-compliant data handling and Business Associate Agreement', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 101, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb),
+  ('compliance.gdpr_dpa', 'GDPR Data Processing Agreement', 'Signed Data Processing Agreement for GDPR compliance', 'feature'::billing_feature_category, 'boolean'::billing_feature_value_type, 'compliance', 'none'::billing_usage_behavior, '{"enforcementType":"none","unit":"boolean","scope":"organization"}'::jsonb, TRUE, FALSE, 102, '{"catalog":"billing-preview-v2","scope":"organization","unit":"boolean","supportsUnlimited":false}'::jsonb)
+)
 INSERT INTO billing_features
-    (feature_key, feature_name, description, category, value_type, module, is_module_root, sort_order, is_billable, is_public, metadata)
-SELECT
-    fs.feature_key,
-    fs.feature_name,
-    fs.description,
-    fs.category,
-    fs.value_type,
-    fs.module,
-    fs.is_module_root,
-    fs.sort_order,
-    TRUE,
-    TRUE,
-    fs.metadata || jsonb_build_object('catalog', 'enterprise-module-v1')
-FROM tmp_enterprise_billing_feature_seed fs
+  (feature_key, feature_name, description, category, value_type, module, usage_behavior, configuration, is_public, is_module_root, sort_order, is_billable, metadata)
+SELECT feature_key, feature_name, description, category, value_type, module, usage_behavior, configuration, is_public, is_module_root, sort_order, TRUE, metadata
+FROM feature_seed
 ON CONFLICT (feature_key) DO UPDATE
 SET feature_name = EXCLUDED.feature_name,
     description = EXCLUDED.description,
     category = EXCLUDED.category,
     value_type = EXCLUDED.value_type,
     module = EXCLUDED.module,
-    is_module_root = EXCLUDED.is_module_root,
-    sort_order = EXCLUDED.sort_order,
-    is_billable = EXCLUDED.is_billable,
-    is_public = EXCLUDED.is_public,
-    metadata = EXCLUDED.metadata,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
-WITH plan_scope AS (
-    SELECT id, key
-    FROM plans
-    WHERE key IN ('free', 'starter', 'growth', 'business', 'enterprise')
-      AND version = 1
-      AND deleted_at IS NULL
-),
-feature_scope AS (
-    SELECT bf.id, bf.feature_key, bf.value_type, fs.free_value, fs.starter_value, fs.growth_value, fs.business_value, fs.enterprise_value
-    FROM tmp_enterprise_billing_feature_seed fs
-    JOIN billing_features bf
-      ON bf.feature_key = fs.feature_key
-     AND bf.deleted_at IS NULL
-),
-entitlement_values AS (
-    SELECT
-        p.id AS plan_id,
-        f.id AS feature_id,
-        CASE p.key
-            WHEN 'free' THEN f.free_value
-            WHEN 'starter' THEN f.starter_value
-            WHEN 'growth' THEN f.growth_value
-            WHEN 'business' THEN f.business_value
-            ELSE f.enterprise_value
-        END AS plan_value,
-        f.value_type
-    FROM plan_scope p
-    CROSS JOIN feature_scope f
-)
-INSERT INTO plan_feature_entitlements
-    (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value, metadata)
-SELECT
-    ev.plan_id,
-    ev.feature_id,
-    CASE WHEN ev.value_type = 'boolean' THEN ev.plan_value::boolean END,
-    CASE WHEN ev.value_type = 'integer' THEN ev.plan_value::bigint END,
-    CASE WHEN ev.value_type = 'decimal' THEN ev.plan_value::numeric(20,6) END,
-    CASE WHEN ev.value_type = 'string' THEN ev.plan_value END,
-    jsonb_build_object('catalog', 'enterprise-module-v1')
-FROM entitlement_values ev
-ON CONFLICT (plan_id, feature_id) DO UPDATE
-SET boolean_value = EXCLUDED.boolean_value,
-    integer_value = EXCLUDED.integer_value,
-    decimal_value = EXCLUDED.decimal_value,
-    string_value = EXCLUDED.string_value,
-    metadata = EXCLUDED.metadata,
-    deleted_at = NULL,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
-WITH addon_seed(key, name, description, category, target_module, target_feature_key, available_in_tiers, not_available_in_tiers, is_active, sort_order, metadata) AS (
-VALUES
-    ('session_replay', 'Session Replay', 'Record and replay user sessions.', 'module', 'session_replay', 'module_session_replay_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 1, '{"frontendGroup":"sessionReplay"}'::jsonb),
-    ('profiling', 'Profiling', 'CPU and memory profiling.', 'module', 'profiling', 'module_profiling_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 2, '{"frontendGroup":"profiling"}'::jsonb),
-    ('cron_monitoring', 'Cron Monitoring', 'Scheduled job monitoring.', 'module', 'cron_monitoring', 'module_cron_monitoring_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 3, '{"frontendGroup":"cronMonitoring"}'::jsonb),
-    ('uptime_monitoring', 'Uptime Monitoring', 'Synthetic checks and status pages.', 'module', 'uptime_monitoring', 'module_uptime_monitoring_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 4, '{"frontendGroup":"uptimeMonitoring"}'::jsonb),
-    ('version_management', 'Version Management', 'Release health and deploy tracking.', 'module', 'version_management', 'module_version_management_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 5, '{"frontendGroup":"versionManagement"}'::jsonb),
-    ('incident_management', 'Incident Management', 'Incident timelines, postmortems, and routing.', 'module', 'incident_management', 'module_incident_management_enabled', '{free,starter,growth,business}'::billing_plan_tier[], '{enterprise}'::billing_plan_tier[], TRUE, 6, '{"frontendGroup":"incidentManagement"}'::jsonb),
-    ('ai_credits', 'AI Credits Pack', 'Additional monthly AI analysis credits.', 'capacity', 'ai_insights', 'module_ai_insights_monthly_credits', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 20, '{"unit":"credits","reset":"monthly"}'::jsonb),
-    ('extra_events', 'Extra Events', 'Additional monthly event volume.', 'capacity', NULL, 'monthly_events', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 21, '{"unit":"events","reset":"monthly"}'::jsonb),
-    ('extra_projects', 'Extra Projects', 'Additional active projects.', 'capacity', NULL, 'limit_projects_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 22, '{"unit":"projects","reset":"never"}'::jsonb),
-    ('extra_members', 'Extra Members', 'Additional organization members.', 'capacity', NULL, 'limit_members_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 23, '{"unit":"members","reset":"never"}'::jsonb),
-    ('extra_connectors', 'Extra Connectors', 'Additional alert connectors.', 'capacity', NULL, 'limit_connectors_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 24, '{"unit":"connectors","reset":"never"}'::jsonb),
-    ('extra_alert_rules', 'Extra Alert Rules', 'Additional alert rules.', 'capacity', NULL, 'limit_alert_rules_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 25, '{"unit":"rules","reset":"never"}'::jsonb),
-    ('extra_releases', 'Extra Releases', 'Additional tracked releases each month.', 'capacity', NULL, 'limit_releases_max', '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 26, '{"unit":"releases","reset":"monthly"}'::jsonb),
-    ('extended_retention', 'Extended Retention', 'Extend telemetry retention windows.', 'capacity', NULL, NULL, '{starter,growth,business}'::billing_plan_tier[], '{free,enterprise}'::billing_plan_tier[], TRUE, 27, '{"unit":"days","reset":"rolling"}'::jsonb),
-    ('private_networking', 'Private Networking', 'VPC peering and private endpoints.', 'enterprise_feature', 'enterprise', 'module_enterprise_features_private_networking', '{business}'::billing_plan_tier[], '{free,starter,growth,enterprise}'::billing_plan_tier[], TRUE, 40, '{"frontendGroup":"enterprise"}'::jsonb),
-    ('custom_domains', 'Custom Domains', 'Use custom domains for status pages and shared views.', 'enterprise_feature', 'enterprise', 'module_enterprise_features_custom_domains', '{growth,business}'::billing_plan_tier[], '{free,starter,enterprise}'::billing_plan_tier[], TRUE, 41, '{"frontendGroup":"enterprise"}'::jsonb),
-    ('data_residency', 'Data Residency', 'Custom data residency commitments.', 'enterprise_feature', 'enterprise', 'module_enterprise_data_residency', '{business}'::billing_plan_tier[], '{free,starter,growth,enterprise}'::billing_plan_tier[], TRUE, 42, '{"frontendGroup":"enterprise"}'::jsonb),
-    ('dedicated_workers', 'Dedicated Workers', 'Dedicated processing workers.', 'enterprise_feature', 'enterprise', 'module_enterprise_features_dedicated_workers', '{business}'::billing_plan_tier[], '{free,starter,growth,enterprise}'::billing_plan_tier[], TRUE, 43, '{"frontendGroup":"enterprise"}'::jsonb)
-)
-INSERT INTO addons
-    (key, name, description, category, target_module, target_feature_id, available_in_tiers, not_available_in_tiers, is_active, sort_order, metadata)
-SELECT
-    a.key,
-    a.name,
-    a.description,
-    a.category,
-    a.target_module,
-    bf.id,
-    a.available_in_tiers,
-    a.not_available_in_tiers,
-    a.is_active,
-    a.sort_order,
-    a.metadata || jsonb_build_object('catalog', 'enterprise-module-v1')
-FROM addon_seed a
-LEFT JOIN billing_features bf
-  ON bf.feature_key = a.target_feature_key
- AND bf.deleted_at IS NULL
-ON CONFLICT (key) DO UPDATE
-SET name = EXCLUDED.name,
-    description = EXCLUDED.description,
-    category = EXCLUDED.category,
-    target_module = EXCLUDED.target_module,
-    target_feature_id = EXCLUDED.target_feature_id,
-    available_in_tiers = EXCLUDED.available_in_tiers,
-    not_available_in_tiers = EXCLUDED.not_available_in_tiers,
-    is_active = EXCLUDED.is_active,
-    sort_order = EXCLUDED.sort_order,
-    metadata = EXCLUDED.metadata,
-    updated_at = NOW();
-
--- Source: canonical_migrations_draft/11_billing/026_enterprise_module_billing_seed.sql
-WITH addon_price_seed(addon_key, provider, billing_interval, currency, amount_minor, pricing_model, unit_quantity, unit_label, is_default) AS (
-VALUES
-    ('session_replay', 'stripe', 'monthly', 'USD', 2900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('profiling', 'stripe', 'monthly', 'USD', 1900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('cron_monitoring', 'stripe', 'monthly', 'USD', 1500::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('uptime_monitoring', 'stripe', 'monthly', 'USD', 2500::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('version_management', 'stripe', 'monthly', 'USD', 1900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('incident_management', 'stripe', 'monthly', 'USD', 3900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('ai_credits', 'stripe', 'monthly', 'USD', 1000::bigint, 'per_unit', 1000::integer, 'credits', TRUE),
-    ('extra_events', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 100000::integer, 'events', TRUE),
-    ('extra_projects', 'stripe', 'monthly', 'USD', 1000::bigint, 'per_unit', 5::integer, 'projects', TRUE),
-    ('extra_members', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 5::integer, 'members', TRUE),
-    ('extra_connectors', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 5::integer, 'connectors', TRUE),
-    ('extra_alert_rules', 'stripe', 'monthly', 'USD', 500::bigint, 'per_unit', 25::integer, 'rules', TRUE),
-    ('extra_releases', 'stripe', 'monthly', 'USD', 700::bigint, 'per_unit', 25::integer, 'releases', TRUE),
-    ('extended_retention', 'stripe', 'monthly', 'USD', 2000::bigint, 'per_unit', 30::integer, 'days', TRUE),
-    ('private_networking', 'stripe', 'monthly', 'USD', 19900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('custom_domains', 'stripe', 'monthly', 'USD', 4900::bigint, 'per_unit', 1::integer, 'domain', TRUE),
-    ('data_residency', 'stripe', 'monthly', 'USD', 9900::bigint, 'flat', NULL::integer, NULL::text, TRUE),
-    ('dedicated_workers', 'stripe', 'monthly', 'USD', 29900::bigint, 'flat', NULL::integer, NULL::text, TRUE)
-),
-resolved_addon_prices AS (
-    SELECT
-        a.id AS addon_id,
-        aps.provider::billing_provider_type AS provider,
-        aps.billing_interval::billing_interval_type AS billing_interval,
-        aps.currency,
-        aps.amount_minor,
-        NULL::text AS provider_price_id,
-        aps.pricing_model,
-        aps.unit_quantity,
-        aps.unit_label,
-        aps.is_default,
-        '-infinity'::timestamptz AS starts_at,
-        NULL::timestamptz AS ends_at
-    FROM addon_price_seed aps
-    JOIN addons a
-      ON a.key = aps.addon_key
-),
-updated_addon_prices AS (
-    UPDATE addon_prices ap
-    SET amount_minor = rap.amount_minor,
-        provider_price_id = rap.provider_price_id,
-        pricing_model = rap.pricing_model,
-        unit_quantity = rap.unit_quantity,
-        unit_label = rap.unit_label,
-        is_default = rap.is_default,
-        ends_at = rap.ends_at,
-        updated_at = NOW()
-    FROM resolved_addon_prices rap
-    WHERE ap.addon_id = rap.addon_id
-      AND ap.provider = rap.provider
-      AND ap.billing_interval = rap.billing_interval
-      AND ap.currency = rap.currency
-    RETURNING ap.addon_id, ap.provider, ap.billing_interval, ap.currency
-)
-INSERT INTO addon_prices
-    (addon_id, provider, billing_interval, currency, amount_minor, provider_price_id, pricing_model, unit_quantity, unit_label, is_default, starts_at, ends_at)
-SELECT
-    rap.addon_id,
-    rap.provider,
-    rap.billing_interval,
-    rap.currency,
-    rap.amount_minor,
-    rap.provider_price_id,
-    rap.pricing_model,
-    rap.unit_quantity,
-    rap.unit_label,
-    rap.is_default,
-    rap.starts_at,
-    rap.ends_at
-FROM resolved_addon_prices rap
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM updated_addon_prices uap
-    WHERE uap.addon_id = rap.addon_id
-      AND uap.provider = rap.provider
-      AND uap.billing_interval = rap.billing_interval
-      AND uap.currency = rap.currency
-)
-ON CONFLICT (addon_id, provider, billing_interval, currency, starts_at) DO UPDATE
-SET amount_minor = EXCLUDED.amount_minor,
-    provider_price_id = EXCLUDED.provider_price_id,
-    pricing_model = EXCLUDED.pricing_model,
-    unit_quantity = EXCLUDED.unit_quantity,
-    unit_label = EXCLUDED.unit_label,
-    is_default = EXCLUDED.is_default,
-    ends_at = EXCLUDED.ends_at,
-    updated_at = NOW();
-
--- Source: 20_seeders/008_11_billing_seeder_026_seed_plans.sql
--- Source: canonical_migrations_draft/11_billing/seeder/026_seed_plans.sql
-INSERT INTO plans
-(
-    key,
-    version,
-    name,
-    tier,
-    description,
-
-    trial_days,
-
-    is_active,
-    is_public,
-    is_customizable,
-
-    next_plan_key,
-
-    badge,
-
-    sort_order
-)
-VALUES
-
-(
-    'free',
-    1,
-    'Free',
-    'free',
-    'Perfect for personal projects, prototypes and evaluation.',
-
-    0,
-
-    TRUE,
-    TRUE,
-    FALSE,
-
-    'starter',
-
-    NULL,
-
-    1
-),
-
-(
-    'starter',
-    1,
-    'Starter',
-    'starter',
-    'Production-ready observability for small teams.',
-
-    14,
-
-    TRUE,
-    TRUE,
-    FALSE,
-
-    'growth',
-
-    'Popular',
-
-    2
-),
-
-(
-    'growth',
-    1,
-    'Growth',
-    'growth',
-    'Scaling teams requiring advanced observability and AI capabilities.',
-
-    14,
-
-    TRUE,
-    TRUE,
-    FALSE,
-
-    'business',
-
-    'Recommended',
-
-    3
-),
-
-(
-    'business',
-    1,
-    'Business',
-    'business',
-    'Enterprise-ready monitoring with governance, security and automation.',
-
-    14,
-
-    TRUE,
-    TRUE,
-    FALSE,
-
-    'enterprise',
-
-    'Best Value',
-
-    4
-),
-
-(
-    'enterprise',
-    1,
-    'Enterprise',
-    'enterprise',
-    'Custom enterprise deployment with unlimited scale and dedicated support.',
-
-    30,
-
-    TRUE,
-    FALSE,
-    TRUE,
-
-    NULL,
-
-    NULL,
-
-    5
-)
-
-ON CONFLICT (key, version)
-
-DO UPDATE
-
-SET
-
-name = EXCLUDED.name,
-
-tier = EXCLUDED.tier,
-
-description = EXCLUDED.description,
-
-trial_days = EXCLUDED.trial_days,
-
-is_active = EXCLUDED.is_active,
-
-is_public = EXCLUDED.is_public,
-
-is_customizable = EXCLUDED.is_customizable,
-
-next_plan_key = EXCLUDED.next_plan_key,
-
-badge = EXCLUDED.badge,
-
-sort_order = EXCLUDED.sort_order,
-
-deleted_at = NULL,
-
-updated_at = NOW();
-
--- Source: 20_seeders/009_11_billing_seeder_027_seed_plan_prices.sql
--- Source: canonical_migrations_draft/11_billing/seeder/027_seed_plan_prices.sql
-WITH price_seed
-(
-    plan_key,
-    version,
-    provider,
-    billing_interval,
-    currency,
-    amount_minor,
-    is_default,
-    metadata
-)
-AS
-(
-VALUES
-
--- ============================================================
--- FREE
--- ============================================================
-
-(
-    'free',
-    1,
-    'system',
-    'monthly',
-    'USD',
-    0,
-    TRUE,
-    '{"display":"Free"}'::jsonb
-),
-
-(
-    'free',
-    1,
-    'system',
-    'annual',
-    'USD',
-    0,
-    FALSE,
-    '{"display":"Free"}'::jsonb
-),
-
--- ============================================================
--- STARTER
--- ============================================================
-
-(
-    'starter',
-    1,
-    'stripe',
-    'monthly',
-    'USD',
-    2900,
-    TRUE,
-    '{
-        "display":"$29/mo",
-        "recommended":false
-    }'
-),
-
-(
-    'starter',
-    1,
-    'stripe',
-    'annual',
-    'USD',
-    29000,
-    FALSE,
-    '{
-        "display":"$290/year",
-        "discount":"2 months"
-    }'
-),
-
--- ============================================================
--- GROWTH
--- ============================================================
-
-(
-    'growth',
-    1,
-    'stripe',
-    'monthly',
-    'USD',
-    9900,
-    TRUE,
-    '{
-        "display":"$99/mo",
-        "recommended":true
-    }'
-),
-
-(
-    'growth',
-    1,
-    'stripe',
-    'annual',
-    'USD',
-    99000,
-    FALSE,
-    '{
-        "display":"$990/year",
-        "discount":"2 months"
-    }'
-),
-
--- ============================================================
--- BUSINESS
--- ============================================================
-
-(
-    'business',
-    1,
-    'stripe',
-    'monthly',
-    'USD',
-    29900,
-    TRUE,
-    '{
-        "display":"$299/mo"
-    }'
-),
-
-(
-    'business',
-    1,
-    'stripe',
-    'annual',
-    'USD',
-    299000,
-    FALSE,
-    '{
-        "display":"$2990/year",
-        "discount":"2 months"
-    }'
-),
-
--- ============================================================
--- ENTERPRISE
--- ============================================================
-
-(
-    'enterprise',
-    1,
-    'system',
-    'monthly',
-    'USD',
-    0,
-    TRUE,
-    '{
-        "contactSales":true
-    }'
-),
-
-(
-    'enterprise',
-    1,
-    'system',
-    'annual',
-    'USD',
-    0,
-    FALSE,
-    '{
-        "contactSales":true
-    }'
-)
-
-)
-
-INSERT INTO plan_prices
-(
-    plan_id,
-    provider,
-    billing_interval,
-    currency,
-    amount_minor,
-    provider_price_id,
-    is_default,
-    starts_at,
-    ends_at,
-    metadata
-)
-
-SELECT
-
-    p.id,
-
-    ps.provider::billing_provider_type,
-
-    ps.billing_interval::billing_interval_type,
-
-    ps.currency,
-
-    ps.amount_minor,
-
-    NULL,
-
-    ps.is_default,
-
-    '-infinity'::timestamptz,
-
-    NULL,
-
-    ps.metadata
-
-FROM price_seed ps
-
-JOIN plans p
-
-ON p.key = ps.plan_key
-AND p.version = ps.version
-AND p.deleted_at IS NULL
-
-ON CONFLICT
-(
-    plan_id,
-    provider,
-    billing_interval,
-    currency,
-    starts_at
-)
-
-DO UPDATE
-
-SET
-
-    amount_minor = EXCLUDED.amount_minor,
-
-    provider_price_id = EXCLUDED.provider_price_id,
-
-    is_default = EXCLUDED.is_default,
-
-    ends_at = EXCLUDED.ends_at,
-
-    metadata = EXCLUDED.metadata,
-
-    deleted_at = NULL,
-
-    updated_at = NOW();
-
--- Source: 20_seeders/010_11_billing_seeder_028a_seed_billing_features_core.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028a_seed_billing_features_core.sql
-WITH feature_seed (
-    feature_key,
-    name,
-    description,
-    category,
-    module,
-    value_type,
-    usage_behavior,
-    configuration,
-    is_public,
-    is_module_root
-) AS (
-VALUES
-
-('quota.monthly_events','Monthly Events',
- 'Maximum billable events per billing cycle',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.monthly_spans','Monthly Spans',
- 'Maximum billable spans per billing cycle',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.monthly_logs','Monthly Logs',
- 'Maximum billable log events per billing cycle',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.monthly_metrics','Monthly Metrics',
- 'Maximum metric points per billing cycle',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.monthly_profiles','Monthly Profiles',
- 'Maximum profiling captures per billing cycle',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.monthly_replays','Monthly Session Replays',
- 'Maximum session replay recordings',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.projects','Projects',
- 'Maximum projects allowed',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.environments','Environments',
- 'Maximum deployment environments',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.api_keys','API Keys',
- 'Maximum API keys',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.members','Members',
- 'Maximum organization members',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.retention_days','Retention Days',
- 'Maximum data retention period',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.requests_per_second','Requests Per Second',
- 'Maximum ingestion throughput',
- 'quota','quota','integer','throttle','{}'::jsonb,TRUE,FALSE),
-
-('quota.ai_credits','AI Credits',
- 'Monthly AI credit allocation',
- 'quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('quota.alert_rules','Alert Rules',
- 'Maximum alert rules',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('quota.dashboards','Dashboards',
- 'Maximum dashboards',
- 'quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE)
-
-)
-
-INSERT INTO billing_features
-(
-    feature_key,
-    feature_name,
-    description,
-    category,
-    module,
-    value_type,
-    usage_behavior,
-    configuration,
-    is_public,
-    is_module_root
-)
-SELECT
-    feature_key,
-    name,
-    description,
-    category::billing_feature_category,
-    module,
-    value_type::billing_feature_value_type,
-    usage_behavior::billing_usage_behavior,
-    configuration,
-    is_public,
-    is_module_root
-FROM feature_seed
-
-ON CONFLICT (feature_key)
-DO UPDATE SET
-    feature_name = EXCLUDED.feature_name,
-    description = EXCLUDED.description,
-    category = EXCLUDED.category,
-    module = EXCLUDED.module,
-    value_type = EXCLUDED.value_type,
     usage_behavior = EXCLUDED.usage_behavior,
     configuration = EXCLUDED.configuration,
     is_public = EXCLUDED.is_public,
     is_module_root = EXCLUDED.is_module_root,
-    updated_at = NOW(),
-    deleted_at = NULL;
+    sort_order = EXCLUDED.sort_order,
+    is_billable = EXCLUDED.is_billable,
+    metadata = EXCLUDED.metadata,
+    deleted_at = NULL,
+    updated_at = NOW();
 
--- Source: 20_seeders/011_11_billing_seeder_028a2_seed_billing_features_projects.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028a2_seed_billing_features_projects.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
+-- ============================================================
+-- Source: 20_seeders/006_11_billing_catalog_plan_entitlements.sql
+-- ============================================================
+
+-- =============================================================================
+-- Seeder File: 006_11_billing_catalog_plan_entitlements.sql
+-- Description: Seeds JSON-derived plan feature entitlements
+-- Catalog Version: 2.0
+-- Source: billing_catalog_response.preview.json
+-- =============================================================================
+
+WITH entitlement_seed(plan_key, feature_key, boolean_value, integer_value, decimal_value, string_value, metadata, configuration) AS (
 VALUES
-('organization.enabled','Organizations','Multi-organization capability','organization','organization','boolean','none','{}'::jsonb,TRUE,FALSE),
-('organization.custom_domains','Custom Domains','Custom domains for organization','organization','organization','boolean','none','{}'::jsonb,TRUE,FALSE),
-('organization.audit_logs','Audit Logs','Organization audit log access','organization','organization','boolean','none','{}'::jsonb,TRUE,FALSE),
-('organization.invites','Member Invites','Invite members into organization','organization','organization','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('projects.enabled','Projects','Project management','organization','projects','boolean','none','{}'::jsonb,TRUE,FALSE),
-('projects.max_projects','Maximum Projects','Maximum projects allowed','quota','projects','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('projects.environments','Project Environments','Multiple deployment environments','organization','projects','boolean','none','{}'::jsonb,TRUE,FALSE),
-('projects.archiving','Project Archiving','Archive inactive projects','organization','projects','boolean','none','{}'::jsonb,TRUE,FALSE),
-('projects.templates','Project Templates','Reusable project templates','organization','projects','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('members.max_members','Maximum Members','Maximum organization members','quota','members','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('members.custom_roles','Custom Roles','Create custom RBAC roles','security','members','boolean','none','{}'::jsonb,TRUE,FALSE),
-('members.project_roles','Project Roles','Project scoped permissions','security','members','boolean','none','{}'::jsonb,TRUE,FALSE),
-('members.teams','Teams','Create and manage teams','organization','members','boolean','none','{}'::jsonb,TRUE,FALSE),
-('members.service_accounts','Service Accounts','Machine identities','security','members','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('api_keys.max_keys','Maximum API Keys','Maximum API keys','quota','api_keys','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('api_keys.scoped_keys','Scoped API Keys','Fine grained API key scopes','security','api_keys','boolean','none','{}'::jsonb,TRUE,FALSE),
-('api_keys.rotation','API Key Rotation','Automatic key rotation','security','api_keys','boolean','none','{}'::jsonb,TRUE,FALSE),
-('api_keys.expiration','API Key Expiration','Expiring API keys','security','api_keys','boolean','none','{}'::jsonb,TRUE,FALSE),
-('api_keys.audit','API Key Audit','API key audit history','security','api_keys','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('environments.custom','Custom Environments','Create custom environments','organization','environments','boolean','none','{}'::jsonb,TRUE,FALSE),
-('environments.production','Production Environment','Production environment support','organization','environments','boolean','none','{}'::jsonb,TRUE,FALSE),
-('environments.staging','Staging Environment','Staging environment support','organization','environments','boolean','none','{}'::jsonb,TRUE,FALSE),
-('environments.development','Development Environment','Development environment support','organization','environments','boolean','none','{}'::jsonb,TRUE,FALSE)
+  ('free', 'organization.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'organization.max_orgs_per_user', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"organizations","scope":"user","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'projects.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.projects', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"projects","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.members', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.environments', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.api_keys', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_events', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.requests_per_second', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.remote_config', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.retry', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.batching', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.offline_queue', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'sdk.dynamic_sampling', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.sdk_batch_queue_size', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.sdk_offline_queue_limit', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'privacy.data_scrubbing', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'privacy.capture_headers', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'privacy.capture_body', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'privacy.capture_ip', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'error_tracking.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'tracing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'logging.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'metrics.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'profiling.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'replay.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'uptime.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'cron_monitoring.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.log_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.metric_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.profile_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.replay_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.trace_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.audit_log_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'alerting.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.rules', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.routing.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.composite', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.escalation_policies', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.on_call', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.incident_timeline', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.managed_email_fallback', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'alerting.ai_alert', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.alert_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.project_alert_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.alert_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.notification_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.project_notification_channels', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.routing_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.project_routing_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.daily_alerts', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_alerts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.connector_sends', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'automation.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.automation_rules', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'dashboards.custom_dashboards', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'dashboards.custom_widgets', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.dashboards', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_reports', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'analytics.explorer', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'analytics.query_builder', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.summaries', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.root_cause_analysis', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.anomaly_detection', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.forecasting', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'ai.incident_copilot', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.ai_credits', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.connectors', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.integrations', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.webhook', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.slack', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.discord', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.github', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.jira', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'security.scim', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'security.custom_roles', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'quota.service_accounts', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.custom_roles', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('free', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'organization.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'organization.max_orgs_per_user', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"organizations","scope":"user","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'projects.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.projects', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"projects","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.members', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.environments', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.api_keys', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.monthly_events', NULL::boolean, 150000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.requests_per_second', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'sdk.retry', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'sdk.batching', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'sdk.offline_queue', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'sdk.dynamic_sampling', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.sdk_batch_queue_size', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.sdk_offline_queue_limit', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'privacy.data_scrubbing', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'privacy.capture_headers', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'privacy.capture_body', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'privacy.capture_ip', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'error_tracking.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'tracing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'logging.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'metrics.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'profiling.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'replay.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.log_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.metric_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.profile_retention_days', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.replay_retention_days', NULL::boolean, 7, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.trace_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.audit_log_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.composite', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.escalation_policies', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.on_call', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.incident_timeline', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.managed_email_fallback', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'alerting.ai_alert', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.alert_rules', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.project_alert_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.alert_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.notification_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.project_notification_channels', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.routing_rules', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.project_routing_rules', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.daily_alerts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.monthly_alerts', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.connector_sends', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.automation_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'dashboards.custom_widgets', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.dashboards', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.monthly_reports', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'analytics.query_builder', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.summaries', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.root_cause_analysis', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.anomaly_detection', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.forecasting', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'ai.incident_copilot', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.ai_credits', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.connectors', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.integrations', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.discord', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.github', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.jira', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'security.scim', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'security.custom_roles', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'quota.service_accounts', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.custom_roles', NULL::boolean, 0, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('starter', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'organization.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'organization.max_orgs_per_user', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"organizations","scope":"user","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'projects.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.projects', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"projects","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.members', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.environments', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.api_keys', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.monthly_events', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.requests_per_second', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'sdk.retry', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'sdk.batching', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'sdk.offline_queue', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'sdk.dynamic_sampling', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.sdk_batch_queue_size', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.sdk_offline_queue_limit', NULL::boolean, 5000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'privacy.data_scrubbing', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'privacy.capture_headers', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'privacy.capture_body', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'privacy.capture_ip', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'error_tracking.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'tracing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'logging.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'metrics.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'profiling.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'replay.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.log_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.metric_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.profile_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.replay_retention_days', NULL::boolean, 30, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.trace_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.audit_log_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.composite', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.escalation_policies', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.on_call', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.incident_timeline', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.managed_email_fallback', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'alerting.ai_alert', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.alert_rules', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.project_alert_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.alert_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.notification_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.project_notification_channels', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.routing_rules', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.project_routing_rules', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.daily_alerts', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.monthly_alerts', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.connector_sends', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.automation_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'dashboards.embeds', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'dashboards.scheduled_reports', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.dashboards', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.monthly_reports', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.summaries', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.root_cause_analysis', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.anomaly_detection', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.forecasting', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'ai.incident_copilot', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.ai_credits', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.connectors', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.integrations', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.discord', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.pagerduty', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.sms', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.gitlab', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'integrations.terraform', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'security.enabled', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'security.audit_logs', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'security.sso', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'security.scim', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'security.custom_roles', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'quota.service_accounts', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.custom_roles', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'support.dedicated', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, NULL, '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('growth', 'compliance.gdpr_dpa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'organization.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'organization.max_orgs_per_user', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"organizations","scope":"user","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'projects.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.projects', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"projects","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.members', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.environments', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.api_keys', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.monthly_events', NULL::boolean, 8000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.requests_per_second', NULL::boolean, 5000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'sdk.retry', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'sdk.batching', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'sdk.offline_queue', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'sdk.dynamic_sampling', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.sdk_batch_queue_size', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.sdk_offline_queue_limit', NULL::boolean, 25000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'privacy.data_scrubbing', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'privacy.capture_headers', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'privacy.capture_body', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'privacy.capture_ip', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'error_tracking.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'tracing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'logging.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'metrics.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'profiling.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'replay.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.log_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.metric_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.profile_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.replay_retention_days', NULL::boolean, 90, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.trace_retention_days', NULL::boolean, 180, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.audit_log_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.composite', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.escalation_policies', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.on_call', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.incident_timeline', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.managed_email_fallback', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'alerting.ai_alert', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.alert_rules', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.project_alert_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.alert_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.notification_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.project_notification_channels', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.routing_rules', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.project_routing_rules', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.daily_alerts', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.monthly_alerts', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.connector_sends', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.automation_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'dashboards.embeds', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'dashboards.public_links', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'dashboards.scheduled_reports', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.dashboards', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.monthly_reports', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.summaries', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.root_cause_analysis', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.anomaly_detection', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.forecasting', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'ai.incident_copilot', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.ai_credits', NULL::boolean, 5000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.connectors', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.integrations', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.discord', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.microsoft_teams', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.pagerduty', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.sms', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.gitlab', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.bitbucket', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'integrations.terraform', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.audit_logs', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.sso', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.scim', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'security.custom_roles', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'quota.service_accounts', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.custom_roles', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'support.dedicated', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, '99.9%', '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'deployment.custom', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'compliance.hipaa', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('business', 'compliance.gdpr_dpa', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'organization.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'organization.max_orgs_per_user', NULL::boolean, 1, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"organizations","scope":"user","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'projects.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.projects', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"projects","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.members', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.environments', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.api_keys', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.monthly_events', NULL::boolean, NULL::bigint, NULL::numeric, 'Custom', '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.requests_per_second', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'sdk.retry', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'sdk.batching', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'sdk.offline_queue', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'sdk.dynamic_sampling', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.sdk_batch_queue_size', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.sdk_offline_queue_limit', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'privacy.data_scrubbing', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'privacy.capture_headers', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'privacy.capture_body', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'privacy.capture_ip', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'error_tracking.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'tracing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'logging.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'metrics.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'profiling.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'replay.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'uptime.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'cron_monitoring.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.log_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.metric_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.profile_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.replay_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.trace_retention_days', NULL::boolean, 365, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.audit_log_retention_days', NULL::boolean, 2555, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"days","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'alerting.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.rules', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.routing.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.composite', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.escalation_policies', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.on_call', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.incident_timeline', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.managed_email_fallback', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'alerting.ai_alert', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.alert_rules', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.project_alert_rules', NULL::boolean, 500, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.alert_channels', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.notification_channels', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.project_notification_channels', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"channels","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.routing_rules', NULL::boolean, 200, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.project_routing_rules', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.daily_alerts', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.monthly_alerts', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"notifications","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.connector_sends', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"sends","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'automation.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.automation_rules', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"rules","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'dashboards.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'dashboards.custom_dashboards', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'dashboards.custom_widgets', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'dashboards.embeds', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'dashboards.public_links', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'dashboards.scheduled_reports', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.dashboards', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"dashboards","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.monthly_reports', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"reports","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'analytics.explorer', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'analytics.query_builder', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.summaries', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.root_cause_analysis', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.anomaly_detection', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.forecasting', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'ai.incident_copilot', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.ai_credits', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'integrations.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.rest_api', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.connectors', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"connectors","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.integrations', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"integrations","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'integrations.email', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.webhook', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.slack', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.discord', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.microsoft_teams', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.pagerduty', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.sms', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.github', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.gitlab', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.bitbucket', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.jira', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'integrations.terraform', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'security.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'security.audit_logs', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'security.sso', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'security.scim', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'security.custom_roles', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'quota.service_accounts', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"accounts","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.custom_roles', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"roles","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'support.dedicated', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'support.sla', NULL::boolean, NULL::bigint, NULL::numeric, '99.99%', '{"catalog":"billing-preview-v2","unit":"string","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'deployment.custom', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'compliance.hipaa', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
+  ('enterprise', 'compliance.gdpr_dpa', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb)
 )
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,
-name,
-description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,
-is_public,
-is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/012_11_billing_seeder_028a3_seed_billing_features_sdk.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028a3_seed_billing_features_sdk.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
--- SDK
-('sdk.enabled','SDK Enabled','Enable SDK ingestion','sdk','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sdk.remote_config','Remote Configuration','Allow dynamic SDK configuration','sdk','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sdk.offline_queue','Offline Queue','Persist events locally when offline','sdk','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sdk.batching','Batching','Batch event delivery','sdk','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sdk.retry','Retry','Retry failed deliveries','sdk','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sdk.dynamic_sampling','Dynamic Sampling','Enable dynamic sampling','sampling','sdk','boolean','none','{}'::jsonb,TRUE,FALSE),
-
--- Sampling
-('sampling.error_rate','Error Sampling Rate','Error sampling percentage','sampling','sampling','decimal','none','{"min":0,"max":1}'::jsonb,TRUE,FALSE),
-('sampling.trace_rate','Trace Sampling Rate','Trace sampling percentage','sampling','sampling','decimal','none','{"min":0,"max":1}'::jsonb,TRUE,FALSE),
-('sampling.profile_rate','Profile Sampling Rate','Profile sampling percentage','sampling','sampling','decimal','none','{"min":0,"max":1}'::jsonb,TRUE,FALSE),
-('sampling.session_replay_rate','Replay Sampling Rate','Session replay sampling percentage','sampling','sampling','decimal','none','{"min":0,"max":1}'::jsonb,TRUE,FALSE),
-
--- Transport
-('transport.compression','Compression','Compress outbound payloads','transport','transport','boolean','none','{}'::jsonb,TRUE,FALSE),
-('transport.http2','HTTP/2','HTTP/2 transport support','transport','transport','boolean','none','{}'::jsonb,TRUE,FALSE),
-('transport.keep_alive','Keep Alive','Persistent transport connections','transport','transport','boolean','none','{}'::jsonb,TRUE,FALSE),
-('transport.max_batch_size','Maximum Batch Size','Maximum events per batch','transport','transport','integer','hard_limit','{"unit":"events"}'::jsonb,TRUE,FALSE),
-('transport.flush_interval_ms','Flush Interval','Flush interval in milliseconds','transport','transport','integer','none','{"unit":"ms"}'::jsonb,TRUE,FALSE),
-
--- Privacy
-('privacy.capture_headers','Capture Headers','Capture HTTP headers','privacy','privacy','boolean','none','{}'::jsonb,TRUE,FALSE),
-('privacy.capture_body','Capture Request Body','Capture request body','privacy','privacy','boolean','none','{}'::jsonb,TRUE,FALSE),
-('privacy.capture_ip','Capture Client IP','Capture client IP address','privacy','privacy','boolean','none','{}'::jsonb,TRUE,FALSE),
-('privacy.data_scrubbing','Data Scrubbing','Automatic PII scrubbing','privacy','privacy','boolean','none','{}'::jsonb,TRUE,FALSE),
-
--- Instrumentation
-('instrumentation.http','HTTP Instrumentation','Automatic HTTP instrumentation','instrumentation','instrumentation','boolean','none','{}'::jsonb,TRUE,FALSE),
-('instrumentation.express','Express Instrumentation','Express auto instrumentation','instrumentation','instrumentation','boolean','none','{}'::jsonb,TRUE,FALSE),
-('instrumentation.fastify','Fastify Instrumentation','Fastify auto instrumentation','instrumentation','instrumentation','boolean','none','{}'::jsonb,TRUE,FALSE),
-('instrumentation.database','Database Instrumentation','SQL instrumentation','instrumentation','instrumentation','boolean','none','{}'::jsonb,TRUE,FALSE),
-('instrumentation.redis','Redis Instrumentation','Redis instrumentation','instrumentation','instrumentation','boolean','none','{}'::jsonb,TRUE,FALSE),
-
--- Kill Switches
-('killswitch.sdk','SDK Kill Switch','Disable SDK remotely','killswitch','killswitch','boolean','none','{}'::jsonb,TRUE,FALSE),
-('killswitch.tracing','Tracing Kill Switch','Disable tracing remotely','killswitch','killswitch','boolean','none','{}'::jsonb,TRUE,FALSE),
-('killswitch.logging','Logging Kill Switch','Disable logging remotely','killswitch','killswitch','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,
-name,
-description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,
-is_public,
-is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/013_11_billing_seeder_028b1_seed_billing_features_error_tracking.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b1_seed_billing_features_error_tracking.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('error_tracking.enabled','Error Tracking','Enable error monitoring','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.issue_grouping','Issue Grouping','Automatic issue grouping','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.stack_traces','Stack Traces','Capture stack traces','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.source_maps','Source Maps','Upload and resolve source maps','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.release_tracking','Release Tracking','Track releases and deployments','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.release_health','Release Health','Release crash-free sessions','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.regressions','Regression Detection','Detect recurring regressions','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.fingerprinting','Custom Fingerprinting','Custom grouping fingerprints','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.inbound_filters','Inbound Filters','Drop unwanted events','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.attachments','Attachments','Store event attachments','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.user_feedback','User Feedback','Collect end-user feedback','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.suspect_commits','Suspect Commits','Associate commits with issues','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.owner_rules','Ownership Rules','Automatic ownership assignment','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.issue_states','Issue Workflow','Resolved/ignored workflow','feature','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.event_sampling','Error Sampling','Independent error sampling','sampling','error_tracking','decimal','none','{"min":0,"max":1}'::jsonb,TRUE,FALSE),
-('error_tracking.retention_days','Error Retention','Retention period for errors','quota','error_tracking','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('error_tracking.max_attachments_mb','Attachment Size','Maximum attachment size','quota','error_tracking','integer','hard_limit','{"unit":"MB"}'::jsonb,TRUE,FALSE),
-('error_tracking.ai_root_cause','AI Root Cause','AI-assisted root cause analysis','ai','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.ai_summaries','AI Summaries','AI issue summaries','ai','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE),
-('error_tracking.webhooks','Error Webhooks','Webhook notifications','integration','error_tracking','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,
-name,
-description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,
-is_public,
-is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/014_11_billing_seeder_028b2_seed_billing_features_tracing.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b2_seed_billing_features_tracing.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('tracing.enabled','Distributed Tracing','Enable distributed tracing','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.opentelemetry','OpenTelemetry Support','Native OpenTelemetry ingestion','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.service_map','Service Map','Interactive service dependency map','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.trace_search','Trace Search','Search and filter traces','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.span_search','Span Search','Search individual spans','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.span_links','Span Links','Support span links','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.span_events','Span Events','Capture span events','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.span_attributes','Span Attributes','Index custom span attributes','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.baggage','Baggage Propagation','Distributed baggage propagation','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.context_propagation','Context Propagation','Cross-service context propagation','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.trace_analytics','Trace Analytics','Aggregate trace analytics','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.flame_graphs','Flame Graphs','Trace flame graph visualization','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.critical_path','Critical Path','Critical path analysis','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.service_dependencies','Service Dependencies','Dependency topology analysis','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.trace_compare','Trace Comparison','Compare two traces','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('tracing.live_traces','Live Traces','Real-time trace stream','feature','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sampling.trace_dynamic','Dynamic Trace Sampling','Adaptive trace sampling','sampling','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('quota.trace_retention_days','Trace Retention Days','Maximum trace retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('quota.monthly_traces','Monthly Traces','Maximum traces per billing cycle','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('ai.trace_analysis','AI Trace Analysis','AI-assisted trace investigation','ai','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.trace_anomalies','AI Trace Anomaly Detection','Detect anomalous traces using AI','ai','tracing','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.trace_webhooks','Trace Webhooks','Webhook notifications for traces','integration','tracing','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,
-name,
-description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,
-is_public,
-is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/015_11_billing_seeder_028b3_seed_billing_features_logging.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b3_seed_billing_features_logging.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('logging.enabled','Logging','Enable centralized logging','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.live_tail','Live Tail','Real-time log streaming','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.search','Log Search','Search indexed logs','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.saved_searches','Saved Searches','Save reusable log queries','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.parsing','Log Parsing','Structured log parsing','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.pipelines','Log Pipelines','Processing pipelines','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.masking','Sensitive Data Masking','Mask sensitive log data','privacy','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.archives','Log Archives','Archive logs to external storage','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.export','Log Export','Export logs','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.ingestion_filters','Ingestion Filters','Drop logs before ingestion','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.pattern_detection','Pattern Detection','Automatic log pattern detection','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.field_indexing','Field Indexing','Custom indexed fields','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.log_correlation','Trace Correlation','Correlate logs with traces','feature','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.anomaly_detection','Log Anomaly Detection','Detect anomalous logs','ai','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('logging.ai_summaries','AI Log Summaries','Summarize logs with AI','ai','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('quota.monthly_logs','Monthly Logs','Maximum billable logs','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.log_retention_days','Log Retention Days','Maximum log retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('quota.log_archives','Log Archives','Maximum archive destinations','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('integration.log_webhooks','Log Webhooks','Webhook notifications for log alerts','integration','logging','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.log_exports','External Log Export','Export logs to external systems','integration','logging','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/016_11_billing_seeder_028b4_seed_billing_features_metrics.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b4_seed_billing_features_metrics.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('metrics.enabled','Metrics','Enable metrics platform','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.custom_metrics','Custom Metrics','Create custom metrics','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.counters','Counters','Counter metric support','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.gauges','Gauges','Gauge metric support','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.histograms','Histograms','Histogram metric support','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.summaries','Summaries','Summary metric support','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.percentiles','Percentiles','Percentile calculations','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.exemplars','Exemplars','Trace-linked exemplars','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.metric_math','Metric Math','Derived metric calculations','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.recording_rules','Recording Rules','Precomputed recording rules','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.downsampling','Downsampling','Automatic metric downsampling','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.dimensions','High Cardinality Dimensions','Support indexed dimensions','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.correlation','Trace Correlation','Correlate metrics with traces','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('metrics.live_stream','Live Metrics','Real-time metric stream','feature','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.metric_anomalies','AI Metric Anomalies','AI anomaly detection for metrics','ai','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.metric_forecasting','AI Forecasting','Forecast future metric trends','ai','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('quota.monthly_metrics','Monthly Metrics','Maximum metric points per billing cycle','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.metric_retention_days','Metric Retention Days','Maximum metric retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('integration.metrics_export','Metrics Export','Export metrics to external platforms','integration','metrics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.prometheus_remote_write','Prometheus Remote Write','Prometheus remote write integration','integration','metrics','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/017_11_billing_seeder_028b5_seed_billing_features_profiling.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b5_seed_billing_features_profiling.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('profiling.enabled','Continuous Profiling','Enable continuous profiling','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.cpu','CPU Profiling','CPU profile collection','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.memory','Memory Profiling','Heap and allocation profiling','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.wall_time','Wall Time Profiles','Wall-clock execution profiling','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.flamegraphs','Flame Graphs','Interactive flame graph viewer','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.call_tree','Call Tree','Hierarchical call tree','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.hotspots','Hotspot Analysis','Identify performance hotspots','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.diff','Profile Diff','Compare two profiles','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.symbolication','Native Symbolication','Resolve native symbols','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.trace_correlation','Trace Correlation','Link profiles to traces','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.release_comparison','Release Comparison','Compare profiles across releases','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('profiling.continuous','Continuous Collection','Always-on profiling','feature','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sampling.profile_dynamic','Dynamic Profile Sampling','Adaptive profile sampling','sampling','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.profile_insights','AI Profile Insights','AI-assisted performance insights','ai','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.profile_regressions','AI Performance Regression','Detect performance regressions','ai','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('quota.monthly_profiles','Monthly Profiles','Maximum profiles collected','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.profile_retention_days','Profile Retention Days','Maximum profile retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('integration.profile_exports','Profile Export','Export profiles','integration','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.pprof','pprof Export','Export in pprof format','integration','profiling','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.parca','Parca Integration','Parca compatible integration','integration','profiling','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/018_11_billing_seeder_028b6_seed_billing_features_session_replay.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b6_seed_billing_features_session_replay.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('replay.enabled','Session Replay','Enable session replay','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.browser','Browser Replay','Browser session recording','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.mobile','Mobile Replay','Mobile session recording','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.console_logs','Console Logs','Capture browser console logs','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.network','Network Capture','Capture network requests','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.dom_mutations','DOM Mutations','Record DOM mutations','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.user_interactions','User Interactions','Capture clicks, scrolls and input','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.error_linking','Error Linking','Link replays to captured errors','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.trace_linking','Trace Linking','Link replays to distributed traces','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.search','Replay Search','Search replay sessions','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.bookmarks','Replay Bookmarks','Bookmark replay timestamps','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.privacy_masking','Privacy Masking','Mask sensitive UI elements','privacy','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.canvas_capture','Canvas Capture','Capture HTML canvas updates','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('replay.webgl_capture','WebGL Capture','Capture WebGL rendering','feature','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('sampling.replay_dynamic','Dynamic Replay Sampling','Adaptive replay sampling','sampling','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.replay_summaries','AI Replay Summaries','Generate replay summaries','ai','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.replay_anomalies','AI Replay Insights','AI detects abnormal user sessions','ai','replay','boolean','none','{}'::jsonb,TRUE,FALSE),
-('quota.monthly_replays','Monthly Replays','Maximum replay sessions','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.replay_retention_days','Replay Retention Days','Maximum replay retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('integration.replay_exports','Replay Export','Export replay recordings','integration','replay','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/019_11_billing_seeder_028b7_seed_billing_features_uptime_cron.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028b7_seed_billing_features_uptime_cron.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('uptime.enabled','Uptime Monitoring','Enable uptime monitoring','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.http_checks','HTTP Checks','HTTP/HTTPS synthetic checks','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.tcp_checks','TCP Checks','TCP endpoint monitoring','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.ping_checks','Ping Checks','ICMP ping monitoring','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.ssl_monitoring','SSL Monitoring','SSL certificate monitoring','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.dns_monitoring','DNS Monitoring','DNS resolution monitoring','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.multi_region','Multi-region Checks','Execute checks from multiple regions','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.public_status_page','Public Status Page','Expose public service status','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('uptime.private_status_page','Private Status Page','Internal status dashboards','feature','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('cron.enabled','Cron Monitoring','Monitor scheduled jobs','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-('cron.heartbeats','Heartbeats','Heartbeat check-ins','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-('cron.missed_runs','Missed Run Detection','Detect missed cron executions','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-('cron.late_runs','Late Run Detection','Detect delayed cron executions','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-('cron.execution_history','Execution History','Store cron execution history','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-('cron.failure_analysis','Failure Analysis','Analyze cron failures','feature','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('ai.uptime_anomalies','AI Uptime Anomalies','AI outage and anomaly detection','ai','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.cron_failure_prediction','AI Cron Prediction','Predict cron failures','ai','cron','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.monitors','Monitors','Maximum monitors','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.status_pages','Status Pages','Maximum status pages','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.cron_monitors','Cron Monitors','Maximum cron monitors','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.cron_checkins','Monthly Cron Check-ins','Maximum cron check-ins','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('integration.pagerduty','PagerDuty Integration','Notify PagerDuty','integration','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.opsgenie','Opsgenie Integration','Notify Opsgenie','integration','uptime','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integration.statuspage','Status Page Integration','Publish incidents to status pages','integration','uptime','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/020_11_billing_seeder_028c1_seed_billing_features_alerting.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028c1_seed_billing_features_alerting.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('alerting.enabled','Alerting','Enable alerting platform','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.rules','Alert Rules','Create alert rules','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.threshold','Threshold Alerts','Static threshold alerts','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.anomaly','Anomaly Alerts','Anomaly-based alerts','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.composite','Composite Alerts','Combine multiple conditions','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.scheduled_mute','Scheduled Muting','Mute alerts on schedules','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.maintenance_windows','Maintenance Windows','Suppress alerts during maintenance','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.deduplication','Deduplication','Deduplicate repeated alerts','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.escalation_policies','Escalation Policies','Configure escalations','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.on_call','On-call Routing','Route alerts to on-call responders','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.incident_timeline','Incident Timeline','Timeline for incidents','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.routing.enabled','Advanced Routing','Enable complex route tables and conditions for alerts','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('alerting.managed_email_fallback','Managed Email Fallback','Use Pulse-managed SMTP when no organization email connector is available','feature','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('ai.alert_prioritization','AI Alert Prioritization','Rank alerts by importance','ai','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.alert_deduplication','AI Alert Deduplication','Cluster similar alerts','ai','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.alert_rules','Alert Rules','Maximum alert rules per organization','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.project_alert_rules','Project Alert Rules','Maximum alert rules per project','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.alert_channels','Alert Channels','Maximum alert channels per organization','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.connectors','Connectors','Maximum configured connector instances','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.notification_channels','Notification Channels','Maximum notification channels','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.routing_rules','Routing Rules','Maximum alert routing rules per organization','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.daily_alerts','Daily Alerts','Maximum alert notifications generated per day','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.monthly_alerts','Monthly Alerts','Maximum alert notifications generated per month','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.connector_sends','Connector Sends','Maximum connector delivery attempts per month','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-('quota.incidents','Monthly Incidents','Maximum tracked incidents','quota','quota','integer','overage','{}'::jsonb,TRUE,FALSE),
-
-('integrations.email','Email Notifications','Notify via email','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.slack','Slack Integration','Notify Slack','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.discord','Discord Integration','Notify Discord','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.microsoft_teams','Microsoft Teams','Notify Microsoft Teams','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.webhook','Webhook Notifications','Custom webhook notifications','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.sms','SMS Notifications','Notify via SMS','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.pagerduty','PagerDuty','PagerDuty integration','integration','alerting','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/021_11_billing_seeder_028c2_seed_billing_features_dashboards.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028c2_seed_billing_features_dashboards.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('dashboards.enabled','Dashboards','Enable dashboards','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.custom_dashboards','Custom Dashboards','Create custom dashboards','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.widgets','Dashboard Widgets','Use built-in dashboard widgets','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.custom_widgets','Custom Widgets','Build custom dashboard widgets','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.folders','Dashboard Folders','Organize dashboards into folders','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.saved_views','Saved Views','Save reusable dashboard views','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.filters','Global Filters','Apply global dashboard filters','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.variables','Dashboard Variables','Parameterized dashboards','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.drilldowns','Drilldowns','Navigate from charts into underlying data','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.scheduled_reports','Scheduled Reports','Email scheduled dashboard reports','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.pdf_export','PDF Export','Export dashboards as PDF','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.csv_export','CSV Export','Export dashboard data as CSV','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.sharing','Dashboard Sharing','Share dashboards with users','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.public_links','Public Dashboard Links','Create public dashboard links','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('dashboards.embeds','Embedded Dashboards','Embed dashboards into external apps','feature','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('analytics.explorer','Analytics Explorer','Interactive analytics explorer','feature','analytics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('analytics.query_builder','Query Builder','Visual query builder','feature','analytics','boolean','none','{}'::jsonb,TRUE,FALSE),
-('analytics.comparisons','Time Comparisons','Compare metrics across time ranges','feature','analytics','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('ai.dashboard_insights','AI Dashboard Insights','AI-generated dashboard insights','ai','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.report_summaries','AI Report Summaries','AI-generated report summaries','ai','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.dashboards','Dashboards','Maximum dashboards','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.dashboard_widgets','Dashboard Widgets','Maximum widgets','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.saved_views','Saved Views','Maximum saved views','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('integrations.power_bi','Power BI Integration','Export to Microsoft Power BI','integration','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.grafana','Grafana Integration','Grafana interoperability','integration','dashboards','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/022_11_billing_seeder_028c3_seed_billing_features_integrations.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028c3_seed_billing_features_integrations.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('integrations.enabled','Integrations','Enable third-party integrations','feature','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('integrations.github','GitHub','GitHub integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.gitlab','GitLab','GitLab integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.bitbucket','Bitbucket','Bitbucket integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('integrations.jira','Jira','Jira integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.linear','Linear','Linear integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('integrations.aws','AWS','Amazon Web Services integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.azure','Azure','Microsoft Azure integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.gcp','Google Cloud','Google Cloud integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.vercel','Vercel','Vercel deployment integration','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('integrations.opentelemetry','OpenTelemetry','OpenTelemetry interoperability','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.rest_api','REST API','Public REST API access','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.webhooks','Outgoing Webhooks','Outbound webhook support','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.incoming_webhooks','Incoming Webhooks','Inbound webhook endpoints','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.cli','CLI','Command-line interface','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.terraform','Terraform Provider','Terraform provider access','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('integrations.data_export','Data Export','Bulk data export','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.data_import','Data Import','Bulk data import','integration','integrations','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.integrations','Integrations','Maximum connected integrations','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.api_tokens','API Tokens','Maximum personal API tokens','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.webhooks','Webhooks','Maximum webhook endpoints','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/023_11_billing_seeder_028c4_seed_billing_features_ai.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028c4_seed_billing_features_ai.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('ai.enabled','AI Platform','Enable AI-powered features','feature','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.root_cause_analysis','Root Cause Analysis','AI-assisted root cause analysis','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.anomaly_detection','Anomaly Detection','Detect anomalies across telemetry','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.intelligent_alerting','Intelligent Alerting','Reduce alert noise with AI','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.summaries','AI Summaries','Generate summaries for incidents and telemetry','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.forecasting','Forecasting','Predict future trends','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.recommendations','Recommendations','Recommend optimizations','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.incident_copilot','Incident Copilot','Interactive incident assistant','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.query_assistant','Query Assistant','Natural language query generation','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.release_insights','Release Insights','Analyze release impact','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.change_detection','Change Detection','Correlate deployments with regressions','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.service_health_score','Service Health Score','AI-generated health scoring','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('ai.automation','AI Automation','Execute AI-assisted remediation workflows','ai','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.ai_credits','AI Credits','Monthly AI credit allocation','quota','quota','integer','overage','{"unit":"credits"}'::jsonb,TRUE,FALSE),
-('quota.ai_requests','AI Requests','Maximum AI requests per month','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('integrations.openai','OpenAI Provider','Use OpenAI models','integration','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.anthropic','Anthropic Provider','Use Anthropic models','integration','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.google_ai','Google AI Provider','Use Google AI models','integration','ai','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.custom_llm','Custom LLM','Connect custom AI providers','integration','ai','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/024_11_billing_seeder_028d1_seed_billing_features_enterprise_security.sql
--- Source: canonical_migrations_draft/11_billing/seeder/028d1_seed_billing_features_enterprise_security.sql
-WITH feature_seed(
-feature_key,name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root
-) AS (
-VALUES
-('security.enabled','Enterprise Security','Enable enterprise security capabilities','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.sso','Single Sign-On','SAML/OIDC single sign-on','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.scim','SCIM Provisioning','Automated user provisioning','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.custom_roles','Custom Roles','Create custom RBAC roles','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.role_permissions','Granular Permissions','Fine-grained permissions','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.audit_logs','Audit Logs','Organization audit trail','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.approval_workflows','Approval Workflows','Approval-based administrative actions','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.ip_allowlist','IP Allowlist','Restrict access by IP','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.session_policies','Session Policies','Session timeout and policy controls','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.service_accounts','Service Accounts','Machine identities','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.api_key_governance','API Key Governance','API key lifecycle controls','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.secret_management','Secret Management','Manage sensitive credentials','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.data_residency','Data Residency','Regional data residency controls','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.byok','Bring Your Own Key','Customer-managed encryption keys','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.encryption_controls','Encryption Controls','Advanced encryption configuration','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.gdpr','GDPR Compliance','GDPR tooling','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.hipaa','HIPAA Compliance','HIPAA support','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.soc2','SOC2 Compliance','SOC2 controls','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('security.organization_policies','Organization Policies','Organization-wide security policies','feature','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-
-('quota.audit_log_retention_days','Audit Log Retention','Maximum audit log retention','quota','quota','integer','hard_limit','{"unit":"days"}'::jsonb,TRUE,FALSE),
-('quota.service_accounts','Service Accounts','Maximum service accounts','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-('quota.custom_roles','Custom Roles','Maximum custom roles','quota','quota','integer','hard_limit','{}'::jsonb,TRUE,FALSE),
-
-('integrations.okta','Okta','Okta identity integration','integration','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.microsoft_entra','Microsoft Entra ID','Microsoft Entra integration','integration','security','boolean','none','{}'::jsonb,TRUE,FALSE),
-('integrations.google_workspace','Google Workspace','Google Workspace integration','integration','security','boolean','none','{}'::jsonb,TRUE,FALSE)
-)
-
-INSERT INTO billing_features
-(feature_key,feature_name,description,category,module,value_type,usage_behavior,configuration,is_public,is_module_root)
-SELECT
-feature_key,name,description,
-category::billing_feature_category,
-module,
-value_type::billing_feature_value_type,
-usage_behavior::billing_usage_behavior,
-configuration,is_public,is_module_root
-FROM feature_seed
-ON CONFLICT (feature_key)
-DO UPDATE SET
-feature_name=EXCLUDED.feature_name,
-description=EXCLUDED.description,
-category=EXCLUDED.category,
-module=EXCLUDED.module,
-value_type=EXCLUDED.value_type,
-usage_behavior=EXCLUDED.usage_behavior,
-configuration=EXCLUDED.configuration,
-is_public=EXCLUDED.is_public,
-is_module_root=EXCLUDED.is_module_root,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/025_11_billing_seeder_029b_seed_feature_dependencies_canonical.sql
--- Source: canonical_migrations_draft/11_billing/seeder/029b_seed_feature_dependencies_canonical.sql
-WITH dependency_seed(feature_key, depends_on_key, dependency_type) AS (
-  VALUES
-    ('tracing.service_map', 'tracing.enabled', 'required'),
-    ('tracing.flame_graphs', 'tracing.enabled', 'required'),
-    ('logging.live_tail', 'logging.enabled', 'required'),
-    ('logging.search', 'logging.enabled', 'required'),
-    ('profiling.trace_correlation', 'profiling.enabled', 'required'),
-    ('replay.error_linking', 'replay.enabled', 'required'),
-    ('alerting.escalation_policies', 'alerting.enabled', 'required'),
-    ('ai.root_cause_analysis', 'ai.enabled', 'required'),
-    ('security.scim', 'security.sso', 'required')
-)
-INSERT INTO feature_dependencies (feature_id, depends_on_feature_id, dependency_type)
-SELECT child.id, parent.id, seed.dependency_type
-FROM dependency_seed seed
-JOIN billing_features child ON child.feature_key = seed.feature_key AND child.deleted_at IS NULL
-JOIN billing_features parent ON parent.feature_key = seed.depends_on_key AND parent.deleted_at IS NULL
-ON CONFLICT (feature_id, depends_on_feature_id)
-DO UPDATE SET dependency_type = EXCLUDED.dependency_type;
-
--- Source: 20_seeders/026_11_billing_seeder_030a_seed_plan_entitlements_core.sql
--- Source: canonical_migrations_draft/11_billing/seeder/030a_seed_plan_entitlements_core.sql
-WITH entitlement_seed(plan_key, feature_key, value_boolean, value_integer) AS (
-VALUES
--- ===== FREE =====
-('free','organization.enabled',TRUE,NULL),
-('free','projects.enabled',TRUE,NULL),
-('free','sdk.enabled',TRUE,NULL),
-('free','quota.projects',NULL,1),
-('free','quota.members',NULL,3),
-('free','quota.api_keys',NULL,2),
-('free','quota.environments',NULL,2),
-('free','quota.monthly_events',NULL,100000),
-('free','quota.requests_per_second',NULL,50),
-
--- ===== STARTER =====
-('starter','organization.enabled',TRUE,NULL),
-('starter','projects.enabled',TRUE,NULL),
-('starter','sdk.enabled',TRUE,NULL),
-('starter','sdk.remote_config',TRUE,NULL),
-('starter','sdk.retry',TRUE,NULL),
-('starter','sdk.batching',TRUE,NULL),
-('starter','quota.projects',NULL,5),
-('starter','quota.members',NULL,10),
-('starter','quota.api_keys',NULL,10),
-('starter','quota.environments',NULL,5),
-('starter','quota.monthly_events',NULL,1000000),
-('starter','quota.requests_per_second',NULL,250),
-
--- ===== GROWTH =====
-('growth','organization.enabled',TRUE,NULL),
-('growth','projects.enabled',TRUE,NULL),
-('growth','sdk.enabled',TRUE,NULL),
-('growth','sdk.remote_config',TRUE,NULL),
-('growth','sdk.retry',TRUE,NULL),
-('growth','sdk.batching',TRUE,NULL),
-('growth','sdk.offline_queue',TRUE,NULL),
-('growth','sdk.dynamic_sampling',TRUE,NULL),
-('growth','privacy.data_scrubbing',TRUE,NULL),
-('growth','quota.projects',NULL,25),
-('growth','quota.members',NULL,50),
-('growth','quota.api_keys',NULL,50),
-('growth','quota.environments',NULL,10),
-('growth','quota.monthly_events',NULL,10000000),
-('growth','quota.requests_per_second',NULL,1000),
-
--- ===== BUSINESS =====
-('business','organization.enabled',TRUE,NULL),
-('business','projects.enabled',TRUE,NULL),
-('business','sdk.enabled',TRUE,NULL),
-('business','sdk.remote_config',TRUE,NULL),
-('business','sdk.retry',TRUE,NULL),
-('business','sdk.batching',TRUE,NULL),
-('business','sdk.offline_queue',TRUE,NULL),
-('business','sdk.dynamic_sampling',TRUE,NULL),
-('business','privacy.data_scrubbing',TRUE,NULL),
-('business','privacy.capture_headers',TRUE,NULL),
-('business','privacy.capture_body',TRUE,NULL),
-('business','quota.projects',NULL,100),
-('business','quota.members',NULL,250),
-('business','quota.api_keys',NULL,250),
-('business','quota.environments',NULL,25),
-('business','quota.monthly_events',NULL,100000000),
-('business','quota.requests_per_second',NULL,5000),
-
--- ===== ENTERPRISE =====
-('enterprise','organization.enabled',TRUE,NULL),
-('enterprise','projects.enabled',TRUE,NULL),
-('enterprise','sdk.enabled',TRUE,NULL),
-('enterprise','sdk.remote_config',TRUE,NULL),
-('enterprise','sdk.retry',TRUE,NULL),
-('enterprise','sdk.batching',TRUE,NULL),
-('enterprise','sdk.offline_queue',TRUE,NULL),
-('enterprise','sdk.dynamic_sampling',TRUE,NULL),
-('enterprise','privacy.data_scrubbing',TRUE,NULL),
-('enterprise','privacy.capture_headers',TRUE,NULL),
-('enterprise','privacy.capture_body',TRUE,NULL),
-('enterprise','privacy.capture_ip',TRUE,NULL),
-('enterprise','quota.projects',NULL,1000),
-('enterprise','quota.members',NULL,10000),
-('enterprise','quota.api_keys',NULL,1000),
-('enterprise','quota.environments',NULL,100),
-('enterprise','quota.monthly_events',NULL,1000000000),
-('enterprise','quota.requests_per_second',NULL,50000)
-)
-
 INSERT INTO plan_feature_entitlements
-(plan_id, feature_id, boolean_value, integer_value)
-SELECT
-p.id,
-f.id,
-e.value_boolean,
-e.value_integer
-FROM entitlement_seed e
-JOIN plans p ON p.key = e.plan_key
-JOIN billing_features f ON f.feature_key = e.feature_key
-ON CONFLICT (plan_id, feature_id)
-DO UPDATE SET
-boolean_value = EXCLUDED.boolean_value,
-integer_value = EXCLUDED.integer_value,
-updated_at = NOW(),
-deleted_at = NULL;
-
--- Source: 20_seeders/027_11_billing_seeder_030b_seed_plan_entitlements_observability.sql
--- Source: canonical_migrations_draft/11_billing/seeder/030b_seed_plan_entitlements_observability.sql
-WITH entitlement_seed(plan_key, feature_key, bool_value, int_value) AS (
-VALUES
--- Free
-('free','error_tracking.enabled',TRUE,NULL),
-('free','logging.enabled',TRUE,NULL),
-('free','metrics.enabled',TRUE,NULL),
-('free','quota.monthly_logs',NULL,100000),
-('free','quota.monthly_metrics',NULL,100000),
-('free','quota.monthly_profiles',NULL,0),
-('free','quota.monthly_replays',NULL,0),
-
--- Starter
-('starter','error_tracking.enabled',TRUE,NULL),
-('starter','tracing.enabled',TRUE,NULL),
-('starter','logging.enabled',TRUE,NULL),
-('starter','metrics.enabled',TRUE,NULL),
-('starter','tracing.service_map',TRUE,NULL),
-('starter','logging.search',TRUE,NULL),
-('starter','quota.monthly_logs',NULL,1000000),
-('starter','quota.monthly_metrics',NULL,1000000),
-('starter','quota.monthly_profiles',NULL,50000),
-('starter','quota.monthly_replays',NULL,1000),
-
--- Growth
-('growth','error_tracking.enabled',TRUE,NULL),
-('growth','tracing.enabled',TRUE,NULL),
-('growth','logging.enabled',TRUE,NULL),
-('growth','metrics.enabled',TRUE,NULL),
-('growth','profiling.enabled',TRUE,NULL),
-('growth','replay.enabled',TRUE,NULL),
-('growth','uptime.enabled',TRUE,NULL),
-('growth','cron.enabled',TRUE,NULL),
-('growth','tracing.service_map',TRUE,NULL),
-('growth','logging.live_tail',TRUE,NULL),
-('growth','metrics.metric_math',TRUE,NULL),
-('growth','quota.monthly_logs',NULL,10000000),
-('growth','quota.monthly_metrics',NULL,10000000),
-('growth','quota.monthly_profiles',NULL,500000),
-('growth','quota.monthly_replays',NULL,25000),
-('growth','quota.monitors',NULL,25),
-('growth','quota.cron_monitors',NULL,25),
-
--- Business
-('business','error_tracking.enabled',TRUE,NULL),
-('business','tracing.enabled',TRUE,NULL),
-('business','logging.enabled',TRUE,NULL),
-('business','metrics.enabled',TRUE,NULL),
-('business','profiling.enabled',TRUE,NULL),
-('business','replay.enabled',TRUE,NULL),
-('business','uptime.enabled',TRUE,NULL),
-('business','cron.enabled',TRUE,NULL),
-('business','tracing.live_traces',TRUE,NULL),
-('business','logging.archives',TRUE,NULL),
-('business','metrics.recording_rules',TRUE,NULL),
-('business','profiling.trace_correlation',TRUE,NULL),
-('business','replay.trace_linking',TRUE,NULL),
-('business','quota.monthly_logs',NULL,100000000),
-('business','quota.monthly_metrics',NULL,100000000),
-('business','quota.monthly_profiles',NULL,5000000),
-('business','quota.monthly_replays',NULL,250000),
-('business','quota.monitors',NULL,100),
-('business','quota.cron_monitors',NULL,100),
-
--- Enterprise
-('enterprise','error_tracking.enabled',TRUE,NULL),
-('enterprise','tracing.enabled',TRUE,NULL),
-('enterprise','logging.enabled',TRUE,NULL),
-('enterprise','metrics.enabled',TRUE,NULL),
-('enterprise','profiling.enabled',TRUE,NULL),
-('enterprise','replay.enabled',TRUE,NULL),
-('enterprise','uptime.enabled',TRUE,NULL),
-('enterprise','cron.enabled',TRUE,NULL),
-('enterprise','tracing.live_traces',TRUE,NULL),
-('enterprise','tracing.trace_compare',TRUE,NULL),
-('enterprise','logging.archives',TRUE,NULL),
-('enterprise','logging.pipelines',TRUE,NULL),
-('enterprise','metrics.recording_rules',TRUE,NULL),
-('enterprise','metrics.exemplars',TRUE,NULL),
-('enterprise','profiling.trace_correlation',TRUE,NULL),
-('enterprise','replay.trace_linking',TRUE,NULL),
-('enterprise','quota.monthly_logs',NULL,1000000000),
-('enterprise','quota.monthly_metrics',NULL,1000000000),
-('enterprise','quota.monthly_profiles',NULL,50000000),
-('enterprise','quota.monthly_replays',NULL,1000000),
-('enterprise','quota.monitors',NULL,1000),
-('enterprise','quota.cron_monitors',NULL,1000)
-)
-
-INSERT INTO plan_feature_entitlements
-(plan_id,feature_id,boolean_value,integer_value)
-SELECT p.id,f.id,e.bool_value,e.int_value
-FROM entitlement_seed e
-JOIN plans p ON p.key=e.plan_key
-JOIN billing_features f ON f.feature_key=e.feature_key
-ON CONFLICT(plan_id,feature_id)
-DO UPDATE SET
-boolean_value=EXCLUDED.boolean_value,
-integer_value=EXCLUDED.integer_value,
-updated_at=NOW(),
-deleted_at=NULL;
-
--- Source: 20_seeders/028_11_billing_seeder_030c_seed_plan_entitlements_platform.sql
--- Source: canonical_migrations_draft/11_billing/seeder/030c_seed_plan_entitlements_platform.sql
-WITH entitlement_seed(plan_key, feature_key, bool_value, int_value) AS (
-VALUES
--- ================= FREE =================
-('free','dashboards.enabled',TRUE,NULL),
-('free','alerting.enabled',FALSE,NULL),
-('free','alerting.routing.enabled',FALSE,NULL),
-('free','ai.enabled',FALSE,NULL),
-('free','integrations.rest_api',TRUE,NULL),
-('free','quota.connectors',NULL,2),
-
--- ================= STARTER =================
-('starter','dashboards.enabled',TRUE,NULL),
-('starter','dashboards.custom_dashboards',TRUE,NULL),
-('starter','analytics.explorer',TRUE,NULL),
-('starter','alerting.enabled',TRUE,NULL),
-('starter','alerting.rules',TRUE,NULL),
-('starter','alerting.routing.enabled',TRUE,NULL),
-('starter','alerting.managed_email_fallback',TRUE,NULL),
-('starter','ai.enabled',TRUE,NULL),
-('starter','ai.summaries',TRUE,NULL),
-('starter','integrations.email',TRUE,NULL),
-('starter','integrations.webhook',TRUE,NULL),
-('starter','integrations.slack',TRUE,NULL),
-('starter','quota.dashboards',NULL,10),
-('starter','quota.alert_rules',NULL,10),
-('starter','quota.daily_alerts',NULL,100),
-('starter','quota.monthly_alerts',NULL,1000),
-('starter','quota.connector_sends',NULL,1000),
-('starter','quota.connectors',NULL,10),
-('starter','quota.ai_credits',NULL,500),
-
--- ================= GROWTH =================
-('growth','dashboards.enabled',TRUE,NULL),
-('growth','dashboards.custom_dashboards',TRUE,NULL),
-('growth','dashboards.custom_widgets',TRUE,NULL),
-('growth','analytics.explorer',TRUE,NULL),
-('growth','analytics.query_builder',TRUE,NULL),
-('growth','alerting.enabled',TRUE,NULL),
-('growth','alerting.routing.enabled',TRUE,NULL),
-('growth','alerting.composite',TRUE,NULL),
-('growth','alerting.escalation_policies',TRUE,NULL),
-('growth','alerting.managed_email_fallback',TRUE,NULL),
-('growth','ai.enabled',TRUE,NULL),
-('growth','ai.summaries',TRUE,NULL),
-('growth','integrations.github',TRUE,NULL),
-('growth','integrations.jira',TRUE,NULL),
-('growth','integrations.slack',TRUE,NULL),
-('growth','integrations.discord',TRUE,NULL),
-('growth','integrations.email',TRUE,NULL),
-('growth','integrations.webhook',TRUE,NULL),
-('growth','quota.dashboards',NULL,50),
-('growth','quota.alert_rules',NULL,50),
-('growth','quota.daily_alerts',NULL,1000),
-('growth','quota.monthly_alerts',NULL,25000),
-('growth','quota.connector_sends',NULL,25000),
-('growth','quota.connectors',NULL,50),
-('growth','quota.ai_credits',NULL,5000),
-
--- ================= BUSINESS =================
-('business','dashboards.enabled',TRUE,NULL),
-('business','dashboards.embeds',TRUE,NULL),
-('business','dashboards.scheduled_reports',TRUE,NULL),
-('business','alerting.enabled',TRUE,NULL),
-('business','alerting.routing.enabled',TRUE,NULL),
-('business','alerting.composite',TRUE,NULL),
-('business','alerting.escalation_policies',TRUE,NULL),
-('business','alerting.on_call',TRUE,NULL),
-('business','alerting.incident_timeline',TRUE,NULL),
-('business','alerting.managed_email_fallback',TRUE,NULL),
-('business','ai.enabled',TRUE,NULL),
-('business','ai.root_cause_analysis',TRUE,NULL),
-('business','ai.anomaly_detection',TRUE,NULL),
-('business','ai.forecasting',TRUE,NULL),
-('business','security.enabled',TRUE,NULL),
-('business','security.audit_logs',TRUE,NULL),
-('business','security.sso',TRUE,NULL),
-('business','integrations.github',TRUE,NULL),
-('business','integrations.gitlab',TRUE,NULL),
-('business','integrations.terraform',TRUE,NULL),
-('business','integrations.email',TRUE,NULL),
-('business','integrations.slack',TRUE,NULL),
-('business','integrations.discord',TRUE,NULL),
-('business','integrations.webhook',TRUE,NULL),
-('business','integrations.pagerduty',TRUE,NULL),
-('business','integrations.sms',TRUE,NULL),
-('business','quota.dashboards',NULL,200),
-('business','quota.alert_rules',NULL,250),
-('business','quota.daily_alerts',NULL,10000),
-('business','quota.monthly_alerts',NULL,250000),
-('business','quota.connector_sends',NULL,250000),
-('business','quota.connectors',NULL,250),
-('business','quota.ai_credits',NULL,50000),
-
--- ================= ENTERPRISE =================
-('enterprise','dashboards.enabled',TRUE,NULL),
-('enterprise','dashboards.embeds',TRUE,NULL),
-('enterprise','dashboards.public_links',TRUE,NULL),
-('enterprise','dashboards.scheduled_reports',TRUE,NULL),
-('enterprise','alerting.enabled',TRUE,NULL),
-('enterprise','alerting.routing.enabled',TRUE,NULL),
-('enterprise','alerting.composite',TRUE,NULL),
-('enterprise','alerting.escalation_policies',TRUE,NULL),
-('enterprise','alerting.on_call',TRUE,NULL),
-('enterprise','alerting.incident_timeline',TRUE,NULL),
-('enterprise','alerting.managed_email_fallback',TRUE,NULL),
-('enterprise','ai.enabled',TRUE,NULL),
-('enterprise','ai.summaries',TRUE,NULL),
-('enterprise','ai.root_cause_analysis',TRUE,NULL),
-('enterprise','ai.anomaly_detection',TRUE,NULL),
-('enterprise','ai.forecasting',TRUE,NULL),
-('enterprise','ai.incident_copilot',TRUE,NULL),
-('enterprise','security.enabled',TRUE,NULL),
-('enterprise','security.sso',TRUE,NULL),
-('enterprise','security.scim',TRUE,NULL),
-('enterprise','security.audit_logs',TRUE,NULL),
-('enterprise','security.custom_roles',TRUE,NULL),
-('enterprise','integrations.github',TRUE,NULL),
-('enterprise','integrations.gitlab',TRUE,NULL),
-('enterprise','integrations.bitbucket',TRUE,NULL),
-('enterprise','integrations.jira',TRUE,NULL),
-('enterprise','integrations.terraform',TRUE,NULL),
-('enterprise','integrations.email',TRUE,NULL),
-('enterprise','integrations.slack',TRUE,NULL),
-('enterprise','integrations.discord',TRUE,NULL),
-('enterprise','integrations.microsoft_teams',TRUE,NULL),
-('enterprise','integrations.webhook',TRUE,NULL),
-('enterprise','integrations.pagerduty',TRUE,NULL),
-('enterprise','integrations.sms',TRUE,NULL),
-('enterprise','quota.dashboards',NULL,1000),
-('enterprise','quota.alert_rules',NULL,1000),
-('enterprise','quota.daily_alerts',NULL,100000),
-('enterprise','quota.monthly_alerts',NULL,1000000),
-('enterprise','quota.connector_sends',NULL,1000000),
-('enterprise','quota.connectors',NULL,1000),
-('enterprise','quota.ai_credits',NULL,500000)
-)
-
-INSERT INTO plan_feature_entitlements
-(plan_id, feature_id, boolean_value, integer_value)
-SELECT
-    p.id,
-    f.id,
-    e.bool_value,
-    e.int_value
-FROM entitlement_seed e
-JOIN plans p ON p.key = e.plan_key
-JOIN billing_features f ON f.feature_key = e.feature_key
-ON CONFLICT (plan_id, feature_id)
-DO UPDATE SET
-    boolean_value = EXCLUDED.boolean_value,
+  (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value, metadata, configuration, display_value)
+SELECT p.id, bf.id, es.boolean_value, es.integer_value, es.decimal_value, es.string_value, es.metadata, es.configuration,
+       CASE
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'free' THEN '10K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'starter' THEN '150K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'growth' THEN '1M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'business' THEN '8M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'enterprise' THEN 'Custom'
+         ELSE COALESCE(es.string_value, es.integer_value::text, es.decimal_value::text, es.boolean_value::text)
+       END
+FROM entitlement_seed es
+JOIN plans p ON p.key = es.plan_key AND p.version = 1 AND p.deleted_at IS NULL
+JOIN billing_features bf ON bf.feature_key = es.feature_key AND bf.deleted_at IS NULL
+ON CONFLICT (plan_id, feature_id) DO UPDATE
+SET boolean_value = EXCLUDED.boolean_value,
     integer_value = EXCLUDED.integer_value,
-    updated_at = NOW(),
-    deleted_at = NULL;
+    decimal_value = EXCLUDED.decimal_value,
+    string_value = EXCLUDED.string_value,
+    metadata = EXCLUDED.metadata,
+    configuration = EXCLUDED.configuration,
+    display_value = EXCLUDED.display_value,
+    deleted_at = NULL,
+    updated_at = NOW();
 
--- Source: 20_seeders/029_11_billing_seeder_030d_seed_plan_quota_values.sql
--- Source: canonical_migrations_draft/11_billing/seeder/030d_seed_plan_quota_values.sql
-WITH quota_seed(plan_key, feature_key, integer_value) AS (
-VALUES
--- ================= FREE =================
-('free','quota.projects',1),
-('free','quota.members',3),
-('free','quota.environments',2),
-('free','quota.api_keys',2),
-('free','quota.monthly_events',100000),
-('free','quota.retention_days',7),
-('free','quota.log_retention_days',7),
-('free','quota.metric_retention_days',7),
-('free','quota.profile_retention_days',0),
-('free','quota.replay_retention_days',0),
-('free','quota.trace_retention_days',7),
-('free','quota.alert_rules',0),
-('free','quota.project_alert_rules',0),
-('free','quota.alert_channels',0),
-('free','quota.notification_channels',0),
-('free','quota.routing_rules',0),
-('free','quota.daily_alerts',0),
-('free','quota.monthly_alerts',0),
-('free','quota.connector_sends',0),
-('free','quota.status_pages',0),
-('free','quota.integrations',2),
-('free','quota.connectors',2),
-('free','quota.api_tokens',2),
-('free','quota.webhooks',2),
-('free','quota.service_accounts',0),
-('free','quota.custom_roles',0),
-('free','quota.audit_log_retention_days',0),
-('free','quota.ai_requests',0),
-('free','quota.ai_credits',0),
+-- ============================================================
+-- Source: 20_seeders/007_11_billing_event_credit_weights.sql
+-- ============================================================
 
--- ================= STARTER =================
-('starter','quota.projects',5),
-('starter','quota.members',10),
-('starter','quota.environments',5),
-('starter','quota.api_keys',10),
-('starter','quota.monthly_events',1000000),
-('starter','quota.retention_days',30),
-('starter','quota.log_retention_days',30),
-('starter','quota.metric_retention_days',30),
-('starter','quota.profile_retention_days',30),
-('starter','quota.replay_retention_days',7),
-('starter','quota.trace_retention_days',30),
-('starter','quota.alert_rules',10),
-('starter','quota.project_alert_rules',5),
-('starter','quota.alert_channels',10),
-('starter','quota.notification_channels',10),
-('starter','quota.routing_rules',2),
-('starter','quota.daily_alerts',100),
-('starter','quota.monthly_alerts',1000),
-('starter','quota.connector_sends',1000),
-('starter','quota.status_pages',1),
-('starter','quota.integrations',10),
-('starter','quota.connectors',10),
-('starter','quota.api_tokens',10),
-('starter','quota.webhooks',10),
-('starter','quota.service_accounts',2),
-('starter','quota.custom_roles',0),
-('starter','quota.audit_log_retention_days',30),
-('starter','quota.ai_requests',1000),
-('starter','quota.ai_credits',500),
+-- =============================================================================
+-- Seeder File: 007_11_billing_event_credit_weights.sql
+-- Description: Telemetry Event Type Credit Weights for Weighted Billing System
+-- Version: 1.0
+-- =============================================================================
 
--- ================= GROWTH =================
-('growth','quota.projects',25),
-('growth','quota.members',50),
-('growth','quota.environments',10),
-('growth','quota.api_keys',50),
-('growth','quota.monthly_events',10000000),
-('growth','quota.retention_days',90),
-('growth','quota.log_retention_days',90),
-('growth','quota.metric_retention_days',90),
-('growth','quota.profile_retention_days',90),
-('growth','quota.replay_retention_days',30),
-('growth','quota.trace_retention_days',90),
-('growth','quota.alert_rules',50),
-('growth','quota.project_alert_rules',25),
-('growth','quota.alert_channels',50),
-('growth','quota.notification_channels',50),
-('growth','quota.routing_rules',10),
-('growth','quota.daily_alerts',1000),
-('growth','quota.monthly_alerts',25000),
-('growth','quota.connector_sends',25000),
-('growth','quota.status_pages',5),
-('growth','quota.integrations',50),
-('growth','quota.connectors',50),
-('growth','quota.api_tokens',50),
-('growth','quota.webhooks',50),
-('growth','quota.service_accounts',10),
-('growth','quota.custom_roles',25),
-('growth','quota.audit_log_retention_days',180),
-('growth','quota.ai_requests',10000),
-('growth','quota.ai_credits',2500),
-
--- ================= BUSINESS =================
-('business','quota.projects',100),
-('business','quota.members',250),
-('business','quota.environments',25),
-('business','quota.api_keys',250),
-('business','quota.monthly_events',100000000),
-('business','quota.retention_days',180),
-('business','quota.log_retention_days',180),
-('business','quota.metric_retention_days',180),
-('business','quota.profile_retention_days',180),
-('business','quota.replay_retention_days',90),
-('business','quota.trace_retention_days',180),
-('business','quota.alert_rules',250),
-('business','quota.project_alert_rules',100),
-('business','quota.alert_channels',250),
-('business','quota.notification_channels',250),
-('business','quota.routing_rules',50),
-('business','quota.daily_alerts',10000),
-('business','quota.monthly_alerts',250000),
-('business','quota.connector_sends',250000),
-('business','quota.status_pages',25),
-('business','quota.integrations',250),
-('business','quota.connectors',250),
-('business','quota.api_tokens',250),
-('business','quota.webhooks',250),
-('business','quota.service_accounts',100),
-('business','quota.custom_roles',100),
-('business','quota.audit_log_retention_days',365),
-('business','quota.ai_requests',100000),
-('business','quota.ai_credits',50000),
-
--- ================= ENTERPRISE =================
-('enterprise','quota.projects',1000),
-('enterprise','quota.members',10000),
-('enterprise','quota.environments',100),
-('enterprise','quota.api_keys',1000),
-('enterprise','quota.monthly_events',1000000000),
-('enterprise','quota.retention_days',365),
-('enterprise','quota.log_retention_days',365),
-('enterprise','quota.metric_retention_days',365),
-('enterprise','quota.profile_retention_days',365),
-('enterprise','quota.replay_retention_days',365),
-('enterprise','quota.trace_retention_days',365),
-('enterprise','quota.alert_rules',1000),
-('enterprise','quota.project_alert_rules',500),
-('enterprise','quota.alert_channels',1000),
-('enterprise','quota.notification_channels',1000),
-('enterprise','quota.routing_rules',200),
-('enterprise','quota.daily_alerts',100000),
-('enterprise','quota.monthly_alerts',1000000),
-('enterprise','quota.connector_sends',1000000),
-('enterprise','quota.status_pages',100),
-('enterprise','quota.integrations',1000),
-('enterprise','quota.connectors',1000),
-('enterprise','quota.api_tokens',1000),
-('enterprise','quota.webhooks',1000),
-('enterprise','quota.service_accounts',1000),
-('enterprise','quota.custom_roles',1000),
-('enterprise','quota.audit_log_retention_days',2555),
-('enterprise','quota.ai_requests',1000000),
-('enterprise','quota.ai_credits',1000000)
-)
-
-INSERT INTO plan_feature_entitlements
-(plan_id, feature_id, integer_value)
-SELECT
-    p.id,
-    f.id,
-    q.integer_value
-FROM quota_seed q
-JOIN plans p ON p.key=q.plan_key
-JOIN billing_features f ON f.feature_key=q.feature_key
-ON CONFLICT (plan_id, feature_id)
-DO UPDATE SET
-    integer_value=EXCLUDED.integer_value,
-    updated_at=NOW(),
-    deleted_at=NULL;
-
--- Source: 20_seeders/030_11_billing_seeder_031b_seed_addon_catalog_canonical.sql
--- Source: canonical_migrations_draft/11_billing/seeder/031b_seed_addon_catalog_canonical.sql
-WITH addon_seed(addon_key, name, description, category, target_feature_key, amount_minor, unit_quantity, unit_label) AS (
-  VALUES
-    ('events_10m', '10M Event Pack', 'Additional monthly event capacity', 'capacity', 'quota.monthly_events', 4900::bigint, 10000000, 'events'),
-    ('ai_credits_100k', '100K AI Credits', 'Additional monthly AI credit capacity', 'capacity', 'quota.ai_credits', 9900::bigint, 100000, 'credits'),
-    ('extra_project', 'Extra Project', 'One additional project', 'capacity', 'quota.projects', 500::bigint, 1, 'projects'),
-    ('extra_member', 'Extra Member', 'One additional organization member', 'capacity', 'quota.members', 1000::bigint, 1, 'members')
-), inserted AS (
-  INSERT INTO addons (key, name, description, category, target_feature_id, is_active, metadata)
-  SELECT seed.addon_key, seed.name, seed.description, seed.category, feature.id, TRUE,
-         jsonb_build_object('seededBy', 'canonical-billing')
-  FROM addon_seed seed
-  JOIN billing_features feature ON feature.feature_key = seed.target_feature_key AND feature.deleted_at IS NULL
-  ON CONFLICT (key) DO UPDATE SET
-    name = EXCLUDED.name, description = EXCLUDED.description,
-    target_feature_id = EXCLUDED.target_feature_id, is_active = TRUE,
-    updated_at = NOW()
-  RETURNING id, key
-)
-INSERT INTO addon_prices (addon_id, provider, billing_interval, currency, amount_minor, pricing_model, unit_quantity, unit_label, is_default)
-SELECT inserted.id, 'system', 'monthly', 'USD', seed.amount_minor, 'per_unit', seed.unit_quantity, seed.unit_label, TRUE
-FROM inserted
-JOIN addon_seed seed ON seed.addon_key = inserted.key
-WHERE NOT EXISTS (
-  SELECT 1 FROM addon_prices price
-  WHERE price.addon_id = inserted.id
-    AND price.provider = 'system'
-    AND price.billing_interval = 'monthly'
-    AND price.currency = 'USD'
-    AND price.starts_at IS NULL
+-- Ensure table exists (idempotent)
+CREATE TABLE IF NOT EXISTS billing_event_credit_weights (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type      VARCHAR(64) NOT NULL UNIQUE,
+    credit_weight   NUMERIC(8,4) NOT NULL,
+    description     TEXT,
+    is_active       BOOLEAN NOT NULL DEFAULT true,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_billing_event_credit_weights_active
+    ON billing_event_credit_weights (is_active)
+    WHERE is_active = true;
+
+COMMENT ON TABLE billing_event_credit_weights IS
+'Stores the credit cost per telemetry event type for weighted credit consumption';
+
+COMMENT ON COLUMN billing_event_credit_weights.event_type IS
+'Unique telemetry event type identifier matching SDK event normalization';
+
+COMMENT ON COLUMN billing_event_credit_weights.credit_weight IS
+'Multiplier converting one raw event of this type into billable credits';
+
+-- Seed default credit weights across all SDK telemetry event types
+INSERT INTO billing_event_credit_weights (event_type, credit_weight, description, is_active)
+VALUES
+    ('request',       1.0000, 'Full HTTP / RPC request',                true),
+    ('error',         1.5000, 'Error / Exception',                       true),
+    ('trace',         0.5000, 'Distributed trace root',                 true),
+    ('span',          0.2500, 'Individual span',                        true),
+    ('log',           0.1200, 'Log line',                               true),
+    ('metric',        0.1000, 'Metric data point',                      true),
+    ('profile',       0.5000, 'Profiling sample',                       true),
+    ('replay',        2.0000, 'Session replay',                         true),
+    ('message',       0.3000, 'Custom message / breadcrumb',            true),
+    ('cron_checkin',  0.2000, 'Cron monitor check-in heartbeat',        true)
+ON CONFLICT (event_type) DO UPDATE SET
+    credit_weight = EXCLUDED.credit_weight,
+    description   = EXCLUDED.description,
+    is_active     = EXCLUDED.is_active,
+    updated_at    = NOW();
+
+-- ============================================================
 -- Source: 20_seeders/031_17_enterprise_ingestion_003_feature_flags.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/17_enterprise_ingestion/003_feature_flags.up.sql
 INSERT INTO feature_flags (key, scope, scope_id, enabled, description)
 VALUES
@@ -13408,7 +12465,10 @@ VALUES
    'Enables beta event processors before GA.')
 ON CONFLICT DO NOTHING;
 
+-- ============================================================
 -- Source: 20_seeders/032_17_enterprise_ingestion_004_plans_seed.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/17_enterprise_ingestion/004_plans_seed.up.sql
 INSERT INTO plans (key, version, name, tier, description, trial_days, is_active, is_public, sort_order)
 VALUES
@@ -13419,7 +12479,10 @@ VALUES
   ('enterprise', 1, 'Enterprise', 'enterprise', 'Dedicated capacity and highest ingestion priority.', 0, TRUE, TRUE, 50)
 ON CONFLICT ON CONSTRAINT uq_plans_key_version DO NOTHING;
 
+-- ============================================================
 -- Source: 20_seeders/033_18_ai_004_credit_rules.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/18_ai/004_credit_rules.up.sql
 INSERT INTO credit_rules (scope, ai_mode, cost, cached_cost, partial_cost, priority, status)
 SELECT 'platform', v.ai_mode, v.cost, 0, 0, 100, 'active'
@@ -13441,7 +12504,10 @@ WHERE NOT EXISTS (
   WHERE cr.scope = 'platform' AND cr.ai_mode = v.ai_mode
 );
 
+-- ============================================================
 -- Source: 20_seeders/034_18_ai_011_ai_model_routes.sql
+-- ============================================================
+
 -- Source: canonical_migrations_draft/18_ai/011_ai_model_routes.up.sql
 INSERT INTO ai_model_routes (ai_mode, primary_model, fallback_model, temperature, max_tokens, timeout_ms, priority, status)
 SELECT v.ai_mode, v.primary_model, v.fallback_model, v.temperature, v.max_tokens, 30000, 100, 'active'
@@ -13463,7 +12529,27 @@ WHERE NOT EXISTS (
   WHERE r.ai_mode = v.ai_mode AND r.plan IS NULL AND r.tenant_id IS NULL
 );
 
+-- ============================================================
 -- Source: 20_seeders/035_19_automation_015_automation_default_templates_seed.sql
+-- ============================================================
+
+-- =============================================================================
+-- Canonical platform automation templates (seed).
+--
+-- This is the single authoritative registry of platform-scoped automation
+-- templates. Templates are seeded here and nowhere else; the database is the
+-- source of truth that the API and UI read from.
+--
+-- Idempotency: every statement is an upsert keyed on a stable UUID, so this file
+-- is safe to re-run. Template rows upsert on template_key; version rows upsert on
+-- (template_id, version) and DO UPDATE, so a corrected definition actually rolls
+-- out to already-seeded environments.
+--
+-- Three templates were removed because their purpose depended on an entity that
+-- does not exist in this product (no runbook entity, no status-page subsystem, no
+-- uptime module, and project_releases is an append-only record with nothing to
+-- pause). See docs/automationv2/24-action-inventory-and-decisions.md.
+-- =============================================================================
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
   id, template_key, scope, organization_id, name, description, workflow_type,
@@ -13500,7 +12586,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.service","operator":"exists"},{"leftPath":"$.severity","operator":"in","rightValue":["warning","error","critical","fatal"]}]'::jsonb,
   '[{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:alert_route_v1_001', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13538,7 +12631,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]},{"leftPath":"$.status","operator":"neq","rightValue":"resolved"}]'::jsonb,
   '[{"actionKey":"page_oncall","actionType":"pagerduty.trigger","riskLevel":"medium"},{"actionKey":"notify_escalation","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:escalate_critical_v1_002', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13576,7 +12676,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:incident_critical_v1_003', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13614,7 +12721,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.incident_id","operator":"exists"}]'::jsonb,
   '[{"actionKey":"append_timeline","actionType":"incident.timeline.append","riskLevel":"low"}]'::jsonb,
   'sha256:timeline_append_v1_004', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13652,45 +12766,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.severity","operator":"in","rightValue":["critical","fatal"]},{"leftPath":"$.duration_minutes","operator":"gt","rightValue":30}]'::jsonb,
   '[{"actionKey":"ai_summary","actionType":"ai.summary.generate","riskLevel":"low"},{"actionKey":"generate_postmortem","actionType":"incident.postmortem.generate_draft","riskLevel":"medium"}]'::jsonb,
   'sha256:postmortem_draft_v1_005', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000006',
-  'release-health-guard',
-  'platform', NULL,
-  'Release Health Guard',
-  'Monitor release health and warn when error rate, latency, or crash rate increases after a deployment.',
-  'release_guard', 'releases',
-  TRUE, TRUE, TRUE, 'business',
-  'module_version_management_features_release_gates',
-  ARRAY['releases','health','guard'],
-  60,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000006',
-  'a0000000-0000-4000-8000-000000000006',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"release_guard","trigger":{"kind":"event","type":"release.health_degraded","sourceModule":"releases"},"conditions":[{"leftPath":"$.error_rate_increased","operator":"eq","rightValue":true},{"leftPath":"$.latency_increased","operator":"eq","rightValue":true}],"actions":[{"actionKey":"warn_release","actionType":"release.guard.warn","riskLevel":"medium","requiresApproval":false,"config":{}},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":50,"dedupeWindowSeconds":600,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"release.health_degraded","sourceModule":"releases"}]'::jsonb,
-  '[{"leftPath":"$.error_rate_increased","operator":"eq","rightValue":true},{"leftPath":"$.latency_increased","operator":"eq","rightValue":true}]'::jsonb,
-  '[{"actionKey":"warn_release","actionType":"release.guard.warn","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
-  'sha256:release_health_v1_006', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13728,7 +12811,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.degradation_severe","operator":"eq","rightValue":true},{"leftPath":"$.confidence","operator":"gte","rightValue":0.8}]'::jsonb,
   '[{"actionKey":"recommend_rollback","actionType":"rollback.recommend","riskLevel":"high"},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high"}]'::jsonb,
   'sha256:rollback_approval_v1_007', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13766,7 +12856,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.fingerprint_count","operator":"gt","rightValue":5}]'::jsonb,
   '[{"actionKey":"silence_alert","actionType":"alert.silence.create","riskLevel":"medium"},{"actionKey":"notify_silence","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:dedupe_noisy_v1_008', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13804,45 +12901,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.maintenance_window_active","operator":"eq","rightValue":true}]'::jsonb,
   '[{"actionKey":"silence_maintenance","actionType":"alert.silence.create","riskLevel":"medium"}]'::jsonb,
   'sha256:silence_maint_v1_009', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000010',
-  'open-runbook-for-critical-service',
-  'platform', NULL,
-  'Open Runbook for Critical Service',
-  'Automatically open the associated runbook and notify the team when a critical alert fires for a service with a configured runbook.',
-  'runbook', 'incidents',
-  TRUE, TRUE, FALSE, 'growth',
-  'module_incident_management_enabled',
-  ARRAY['incidents','runbook','critical'],
-  100,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000010',
-  'a0000000-0000-4000-8000-000000000010',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"runbook","trigger":{"kind":"event","type":"alert.event.created","sourceModule":"alerting"},"conditions":[{"leftPath":"$.severity","operator":"eq","rightValue":"critical"},{"leftPath":"$.service_runbook_url","operator":"exists"}],"actions":[{"actionKey":"open_runbook","actionType":"runbook.open","riskLevel":"low","requiresApproval":false,"config":{}},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":100,"dedupeWindowSeconds":300,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"alert.event.created","sourceModule":"alerting"}]'::jsonb,
-  '[{"leftPath":"$.severity","operator":"eq","rightValue":"critical"},{"leftPath":"$.service_runbook_url","operator":"exists"}]'::jsonb,
-  '[{"actionKey":"open_runbook","actionType":"runbook.open","riskLevel":"low"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
-  'sha256:runbook_critical_v1_010', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13880,7 +12946,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.attempts","operator":"lt","rightValue":5}]'::jsonb,
   '[{"actionKey":"retry_delivery","actionType":"connector.delivery.retry","riskLevel":"low"},{"actionKey":"notify_failure","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:connector_dl_retry_v1_011', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13918,7 +12991,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.retryable","operator":"eq","rightValue":true},{"leftPath":"$.attempts","operator":"lt","rightValue":3}]'::jsonb,
   '[{"actionKey":"notify_dead_letter","actionType":"notification.send","riskLevel":"low"},{"actionKey":"noop_retry","actionType":"noop","riskLevel":"low"}]'::jsonb,
   'sha256:ingestion_dl_retry_v1_012', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13956,7 +13036,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.usage_percent","operator":"in","rightValue":[80,90,100]}]'::jsonb,
   '[{"actionKey":"notify_quota","actionType":"quota.notify","riskLevel":"low"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:quota_threshold_v1_013', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -13994,7 +13081,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.meter","operator":"eq","rightValue":"ai_credits"}]'::jsonb,
   '[{"actionKey":"notify_ai_spike","actionType":"notification.send","riskLevel":"low"},{"actionKey":"quota_alert","actionType":"quota.notify","riskLevel":"low"}]'::jsonb,
   'sha256:ai_credit_spike_v1_014', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -14032,7 +13126,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.confidence","operator":"gt","rightValue":0.7}]'::jsonb,
   '[{"actionKey":"security_notify","actionType":"security.notify","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:security_api_key_v1_015', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -14070,7 +13171,14 @@ INSERT INTO automation_template_versions (
   '[]'::jsonb,
   '[{"actionKey":"export_report","actionType":"report.export","riskLevel":"low"},{"actionKey":"notify_report","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:daily_health_v1_016', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -14108,7 +13216,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.release_data_exists","operator":"eq","rightValue":true}]'::jsonb,
   '[{"actionKey":"ai_summarize","actionType":"ai.summary.generate","riskLevel":"low"},{"actionKey":"export_report","actionType":"report.export","riskLevel":"low"},{"actionKey":"notify_report","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:weekly_release_v1_017', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -14146,7 +13261,14 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.burn_rate","operator":"gt","rightValue":1.5}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"}]'::jsonb,
   'sha256:slo_burn_rate_v1_018', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
 -- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
 INSERT INTO automation_templates (
@@ -14184,53 +13306,28 @@ INSERT INTO automation_template_versions (
   '[{"leftPath":"$.job_criticality","operator":"eq","rightValue":"high"}]'::jsonb,
   '[{"actionKey":"create_incident","actionType":"incident.create","riskLevel":"medium"},{"actionKey":"notify_team","actionType":"notification.send","riskLevel":"low"},{"actionKey":"page_oncall","actionType":"pagerduty.trigger","riskLevel":"medium"}]'::jsonb,
   'sha256:cron_missed_v1_019', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
+) ON CONFLICT (template_id, version) DO UPDATE
+  SET is_current = EXCLUDED.is_current,
+      definition = EXCLUDED.definition,
+      trigger_summary = EXCLUDED.trigger_summary,
+      condition_summary = EXCLUDED.condition_summary,
+      action_summary = EXCLUDED.action_summary,
+      checksum = EXCLUDED.checksum,
+      metadata = EXCLUDED.metadata;
 
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_templates (
-  id, template_key, scope, organization_id, name, description, workflow_type,
-  category, is_active, is_public, is_featured, minimum_plan_tier,
-  required_feature_key, tags, sort_order, metadata
-) VALUES (
-  'a0000000-0000-4000-8000-000000000020',
-  'uptime-failure-status-page-draft',
-  'platform', NULL,
-  'Uptime Failure Status Page Draft',
-  'Draft a status page update when a public service uptime check fails for a configurable duration, requiring human approval.',
-  'incident_creation', 'uptime',
-  TRUE, TRUE, TRUE, 'business',
-  'module_uptime_monitoring_enabled',
-  ARRAY['uptime','status_page','approval'],
-  200,
-  '{"schemaVersion":1}'::jsonb
-) ON CONFLICT (template_key) WHERE deleted_at IS NULL AND scope = 'platform' DO UPDATE
-  SET name = EXCLUDED.name, description = EXCLUDED.description,
-      minimum_plan_tier = EXCLUDED.minimum_plan_tier,
-      required_feature_key = EXCLUDED.required_feature_key,
-      tags = EXCLUDED.tags, updated_at = NOW();
-
--- Source: canonical_migrations_draft/19_automation/015_automation_default_templates_seed.sql
-INSERT INTO automation_template_versions (
-  id, template_id, version, is_current, definition, trigger_summary,
-  condition_summary, action_summary, checksum, metadata
-) VALUES (
-  'b0000000-0000-4000-8000-000000000020',
-  'a0000000-0000-4000-8000-000000000020',
-  1, TRUE,
-  '{"schemaVersion":1,"workflowType":"incident_creation","trigger":{"kind":"event","type":"uptime.failed","sourceModule":"uptime"},"conditions":[{"leftPath":"$.public_service","operator":"eq","rightValue":true},{"leftPath":"$.failure_duration_minutes","operator":"gt","rightValue":5}],"actions":[{"actionKey":"draft_status_page","actionType":"status_page.update","riskLevel":"high","requiresApproval":true,"config":{"mode":"draft"}},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high","requiresApproval":false,"config":{}}],"safety":{"maxRunsPerHour":10,"dedupeWindowSeconds":1800,"requiresApprovalAboveRisk":"high"}}'::jsonb,
-  '[{"kind":"event","type":"uptime.failed","sourceModule":"uptime"}]'::jsonb,
-  '[{"leftPath":"$.public_service","operator":"eq","rightValue":true},{"leftPath":"$.failure_duration_minutes","operator":"gt","rightValue":5}]'::jsonb,
-  '[{"actionKey":"draft_status_page","actionType":"status_page.update","riskLevel":"high"},{"actionKey":"request_approval","actionType":"approval.request","riskLevel":"high"}]'::jsonb,
-  'sha256:uptime_status_page_v1_020', '{}'::jsonb
-) ON CONFLICT (template_id, version) DO NOTHING;
-
+-- ============================================================
 -- Source: 20_seeders/036_migrations_002_create_all_ordered.sql
+-- ============================================================
+
 -- Source: migrations/002_create_all_ordered.sql
 INSERT INTO backpressure_gauge (id, pending_depth, updated_at, last_worker_id)
 VALUES (1, 0, NOW(), 'init')
 ON CONFLICT (id) DO NOTHING;
 
+-- ============================================================
 -- Source: 20_seeders/037_migrations_003_project_module_refactor.sql
+-- ============================================================
+
 -- Source: migrations/003_project_module_refactor.sql
 INSERT INTO project_roles (organization_id, name, slug, description, is_system, permissions)
 SELECT o.id,
@@ -14354,3 +13451,698 @@ FROM projects p
 LEFT JOIN project_settings s ON s.project_id = p.id
 WHERE s.id IS NULL
 ON CONFLICT (project_id) DO NOTHING;
+
+-- ============================================================
+-- Source: 04_user\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS auto_revoke_backup_codes ON user_mfa_devices;
+CREATE TRIGGER auto_revoke_backup_codes
+  AFTER UPDATE ON user_mfa_devices
+  FOR EACH ROW
+  WHEN (NEW.is_verified = TRUE AND OLD.is_verified = FALSE)
+  EXECUTE FUNCTION revoke_and_regenerate_backup_codes();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_mfa_devices_updated_at ON user_mfa_devices;
+CREATE TRIGGER trg_mfa_devices_updated_at
+  BEFORE UPDATE ON user_mfa_devices
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_user_preferences_updated_at ON user_preferences;
+CREATE TRIGGER trg_user_preferences_updated_at
+  BEFORE UPDATE ON user_preferences
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+CREATE TRIGGER update_users_updated_at
+  BEFORE UPDATE ON users
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- Source: 05_organization\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_org_alert_thresholds_updated_at ON organization_alert_thresholds;
+CREATE TRIGGER trg_org_alert_thresholds_updated_at
+  BEFORE UPDATE ON organization_alert_thresholds
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_org_members_updated_at ON organization_members;
+CREATE TRIGGER trg_org_members_updated_at
+  BEFORE UPDATE ON organization_members
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_org_settings_updated_at ON organization_settings;
+CREATE TRIGGER trg_org_settings_updated_at
+  BEFORE UPDATE ON organization_settings
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_organization_verified_domains_updated_at ON organization_verified_domains;
+CREATE TRIGGER trg_organization_verified_domains_updated_at
+BEFORE UPDATE
+ON organization_verified_domains
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_org_updated_at ON organizations;
+CREATE TRIGGER trg_org_updated_at
+  BEFORE UPDATE ON organizations
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_quota_requests_updated_at ON quota_requests;
+CREATE TRIGGER trg_quota_requests_updated_at
+  BEFORE UPDATE ON quota_requests
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 06_project\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_api_keys_updated_at ON project_api_keys;
+CREATE TRIGGER trg_project_api_keys_updated_at
+  BEFORE UPDATE ON project_api_keys
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_api_keys_version ON project_api_keys;
+CREATE TRIGGER trg_project_api_keys_version
+  BEFORE UPDATE ON project_api_keys
+  FOR EACH ROW
+  EXECUTE FUNCTION bump_project_version();
+
+-- Source: canonical_migrations_draft/04_projects/015_create_environment_sdk_configuration.up.sql
+DROP TRIGGER IF EXISTS trg_project_environment_sdk_revisions_immutable ON project_environment_sdk_config_revisions;
+CREATE TRIGGER trg_project_environment_sdk_revisions_immutable
+BEFORE UPDATE ON project_environment_sdk_config_revisions
+FOR EACH ROW EXECUTE FUNCTION reject_sdk_config_revision_update();
+
+-- Source: canonical_migrations_draft/04_projects/015_create_environment_sdk_configuration.up.sql
+DROP TRIGGER IF EXISTS trg_project_environment_sdk_configs_updated_at ON project_environment_sdk_configs;
+CREATE TRIGGER trg_project_environment_sdk_configs_updated_at
+BEFORE UPDATE ON project_environment_sdk_configs
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_environments_updated_at ON project_environments;
+CREATE TRIGGER trg_project_environments_updated_at
+  BEFORE UPDATE ON project_environments
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_member_invitations_updated_at ON project_member_invitations;
+CREATE TRIGGER trg_project_member_invitations_updated_at
+  BEFORE UPDATE ON project_member_invitations
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_member_notif_prefs_updated_at ON project_member_notification_preferences;
+CREATE TRIGGER trg_project_member_notif_prefs_updated_at
+  BEFORE UPDATE ON project_member_notification_preferences
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_members_updated_at ON project_members;
+CREATE TRIGGER trg_project_members_updated_at
+  BEFORE UPDATE ON project_members
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_members_version ON project_members;
+CREATE TRIGGER trg_project_members_version
+  BEFORE UPDATE ON project_members
+  FOR EACH ROW
+  EXECUTE FUNCTION bump_project_version();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_notif_prefs_updated_at ON project_notification_preferences;
+CREATE TRIGGER trg_project_notif_prefs_updated_at
+  BEFORE UPDATE ON project_notification_preferences
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_roles_updated_at ON project_roles;
+CREATE TRIGGER trg_project_roles_updated_at
+  BEFORE UPDATE ON project_roles
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_project_usage_updated_at ON project_usage;
+CREATE TRIGGER trg_project_usage_updated_at
+  BEFORE UPDATE ON project_usage
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/04_projects/021_remove_project_defaults_provisioning_trigger.up.sql
+-- Project defaults are provisioned explicitly in application transactions.
+DROP TRIGGER IF EXISTS trg_projects_provision_defaults ON projects;
+
+
+-- Source: canonical_migrations_draft/04_projects/022_add_project_public_id.sql
+DROP TRIGGER IF EXISTS trg_projects_public_id_immutable ON projects;
+CREATE TRIGGER trg_projects_public_id_immutable
+  BEFORE UPDATE ON projects
+  FOR EACH ROW
+  EXECUTE FUNCTION fn_prevent_project_public_id_update();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_projects_updated_at ON projects;
+CREATE TRIGGER trg_projects_updated_at
+  BEFORE UPDATE ON projects
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_projects_version ON projects;
+CREATE TRIGGER trg_projects_version
+  BEFORE UPDATE ON projects
+  FOR EACH ROW
+  EXECUTE FUNCTION bump_project_version();
+
+-- ============================================================
+-- Source: 07_billing\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_billing_features_updated_at ON billing_features;
+CREATE TRIGGER trg_billing_features_updated_at
+BEFORE UPDATE
+ON billing_features
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_coupons_updated_at ON coupons;
+CREATE TRIGGER trg_coupons_updated_at
+BEFORE UPDATE
+ON coupons
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_ai/002_credit_balances.up.sql
+DROP TRIGGER IF EXISTS trg_credit_balances_updated_at ON credit_balances;
+CREATE TRIGGER trg_credit_balances_updated_at
+  BEFORE UPDATE ON credit_balances
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_ai/003_credit_ledger.up.sql
+DROP TRIGGER IF EXISTS trg_credit_ledger_append_only ON credit_ledger;
+CREATE TRIGGER trg_credit_ledger_append_only
+  BEFORE UPDATE OR DELETE ON credit_ledger
+  FOR EACH ROW
+  EXECUTE FUNCTION credit_ledger_append_only();
+
+-- Source: canonical_migrations_draft/18_ai/004_credit_rules.up.sql
+DROP TRIGGER IF EXISTS trg_credit_rules_updated_at ON credit_rules;
+CREATE TRIGGER trg_credit_rules_updated_at
+  BEFORE UPDATE ON credit_rules
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_invoices_updated_at ON invoices;
+CREATE TRIGGER trg_invoices_updated_at
+BEFORE UPDATE
+ON invoices
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_organization_feature_overrides_updated_at ON organization_feature_overrides;
+CREATE TRIGGER trg_organization_feature_overrides_updated_at
+BEFORE UPDATE
+ON organization_feature_overrides
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_organization_subscriptions_updated_at ON organization_subscriptions;
+CREATE TRIGGER trg_organization_subscriptions_updated_at
+BEFORE UPDATE
+ON organization_subscriptions
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_org_usage_current_period_updated_at ON organization_usage_current_period;
+CREATE TRIGGER trg_org_usage_current_period_updated_at
+BEFORE UPDATE
+ON organization_usage_current_period
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_payments_updated_at ON payments;
+CREATE TRIGGER trg_payments_updated_at
+BEFORE UPDATE
+ON payments
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_plan_feature_entitlements_updated_at ON plan_feature_entitlements;
+CREATE TRIGGER trg_plan_feature_entitlements_updated_at
+BEFORE UPDATE
+ON plan_feature_entitlements
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_plan_prices_updated_at ON plan_prices;
+CREATE TRIGGER trg_plan_prices_updated_at
+BEFORE UPDATE
+ON plan_prices
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_plans_updated_at ON plans;
+CREATE TRIGGER trg_plans_updated_at
+  BEFORE UPDATE ON plans
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_subscription_addons_updated_at ON subscription_addons;
+CREATE TRIGGER trg_subscription_addons_updated_at
+BEFORE UPDATE
+ON subscription_addons
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_usage_daily_counters_updated_at ON usage_daily_counters;
+CREATE TRIGGER trg_usage_daily_counters_updated_at
+BEFORE UPDATE
+ON usage_daily_counters
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 08_connector\999_triggers.sql
+-- ============================================================
+
+-- Source: canonical_migrations_draft/06_connectors/015_create_connector_runtime_guards.up.sql
+DROP TRIGGER IF EXISTS trg_connector_circuit_state_updated_at ON connector_circuit_state;
+CREATE TRIGGER trg_connector_circuit_state_updated_at
+  BEFORE UPDATE ON connector_circuit_state
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/06_connectors/015_create_connector_runtime_guards.up.sql
+DROP TRIGGER IF EXISTS trg_connector_rate_buckets_updated_at ON connector_rate_buckets;
+CREATE TRIGGER trg_connector_rate_buckets_updated_at
+  BEFORE UPDATE ON connector_rate_buckets
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/003_project_module_refactor.sql
+DROP TRIGGER IF EXISTS trg_project_connector_subs_updated_at ON project_connector_subscriptions;
+CREATE TRIGGER trg_project_connector_subs_updated_at
+  BEFORE UPDATE ON project_connector_subscriptions
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 10_notification\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_notification_routes_updated_at ON notification_routes;
+CREATE TRIGGER trg_notification_routes_updated_at
+  BEFORE UPDATE ON notification_routes
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_notification_templates_updated_at ON notification_templates;
+CREATE TRIGGER trg_notification_templates_updated_at
+  BEFORE UPDATE ON notification_templates
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 09_alerting\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_acknowledgments_updated_at ON alert_acknowledgments;
+CREATE TRIGGER trg_alert_acknowledgments_updated_at
+  BEFORE UPDATE ON alert_acknowledgments
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_dead_letter_events_updated_at ON alert_dead_letter_events;
+CREATE TRIGGER trg_alert_dead_letter_events_updated_at
+  BEFORE UPDATE ON alert_dead_letter_events
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_delivery_attempts_updated_at ON alert_delivery_attempts;
+CREATE TRIGGER trg_alert_delivery_attempts_updated_at
+  BEFORE UPDATE ON alert_delivery_attempts
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_escalation_policies_updated_at ON alert_escalation_policies;
+CREATE TRIGGER trg_alert_escalation_policies_updated_at
+  BEFORE UPDATE ON alert_escalation_policies
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_escalation_steps_updated_at ON alert_escalation_steps;
+CREATE TRIGGER trg_alert_escalation_steps_updated_at
+  BEFORE UPDATE ON alert_escalation_steps
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_event_batches_updated_at ON alert_event_batches;
+CREATE TRIGGER trg_alert_event_batches_updated_at
+  BEFORE UPDATE ON alert_event_batches
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_events_updated_at ON alert_events;
+CREATE TRIGGER trg_alert_events_updated_at
+  BEFORE UPDATE ON alert_events
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_routing_rules_updated_at ON alert_routing_rules;
+CREATE TRIGGER trg_alert_routing_rules_updated_at
+  BEFORE UPDATE ON alert_routing_rules
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_rule_actions_updated_at ON alert_rule_actions;
+CREATE TRIGGER trg_alert_rule_actions_updated_at
+  BEFORE UPDATE ON alert_rule_actions
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/08_alerting/020_create_alert_rule_bindings.up.sql
+DROP TRIGGER IF EXISTS trg_alert_rule_bindings_updated_at ON alert_rule_bindings;
+CREATE TRIGGER trg_alert_rule_bindings_updated_at
+  BEFORE UPDATE ON alert_rule_bindings
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_rule_conditions_updated_at ON alert_rule_conditions;
+CREATE TRIGGER trg_alert_rule_conditions_updated_at
+  BEFORE UPDATE ON alert_rule_conditions
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_rules_updated_at ON alert_rules;
+CREATE TRIGGER trg_alert_rules_updated_at
+  BEFORE UPDATE ON alert_rules
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_silences_updated_at ON alert_silences;
+CREATE TRIGGER trg_alert_silences_updated_at
+  BEFORE UPDATE ON alert_silences
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_templates_updated_at ON alert_templates;
+CREATE TRIGGER trg_alert_templates_updated_at
+  BEFORE UPDATE ON alert_templates
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_alert_throttle_windows_updated_at ON alert_throttle_windows;
+CREATE TRIGGER trg_alert_throttle_windows_updated_at
+  BEFORE UPDATE ON alert_throttle_windows
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/005_create_alerting_audit_and_search_config.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_audit_roots_updated_at ON alerting_audit_roots;
+CREATE TRIGGER trg_alerting_audit_roots_updated_at
+  BEFORE UPDATE ON alerting_audit_roots
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/006_create_alerting_dashboard_and_saved_views.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_dashboard_widgets_updated_at ON alerting_dashboard_widgets;
+CREATE TRIGGER trg_alerting_dashboard_widgets_updated_at
+  BEFORE UPDATE ON alerting_dashboard_widgets
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/007_create_alerting_entitlements_usage_flags.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_entitlements_updated_at ON alerting_entitlements;
+CREATE TRIGGER trg_alerting_entitlements_updated_at
+  BEFORE UPDATE ON alerting_entitlements
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/002_create_alerting_routing_escalation_config.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_escalation_policies_v2_updated_at ON alerting_escalation_policies_v2;
+CREATE TRIGGER trg_alerting_escalation_policies_v2_updated_at
+  BEFORE UPDATE ON alerting_escalation_policies_v2
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/002_create_alerting_routing_escalation_config.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_escalation_steps_v2_updated_at ON alerting_escalation_steps_v2;
+CREATE TRIGGER trg_alerting_escalation_steps_v2_updated_at
+  BEFORE UPDATE ON alerting_escalation_steps_v2
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/08_alerting/022_alerting_consolidation_support.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_legacy_mappings_updated_at ON alerting_legacy_mappings;
+CREATE TRIGGER trg_alerting_legacy_mappings_updated_at
+  BEFORE UPDATE ON alerting_legacy_mappings
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/003_create_alerting_settings.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_maintenance_config_updated_at ON alerting_maintenance_config;
+CREATE TRIGGER trg_alerting_maintenance_config_updated_at
+  BEFORE UPDATE ON alerting_maintenance_config
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/003_create_alerting_settings.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_notification_defaults_updated_at ON alerting_notification_defaults;
+CREATE TRIGGER trg_alerting_notification_defaults_updated_at
+  BEFORE UPDATE ON alerting_notification_defaults
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/001_create_alerting_workspace_core.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_policy_catalog_updated_at ON alerting_policy_catalog;
+CREATE TRIGGER trg_alerting_policy_catalog_updated_at
+  BEFORE UPDATE ON alerting_policy_catalog
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/001_create_alerting_workspace_core.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_policy_categories_updated_at ON alerting_policy_categories;
+CREATE TRIGGER trg_alerting_policy_categories_updated_at
+  BEFORE UPDATE ON alerting_policy_categories
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/009_create_project_policy_subscriptions.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_project_policy_overrides_updated_at ON alerting_project_policy_overrides;
+CREATE TRIGGER trg_alerting_project_policy_overrides_updated_at
+  BEFORE UPDATE ON alerting_project_policy_overrides
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/009_create_project_policy_subscriptions.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_project_policy_subscriptions_updated_at ON alerting_project_policy_subscriptions;
+CREATE TRIGGER trg_alerting_project_policy_subscriptions_updated_at
+  BEFORE UPDATE ON alerting_project_policy_subscriptions
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/004_create_alerting_provider_catalog.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_provider_catalog_updated_at ON alerting_provider_catalog;
+CREATE TRIGGER trg_alerting_provider_catalog_updated_at
+  BEFORE UPDATE ON alerting_provider_catalog
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/002_create_alerting_routing_escalation_config.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_routing_defaults_updated_at ON alerting_routing_defaults;
+CREATE TRIGGER trg_alerting_routing_defaults_updated_at
+  BEFORE UPDATE ON alerting_routing_defaults
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/006_create_alerting_dashboard_and_saved_views.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_saved_views_updated_at ON alerting_saved_views;
+CREATE TRIGGER trg_alerting_saved_views_updated_at
+  BEFORE UPDATE ON alerting_saved_views
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/005_create_alerting_audit_and_search_config.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_search_index_metadata_updated_at ON alerting_search_index_metadata;
+CREATE TRIGGER trg_alerting_search_index_metadata_updated_at
+  BEFORE UPDATE ON alerting_search_index_metadata
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/003_create_alerting_settings.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_settings_updated_at ON alerting_settings;
+CREATE TRIGGER trg_alerting_settings_updated_at
+  BEFORE UPDATE ON alerting_settings
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/007_create_alerting_entitlements_usage_flags.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_usage_counters_updated_at ON alerting_usage_counters;
+CREATE TRIGGER trg_alerting_usage_counters_updated_at
+  BEFORE UPDATE ON alerting_usage_counters
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/18_alerting_workspace/001_create_alerting_workspace_core.up.sql
+DROP TRIGGER IF EXISTS trg_alerting_workspaces_updated_at ON alerting_workspaces;
+CREATE TRIGGER trg_alerting_workspaces_updated_at
+  BEFORE UPDATE ON alerting_workspaces
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 11_observability\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_feature_flags_updated_at ON feature_flags;
+CREATE TRIGGER trg_feature_flags_updated_at
+  BEFORE UPDATE ON feature_flags
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_ingestion_jobs_updated_at ON ingestion_jobs;
+CREATE TRIGGER trg_ingestion_jobs_updated_at
+  BEFORE UPDATE ON ingestion_jobs
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 13_ai\999_triggers.sql
+-- ============================================================
+
+-- Source: canonical_migrations_draft/18_ai/011_ai_model_routes.up.sql
+DROP TRIGGER IF EXISTS trg_ai_model_routes_updated_at ON ai_model_routes;
+CREATE TRIGGER trg_ai_model_routes_updated_at
+  BEFORE UPDATE ON ai_model_routes
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 14_automation\999_triggers.sql
+-- ============================================================
+
+-- Source: canonical_migrations_draft/19_automation/006_automation_actions.sql
+DROP TRIGGER IF EXISTS trg_automation_actions_updated_at ON automation_actions;
+CREATE TRIGGER trg_automation_actions_updated_at
+  BEFORE UPDATE ON automation_actions
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/19_automation/009_automation_approvals.sql
+DROP TRIGGER IF EXISTS trg_automation_approvals_updated_at ON automation_approvals;
+CREATE TRIGGER trg_automation_approvals_updated_at
+  BEFORE UPDATE ON automation_approvals
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/19_automation/005_automation_conditions.sql
+DROP TRIGGER IF EXISTS trg_automation_conditions_updated_at ON automation_conditions;
+CREATE TRIGGER trg_automation_conditions_updated_at
+  BEFORE UPDATE ON automation_conditions
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/19_automation/010_automation_templates.sql
+DROP TRIGGER IF EXISTS trg_automation_templates_updated_at ON automation_templates;
+CREATE TRIGGER trg_automation_templates_updated_at
+  BEFORE UPDATE ON automation_templates
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/19_automation/004_automation_triggers.sql
+DROP TRIGGER IF EXISTS trg_automation_triggers_updated_at ON automation_triggers;
+CREATE TRIGGER trg_automation_triggers_updated_at
+  BEFORE UPDATE ON automation_triggers
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: canonical_migrations_draft/19_automation/003_automation_workflow_versions.sql
+DROP TRIGGER IF EXISTS trg_immutable_published_version ON automation_workflow_versions;
+CREATE TRIGGER trg_immutable_published_version
+  BEFORE UPDATE ON automation_workflow_versions
+  FOR EACH ROW
+  EXECUTE FUNCTION trg_fn_immutable_published_version();
+
+-- Source: canonical_migrations_draft/19_automation/002_automation_workflows.sql
+DROP TRIGGER IF EXISTS trg_automation_workflows_updated_at ON automation_workflows;
+CREATE TRIGGER trg_automation_workflows_updated_at
+  BEFORE UPDATE ON automation_workflows
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- Source: 002_create_automation_runtime.sql
+DROP TRIGGER IF EXISTS trg_automation_runs_updated_at ON automation_runs;
+CREATE TRIGGER trg_automation_runs_updated_at
+  BEFORE UPDATE ON automation_runs
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_automation_run_steps_updated_at ON automation_run_steps;
+CREATE TRIGGER trg_automation_run_steps_updated_at
+  BEFORE UPDATE ON automation_run_steps
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+
+-- ============================================================
+-- Source: 15_analytics\999_triggers.sql
+-- ============================================================
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_analytics_alerts_updated_at ON analytics_alerts;
+CREATE TRIGGER trg_analytics_alerts_updated_at
+  BEFORE UPDATE ON analytics_alerts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_daily_rollup_updated_at ON analytics_daily_rollup;
+CREATE TRIGGER trg_daily_rollup_updated_at
+  BEFORE UPDATE ON analytics_daily_rollup
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_dashboards_updated_at ON analytics_dashboards;
+CREATE TRIGGER trg_dashboards_updated_at
+  BEFORE UPDATE ON analytics_dashboards
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_error_groups_updated_at ON analytics_error_groups;
+CREATE TRIGGER trg_error_groups_updated_at
+  BEFORE UPDATE ON analytics_error_groups
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_hourly_rollup_updated_at ON analytics_hourly_rollup;
+CREATE TRIGGER trg_hourly_rollup_updated_at
+  BEFORE UPDATE ON analytics_hourly_rollup
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_perf_summary_updated_at ON analytics_performance_summary;
+CREATE TRIGGER trg_perf_summary_updated_at
+  BEFORE UPDATE ON analytics_performance_summary
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Source: migrations/002_create_all.sql
+DROP TRIGGER IF EXISTS trg_saved_queries_updated_at ON analytics_saved_queries;
+CREATE TRIGGER trg_saved_queries_updated_at
+  BEFORE UPDATE ON analytics_saved_queries
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

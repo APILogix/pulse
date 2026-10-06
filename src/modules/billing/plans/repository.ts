@@ -44,13 +44,17 @@ export interface PlanFeatureEntitlementRow {
   string_value: string | null;
 }
 
+export const PLAN_COLUMNS = `
+  id, key, version, name, tier, description, trial_days, is_active, is_public, sort_order, created_at, updated_at
+`;
+
 export class PlansRepository {
   constructor(private readonly db: Pool = pool) {}
 
   async listActivePlans(includeHidden = false, db: Db = this.db): Promise<PlanRow[]> {
     const query = includeHidden
-      ? `SELECT * FROM plans WHERE is_active = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`
-      : `SELECT * FROM plans WHERE is_active = TRUE AND is_public = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`;
+      ? `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`
+      : `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE AND is_public = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`;
     
     const result = await db.query(query);
     return result.rows;
@@ -58,7 +62,7 @@ export class PlansRepository {
 
   async getPlanById(planId: string, db: Db = this.db): Promise<PlanRow | null> {
     const result = await db.query(
-      `SELECT * FROM plans WHERE id = $1 AND deleted_at IS NULL`,
+      `SELECT ${PLAN_COLUMNS} FROM plans WHERE id = $1 AND deleted_at IS NULL`,
       [planId]
     );
     return result.rows[0] || null;

@@ -1,49 +1,50 @@
 import type { FastifyBaseLogger } from 'fastify';
 
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq, type PgmqMessage } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { buildUserDataExport } from './service.js';
 import { logSecurityEvent } from './security-events.js';
 
-const QUEUE_NAME = 'user-data-export';
+const QUEUE_NAME = 'user_data_export';
 
-async function safeCreateQueue(name: string): Promise<void> {
-  const boss = pgboss as unknown as { createQueue?: (n: string) => Promise<void> };
-  if (typeof boss.createQueue === 'function') {
-    await boss.createQueue(name).catch(() => undefined);
-  }
+export async function enqueueUserDataExport(userId: string): Promise<string> {
+  return pgmq.send(QUEUE_NAME, { user_id: userId });
 }
 
 export async function registerUserDataExportWorker(
   logger: FastifyBaseLogger,
 ): Promise<{ stop: () => Promise<void> }> {
-  await safeCreateQueue(QUEUE_NAME);
 
-  await pgboss.work(
-    QUEUE_NAME,
-    { teamSize: 1, teamConcurrency: 1 } as never,
-    (async (job: { data?: { user_id?: string }; id?: string }) => {
-      const userId = job.data?.user_id;
+  const worker = new PgmqWorker(
+    pgmq,
+    async (msg: PgmqMessage<{ user_id?: string }>) => {
+      const userId = msg.message?.user_id;
       if (!userId) {
-        throw new Error('user-data-export job missing user_id');
+        throw new Error('user_data_export job missing user_id');
       }
 
       const data = await buildUserDataExport(userId);
       const sizeBytes = Buffer.byteLength(JSON.stringify(data), 'utf8');
 
       logger.info(
-        { jobId: job.id, userId, sizeBytes },
+        { jobId: msg.msgId, userId, sizeBytes },
         'User data export generated; storage/email delivery integration pending',
       );
       await logSecurityEvent(userId, 'data_export_requested', 'Account data export generated', undefined, {
-        job_id: job.id ?? null,
+        job_id: msg.msgId,
         size_bytes: sizeBytes,
         delivery: 'pending_storage_integration',
       });
-    }) as never,
+    },
+    { queue: QUEUE_NAME, batchSize: 1, concurrency: 1, visibilityTimeoutSeconds: 300 },
   );
 
-  logger.info({ queue: QUEUE_NAME }, 'User data export worker registered');
+  await worker.start();
+  logger.info({ queue: QUEUE_NAME }, 'User data export worker registered with PGMQ');
+
   return {
-    stop: async () => undefined,
+    stop: async () => {
+      await worker.stop();
+    },
   };
 }

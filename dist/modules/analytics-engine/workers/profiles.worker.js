@@ -90,7 +90,8 @@ function hotFunctionStatement(params, topK) {
        GROUP BY organization_id, project_id, environment, bucket, service, function_name, script_url
     ),
     topk AS (
-      SELECT *,
+      SELECT organization_id, project_id, environment, bucket, service,
+             function_name, script_url, line_number, hit_count_sum, profile_count, bucket_hits,
              ROW_NUMBER() OVER (
                PARTITION BY organization_id, project_id, environment, bucket
                ORDER BY hit_count_sum DESC

@@ -18,7 +18,10 @@ export function cursorPage(rows, limit, totalCount) {
     };
 }
 export class BaseRepository {
-    db = pool;
+    db;
+    constructor(db = pool) {
+        this.db = db;
+    }
     async withTransaction(fn) {
         return withTransaction(fn, this.db);
     }

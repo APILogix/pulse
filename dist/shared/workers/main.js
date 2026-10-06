@@ -1,23 +1,23 @@
 /**
- * Worker process bootstrap (PostgreSQL queue - no BullMQ/Redis).
+ * Worker process bootstrap (Supabase PostgreSQL pgmq - no BullMQ/Redis/pg-boss).
  *
  * Flow:
  * 1. Open a dedicated Postgres pool for background work.
- * 2. Start pg-boss background workers (alerting, billing, connectors, auth,
+ * 2. Start Supabase PGMQ background workers (alerting, billing, connectors, auth,
  *    analytics, org cleanup) plus the telemetry maintenance worker.
  * 3. Keep the process alive until SIGTERM/SIGINT, then drain + close cleanly.
  *
- * NOTE: ingestion persistence runs in the DEDICATED ingestion worker process
- * (src/shared/workers/ingestion-worker-main.ts), not here.
- *
- * Scale horizontally by running multiple copies of this process. SKIP LOCKED
+ * Scale horizontally by running multiple copies of this process. Visibility timeout
  * makes that safe.
  */
-import { Pool } from 'pg';
+import '../../config/dns.js';
 import { env } from '../../config/env.js';
+import { closeDatabase, pool as pgPool } from '../../config/database.js';
+import { logProcessConnectionBudget } from '../../config/connection-budget.js';
 import { logger } from '../../config/logger.js';
 import { logDB } from '../../config/log-database.js';
-import { isExpectedServerlessDisconnect, resolvePostgresSslConfig } from '../../config/postgres-ssl.js';
+import { retryConfiguredStartupOperation } from '../../config/startup-retry.js';
+import { pgmq } from '../../lib/pgmq.js';
 import { registerAlertingWorkers } from '../../modules/alerting/queue.js';
 import { registerAuthAutomationWorkers } from '../../modules/auth/infrastructure/jobs/queue.js';
 import { registerBillingJobWorkers } from '../../modules/billing/queue.js';
@@ -27,7 +27,6 @@ import { registerOrganizationCleanupWorkers } from '../../modules/organization/s
 import { registerUserDataExportWorker } from '../../modules/user-account/queue.js';
 import { registerAIWorkers } from '../../modules/ai/queue.js';
 import { registerAutomationWorkers } from '../../modules/automation/workers.js';
-import { startPgBoss, stopPgBoss } from '../../lib/pgboss.js';
 import { AlertRuntimeRepository } from '../../modules/alerting/runtime/alert-runtime.repository.js';
 import { AlertConfigRepository } from '../../modules/alerting/config/alert-config.repository.js';
 import { startAuthCleanupWorker, stopAuthCleanupWorker } from './auth-cleanup.processor.js';
@@ -36,54 +35,12 @@ import { startOrgEmailWorker, stopOrgEmailWorker } from './org-email.processor.j
 import { TelemetryMaintenanceWorker } from './telemetry-maintenance.processor.js';
 const workerLogger = logger.child({ component: 'workers' });
 async function bootstrapWorkers() {
-    const pgPool = new Pool({
-        connectionString: env.DATABASE_URL,
-        ssl: resolvePostgresSslConfig(env.DATABASE_URL, {
-            enabled: env.DB_SSL_ENABLED,
-            rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED,
-        }),
-        max: env.DB_POOL_MAX,
-        min: env.DB_POOL_MIN,
-        idleTimeoutMillis: env.DB_IDLE_TIMEOUT_MS,
-        connectionTimeoutMillis: env.DB_CONNECTION_TIMEOUT_MS,
-        application_name: `pulse_background_workers_${env.NODE_ENV}`,
-        keepAlive: true,
-        keepAliveInitialDelayMillis: env.DB_KEEPALIVE_INITIAL_DELAY_MS,
-    });
-    pgPool.on('connect', (client) => {
-        client.on('error', (err) => {
-            if (isExpectedServerlessDisconnect(err)) {
-                workerLogger.debug({ err: err.message }, 'Client background worker connection closed (Neon/PgBouncer)');
-                return;
-            }
-            workerLogger.debug({ err: err.message }, 'PostgreSQL client socket error on active/checked-out background worker connection');
-        });
-    });
-    pgPool.on('error', (err) => {
-        if (isExpectedServerlessDisconnect(err)) {
-            workerLogger.debug({ err: err.message }, 'Idle worker pool connection closed by server (Neon/PgBouncer)');
-            return;
-        }
-        workerLogger.error({ err }, 'Unexpected worker pool error');
-    });
-    await pgPool.query('SELECT 1');
-    await logDB.connect();
-    // ── ADR-0006 pool ownership assertion ──────────────────────────────────────
-    // docs/alerting-redesign/adr/0006-database-ownership.md
-    //
-    // Prove BEFORE any worker starts that each alerting pool is attached to the
-    // database that owns its tables. Audit finding B1: the evaluator read telemetry
-    // through the control-plane pool while ingestion wrote it through the Log DB pool,
-    // so whenever LOG_DB_PRIMARY was a genuinely separate database, telemetry-driven
-    // alerts silently never fired. This turns that into a startup crash.
-    //
-    // Deployment prerequisite (07-migration-plan.md §7 step 1 before step 2): the Log DB
-    // alerting migrations must be applied first. Set ALERTING_RUNTIME_POOL_ASSERT=false
-    // only for local bootstrap.
+    logProcessConnectionBudget('worker', workerLogger);
+    await retryConfiguredStartupOperation('background worker primary database', () => pgPool.query('SELECT 1'), workerLogger);
+    await retryConfiguredStartupOperation('background worker log database', () => logDB.connect(), workerLogger);
     await new AlertRuntimeRepository(logDB.getPrimaryPool()).assertRuntimePool(workerLogger);
     await new AlertConfigRepository().assertConfigPool(workerLogger);
-    const maintenance = new TelemetryMaintenanceWorker(pgPool, workerLogger);
-    maintenance.start();
+    const maintenance = new TelemetryMaintenanceWorker(logDB.getPrimaryPool(), workerLogger);
     let alertingWorkers = null;
     let analyticsWorkers = null;
     let authAutomationWorkers = null;
@@ -93,73 +50,104 @@ async function bootstrapWorkers() {
     let userDataExportWorker = null;
     let aiWorkers = null;
     let automationWorkers = null;
-    // Ingestion persistence moved to the dedicated ingestion worker process
-    // (src/shared/workers/ingestion-worker-main.ts — pg-boss per-type queues).
-    // This process no longer polls the legacy ingestion_jobs table; the legacy
-    // PgQueue wiring in ./index.ts is retained on disk only for reference.
     let shuttingDown = false;
-    const gracefulShutdown = async (signal) => {
+    const gracefulShutdown = async (signal, initialCode = 0) => {
         if (shuttingDown)
             return;
         shuttingDown = true;
+        let exitCode = initialCode;
         workerLogger.info({ signal }, 'Shutdown signal received — draining workers');
-        maintenance.stop();
-        stopAuthCleanupWorker();
-        stopAuthEmailWorker();
-        stopOrgEmailWorker();
-        if (authAutomationWorkers)
-            await authAutomationWorkers.stop();
-        if (billingJobWorkers)
-            await billingJobWorkers.stop();
-        if (alertingWorkers)
-            await alertingWorkers.stop();
-        if (analyticsWorkers)
-            await analyticsWorkers.stop();
-        if (connectorMonitor)
-            await connectorMonitor.stop();
-        if (orgCleanupWorkers)
-            await orgCleanupWorkers.stop();
-        if (userDataExportWorker)
-            await userDataExportWorker.stop();
-        if (aiWorkers)
-            await aiWorkers.stop();
-        if (automationWorkers)
-            await automationWorkers.stop();
-        await stopPgBoss();
-        await logDB.close();
-        await pgPool.end();
-        process.exit(0);
+        const deadline = setTimeout(() => {
+            workerLogger.fatal({ signal }, 'Worker shutdown timeout exceeded — forcing exit');
+            process.exit(exitCode || 1);
+        }, env.SHUTDOWN_TIMEOUT_MS);
+        deadline.unref();
+        try {
+            maintenance.stop();
+            stopAuthCleanupWorker();
+            stopAuthEmailWorker();
+            stopOrgEmailWorker();
+            const workerStops = [
+                authAutomationWorkers?.stop(),
+                billingJobWorkers?.stop(),
+                alertingWorkers?.stop(),
+                analyticsWorkers?.stop(),
+                connectorMonitor?.stop(),
+                orgCleanupWorkers?.stop(),
+                userDataExportWorker?.stop(),
+                aiWorkers?.stop(),
+                automationWorkers?.stop(),
+            ].filter((operation) => operation !== undefined);
+            const stopResults = await Promise.allSettled(workerStops);
+            if (stopResults.some((result) => result.status === 'rejected'))
+                exitCode = exitCode || 1;
+            const closeResults = await Promise.allSettled([
+                pgmq.close(),
+                logDB.close(),
+                closeDatabase(),
+            ]);
+            if (closeResults.some((result) => result.status === 'rejected'))
+                exitCode = exitCode || 1;
+        }
+        catch (error) {
+            exitCode = exitCode || 1;
+            workerLogger.error({ err: error }, 'Unexpected worker shutdown failure');
+        }
+        finally {
+            clearTimeout(deadline);
+            process.exit(exitCode);
+        }
     };
     process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
-    await startPgBoss();
-    await startAuthEmailWorker();
-    await startOrgEmailWorker();
-    authAutomationWorkers = await registerAuthAutomationWorkers(workerLogger);
-    billingJobWorkers = await registerBillingJobWorkers(workerLogger);
-    connectorMonitor = await startConnectorMonitor(workerLogger);
-    // ADR-0006 / DEV-002: the evaluators must read `events_*` through the pool that ingestion
-    // writes them with. Injected here so the alerting module never imports the Log DB singleton.
-    alertingWorkers = await registerAlertingWorkers(workerLogger, {}, undefined, logDB.getPrimaryPool());
-    analyticsWorkers = await registerAnalyticsWorkers(workerLogger);
-    userDataExportWorker = await registerUserDataExportWorker(workerLogger);
-    aiWorkers = await registerAIWorkers(workerLogger);
-    automationWorkers = await registerAutomationWorkers(workerLogger);
-    if (process.env.ORG_CRON_ENABLED !== 'false') {
-        orgCleanupWorkers = await registerOrganizationCleanupWorkers(workerLogger);
-    }
-    else {
+    // Pre-load all existing queue metadata once so subsequent worker calls complete in 0ms
+    await pgmq.ensureKnownQueuesLoaded();
+    // Register all worker modules concurrently in parallel
+    const [authAuto, billing, connector, alerting, analytics, userDataExport, ai, automation, orgCleanup,] = await Promise.all([
+        registerAuthAutomationWorkers(workerLogger),
+        registerBillingJobWorkers(workerLogger),
+        startConnectorMonitor(workerLogger),
+        registerAlertingWorkers(workerLogger, {}, undefined, logDB.getPrimaryPool()),
+        registerAnalyticsWorkers(workerLogger),
+        registerUserDataExportWorker(workerLogger),
+        registerAIWorkers(workerLogger),
+        registerAutomationWorkers(workerLogger),
+        process.env.ORG_CRON_ENABLED !== 'false'
+            ? registerOrganizationCleanupWorkers(workerLogger)
+            : Promise.resolve(null),
+    ]);
+    authAutomationWorkers = authAuto;
+    billingJobWorkers = billing;
+    connectorMonitor = connector;
+    alertingWorkers = alerting;
+    analyticsWorkers = analytics;
+    userDataExportWorker = userDataExport;
+    aiWorkers = ai;
+    automationWorkers = automation;
+    orgCleanupWorkers = orgCleanup;
+    if (process.env.ORG_CRON_ENABLED === 'false') {
         workerLogger.info('Organization cleanup cron disabled in worker (ORG_CRON_ENABLED=false)');
     }
+    // Lifecycle Stage: APPLICATION_READY & BACKGROUND_POLLERS_STARTED
+    // Start background outbox pollers and maintenance only after all queues and workers are initialized
+    maintenance.start();
+    await startAuthEmailWorker();
+    await startOrgEmailWorker();
     startAuthCleanupWorker();
-    // PM2's wait_ready gate keeps the worker out of the healthy process set
-    // until every queue consumer and scheduled job has registered successfully.
     process.send?.('ready');
-    workerLogger.info('Worker process started');
-    workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation-cron (pg-boss), org-email, org-cleanup-cron (pg-boss), connectors (pg-boss), alerting (pg-boss), billing (pg-boss), event-analytics (pg-boss), user-data-export (pg-boss), ai-reliability-analysis (pg-boss), automation (pg-boss)');
+    workerLogger.info('Worker process started with Supabase PGMQ');
+    workerLogger.info('Active workers: telemetry-maintenance, auth-cleanup, auth-email, auth-automation, org-email, org-cleanup, connectors, alerting, billing, event-analytics, user-data-export, ai-reliability-analysis, automation');
 }
-bootstrapWorkers().catch((error) => {
+bootstrapWorkers().catch(async (error) => {
     workerLogger.fatal({ error }, 'Failed to start worker process');
+    const results = await Promise.allSettled([
+        pgmq.close(),
+        logDB.close(),
+        closeDatabase(),
+    ]);
+    if (results.some((result) => result.status === 'rejected')) {
+        workerLogger.error('One or more worker resources failed to close after startup failure');
+    }
     process.exit(1);
 });
 //# sourceMappingURL=main.js.map

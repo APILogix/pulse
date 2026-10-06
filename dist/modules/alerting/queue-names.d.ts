@@ -1,16 +1,16 @@
 export declare const ALERT_JOBS: {
-    readonly cleanup: "alert.cleanup";
-    readonly escalate: "alert.escalate";
-    readonly escalationSweep: "alert.escalation-sweep";
-    readonly autoResolveSweep: "alert.auto-resolve-sweep";
-    readonly evaluateFast: "alert.evaluate.fast";
-    readonly evaluateWindow: "alert.evaluate.window";
-    readonly evaluateOperational: "alert.evaluate.operational";
-    readonly evaluateAi: "alert.evaluate.ai";
-    readonly notificationRouter: "alert.notification-router";
-    readonly telemetryOutboxRelay: "alert.telemetry-outbox-relay";
-    readonly errorGroupRegressed: "alert.error-group-regressed";
-    readonly alertDomainOutboxRelay: "alert.domain-outbox-relay";
+    readonly cleanup: "alert_cleanup";
+    readonly escalate: "alert_escalate";
+    readonly escalationSweep: "alert_escalation_sweep";
+    readonly autoResolveSweep: "alert_auto_resolve_sweep";
+    readonly evaluateFast: "alert_evaluate_fast";
+    readonly evaluateWindow: "alert_evaluate_window";
+    readonly evaluateOperational: "alert_evaluate_operational";
+    readonly evaluateAi: "alert_evaluate_ai";
+    readonly notificationRouter: "alert_notification_router";
+    readonly telemetryOutboxRelay: "alert_telemetry_outbox_relay";
+    readonly errorGroupRegressed: "alert_error_group_regressed";
+    readonly alertDomainOutboxRelay: "alert_domain_outbox_relay";
 };
-export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert.escalate", "alert.escalation-sweep", "alert.auto-resolve-sweep", "alert.evaluate.fast", "alert.evaluate.window", "alert.evaluate.operational", "alert.evaluate.ai", "alert.notification-router", "alert.telemetry-outbox-relay", "alert.error-group-regressed", "alert.domain-outbox-relay"];
+export declare const ALERT_DELIVERY_WORKER_JOBS: readonly ["alert_escalate", "alert_escalation_sweep", "alert_auto_resolve_sweep", "alert_evaluate_fast", "alert_evaluate_window", "alert_evaluate_operational", "alert_evaluate_ai", "alert_notification_router", "alert_telemetry_outbox_relay", "alert_error_group_regressed", "alert_domain_outbox_relay"];
 //# sourceMappingURL=queue-names.d.ts.map

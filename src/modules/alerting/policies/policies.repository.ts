@@ -38,6 +38,9 @@ function pgCode(e: unknown): string | undefined {
   return typeof e === 'object' && e !== null ? (e as { code?: string }).code : undefined;
 }
 
+export const ALERT_ESCALATION_POLICIES_COLUMNS = 'id, organization_id, name, description, repeat_interval_minutes, max_repeats, is_active, created_at, updated_at, deleted_at';
+export const ALERT_ESCALATION_STEPS_COLUMNS = 'id, policy_id, step_number, wait_minutes, connector_ids, route_ids, notify_on_call, custom_message_template, template_id, is_active, created_at, updated_at';
+
 export class PoliciesRepository {
   private readonly db: typeof pool;
 
@@ -74,7 +77,7 @@ export class PoliciesRepository {
     try {
       const r = await this.db.query<AlertEscalationPolicyRow>(
         `INSERT INTO alert_escalation_policies (organization_id, name, description, repeat_interval_minutes, max_repeats, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${ALERT_ESCALATION_POLICIES_COLUMNS}`,
         [input.organizationId, input.name, input.description, input.repeatIntervalMinutes, input.maxRepeats, input.isActive],
       );
       return r.rows[0]!;
@@ -89,8 +92,7 @@ export class PoliciesRepository {
       `SELECT COUNT(*)::text AS count FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL`, [organizationId],
     );
     const r = await this.db.query<AlertEscalationPolicyRow>(
-      `SELECT * FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL
-       ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      `SELECT ${ALERT_ESCALATION_POLICIES_COLUMNS} FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
       [organizationId, limit, offset],
     );
     return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
@@ -98,7 +100,7 @@ export class PoliciesRepository {
 
   async findEscalationPolicy(organizationId: string, id: string): Promise<AlertEscalationPolicyRow | null> {
     const r = await this.db.query<AlertEscalationPolicyRow>(
-      `SELECT * FROM alert_escalation_policies WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
+      `SELECT ${ALERT_ESCALATION_POLICIES_COLUMNS} FROM alert_escalation_policies WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId],
     );
     return r.rows[0] ?? null;
   }
@@ -124,7 +126,7 @@ export class PoliciesRepository {
          route_ids=EXCLUDED.route_ids, notify_on_call=EXCLUDED.notify_on_call,
          custom_message_template=EXCLUDED.custom_message_template, template_id=EXCLUDED.template_id,
          is_active=EXCLUDED.is_active, updated_at=NOW()
-       RETURNING *`,
+       RETURNING ${ALERT_ESCALATION_STEPS_COLUMNS}`,
       [policyId, input.stepNumber, input.waitMinutes, input.connectorIds, input.routeIds,
        input.notifyOnCall, input.customMessageTemplate, input.templateId, input.isActive],
     );
@@ -133,7 +135,7 @@ export class PoliciesRepository {
 
   async listEscalationSteps(policyId: string): Promise<AlertEscalationStepRow[]> {
     const r = await this.db.query<AlertEscalationStepRow>(
-      `SELECT * FROM alert_escalation_steps WHERE policy_id=$1 ORDER BY step_number ASC`, [policyId],
+      `SELECT ${ALERT_ESCALATION_STEPS_COLUMNS} FROM alert_escalation_steps WHERE policy_id=$1 ORDER BY step_number ASC`, [policyId],
     );
     return r.rows;
   }
@@ -142,9 +144,7 @@ export class PoliciesRepository {
   async listEscalationStepsByPolicyIds(policyIds: string[]): Promise<AlertEscalationStepRow[]> {
     if (policyIds.length === 0) return [];
     const r = await this.db.query<AlertEscalationStepRow>(
-      `SELECT * FROM alert_escalation_steps
-       WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE
-       ORDER BY policy_id, step_number ASC`,
+      `SELECT ${ALERT_ESCALATION_STEPS_COLUMNS} FROM alert_escalation_steps WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE ORDER BY policy_id, step_number ASC`,
       [policyIds],
     );
     return r.rows;

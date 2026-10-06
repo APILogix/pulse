@@ -14,7 +14,7 @@
  */
 import type { FastifyBaseLogger } from 'fastify';
 import { randomUUID } from 'crypto';
-import { pgboss } from '../../../lib/pgboss.js';
+import { pgmq } from '../../../lib/pgmq.js';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
 import { decryptConfigAsync } from '../secrets/secret.service.js';
@@ -220,8 +220,8 @@ export class NotificationDispatcher {
     log: FastifyBaseLogger,
   ): Promise<void> {
     try {
-      await pgboss.send(
-        'alert.evaluate.fast',
+      await pgmq.send(
+        'alert_evaluate_fast',
         {
           organizationId: row.organization_id,
           projectId: row.project_id,
@@ -238,12 +238,6 @@ export class NotificationDispatcher {
             },
           }],
         },
-        {
-          singletonKey: `connector-open-circuit:${row.id}:${Math.floor(Date.now() / 30_000)}`,
-          expireInSeconds: 60,
-          retryLimit: 1,
-          retryDelay: 5,
-        } as never,
       );
     } catch (err) {
       log.warn({ err, connectorId: row.id }, 'Failed to enqueue connector open-circuit alert');

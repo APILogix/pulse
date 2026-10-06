@@ -55,6 +55,7 @@ export interface InsertAuditParams {
     afterState?: Record<string, unknown> | null;
     metadata?: Record<string, unknown>;
 }
+export declare const AUTOMATION_AUDIT_LOG_COLUMNS = "\n  id, organization_id, project_id, workflow_id, run_id, step_id, approval_id,\n  actor_user_id, actor_type, action, entity_type, entity_id, request_id,\n  ip_address, user_agent, before_state, after_state, metadata, occurred_at\n";
 export declare class AutomationAuditRepository {
     private readonly db;
     constructor(db: Pool);

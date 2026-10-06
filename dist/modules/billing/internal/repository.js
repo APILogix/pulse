@@ -1,6 +1,14 @@
 import { pool } from '../../../config/database.js';
 import { generateUUID } from '../../../shared/utils/id.js';
 import { EFFECTIVE_ENTITLEMENTS_SQL } from '../entitlements/repository.js';
+import { COUPON_COLUMNS } from '../coupons/repository.js';
+export const ORG_USAGE_CURRENT_PERIOD_COLUMNS = `
+  id, organization_id, subscription_id, period_start, period_end,
+  events_used, ai_credits_used, projects_used, members_used,
+  api_keys_used, connectors_used, alert_rules_used, dashboards_used,
+  event_limit, ai_credit_limit, overage_events, overage_ai_credits,
+  metadata, created_at, updated_at
+`;
 const resourceColumns = {
     projects: { used: 'projects_used', limit: 'projects_limit' },
     members: { used: 'members_used', limit: 'members_limit' },
@@ -48,7 +56,7 @@ export class InternalBillingRepository {
         return result.rows[0] ?? null;
     }
     async getCurrentUsageForUpdate(orgId, db) {
-        const result = await db.query(`SELECT * FROM organization_usage_current_period
+        const result = await db.query(`SELECT ${ORG_USAGE_CURRENT_PERIOD_COLUMNS} FROM organization_usage_current_period
         WHERE organization_id = $1
         ORDER BY period_end DESC
         LIMIT 1
@@ -56,7 +64,7 @@ export class InternalBillingRepository {
         return result.rows[0] ?? null;
     }
     async getCurrentUsage(orgId, db = this.db) {
-        const result = await db.query(`SELECT * FROM organization_usage_current_period
+        const result = await db.query(`SELECT ${ORG_USAGE_CURRENT_PERIOD_COLUMNS} FROM organization_usage_current_period
         WHERE organization_id = $1
         ORDER BY period_end DESC
         LIMIT 1`, [orgId]);
@@ -93,22 +101,52 @@ export class InternalBillingRepository {
        LIMIT 1`, [orgId, requestId]);
         return result.rows[0] ?? null;
     }
-    async incrementEventUsage(body, acceptedCount, overageCount, db) {
+    async getCreditWeight(eventType, db = this.db) {
+        try {
+            const result = await db.query(`SELECT credit_weight FROM billing_event_credit_weights WHERE event_type = $1 AND is_active = true LIMIT 1`, [eventType]);
+            if (result.rowCount && result.rows[0]) {
+                const val = Number(result.rows[0].credit_weight);
+                if (!Number.isNaN(val) && val > 0)
+                    return val;
+            }
+        }
+        catch {
+            // Fall back if table not yet migrated
+        }
+        const DEFAULT_WEIGHTS = {
+            request: 1.0,
+            error: 1.5,
+            trace: 0.5,
+            span: 0.25,
+            log: 0.12,
+            metric: 0.1,
+            profile: 0.5,
+            replay: 2.0,
+            message: 0.3,
+            cron_checkin: 0.2,
+        };
+        return DEFAULT_WEIGHTS[eventType] ?? 1.0;
+    }
+    async incrementEventUsage(body, acceptedCount, overageCount, db, rawCount) {
+        const rawEvents = rawCount ?? body.rawCount ?? Math.round(body.count);
         await db.query(`UPDATE organization_usage_current_period
           SET events_used = events_used + $2,
               overage_events = overage_events + $3,
-              last_event_at = NOW()
-        WHERE organization_id = $1`, [body.organizationId, acceptedCount, overageCount]);
+              raw_events_count = raw_events_count + $4,
+              last_event_at = NOW(),
+              updated_at = NOW()
+        WHERE organization_id = $1`, [body.organizationId, acceptedCount, overageCount, rawEvents]);
+        const rawDelta = rawEvents;
         const counters = [
-            body.count,
-            body.eventType === 'request' ? body.count : 0,
-            body.eventType === 'error' ? body.count : 0,
-            body.eventType === 'trace' ? body.count : 0,
-            body.eventType === 'span' ? body.count : 0,
-            body.eventType === 'metric' ? body.count : 0,
-            body.eventType === 'log' ? body.count : 0,
-            body.eventType === 'profile' ? body.count : 0,
-            body.eventType === 'replay' ? body.count : 0,
+            rawDelta,
+            body.eventType === 'request' ? rawDelta : 0,
+            body.eventType === 'error' ? rawDelta : 0,
+            body.eventType === 'trace' ? rawDelta : 0,
+            body.eventType === 'span' ? rawDelta : 0,
+            body.eventType === 'metric' ? rawDelta : 0,
+            body.eventType === 'log' ? rawDelta : 0,
+            body.eventType === 'profile' ? rawDelta : 0,
+            body.eventType === 'replay' ? rawDelta : 0,
         ];
         if (body.projectId) {
             await db.query(`INSERT INTO usage_daily_counters (
@@ -228,7 +266,7 @@ export class InternalBillingRepository {
          subtotal_amount, tax_amount, discount_amount, total_amount, amount_paid,
          period_start, period_end, overage_events, overage_amount, metadata
        ) VALUES ($1, $2, $3, $4, 'draft', $5, $6, 0, 0, $6, 0, $7, $8, 0, 0, '{}'::jsonb)
-       RETURNING *`, [
+       RETURNING id, organization_id, subscription_id, provider, status, currency, subtotal_amount, tax_amount, discount_amount, total_amount, amount_paid, period_start, period_end, overage_events, overage_amount, metadata, created_at, updated_at`, [
             invoiceId,
             body.organizationId,
             sub.id,
@@ -248,7 +286,7 @@ export class InternalBillingRepository {
         const result = await db.query(`UPDATE invoices
           SET status = 'open'
         WHERE id = $1 AND status = 'draft'
-        RETURNING *`, [body.invoiceId]);
+        RETURNING id, organization_id, subscription_id, provider, status, currency, subtotal_amount, tax_amount, discount_amount, total_amount, amount_paid, period_start, period_end, overage_events, overage_amount, metadata, created_at, updated_at`, [body.invoiceId]);
         return result.rows[0] ?? null;
     }
     async reconcilePayments(body, db) {
@@ -261,27 +299,35 @@ export class InternalBillingRepository {
         return { reconciled: result.rowCount ?? 0, paymentIds: result.rows.map((row) => row.id) };
     }
     async validateCoupon(body, db = this.db) {
-        const result = await db.query(`SELECT c.*
+        // Normalize at app boundary — plain equality enables B-Tree index scan.
+        const normalizedCode = (body.code || '').trim().toLowerCase();
+        const result = await db.query(`SELECT c.id, c.code, c.name, c.description, c.discount_type, c.discount_value,
+              c.currency, c.max_redemptions, c.redemption_count, c.max_redemptions_per_org,
+              c.first_time_customers_only, c.trial_only, c.valid_from, c.valid_until,
+              c.is_active, c.is_public, c.metadata, c.created_at, c.updated_at
          FROM coupons c
          LEFT JOIN coupon_applicable_plans cap ON cap.coupon_id = c.id
-        WHERE LOWER(c.code) = LOWER($1)
+        WHERE c.code = $1
           AND c.is_active = TRUE
           AND (c.valid_from IS NULL OR c.valid_from <= NOW())
           AND (c.valid_until IS NULL OR c.valid_until > NOW())
           AND (c.max_redemptions IS NULL OR c.redemption_count < c.max_redemptions)
           AND (cap.plan_id IS NULL OR cap.plan_id = $2)
         ORDER BY c.created_at DESC NULLS LAST
-        LIMIT 1`, [body.code, body.planId]);
+        LIMIT 1`, [normalizedCode, body.planId]);
         return result.rows[0] ?? null;
     }
     async redeemCoupon(body, discountAmount, currency, db) {
-        const couponResult = await db.query(`SELECT * FROM coupons
-        WHERE LOWER(code) = LOWER($1)
+        // Normalize at app boundary — plain equality enables B-Tree index scan.
+        const normalizedCode = (body.code || '').trim().toLowerCase();
+        const couponResult = await db.query(`SELECT ${COUPON_COLUMNS} FROM coupons
+        WHERE code = $1
           AND is_active = TRUE
+          AND deleted_at IS NULL
           AND (valid_from IS NULL OR valid_from <= NOW())
           AND (valid_until IS NULL OR valid_until > NOW())
         LIMIT 1
-        FOR UPDATE`, [body.code]);
+        FOR UPDATE`, [normalizedCode]);
         const coupon = couponResult.rows[0];
         if (!coupon)
             return null;
@@ -294,7 +340,7 @@ export class InternalBillingRepository {
          id, coupon_id, organization_id, subscription_id, invoice_id,
          discount_amount, currency, redemption_source, metadata, redeemed_at
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'internal', '{}'::jsonb, NOW())
-       RETURNING *`, [
+       RETURNING id, coupon_id, organization_id, subscription_id, invoice_id, discount_amount, currency, redemption_source, metadata, redeemed_at`, [
             generateUUID(),
             coupon.id,
             body.organizationId,

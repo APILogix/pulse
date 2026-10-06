@@ -128,6 +128,10 @@ export async function cacheIdempotencyResponse(
 
   try {
     const payloadString = typeof payload === "string" ? payload : JSON.stringify(payload);
+    // Hard cap for cached idempotency responses (512 KB) to prevent memory and cache bloat
+    if (payloadString.length > 512 * 1024) {
+      return;
+    }
     const headers: Record<string, string> = {};
     for (const [header, value] of Object.entries(reply.getHeaders())) {
       if (value !== undefined && value !== null) {

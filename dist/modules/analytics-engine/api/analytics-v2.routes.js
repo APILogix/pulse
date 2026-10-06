@@ -221,6 +221,7 @@ export async function analyticsV2Routes(fastify, _options) {
                 percentiles: { ...latency.percentiles },
                 avgMs: latency.avgMs,
             },
+            summary: current,
         };
     };
     const registerRequestRoutes = (prefix, resolve, guards) => {
@@ -665,7 +666,7 @@ export async function analyticsV2Routes(fastify, _options) {
                     scope,
                     workers: FRESHNESS_SOURCES.overview,
                     build: async () => {
-                        const [requestPayload, errorSummary, previousErrors, services, counters, slowest] = await Promise.all([
+                        const [requestPayload, errorSummary, previousErrors, services, counters, slowest, topErrors] = await Promise.all([
                             requestSummaryPayload(scope),
                             read.errorSummary(scope),
                             scope.compareRange ? read.errorSummary(scope, scope.compareRange) : Promise.resolve(null),
@@ -677,6 +678,7 @@ export async function analyticsV2Routes(fastify, _options) {
                                 valueColumn: 'total_count',
                                 extraColumns: ['entity_label', 'error_count'],
                             }),
+                            read.errorGroups(scope, { status: 'unresolved' }).catch(() => []),
                         ]);
                         const requestSeries = buildSeries('requests.total', 'Requests', 'count', scope.window, (counters.get('total') ?? []).map((row) => ({ bucket: row.bucket, value: row.value })), scope.range);
                         const errorSeries = buildSeries('requests.error_count', 'Errors', 'count', scope.window, (counters.get('errors') ?? []).map((row) => ({ bucket: row.bucket, value: row.value })), scope.range);
@@ -684,6 +686,54 @@ export async function analyticsV2Routes(fastify, _options) {
                         const cards = requestPayload.cards.map((card) => card.key === 'requests.total'
                             ? { ...card, sparkline: sparklineFrom(requestSeries) }
                             : card);
+                        const rankedSlowest = buildRankedList({
+                            key: 'endpoints.top_slowest',
+                            label: 'Slowest endpoints',
+                            unit: 'ms',
+                            items: slowest.map((row) => {
+                                const percentiles = row.latencyPercentiles;
+                                return {
+                                    key: String(row.entity_key),
+                                    label: String(row.entity_label ?? row.entity_key),
+                                    value: percentiles?.p95 ?? 0,
+                                    secondary: `${num(row.value)} req`,
+                                };
+                            }),
+                        });
+                        const summary = requestPayload.summary;
+                        const totalReqs = summary?.total ?? 0;
+                        const successReqs = summary?.success ?? 0;
+                        const redirectReqs = summary?.redirect ?? 0;
+                        const clientErrorReqs = summary?.clientError ?? 0;
+                        const errorReqs = summary?.error ?? 0;
+                        const statusDistribution = {
+                            total: totalReqs,
+                            distribution: [
+                                { class: '2xx', count: successReqs, pct: totalReqs > 0 ? (successReqs / totalReqs) * 100 : 0 },
+                                { class: '3xx', count: redirectReqs, pct: totalReqs > 0 ? (redirectReqs / totalReqs) * 100 : 0 },
+                                { class: '4xx', count: clientErrorReqs, pct: totalReqs > 0 ? (clientErrorReqs / totalReqs) * 100 : 0 },
+                                { class: '5xx', count: errorReqs, pct: totalReqs > 0 ? (errorReqs / totalReqs) * 100 : 0 },
+                            ],
+                        };
+                        const mappedTopErrors = (topErrors || []).slice(0, 5).map((row) => ({
+                            fingerprint: String(row.fingerprint),
+                            errorName: String(row.error_name ?? 'Error'),
+                            message: String(row.message_template ?? ''),
+                            occurrences: num(row.occurrences),
+                            affectedUsers: num(row.affected_users),
+                            severity: String(row.severity ?? 'error'),
+                            mechanism: String(row.mechanism ?? 'generic'),
+                            regressionScore: num(row.regression_score),
+                            status: String(row.status ?? 'unresolved'),
+                            priority: num(row.priority ?? 0),
+                            isNew: Boolean(row.is_new),
+                            services: Array.isArray(row.services) ? row.services.map(String) : [],
+                            releases: Array.isArray(row.releases) ? row.releases.map(String) : [],
+                            firstSeen: row.first_seen_at ? new Date(row.first_seen_at).toISOString() : new Date().toISOString(),
+                            lastSeen: row.last_seen_at ? new Date(row.last_seen_at).toISOString() : new Date().toISOString(),
+                            href: `/errors/${row.fingerprint}`,
+                            aiContext: '',
+                        }));
                         return {
                             cards: [
                                 ...cards,
@@ -708,20 +758,12 @@ export async function analyticsV2Routes(fastify, _options) {
                             series: { requests: requestSeries, errors: errorSeries },
                             latency: requestPayload.latency,
                             services: services.slice(0, scope.limit),
-                            topSlowEndpoints: buildRankedList({
-                                key: 'endpoints.top_slowest',
-                                label: 'Slowest endpoints',
-                                unit: 'ms',
-                                items: slowest.map((row) => {
-                                    const percentiles = row.latencyPercentiles;
-                                    return {
-                                        key: String(row.entity_key),
-                                        label: String(row.entity_label ?? row.entity_key),
-                                        value: percentiles?.p95 ?? 0,
-                                        secondary: `${num(row.value)} req`,
-                                    };
-                                }),
-                            }),
+                            topSlowEndpoints: rankedSlowest,
+                            requestSeries,
+                            errorSeries,
+                            slowestEndpoints: rankedSlowest.items,
+                            statusDistribution,
+                            topErrors: mappedTopErrors,
                         };
                     },
                 });

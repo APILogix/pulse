@@ -144,4 +144,75 @@ describe('API key lifecycle uses status as the only source of truth', () => {
     });
     expect(summary).not.toHaveProperty('latencyMsP95');
   });
+
+  it('creates API keys with no expiry and supersedes any existing active keys for the environment', async () => {
+    const existingKeyRecord = {
+      id: apiKeyId,
+      projectId,
+      environmentId,
+      name: 'Old Key',
+      status: 'active',
+      expiresAt: null,
+      secretHash: 'old-hash-1234567890',
+    };
+    const mockClient = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const apiKeys = {
+      listActiveApiKeyRecords: vi.fn().mockResolvedValue([existingKeyRecord]),
+      createApiKey: vi.fn(async (input: any) => ({
+        ...input,
+        id: 'new-key-uuid',
+        status: 'active',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })),
+    };
+    const environments = {
+      findEnvironment: vi.fn().mockResolvedValue({
+        id: environmentId,
+        slug: 'production',
+        isActive: true,
+        deletedAt: null,
+      }),
+    };
+    const service = new ApiKeyService(
+      { withTransaction: vi.fn(async (work: any) => work(mockClient)) } as any,
+      { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() } as any,
+      {} as any, {} as any, {} as any,
+      apiKeys as any, environments as any, {} as any,
+    );
+    vi.spyOn(service, 'requireProjectAccess').mockResolvedValue({} as any);
+    vi.spyOn(service, 'enforceProjectModuleLimit').mockResolvedValue({} as any);
+    vi.spyOn(service, 'audit').mockResolvedValue(undefined);
+    vi.spyOn(service as any, 'adjustOrgApiKeyUsage').mockResolvedValue(undefined);
+
+    const result = await service.createApiKey(
+      orgId,
+      projectId,
+      userId,
+      { environmentId, name: 'Production Backend Ingestion' },
+      meta as any,
+    );
+
+    // 1. Verify old key was soft-deleted / revoked
+    expect(mockClient.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'revoked'"),
+      [userId, existingKeyRecord.id],
+    );
+
+    // 2. Verify new key was created with expiresAt = null (never expires)
+    expect(apiKeys.createApiKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId,
+        organizationId: orgId,
+        environmentId,
+        expiresAt: null,
+      }),
+      mockClient,
+    );
+
+    // 3. Verify public result
+    expect(result.apiKey.expiresAt).toBeNull();
+    expect(result.apiKey.status).toBe('active');
+    expect(result.fullKey.startsWith('pv_live_')).toBe(true);
+  });
 });

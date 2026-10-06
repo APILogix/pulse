@@ -13,6 +13,7 @@
 import type { PoolClient } from 'pg';
 import { pool } from '../../../config/database.js';
 import { type AlertMetricRow, type MetricGranularity } from '../types.js';
+export declare const ALERT_METRICS_COLUMNS = "id, organization_id, rule_id, metric_type, value, bucket_start, bucket_end, granularity, labels, created_at";
 export declare class MetricsRepository {
     private readonly db;
     /**

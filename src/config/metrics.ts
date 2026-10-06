@@ -57,8 +57,11 @@ async function metricsPlugin(fastify: FastifyInstance): Promise<void> {
   fastify.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
     httpRequestsInFlight.dec();
 
-    const duration = (Date.now() - (request as any).startTime) / 1000;
-    const route = request.routerPath || request.url;
+    const duration = (request as any).startTime
+      ? Math.max(0, (Date.now() - (request as any).startTime) / 1000)
+      : 0;
+    // Strictly bound route label cardinality to prevent memory leak from random 404/unmatched URLs
+    const route = request.routerPath || 'unmatched';
     const labels = {
       method: request.method,
       route,

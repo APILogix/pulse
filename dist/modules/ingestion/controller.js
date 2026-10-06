@@ -40,12 +40,19 @@ export class IngestionController {
             reply.header('ETag', result.etag);
             reply.header('X-Config-Revision', String(result.revisionNo));
             reply.header('Cache-Control', 'private, no-cache');
+            const ifNoneMatch = request.headers['if-none-match'];
+            if (ifNoneMatch) {
+                const normalizedClient = ifNoneMatch.trim().replace(/^W\//, '');
+                const normalizedServer = result.etag.trim().replace(/^W\//, '');
+                if (normalizedClient === normalizedServer || ifNoneMatch === '*') {
+                    return reply.status(304).send();
+                }
+            }
             const config = result.config;
             const ingestEndpoint = config.transport.routes.events?.url
                 || config.transport.routes.requests?.url
                 || (config.transport.routes.errors?.url ? `${config.transport.routes.errors.url.replace(/\/errors$/, '')}/events` : "");
             const responsePayload = {
-                ...config,
                 success: true,
                 projectId: config.sdk.projectId,
                 organizationId: result.organizationId,
@@ -56,8 +63,6 @@ export class IngestionController {
                 configHash: config.meta.configHash,
                 plan: "enterprise",
                 config,
-                data: config,
-                remoteConfig: config,
                 ingestion: {
                     endpoint: ingestEndpoint,
                     batchSize: config.transport.routes.events.batchSize,

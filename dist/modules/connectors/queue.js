@@ -1,4 +1,5 @@
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { ConnectorRepository } from './repository.js';
 import { NotificationDispatcher } from './delivery/delivery.service.js';
 import { ConnectorService } from './service.js';
@@ -20,114 +21,60 @@ import { sendEmail } from '../../shared/email/mailer.js';
 import { alertFiringTemplate, alertResolvedTemplate, latencyAlertTemplate, standardNotificationTemplate, } from '../../shared/email/index.js';
 import { ProjectOwnerRepository } from '../alerting/runtime/email-only-restricted-routing.js';
 import { renderEnterpriseAlertEmail } from '../alerting/runtime/alert-notification-formatter.js';
-function allJobs(arg) {
-    if (Array.isArray(arg))
-        return arg;
-    return arg ? [arg] : [];
+function toChannelKind(raw) {
+    const k = raw.trim().toLowerCase();
+    if (k.startsWith('connector.v2.'))
+        return k.slice('connector.v2.'.length);
+    if (k.startsWith('connector_v2_'))
+        return k.slice('connector_v2_'.length);
+    return k;
 }
-async function safeCreateQueue(name, strict = false) {
-    const boss = pgboss;
-    if (typeof boss.createQueue !== 'function') {
-        if (strict)
-            throw new Error(`PgBoss queue factory is unavailable for required queue ${name}`);
-        return;
+function resolveCredentialExpiry(normalized, currentExpiresAt) {
+    const raw = normalized.expires_at ?? normalized.expiresAt ?? normalized.token_expires_at ?? normalized.tokenExpiresAt;
+    if (raw instanceof Date)
+        return isNaN(raw.getTime()) ? currentExpiresAt : raw;
+    if (typeof raw === 'string' || typeof raw === 'number') {
+        const parsed = new Date(raw);
+        if (!isNaN(parsed.getTime()))
+            return parsed;
     }
-    if (strict) {
-        await boss.createQueue(name);
-        return;
-    }
-    await Promise.resolve(boss.createQueue(name)).catch(() => undefined);
+    return currentExpiresAt;
 }
 function workerMeta(actorUserId = null) {
     return {
         actorUserId,
         actorIp: '127.0.0.1',
-        actorUserAgent: 'connector-worker',
-        requestId: '00000000-0000-0000-0000-000000000000',
+        actorUserAgent: 'worker/connector-runtime',
+        requestId: `req_worker_${Date.now()}`,
     };
 }
-function resolveCredentialExpiry(config, fallback) {
-    const raw = config.expiresAt;
-    if (raw instanceof Date && !Number.isNaN(raw.getTime()))
-        return raw;
-    if (typeof raw === 'string') {
-        const parsed = new Date(raw);
-        if (!Number.isNaN(parsed.getTime()))
-            return parsed;
+function getProviderConcurrency(provider) {
+    switch (provider.toLowerCase()) {
+        case 'slack': return env.CONNECTOR_CONCURRENCY_SLACK;
+        case 'email': return env.CONNECTOR_CONCURRENCY_EMAIL;
+        case 'webhook': return env.CONNECTOR_CONCURRENCY_WEBHOOK;
+        case 'discord': return env.CONNECTOR_CONCURRENCY_DISCORD;
+        case 'teams': return env.CONNECTOR_CONCURRENCY_TEAMS;
+        case 'pagerduty': return env.CONNECTOR_CONCURRENCY_PAGERDUTY;
+        case 'sms': return env.CONNECTOR_CONCURRENCY_SMS;
+        default: return env.CONNECTOR_SEND_CONCURRENCY;
     }
-    return fallback;
-}
-function payloadWithProjectChannel(job) {
-    if (!job.projectChannel)
-        return job.payload;
-    return {
-        ...job.payload,
-        metadata: {
-            ...(job.payload.metadata ?? {}),
-            projectChannel: {
-                ...(job.projectChannel.metadata ?? {}),
-                userId: job.projectChannel.userId,
-                channelId: job.projectChannel.channelId,
-                channelType: job.projectChannel.channelType,
-                destination: job.projectChannel.destination ?? null,
-            },
-        },
-    };
-}
-function toChannelKind(value) {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'email' || normalized === 'slack' || normalized === 'discord'
-        || normalized === 'teams' || normalized === 'pagerduty' || normalized === 'webhook'
-        || normalized === 'sms')
-        return normalized;
-    throw new Error(`Unsupported connector provider: ${value}`);
-}
-function getProviderConcurrency(type) {
-    const norm = type.trim().toLowerCase();
-    if (norm === 'slack')
-        return env.CONNECTOR_CONCURRENCY_SLACK;
-    if (norm === 'email')
-        return env.CONNECTOR_CONCURRENCY_EMAIL;
-    if (norm === 'webhook')
-        return env.CONNECTOR_CONCURRENCY_WEBHOOK;
-    if (norm === 'discord')
-        return env.CONNECTOR_CONCURRENCY_DISCORD;
-    if (norm === 'teams')
-        return env.CONNECTOR_CONCURRENCY_TEAMS;
-    if (norm === 'pagerduty')
-        return env.CONNECTOR_CONCURRENCY_PAGERDUTY;
-    if (norm === 'sms')
-        return env.CONNECTOR_CONCURRENCY_SMS;
-    return env.CONNECTOR_SEND_CONCURRENCY;
-}
-function escapeHtml(value) {
-    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 function renderManagedAlertEmail(jobData, targetEmail) {
     return renderEnterpriseAlertEmail({
-        payload: (jobData.payload ?? {}),
+        payload: jobData.payload,
         organizationId: jobData.organizationId,
-        projectId: jobData.projectId ?? undefined,
-        alertKey: jobData.alertKey ?? undefined,
+        projectId: jobData.projectId,
+        alertKey: jobData.alertKey,
         alertEventId: jobData.alertEventId ?? undefined,
         severity: jobData.severity,
         ruleId: jobData.ruleId ?? undefined,
-        deliveryMode: jobData.deliveryMode ?? undefined,
+        deliveryMode: jobData.deliveryMode,
         recipientEmail: targetEmail,
     });
 }
 async function processManagedEmailJob(jobData, jobId, runtimeRepository, notificationEntitlement, owners, log) {
     const startedAt = Date.now();
-    // Structured logging only. Recipient addresses and rendered email bodies are
-    // PII/customer content and must never be written to stdout.
-    log.debug({
-        jobId,
-        notificationJobId: jobData.notificationJobId,
-        ruleId: jobData.ruleId ?? null,
-        severity: jobData.severity,
-        organizationId: jobData.organizationId,
-    }, 'processing managed email job');
     const capability = await notificationEntitlement.resolve(jobData.organizationId);
     if (!capability.alertingEnabled && !capability.managedEmailEnabled) {
         await runtimeRepository.recordNotificationDelivery({
@@ -148,8 +95,6 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
         const owner = await owners.findActiveVerifiedOwner(jobData.organizationId, jobData.projectId);
         if (owner) {
             targetEmail = owner.email;
-            // Log the resolution SOURCE and user id, never the address itself.
-            log.debug({ jobId, recipientSource: 'project_owner', recipientUserId: owner.userId }, 'managed email recipient resolved');
         }
         else {
             const fallback = owners.findActiveVerifiedFallbackRecipient
@@ -157,7 +102,6 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
                 : null;
             if (fallback) {
                 targetEmail = fallback.email;
-                log.debug({ jobId, recipientSource: 'organization_fallback', recipientUserId: fallback.userId }, 'managed email recipient resolved');
             }
             else {
                 await runtimeRepository.recordNotificationDelivery({
@@ -170,25 +114,11 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
                     latencyMs: Date.now() - startedAt,
                 });
                 recordNotificationDelivery('notification.delivery.owner_unavailable');
-                log.warn({ jobId, projectId: jobData.projectId, organizationId: jobData.organizationId }, 'Managed email delivery failed: neither project owner nor organization fallback recipient is available');
                 return;
             }
         }
     }
     const template = renderManagedAlertEmail(jobData, targetEmail);
-    // Deliberately does NOT log the recipient address, the subject, or the
-    // rendered body. Those are customer content/PII; dumping them to stdout
-    // leaks alert contents into log aggregation. Identifiers are enough to trace
-    // a delivery, and the payload is already persisted on the notification job.
-    log.debug({
-        jobId,
-        notificationJobId: jobData.notificationJobId,
-        ruleId: jobData.ruleId ?? null,
-        alertKey: jobData.alertKey ?? null,
-        severity: jobData.severity,
-        deliveryMode: jobData.deliveryMode,
-        bodyLength: template.text.length,
-    }, 'managed email template rendered');
     try {
         await sendEmail({
             to: targetEmail,
@@ -204,12 +134,7 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.sent');
-        log.info({
-            jobId,
-            notificationJobId: jobData.notificationJobId,
-            organizationId: jobData.organizationId,
-            latencyMs: Date.now() - startedAt,
-        }, 'Managed email alert delivered successfully');
+        log.info({ jobId, notificationJobId: jobData.notificationJobId, organizationId: jobData.organizationId }, 'Managed email alert delivered successfully');
     }
     catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -224,10 +149,8 @@ async function processManagedEmailJob(jobData, jobId, runtimeRepository, notific
             latencyMs: Date.now() - startedAt,
         });
         recordNotificationDelivery('notification.delivery.failed');
-        log.error({ err, jobId, notificationJobId: jobData.notificationJobId, permanent: isPermanent }, 'Managed email delivery attempt failed');
-        if (!isPermanent) {
+        if (!isPermanent)
             throw err;
-        }
     }
 }
 export async function registerConnectorWorkers(logger, runtimeRepository = new AlertRuntimeRepository(logDB.getPrimaryPool()), config = {}) {
@@ -250,11 +173,9 @@ export async function registerConnectorWorkers(logger, runtimeRepository = new A
         ? [CONNECTOR_JOBS.deliveryRetry]
         : Object.values(CONNECTOR_JOBS);
     const connectorTypes = listConnectorTypes();
-    // Canonical V2 transport queues are the ONLY notification transport consumers.
-    // The legacy `connector-send-<provider>` family has been removed entirely.
     const transportQueues = connectorTypes.map((t) => connectorTransportQueue(t.type));
     const registeredQueueNames = [...baseQueues, ...transportQueues];
-    await Promise.all(registeredQueueNames.map((queue) => safeCreateQueue(queue, config.strictQueueCreation === true)));
+    await Promise.all(registeredQueueNames.map((queue) => pgmq.createQueue(queue)));
     const circuitProbeTimer = setInterval(async () => {
         try {
             const recovered = await globalGuards.probeOpenCircuits(env.CONNECTOR_CIRCUIT_RESET_SECONDS);
@@ -267,250 +188,220 @@ export async function registerConnectorWorkers(logger, runtimeRepository = new A
         }
     }, 60_000);
     circuitProbeTimer.unref();
-    for (const queue of transportQueues) {
+    const workers = [];
+    // ── Transport Workers ───────────────────────────────────────────────────
+    await Promise.all(transportQueues.map(async (queue) => {
         const providerType = providerFromTransportQueue(queue);
         const concurrency = getProviderConcurrency(providerType);
-        await pgboss.work(queue, { localConcurrency: concurrency, batchSize: env.CONNECTOR_SEND_BATCH_SIZE }, (async (arg) => {
-            const jobs = allJobs(arg);
-            await Promise.all(jobs.map(async (job) => {
-                if (isManagedEmailJob(job.data)) {
-                    await processManagedEmailJob(job.data, job.id, runtimeRepository, notificationEntitlement, owners, log);
-                    return;
-                }
-                if (!isConnectorTransportJob(job.data)) {
-                    log.error({ jobId: job.id }, 'Rejected connector transport job with invalid contract');
-                    return;
-                }
-                const channelKind = toChannelKind(job.data.channelKind);
-                const capability = await notificationEntitlement.resolve(job.data.organizationId);
-                if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(channelKind)) {
-                    await runtimeRepository.recordNotificationDelivery({
-                        organizationId: job.data.organizationId,
-                        jobId: job.data.notificationJobId,
-                        jobStatus: 'failed',
-                        attemptStatus: 'failed',
-                        errorCategory: 'DELIVERY_BLOCKED_ENTITLEMENT',
-                        errorMessage: 'Connector entitlement is unavailable for delivery',
-                    });
-                    recordNotificationDelivery('notification.delivery.entitlement_blocked');
-                    log.warn({ jobId: job.id, channelKind }, 'Connector transport blocked by entitlement');
-                    return;
-                }
-                // Defensive tenant verification: the connector is looked up org-scoped
-                // AND its stored organization_id is re-compared to the job's claimed
-                // tenant. One tenant can never deliver through another's connector.
-                const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-                if (!row || row.status !== 'active' || row.organization_id !== job.data.organizationId) {
-                    await runtimeRepository.recordNotificationDelivery({
-                        organizationId: job.data.organizationId,
-                        jobId: job.data.notificationJobId,
-                        jobStatus: 'failed',
-                        attemptStatus: 'failed',
-                        errorCategory: 'connector_unavailable',
-                        errorMessage: 'Connector is missing, inactive, or tenant mismatched',
-                    });
-                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector transport skipped: inactive or tenant mismatched connector');
-                    return;
-                }
-                // Global rate-limit + circuit guard. Previously this guard was only
-                // CONSULTED on the legacy provider queue while the canonical V2 queue
-                // merely wrote to it, so the circuit state existed but never actually
-                // protected the live delivery path. It is now enforced here.
-                if (env.CONNECTOR_GLOBAL_LIMITS) {
-                    const guard = await globalGuards.acquire(job.data.connectorId, {
-                        limit: env.CONNECTOR_GLOBAL_LIMIT,
-                        windowSeconds: env.CONNECTOR_GLOBAL_WINDOW_SECONDS,
-                        failureThreshold: env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD,
-                        resetSeconds: env.CONNECTOR_CIRCUIT_RESET_SECONDS,
-                    });
-                    if (!guard.allowed) {
-                        // Deferred, not failed: leave the job queued so the delivery-retry
-                        // sweep replays it once the window/circuit reopens. This keeps
-                        // retry bounded instead of burning the attempt budget.
-                        await runtimeRepository.recordNotificationDelivery({
-                            organizationId: job.data.organizationId,
-                            jobId: job.data.notificationJobId,
-                            jobStatus: 'queued',
-                            attemptStatus: 'failed',
-                            errorCategory: guard.circuitState === 'open' ? 'circuit_open' : 'rate_limit',
-                            errorMessage: `Delivery deferred by global guard (circuit=${guard.circuitState})`,
-                        });
-                        recordNotificationDelivery('notification.delivery.rate_limited');
-                        log.warn({ jobId: job.id, connectorId: job.data.connectorId, circuitState: guard.circuitState }, 'Connector transport deferred by global guard');
-                        return;
-                    }
-                }
-                const outcome = await dispatcher.dispatch(row, job.data.payload, { routeId: null });
-                const succeeded = outcome.status === 'sent';
-                const retryable = outcome.result.retryable === true;
+        const worker = new PgmqWorker(pgmq, async (msg) => {
+            const jobData = msg.message;
+            const jobId = msg.msgId;
+            if (isManagedEmailJob(jobData)) {
+                await processManagedEmailJob(jobData, jobId, runtimeRepository, notificationEntitlement, owners, log);
+                return;
+            }
+            if (!isConnectorTransportJob(jobData)) {
+                log.error({ jobId }, 'Rejected connector transport job with invalid contract');
+                return;
+            }
+            const channelKind = toChannelKind(jobData.channelKind);
+            const capability = await notificationEntitlement.resolve(jobData.organizationId);
+            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(channelKind)) {
                 await runtimeRepository.recordNotificationDelivery({
-                    organizationId: job.data.organizationId,
-                    jobId: job.data.notificationJobId,
-                    jobStatus: succeeded ? 'sent' : retryable ? 'queued' : 'failed',
-                    attemptStatus: succeeded ? 'sent' : 'failed',
-                    errorCategory: succeeded ? null : outcome.result.failureCategory ?? 'transport',
-                    errorMessage: succeeded ? null : outcome.result.errorMessage ?? 'Connector delivery deferred or failed',
-                    latencyMs: outcome.result.latencyMs,
-                    externalMessageId: outcome.result.externalMessageId ?? null,
-                    responseStatusCode: outcome.result.statusCode ?? null,
+                    organizationId: jobData.organizationId,
+                    jobId: jobData.notificationJobId,
+                    jobStatus: 'failed',
+                    attemptStatus: 'failed',
+                    errorCategory: 'DELIVERY_BLOCKED_ENTITLEMENT',
+                    errorMessage: 'Connector entitlement is unavailable for delivery',
                 });
-                // Feed the same guard we gate on above, so open/half-open/closed
-                // transitions are driven by the live delivery path.
-                if (succeeded)
-                    await globalGuards.recordSuccess(job.data.connectorId);
-                else
-                    await globalGuards.recordFailure(job.data.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
-            }));
-        }));
-    }
-    await pgboss.work(CONNECTOR_JOBS.deliveryRetry, {}, (async () => {
+                recordNotificationDelivery('notification.delivery.entitlement_blocked');
+                log.warn({ jobId, channelKind }, 'Connector transport blocked by entitlement');
+                return;
+            }
+            const row = await repository.findById(jobData.organizationId, jobData.connectorId);
+            if (!row || row.status !== 'active' || row.organization_id !== jobData.organizationId) {
+                await runtimeRepository.recordNotificationDelivery({
+                    organizationId: jobData.organizationId,
+                    jobId: jobData.notificationJobId,
+                    jobStatus: 'failed',
+                    attemptStatus: 'failed',
+                    errorCategory: 'connector_unavailable',
+                    errorMessage: 'Connector is missing, inactive, or tenant mismatched',
+                });
+                log.warn({ jobId, connectorId: jobData.connectorId }, 'Connector transport skipped: inactive or tenant mismatched');
+                return;
+            }
+            if (env.CONNECTOR_GLOBAL_LIMITS) {
+                const guard = await globalGuards.acquire(jobData.connectorId, {
+                    limit: env.CONNECTOR_GLOBAL_LIMIT,
+                    windowSeconds: env.CONNECTOR_GLOBAL_WINDOW_SECONDS,
+                    failureThreshold: env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD,
+                    resetSeconds: env.CONNECTOR_CIRCUIT_RESET_SECONDS,
+                });
+                if (!guard.allowed) {
+                    await runtimeRepository.recordNotificationDelivery({
+                        organizationId: jobData.organizationId,
+                        jobId: jobData.notificationJobId,
+                        jobStatus: 'queued',
+                        attemptStatus: 'failed',
+                        errorCategory: guard.circuitState === 'open' ? 'circuit_open' : 'rate_limit',
+                        errorMessage: `Delivery deferred by global guard (circuit=${guard.circuitState})`,
+                    });
+                    recordNotificationDelivery('notification.delivery.rate_limited');
+                    return;
+                }
+            }
+            const outcome = await dispatcher.dispatch(row, jobData.payload, { routeId: null });
+            const succeeded = outcome.status === 'sent';
+            const retryable = outcome.result.retryable === true;
+            await runtimeRepository.recordNotificationDelivery({
+                organizationId: jobData.organizationId,
+                jobId: jobData.notificationJobId,
+                jobStatus: succeeded ? 'sent' : retryable ? 'queued' : 'failed',
+                attemptStatus: succeeded ? 'sent' : 'failed',
+                errorCategory: succeeded ? null : outcome.result.failureCategory ?? 'transport',
+                errorMessage: succeeded ? null : outcome.result.errorMessage ?? 'Connector delivery deferred or failed',
+                latencyMs: outcome.result.latencyMs,
+                externalMessageId: outcome.result.externalMessageId ?? null,
+                responseStatusCode: outcome.result.statusCode ?? null,
+            });
+            if (succeeded)
+                await globalGuards.recordSuccess(jobData.connectorId);
+            else
+                await globalGuards.recordFailure(jobData.connectorId, env.CONNECTOR_CIRCUIT_FAILURE_THRESHOLD);
+        }, {
+            queue,
+            concurrency,
+            batchSize: env.CONNECTOR_SEND_BATCH_SIZE,
+            visibilityTimeoutSeconds: env.CONNECTOR_SEND_EXPIRE_SECONDS,
+        });
+        await worker.start();
+        workers.push(worker);
+    }));
+    // ── Delivery Retry Worker ───────────────────────────────────────────────
+    const retryWorker = new PgmqWorker(pgmq, async () => {
         await monitor.processRetries();
         sweepRateLimiter();
-    }));
+    }, { queue: CONNECTOR_JOBS.deliveryRetry, batchSize: 1, concurrency: 2 });
+    const controlWorkers = [retryWorker];
     if (!alertDeliveryOnly) {
-        await pgboss.work(CONNECTOR_JOBS.healthCheck, {}, (async () => {
+        // ── Health Check Worker ───────────────────────────────────────────────
+        const healthWorker = new PgmqWorker(pgmq, async () => {
             await monitor.runHealthChecks();
-        }));
-        await pgboss.work(CONNECTOR_JOBS.test, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-            const jobs = allJobs(arg);
-            await Promise.all(jobs.map(async (job) => {
-                const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-                if (!row) {
-                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test skipped: connector not found');
-                    return;
-                }
-                const capability = await notificationEntitlement.resolve(job.data.organizationId);
-                if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
-                    || !capability.isProviderAllowed(row.type, true)) {
-                    recordNotificationDelivery('notification.delivery.entitlement_blocked');
-                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector test blocked by entitlement');
-                    return;
-                }
-                const result = await service.runConnectionTest(row, null);
-                await repository.insertAuditLog({
-                    organizationId: job.data.organizationId,
-                    connectorId: job.data.connectorId,
-                    action: 'test.completed',
-                    actorId: null,
-                    changesSummary: { success: result.success },
+        }, { queue: CONNECTOR_JOBS.healthCheck, batchSize: 1, concurrency: 1 });
+        controlWorkers.push(healthWorker);
+        // ── Test Worker ───────────────────────────────────────────────────────
+        const testWorker = new PgmqWorker(pgmq, async (msg) => {
+            const { organizationId, connectorId } = msg.message;
+            const row = await repository.findById(organizationId, connectorId);
+            if (!row)
+                return;
+            const capability = await notificationEntitlement.resolve(organizationId);
+            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(row.type, true)) {
+                recordNotificationDelivery('notification.delivery.entitlement_blocked');
+                return;
+            }
+            const result = await service.runConnectionTest(row, null);
+            await repository.insertAuditLog({
+                organizationId,
+                connectorId,
+                action: 'test.completed',
+                actorId: null,
+                changesSummary: { success: result.success },
+            });
+        }, { queue: CONNECTOR_JOBS.test, batchSize: 3, concurrency: 3 });
+        controlWorkers.push(testWorker);
+        // ── Secret Rotation Worker ────────────────────────────────────────────
+        const rotWorker = new PgmqWorker(pgmq, async (msg) => {
+            const { organizationId, connectorId, config: newConfig, actorUserId } = msg.message;
+            await service.rotateSecret(organizationId, workerMeta(actorUserId ?? null), connectorId, { config: newConfig });
+        }, { queue: CONNECTOR_JOBS.secretRotation, batchSize: 2, concurrency: 2 });
+        controlWorkers.push(rotWorker);
+        // ── OAuth Refresh Worker ──────────────────────────────────────────────
+        const oauthWorker = new PgmqWorker(pgmq, async (msg) => {
+            const { organizationId, connectorId } = msg.message;
+            const row = await repository.findById(organizationId, connectorId);
+            if (!row)
+                return;
+            const capability = await notificationEntitlement.resolve(organizationId);
+            if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess || !capability.isProviderAllowed(row.type, true)) {
+                recordNotificationDelivery('notification.delivery.entitlement_blocked');
+                return;
+            }
+            const credential = await repository.getCredential(organizationId, connectorId, 'oauth');
+            if (!credential || credential.credential_type !== 'oauth')
+                return;
+            const connector = await dispatcher.instantiate(row);
+            const currentCredential = decryptConfig(credential.encrypted_value);
+            const refreshed = await connector.refreshCredentials(currentCredential);
+            if (!refreshed.valid)
+                return;
+            if (refreshed.normalized) {
+                const expiresAt = resolveCredentialExpiry(refreshed.normalized, credential.expires_at);
+                await repository.upsertCredential({
+                    organizationId,
+                    connectorId,
+                    credentialType: credential.credential_type,
+                    keyName: credential.key_name,
+                    encryptedValue: encryptConfig(refreshed.normalized),
+                    expiresAt,
+                    actorUserId: null,
                 });
-            }));
-        }));
-        await pgboss.work(CONNECTOR_JOBS.secretRotation, { localConcurrency: 2, batchSize: 2 }, (async (arg) => {
-            const jobs = allJobs(arg);
-            await Promise.all(jobs.map(async (job) => {
-                await service.rotateSecret(job.data.organizationId, workerMeta(job.data.actorUserId ?? null), job.data.connectorId, { config: job.data.config });
-                log.info({ jobId: job.id, connectorId: job.data.connectorId }, 'Connector secret rotation job completed');
-            }));
-        }));
-        await pgboss.work(CONNECTOR_JOBS.oauthRefresh, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-            const jobs = allJobs(arg);
-            await Promise.all(jobs.map(async (job) => {
-                const row = await repository.findById(job.data.organizationId, job.data.connectorId);
-                if (!row) {
-                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh skipped: connector not found');
-                    return;
-                }
-                const capability = await notificationEntitlement.resolve(job.data.organizationId);
-                if (capability.reason === 'ENTITLEMENT_UNKNOWN' || !capability.connectorAccess
-                    || !capability.isProviderAllowed(row.type, true)) {
-                    recordNotificationDelivery('notification.delivery.entitlement_blocked');
-                    log.warn({ jobId: job.id, connectorId: job.data.connectorId }, 'OAuth refresh blocked by entitlement');
-                    return;
-                }
-                const credential = await repository.getCredential(job.data.organizationId, job.data.connectorId, 'oauth');
-                if (!credential) {
-                    await repository.insertAuditLog({
-                        organizationId: job.data.organizationId,
-                        connectorId: job.data.connectorId,
-                        action: 'oauth.refresh_failed',
-                        actorId: null,
-                        changesSummary: { reason: 'missing_oauth_credential' },
-                    });
-                    return;
-                }
-                if (credential.credential_type !== 'oauth') {
-                    await repository.insertAuditLog({
-                        organizationId: job.data.organizationId,
-                        connectorId: job.data.connectorId,
-                        action: 'oauth.refresh_skipped',
-                        actorId: null,
-                        changesSummary: { reason: 'credential_not_active', credentialType: credential.credential_type },
-                    });
-                    return;
-                }
-                const connector = await dispatcher.instantiate(row);
-                const currentCredential = decryptConfig(credential.encrypted_value);
-                const refreshed = await connector.refreshCredentials(currentCredential);
-                if (!refreshed.valid) {
-                    await repository.insertAuditLog({
-                        organizationId: job.data.organizationId,
-                        connectorId: job.data.connectorId,
-                        action: 'oauth.refresh_failed',
-                        actorId: null,
-                        changesSummary: { errors: refreshed.errors },
-                    });
-                    return;
-                }
-                if (refreshed.normalized) {
-                    const expiresAt = resolveCredentialExpiry(refreshed.normalized, credential.expires_at);
-                    await repository.upsertCredential({
-                        organizationId: job.data.organizationId,
-                        connectorId: job.data.connectorId,
-                        credentialType: credential.credential_type,
-                        keyName: credential.key_name,
-                        encryptedValue: encryptConfig(refreshed.normalized),
-                        expiresAt,
-                        actorUserId: null,
-                    });
-                }
-                await repository.insertAuditLog({
-                    organizationId: job.data.organizationId,
-                    connectorId: job.data.connectorId,
-                    action: 'oauth.refreshed',
-                    actorId: null,
-                });
-            }));
-        }));
-        await pgboss.work(CONNECTOR_JOBS.cleanup, {}, (async () => {
+            }
+            await repository.insertAuditLog({
+                organizationId,
+                connectorId,
+                action: 'oauth.refreshed',
+                actorId: null,
+            });
+        }, { queue: CONNECTOR_JOBS.oauthRefresh, batchSize: 3, concurrency: 3 });
+        controlWorkers.push(oauthWorker);
+        // ── Cleanup Worker ────────────────────────────────────────────────────
+        const cleanupWorker = new PgmqWorker(pgmq, async () => {
             const expiredOAuthStates = await repository.cleanupExpiredOAuthStates();
             if (expiredOAuthStates > 0) {
                 log.info({ expiredOAuthStates }, 'Connector cleanup removed expired OAuth states');
             }
-        }));
-        await pgboss.work(CONNECTOR_JOBS.deadLetterRetry, { localConcurrency: 3, batchSize: 3 }, (async (arg) => {
-            const jobs = allJobs(arg);
-            await Promise.all(jobs.map(async (job) => {
-                const delivery = await repository.retryDelivery(job.data.organizationId, job.data.deliveryId);
-                if (!delivery) {
-                    log.warn({ jobId: job.id, deliveryId: job.data.deliveryId }, 'Dead-letter retry skipped: delivery not retryable');
-                    return;
-                }
-                await repository.insertAuditLog({
-                    organizationId: job.data.organizationId,
-                    connectorId: delivery.connector_id,
-                    action: 'delivery.dead_letter_retry_requested',
-                    actorId: job.data.actorUserId ?? null,
-                    changesSummary: { deliveryId: delivery.id },
-                });
-                await pgboss.send(CONNECTOR_JOBS.deliveryRetry, { organizationId: job.data.organizationId, deliveryId: delivery.id }, { retryLimit: 3, retryDelay: 60, retryBackoff: true, expireInSeconds: env.CONNECTOR_RETRY_EXPIRE_SECONDS });
-            }));
-        }));
+        }, { queue: CONNECTOR_JOBS.cleanup, batchSize: 1, concurrency: 1 });
+        controlWorkers.push(cleanupWorker);
+        // ── Dead Letter Retry Worker ──────────────────────────────────────────
+        const deadLetterWorker = new PgmqWorker(pgmq, async (msg) => {
+            const { organizationId, deliveryId, actorUserId } = msg.message;
+            const delivery = await repository.retryDelivery(organizationId, deliveryId);
+            if (!delivery)
+                return;
+            await repository.insertAuditLog({
+                organizationId,
+                connectorId: delivery.connector_id,
+                action: 'delivery.dead_letter_retry_requested',
+                actorId: actorUserId ?? null,
+                changesSummary: { deliveryId: delivery.id },
+            });
+            await pgmq.send(CONNECTOR_JOBS.deliveryRetry, { organizationId, deliveryId: delivery.id }, { delaySeconds: 0 });
+        }, { queue: CONNECTOR_JOBS.deadLetterRetry, batchSize: 3, concurrency: 3 });
+        controlWorkers.push(deadLetterWorker);
     }
-    await pgboss.schedule(CONNECTOR_JOBS.deliveryRetry, '* * * * *', {}, { singletonKey: 'connector-delivery-retry' });
+    await Promise.all(controlWorkers.map(async (worker) => {
+        await worker.start();
+        workers.push(worker);
+    }));
+    // ── Dispatch Intervals ──────────────────────────────────────────────────
+    const dispatchTimers = [
+        setInterval(() => void pgmq.send(CONNECTOR_JOBS.deliveryRetry, {}).catch(() => undefined), 60_000),
+    ];
     if (!alertDeliveryOnly) {
-        await pgboss.schedule(CONNECTOR_JOBS.healthCheck, '*/5 * * * *', {}, { singletonKey: 'connector-health-check' });
-        await pgboss.schedule(CONNECTOR_JOBS.cleanup, '0 * * * *', {}, { singletonKey: 'connector-cleanup' });
+        dispatchTimers.push(setInterval(() => void pgmq.send(CONNECTOR_JOBS.healthCheck, {}).catch(() => undefined), 300_000), setInterval(() => void pgmq.send(CONNECTOR_JOBS.cleanup, {}).catch(() => undefined), 3600_000));
     }
-    log.info({ queues: alertDeliveryOnly ? registeredQueueNames : CONNECTOR_JOBS }, 'Connector pg-boss workers registered');
+    for (const timer of dispatchTimers)
+        timer.unref();
+    log.info({ queues: registeredQueueNames.length, workers: workers.length }, 'Connector PGMQ workers registered');
     return {
         stop: async () => {
             clearInterval(circuitProbeTimer);
-            await pgboss.unschedule(CONNECTOR_JOBS.deliveryRetry).catch(() => undefined);
-            if (!alertDeliveryOnly) {
-                await pgboss.unschedule(CONNECTOR_JOBS.healthCheck).catch(() => undefined);
-                await pgboss.unschedule(CONNECTOR_JOBS.cleanup).catch(() => undefined);
-            }
+            for (const t of dispatchTimers)
+                clearInterval(t);
+            await Promise.all(workers.map((w) => w.stop()));
         },
     };
 }

@@ -1,5 +1,12 @@
+import '../src/config/dns.js';
 import { config } from 'dotenv';
 import { Pool, type PoolConfig } from 'pg';
+import {
+  getSafePostgresConnectionTarget,
+  parsePostgresAddressFamily,
+  withPostgresAddressFamily,
+} from '../src/config/postgres-network.js';
+import { resolvePostgresSslConfig, sanitizePostgresConnectionString } from '../src/config/postgres-ssl.js';
 
 config();
 
@@ -102,6 +109,7 @@ async function listTables(pool: Pool, schemas: string[]): Promise<TableRow[]> {
     WHERE n.nspname = ANY($1::text[])
       AND c.relkind IN ('r', 'p')
       AND c.relispartition = false
+      AND c.relname NOT IN ('schema_migrations')
     ORDER BY n.nspname, c.relname
     `,
     [schemas],
@@ -125,14 +133,15 @@ async function main(): Promise<void> {
     throw new Error('Refusing to truncate primary DB unless --yes and PRIMARY_DB_TRUNCATE=true are both set');
   }
 
-  const pool = new Pool({
-    connectionString,
+  const pool = new Pool(withPostgresAddressFamily({
+    connectionString: sanitizePostgresConnectionString(connectionString),
     max: 1,
-    ssl: resolveSsl(connectionString),
-  });
+    ssl: resolvePostgresSslConfig(connectionString),
+  }, parsePostgresAddressFamily(process.env.DB_FAMILY)));
 
   try {
-    console.log('Target primary DB:', redactConnectionString(connectionString));
+    const target = getSafePostgresConnectionTarget(connectionString);
+    console.log('Target primary DB:', `${target.host}:${target.port}/${target.database}`);
     console.log('Schemas:', options.schemas.join(', '));
 
     const tables = await listTables(pool, options.schemas);

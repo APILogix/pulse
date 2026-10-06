@@ -96,7 +96,7 @@ const ROUTE_DEFAULTS = {
 function schemaDefaults() {
     const features = Object.fromEntries(FEATURE_KEYS.map((key) => [key, true]));
     const killswitches = Object.fromEntries(KILLSWITCH_KEYS.map((key) => [key, false]));
-    const instrumentation = Object.fromEntries(INSTRUMENTATION_KEYS.map((key) => [key, true]));
+    const instrumentation = Object.fromEntries(INSTRUMENTATION_KEYS.map((key) => [key, key !== "axios"]));
     const entitlements = Object.fromEntries(ENTITLEMENT_KEYS.map((key) => [key, true]));
     return {
         schemaVersion: SCHEMA_VERSION,

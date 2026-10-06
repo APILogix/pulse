@@ -1004,8 +1004,25 @@ export class AIRepository {
   }
 
   async releaseStaleReservations(): Promise<number> {
-    const result = await this.db.query<{ released_count: number }>(`SELECT ai_release_stale_reservations() AS released_count`);
-    return Number(result.rows[0]?.released_count ?? 0);
+    try {
+      const result = await this.db.query<{ released_count: number }>(`SELECT ai_release_stale_reservations() AS released_count`);
+      return Number(result.rows[0]?.released_count ?? 0);
+    } catch (err: any) {
+      if (err?.code === '42883') {
+        // Fallback: stored function not defined in DB yet; run equivalent inline SQL
+        const fallback = await this.db.query<{ count: string }>(`
+          WITH stale AS (
+            DELETE FROM ai_credit_reservations
+            WHERE status = 'pending'
+              AND created_at < NOW() - INTERVAL '15 minutes'
+            RETURNING tenant_id, amount
+          )
+          SELECT COUNT(*)::text AS count FROM stale;
+        `);
+        return Number(fallback.rows[0]?.count ?? 0);
+      }
+      throw err;
+    }
   }
 
   async markRequestFailed(requestId: string, tenantId: string, status: string): Promise<void> {

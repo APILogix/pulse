@@ -2,6 +2,27 @@ import { createHash } from 'crypto';
 import { AutomationNotFoundError, AutomationConflictError, AutomationEntitlementRequiredError, AutomationLimitExceededError, AutomationApprovalExpiredError, } from './errors.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
 // ---------------------------------------------------------------------------
+// Types (DTO-ready camelCase row interfaces)
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Explicit column projections (ensures zero SELECT * / RETURNING * egress)
+// ---------------------------------------------------------------------------
+export const AUTOMATION_WORKFLOW_COLUMNS = 'id, organization_id, project_id, created_by, updated_by, template_id, name, slug, description, workflow_type, scope, status, is_enabled, current_version, last_run_at, next_run_at, timezone, tags, metadata, created_at, updated_at, deleted_at';
+export const AUTOMATION_WORKFLOW_SUMMARY_COLUMNS = 'id, organization_id, project_id, created_by, updated_by, template_id, name, slug, description, workflow_type, scope, status, is_enabled, current_version, last_run_at, next_run_at, timezone, tags, metadata, created_at, updated_at, deleted_at, trigger_count, trigger_type, action_count, action_types, action_requires_approval, last_run_status, last_run_created_at';
+export const AUTOMATION_TRIGGER_COLUMNS = 'id, workflow_id, workflow_version_id, trigger_kind, trigger_type, source_module, source_event, schedule_cron, timezone, webhook_secret_hash, is_enabled, dedupe_key_template, cooldown_seconds, config, metadata, created_at, updated_at, deleted_at';
+export const AUTOMATION_CONDITION_COLUMNS = 'id, workflow_id, workflow_version_id, condition_group, sort_order, left_path, operator, right_value, value_type, is_required, metadata, created_at, updated_at, deleted_at';
+export const AUTOMATION_ACTION_COLUMNS = 'id, workflow_id, workflow_version_id, action_key, action_type, integration_key, sort_order, is_enabled, requires_approval, risk_level, timeout_seconds, max_attempts, retry_backoff_seconds, idempotency_key_template, config, metadata, created_at, updated_at, deleted_at';
+export const AUTOMATION_WORKFLOW_VERSION_COLUMNS = 'id, workflow_id, version, status, definition, trigger_summary, condition_summary, action_summary, published_by, published_at, checksum, metadata, created_at';
+export const AUTOMATION_TEMPLATE_COLUMNS = 'id, template_key, scope, organization_id, name, description, workflow_type, category, is_active, is_public, is_featured, minimum_plan_tier, required_feature_key, tags, sort_order, metadata, created_at, updated_at, deleted_at';
+export const AUTOMATION_TEMPLATE_VERSION_COLUMNS = 'id, template_id, version, is_current, definition, trigger_summary, condition_summary, action_summary, created_by, published_at, checksum, metadata, created_at';
+export const AUTOMATION_EVENT_INBOX_COLUMNS = 'id, organization_id, project_id, source_module, event_type, source_event_id, dedupe_key, payload, headers, status, received_at, locked_at, locked_by, processed_at, attempts, next_retry_at, last_error, metadata';
+export const AUTOMATION_RUN_COLUMNS = 'id, organization_id, project_id, workflow_id, workflow_version_id, trigger_id, inbox_event_id, status, trigger_type, source_module, source_event_id, dedupe_key, idempotency_key, priority, queued_at, started_at, completed_at, cancelled_at, expires_at, attempt, max_attempts, input_payload, output_payload, error_code, error_message, metadata, created_at, updated_at';
+export const AUTOMATION_RUN_SUMMARY_COLUMNS = 'run_id, workflow_id, workflow_name, organization_id, status, trigger_type, source_module, priority, queued_at, started_at, completed_at, created_at, step_count, failed_step_count, pending_approval_count';
+export const AUTOMATION_RUN_STEP_COLUMNS = 'id, run_id, workflow_id, action_id, step_key, action_type, status, sort_order, attempt, max_attempts, started_at, completed_at, next_retry_at, timeout_at, requires_approval, approval_id, idempotency_key, input_payload, output_payload, error_code, error_message, metadata, created_at, updated_at';
+export const AUTOMATION_RUN_STEP_COLUMNS_WITH_S = 's.id, s.run_id, s.workflow_id, s.action_id, s.step_key, s.action_type, s.status, s.sort_order, s.attempt, s.max_attempts, s.started_at, s.completed_at, s.next_retry_at, s.timeout_at, s.requires_approval, s.approval_id, s.idempotency_key, s.input_payload, s.output_payload, s.error_code, s.error_message, s.metadata, s.created_at, s.updated_at';
+export const AUTOMATION_APPROVAL_COLUMNS = 'id, organization_id, workflow_id, run_id, step_id, requested_by, approved_by, rejected_by, status, risk_level, approval_reason, rejection_reason, expires_at, decided_at, request_payload, decision_payload, metadata, created_at, updated_at';
+export const AUTOMATION_AUDIT_LOG_COLUMNS = 'id, organization_id, project_id, workflow_id, run_id, step_id, approval_id, actor_user_id, actor_type, action, entity_type, entity_id, request_id, ip_address, user_agent, before_state, after_state, metadata, occurred_at';
+// ---------------------------------------------------------------------------
 // PostgreSQL error codes
 // ---------------------------------------------------------------------------
 const PG_UNIQUE_VIOLATION = '23505';
@@ -385,7 +406,7 @@ export class AutomationRepository {
     // -------------------------------------------------------------------------
     async listWorkflows(orgId, q, db = this.db) {
         const params = [orgId];
-        const conditions = ['organization_id = $1'];
+        const conditions = ['organization_id = $1', 'deleted_at IS NULL'];
         if (q.status) {
             params.push(q.status);
             conditions.push(`status = $${params.length}`);
@@ -414,14 +435,14 @@ export class AutomationRepository {
             conditions.push(`(name ILIKE $${params.length} OR slug ILIKE $${params.length})`);
         }
         const where = conditions.join(' AND ');
-        const countR = await db.query(`SELECT COUNT(*)::int AS total FROM v_automation_workflow_summaries WHERE ${where}`, params);
+        const countR = await db.query(`SELECT COUNT(*)::int AS total FROM automation_workflows WHERE ${where}`, params);
         const total = countR.rows[0]?.total ?? 0;
         const dataParams = [...params, q.limit, q.offset];
-        const dataR = await db.query(`SELECT * FROM v_automation_workflow_summaries WHERE ${where} ORDER BY updated_at DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
+        const dataR = await db.query(`SELECT ${AUTOMATION_WORKFLOW_SUMMARY_COLUMNS} FROM v_automation_workflow_summaries WHERE ${where} ORDER BY updated_at DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
         return { data: dataR.rows.map(toWorkflowSummary), total };
     }
     async getWorkflow(orgId, workflowId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_workflows WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`, [workflowId, orgId]);
+        const r = await db.query(`SELECT ${AUTOMATION_WORKFLOW_COLUMNS} FROM automation_workflows WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL`, [workflowId, orgId]);
         return r.rows[0] ? toWorkflow(r.rows[0]) : null;
     }
     /**
@@ -432,10 +453,10 @@ export class AutomationRepository {
         if (!workflow)
             return null;
         const [triggersR, conditionsR, actionsR, versionR] = await Promise.all([
-            db.query(`SELECT * FROM automation_triggers WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY created_at`, [workflowId]),
-            db.query(`SELECT * FROM automation_conditions WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY condition_group, sort_order`, [workflowId]),
-            db.query(`SELECT * FROM automation_actions WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY sort_order`, [workflowId]),
-            db.query(`SELECT * FROM automation_workflow_versions WHERE workflow_id = $1 AND status = 'published' ORDER BY version DESC LIMIT 1`, [workflowId]),
+            db.query(`SELECT ${AUTOMATION_TRIGGER_COLUMNS} FROM automation_triggers WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY created_at`, [workflowId]),
+            db.query(`SELECT ${AUTOMATION_CONDITION_COLUMNS} FROM automation_conditions WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY condition_group, sort_order`, [workflowId]),
+            db.query(`SELECT ${AUTOMATION_ACTION_COLUMNS} FROM automation_actions WHERE workflow_id = $1 AND workflow_version_id IS NULL AND deleted_at IS NULL ORDER BY sort_order`, [workflowId]),
+            db.query(`SELECT ${AUTOMATION_WORKFLOW_VERSION_COLUMNS} FROM automation_workflow_versions WHERE workflow_id = $1 AND status = 'published' ORDER BY version DESC LIMIT 1`, [workflowId]),
         ]);
         return {
             workflow,
@@ -446,34 +467,28 @@ export class AutomationRepository {
         };
     }
     async getWorkflowForUpdate(workflowId, orgId, client) {
-        const r = await client.query(`SELECT * FROM automation_workflows WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL FOR UPDATE`, [workflowId, orgId]);
+        const r = await client.query(`SELECT ${AUTOMATION_WORKFLOW_COLUMNS} FROM automation_workflows WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL FOR UPDATE`, [workflowId, orgId]);
         return r.rows[0] ? toWorkflow(r.rows[0]) : null;
     }
     /**
      * Resolve the active (latest published) version for a workflow.
      */
     async getActiveVersion(workflowId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_workflow_versions
-       WHERE workflow_id = $1 AND status = 'published'
-       ORDER BY version DESC LIMIT 1`, [workflowId]);
+        const r = await db.query(`SELECT ${AUTOMATION_WORKFLOW_VERSION_COLUMNS} FROM automation_workflow_versions WHERE workflow_id = $1 AND status = 'published' ORDER BY version DESC LIMIT 1`, [workflowId]);
         return r.rows[0] ? toWorkflowVersion(r.rows[0]) : null;
     }
     /**
      * Get version-bound (pinned) actions for a specific workflow version.
      */
     async getVersionActions(workflowId, versionId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_actions
-       WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL
-       ORDER BY sort_order`, [workflowId, versionId]);
+        const r = await db.query(`SELECT ${AUTOMATION_ACTION_COLUMNS} FROM automation_actions WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL ORDER BY sort_order`, [workflowId, versionId]);
         return r.rows.map(toAction);
     }
     /**
      * Get version-bound (pinned) conditions for a specific workflow version.
      */
     async getVersionConditions(workflowId, versionId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_conditions
-       WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL
-       ORDER BY condition_group, sort_order`, [workflowId, versionId]);
+        const r = await db.query(`SELECT ${AUTOMATION_CONDITION_COLUMNS} FROM automation_conditions WHERE workflow_id = $1 AND workflow_version_id = $2 AND deleted_at IS NULL ORDER BY condition_group, sort_order`, [workflowId, versionId]);
         return r.rows.map(toCondition);
     }
     // -------------------------------------------------------------------------
@@ -488,7 +503,7 @@ export class AutomationRepository {
             (organization_id, project_id, created_by, updated_by, template_id, name, slug, description,
              workflow_type, scope, status, is_enabled, current_version, timezone, tags, metadata)
            VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,'draft',FALSE,1,$10,$11,$12::jsonb)
-           RETURNING *`, [
+           RETURNING ${AUTOMATION_WORKFLOW_COLUMNS}`, [
                     params.orgId, params.projectId ?? null, params.createdBy, params.templateId ?? null,
                     params.name, params.slug, params.description ?? null, params.workflowType,
                     params.scope ?? 'organization', params.timezone ?? 'UTC',
@@ -609,7 +624,7 @@ export class AutomationRepository {
                 fields.push('next_run_at = NULL');
             }
             const updR = await client.query(`UPDATE automation_workflows SET ${fields.join(', ')}
-         WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL RETURNING *`, values);
+         WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL RETURNING ${AUTOMATION_WORKFLOW_COLUMNS}`, values);
             const updated = toWorkflow(updR.rows[0]);
             // Replace normalized trigger/conditions/actions if provided
             if (params.trigger) {
@@ -689,7 +704,7 @@ export class AutomationRepository {
     async setWorkflowEnabled(orgId, workflowId, enabled, audit, db = this.db) {
         const status = enabled ? 'active' : 'disabled';
         const r = await db.query(`UPDATE automation_workflows SET is_enabled = $3, status = $4, updated_at = NOW()
-       WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL RETURNING *`, [workflowId, orgId, enabled, status]);
+       WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL RETURNING ${AUTOMATION_WORKFLOW_COLUMNS}`, [workflowId, orgId, enabled, status]);
         if (r.rows[0] && audit) {
             const action = enabled ? 'workflow.enabled' : 'workflow.disabled';
             await db.query(`INSERT INTO automation_audit_logs
@@ -717,7 +732,7 @@ export class AutomationRepository {
           (workflow_id, version, status, definition, trigger_summary, condition_summary,
            action_summary, published_by, published_at, checksum)
          VALUES ($1,$2,'published',$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7,NOW(),$8)
-         RETURNING *`, [
+         RETURNING ${AUTOMATION_WORKFLOW_VERSION_COLUMNS}`, [
                 params.workflowId, newVersion,
                 JSON.stringify(params.definition), JSON.stringify(params.triggerSummary),
                 JSON.stringify(params.conditionSummary), JSON.stringify(params.actionSummary),
@@ -792,30 +807,25 @@ export class AutomationRepository {
         const countR = await db.query(`SELECT COUNT(*)::int AS total FROM automation_templates WHERE ${where}`, params);
         const total = countR.rows[0]?.total ?? 0;
         const dataParams = [...params, q.limit, q.offset];
-        const dataR = await db.query(`SELECT * FROM automation_templates WHERE ${where} ORDER BY sort_order, name LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
+        const dataR = await db.query(`SELECT ${AUTOMATION_TEMPLATE_COLUMNS} FROM automation_templates WHERE ${where} ORDER BY sort_order, name LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
         return { data: dataR.rows.map(toTemplate), total };
     }
     async getTemplate(templateKey, orgId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_templates
-       WHERE template_key = $1 AND deleted_at IS NULL AND is_active = TRUE
-         AND (scope = 'platform' OR (scope = 'organization' AND organization_id = $2))
-       ORDER BY CASE WHEN scope = 'organization' THEN 0 ELSE 1 END
-       LIMIT 1`, [templateKey, orgId]);
+        const r = await db.query(`SELECT ${AUTOMATION_TEMPLATE_COLUMNS} FROM automation_templates WHERE template_key = $1 AND deleted_at IS NULL AND is_active = TRUE AND (scope = 'platform' OR (scope = 'organization' AND organization_id = $2)) ORDER BY CASE WHEN scope = 'organization' THEN 0 ELSE 1 END LIMIT 1`, [templateKey, orgId]);
         return r.rows[0] ? toTemplate(r.rows[0]) : null;
     }
     /** Load current versions for a page of templates in one query. */
     async getCurrentTemplateVersions(templateIds, db = this.db) {
         if (templateIds.length === 0)
             return new Map();
-        const r = await db.query(`SELECT * FROM automation_template_versions
-       WHERE template_id = ANY($1::uuid[]) AND is_current = TRUE`, [templateIds]);
+        const r = await db.query(`SELECT ${AUTOMATION_TEMPLATE_VERSION_COLUMNS} FROM automation_template_versions WHERE template_id = ANY($1::uuid[]) AND is_current = TRUE`, [templateIds]);
         return new Map(r.rows.map((row) => {
             const version = toTemplateVersion(row);
             return [version.templateId, version];
         }));
     }
     async getTemplateCurrentVersion(templateId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_template_versions WHERE template_id = $1 AND is_current = TRUE LIMIT 1`, [templateId]);
+        const r = await db.query(`SELECT ${AUTOMATION_TEMPLATE_VERSION_COLUMNS} FROM automation_template_versions WHERE template_id = $1 AND is_current = TRUE LIMIT 1`, [templateId]);
         return r.rows[0] ? toTemplateVersion(r.rows[0]) : null;
     }
     /**
@@ -826,12 +836,12 @@ export class AutomationRepository {
     async createWorkflowFromTemplate(params) {
         return this.withTransaction(async (client) => {
             // Fetch template
-            const tR = await client.query(`SELECT * FROM automation_templates WHERE id = $1 AND deleted_at IS NULL AND is_active = TRUE`, [params.templateId]);
+            const tR = await client.query(`SELECT ${AUTOMATION_TEMPLATE_COLUMNS} FROM automation_templates WHERE id = $1 AND deleted_at IS NULL AND is_active = TRUE`, [params.templateId]);
             if (!tR.rows[0])
                 throw new AutomationNotFoundError('Template');
             const template = toTemplate(tR.rows[0]);
             // Fetch current version
-            const vR = await client.query(`SELECT * FROM automation_template_versions WHERE template_id = $1 AND is_current = TRUE LIMIT 1`, [params.templateId]);
+            const vR = await client.query(`SELECT ${AUTOMATION_TEMPLATE_VERSION_COLUMNS} FROM automation_template_versions WHERE template_id = $1 AND is_current = TRUE LIMIT 1`, [params.templateId]);
             if (!vR.rows[0])
                 throw new AutomationNotFoundError('Template version');
             const tv = toTemplateVersion(vR.rows[0]);
@@ -843,7 +853,7 @@ export class AutomationRepository {
           (organization_id, project_id, created_by, updated_by, template_id, name, slug, description,
            workflow_type, scope, status, is_enabled, current_version, timezone, tags, metadata)
          VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,'organization','draft',FALSE,1,'UTC',$9,$10::jsonb)
-         RETURNING *`, [
+           RETURNING ${AUTOMATION_WORKFLOW_COLUMNS}`, [
                 params.orgId, params.projectId ?? null, params.createdBy, template.id,
                 params.name, params.slug, params.description ?? template.description,
                 template.workflowType, params.overrides?.tags ?? template.tags,
@@ -947,7 +957,7 @@ export class AutomationRepository {
            dedupe_key, payload, headers, status, metadata)
          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,'pending',$9::jsonb)
          ON CONFLICT (organization_id, dedupe_key) DO NOTHING
-         RETURNING *`, [
+         RETURNING ${AUTOMATION_WORKFLOW_VERSION_COLUMNS}`, [
                 params.organizationId, params.projectId ?? null, params.sourceModule,
                 params.eventType, params.sourceEventId ?? null, params.dedupeKey,
                 JSON.stringify(params.payload), JSON.stringify(safeHeaders),
@@ -956,8 +966,7 @@ export class AutomationRepository {
             if (r.rows[0])
                 return { event: toInboxEvent(r.rows[0]), created: true };
             // Already exists — tenant-scoped lookup, including NULL-org system events.
-            const existing = await db.query(`SELECT * FROM automation_events_inbox
-         WHERE dedupe_key = $1 AND organization_id IS NOT DISTINCT FROM $2::uuid`, [params.dedupeKey, params.organizationId]);
+            const existing = await db.query(`SELECT ${AUTOMATION_EVENT_INBOX_COLUMNS} FROM automation_events_inbox WHERE dedupe_key = $1 AND organization_id IS NOT DISTINCT FROM $2::uuid`, [params.dedupeKey, params.organizationId]);
             if (!existing.rows[0]) {
                 throw new AutomationConflictError('Inbox dedupe conflict could not be resolved');
             }
@@ -968,15 +977,31 @@ export class AutomationRepository {
         }
     }
     /**
-     * Claim up to `batchSize` pending events using CTE + FOR UPDATE SKIP LOCKED.
-     * Also recovers stuck events locked > 5 min ago.
+     * Claim up to `batchSize` pending events using bounded candidate CTEs + FOR UPDATE SKIP LOCKED.
+     * Splits due events and stale recovery into separate index-friendly branches to eliminate
+     * sequential table scans on 1-second worker polling ticks (AUT-Q012).
      */
     async claimInboxEvents(workerId, batchSize, db = this.db) {
-        const r = await db.query(`WITH claimable AS (
+        const r = await db.query(`WITH due_candidates AS (
          SELECT id FROM automation_events_inbox
-         WHERE (
-           (status IN ('pending','retry') AND (next_retry_at IS NULL OR next_retry_at <= NOW()))
-           OR (status = 'processing' AND locked_at < NOW() - INTERVAL '5 minutes')
+         WHERE status IN ('pending', 'retry')
+           AND (next_retry_at IS NULL OR next_retry_at <= NOW())
+         ORDER BY received_at ASC
+         LIMIT $1
+       ),
+       stale_candidates AS (
+         SELECT id FROM automation_events_inbox
+         WHERE status = 'processing'
+           AND locked_at < NOW() - INTERVAL '5 minutes'
+         ORDER BY received_at ASC
+         LIMIT $1
+       ),
+       claimable AS (
+         SELECT id FROM automation_events_inbox
+         WHERE id IN (
+           SELECT id FROM due_candidates
+           UNION ALL
+           SELECT id FROM stale_candidates
          )
          ORDER BY received_at ASC
          LIMIT $1
@@ -1029,7 +1054,7 @@ export class AutomationRepository {
              inbox_event_id, status, trigger_type, source_module, source_event_id,
              dedupe_key, idempotency_key, priority, max_attempts, input_payload, expires_at)
            VALUES ($1,$2,$3,$4,$5,$6,'queued',$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15)
-           RETURNING *`, [
+           RETURNING ${AUTOMATION_RUN_COLUMNS}`, [
                     params.organizationId, params.projectId ?? null, params.workflowId,
                     params.workflowVersionId, params.triggerId ?? null, params.inboxEventId ?? null,
                     params.triggerType, params.sourceModule, params.sourceEventId ?? null,
@@ -1062,12 +1087,12 @@ export class AutomationRepository {
                max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
              VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
              ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
-             RETURNING *`
+             RETURNING ${AUTOMATION_RUN_STEP_COLUMNS}`
                     : `INSERT INTO automation_run_steps
               (run_id, workflow_id, action_id, step_key, action_type, status, sort_order,
                max_attempts, requires_approval, idempotency_key, input_payload, metadata, next_retry_at)
              VALUES ($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)
-             RETURNING *`;
+             RETURNING ${AUTOMATION_RUN_STEP_COLUMNS}`;
                 const sR = await client.query(insertSql, [
                     run.id, params.workflowId, s.actionId ?? null, s.stepKey, s.actionType,
                     s.sortOrder, s.maxAttempts ?? 3, s.requiresApproval ?? false,
@@ -1108,11 +1133,11 @@ export class AutomationRepository {
         const countR = await db.query(`SELECT COUNT(*)::int AS total FROM v_automation_run_summaries WHERE ${where}`, params);
         const total = countR.rows[0]?.total ?? 0;
         const dataParams = [...params, q.limit, q.offset];
-        const dataR = await db.query(`SELECT * FROM v_automation_run_summaries WHERE ${where} ORDER BY created_at DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
+        const dataR = await db.query(`SELECT ${AUTOMATION_RUN_SUMMARY_COLUMNS} FROM v_automation_run_summaries WHERE ${where} ORDER BY created_at DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
         return { data: dataR.rows.map(toRunSummary), total };
     }
     async getRun(orgId, runId, db = this.db) {
-        const r = await db.query(`SELECT * FROM automation_runs WHERE id = $1 AND organization_id = $2`, [runId, orgId]);
+        const r = await db.query(`SELECT ${AUTOMATION_RUN_COLUMNS} FROM automation_runs WHERE id = $1 AND organization_id = $2`, [runId, orgId]);
         return r.rows[0] ? toRun(r.rows[0]) : null;
     }
     /**
@@ -1122,7 +1147,7 @@ export class AutomationRepository {
         return this.withTransaction(async (client) => {
             const r = await client.query(`UPDATE automation_runs SET status = 'cancelled', cancelled_at = NOW(), updated_at = NOW()
          WHERE id = $1 AND organization_id = $2 AND status IN ('queued','running','waiting_approval')
-         RETURNING *`, [runId, orgId]);
+         RETURNING ${AUTOMATION_RUN_COLUMNS}`, [runId, orgId]);
             if (!r.rows[0])
                 return null;
             // Cancel all pending approvals for this run
@@ -1145,7 +1170,7 @@ export class AutomationRepository {
              completed_at = NULL, cancelled_at = NULL, error_code = NULL, error_message = NULL, updated_at = NOW()
          WHERE id = $1 AND organization_id = $2 AND status IN ('failed','cancelled','timed_out')
            AND attempt < max_attempts
-         RETURNING *`, [runId, orgId]);
+         RETURNING ${AUTOMATION_RUN_COLUMNS}`, [runId, orgId]);
             if (!r.rows[0])
                 return null;
             if (fromStep) {
@@ -1177,10 +1202,7 @@ export class AutomationRepository {
         });
     }
     async listRunSteps(runId, orgId, db = this.db) {
-        const r = await db.query(`SELECT s.* FROM automation_run_steps s
-       JOIN automation_runs r ON r.id = s.run_id
-       WHERE s.run_id = $1 AND r.organization_id = $2
-       ORDER BY s.sort_order ASC`, [runId, orgId]);
+        const r = await db.query(`SELECT ${AUTOMATION_RUN_STEP_COLUMNS_WITH_S} FROM automation_run_steps s JOIN automation_runs r ON r.id = s.run_id WHERE s.run_id = $1 AND r.organization_id = $2 ORDER BY s.sort_order ASC`, [runId, orgId]);
         return r.rows.map(toStep);
     }
     // -------------------------------------------------------------------------
@@ -1250,7 +1272,7 @@ export class AutomationRepository {
            completed_at = COALESCE($6, completed_at), next_retry_at = $7,
            attempt = COALESCE($8, attempt), updated_at = NOW()
        WHERE id = $1
-       RETURNING *`, [
+         RETURNING ${AUTOMATION_RUN_COLUMNS}`, [
             stepId, updates.status,
             updates.outputPayload ? JSON.stringify(updates.outputPayload) : null,
             updates.errorCode ?? null, updates.errorMessage ?? null,
@@ -1266,7 +1288,7 @@ export class AutomationRepository {
            error_code = COALESCE($5, error_code), error_message = COALESCE($6, error_message),
            output_payload = COALESCE($7::jsonb, output_payload), updated_at = NOW()
        WHERE id = $1
-       RETURNING *`, [
+       RETURNING ${AUTOMATION_RUN_COLUMNS}`, [
             runId, updates.status, updates.startedAt ?? null, updates.completedAt ?? null,
             updates.errorCode ?? null, updates.errorMessage ?? null,
             updates.outputPayload ? JSON.stringify(updates.outputPayload) : null,
@@ -1339,7 +1361,7 @@ export class AutomationRepository {
         (organization_id, workflow_id, run_id, step_id, requested_by, status,
          risk_level, expires_at, request_payload, metadata)
        VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,$8::jsonb,$9::jsonb)
-       RETURNING *`, [
+       RETURNING ${AUTOMATION_APPROVAL_COLUMNS}`, [
             params.organizationId, params.workflowId, params.runId,
             params.stepId ?? null, params.requestedBy ?? null,
             params.riskLevel, params.expiresAt,
@@ -1365,15 +1387,12 @@ export class AutomationRepository {
             let approval = null;
             let created = false;
             if (stepR.rows[0].approval_id) {
-                const existingById = await client.query(`SELECT * FROM automation_approvals
-           WHERE id = $1 AND organization_id = $2`, [stepR.rows[0].approval_id, params.organizationId]);
+                const existingById = await client.query(`SELECT ${AUTOMATION_APPROVAL_COLUMNS} FROM automation_approvals WHERE id = $1 AND organization_id = $2`, [stepR.rows[0].approval_id, params.organizationId]);
                 if (existingById.rows[0])
                     approval = toApproval(existingById.rows[0]);
             }
             if (!approval) {
-                const pending = await client.query(`SELECT * FROM automation_approvals
-           WHERE step_id = $1 AND organization_id = $2 AND status = 'pending'
-           LIMIT 1 FOR UPDATE`, [params.stepId, params.organizationId]);
+                const pending = await client.query(`SELECT ${AUTOMATION_APPROVAL_COLUMNS} FROM automation_approvals WHERE step_id = $1 AND organization_id = $2 AND status = 'pending' LIMIT 1 FOR UPDATE`, [params.stepId, params.organizationId]);
                 if (pending.rows[0]) {
                     approval = toApproval(pending.rows[0]);
                 }
@@ -1443,7 +1462,7 @@ export class AutomationRepository {
     async approveApproval(orgId, approvalId, approvedBy, reason, decisionPayload) {
         return this.withTransaction(async (client) => {
             // Lock the approval row
-            const lockR = await client.query(`SELECT * FROM automation_approvals WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [approvalId, orgId]);
+            const lockR = await client.query(`SELECT ${AUTOMATION_APPROVAL_COLUMNS} FROM automation_approvals WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [approvalId, orgId]);
             if (!lockR.rows[0])
                 throw new AutomationNotFoundError('Approval');
             const approval = toApproval(lockR.rows[0]);
@@ -1458,7 +1477,7 @@ export class AutomationRepository {
          SET status = 'approved', approved_by = $3, approval_reason = $4,
              decision_payload = $5::jsonb, decided_at = NOW(), updated_at = NOW()
          WHERE id = $1 AND organization_id = $2
-         RETURNING *`, [approvalId, orgId, approvedBy, reason ?? null, JSON.stringify(decisionPayload ?? {})]);
+         RETURNING ${AUTOMATION_APPROVAL_COLUMNS}`, [approvalId, orgId, approvedBy, reason ?? null, JSON.stringify(decisionPayload ?? {})]);
             const updated = toApproval(updR.rows[0]);
             // Resume step if linked
             if (updated.stepId) {
@@ -1478,7 +1497,7 @@ export class AutomationRepository {
      */
     async rejectApproval(orgId, approvalId, rejectedBy, reason, decisionPayload) {
         return this.withTransaction(async (client) => {
-            const lockR = await client.query(`SELECT * FROM automation_approvals WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [approvalId, orgId]);
+            const lockR = await client.query(`SELECT ${AUTOMATION_APPROVAL_COLUMNS} FROM automation_approvals WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [approvalId, orgId]);
             if (!lockR.rows[0])
                 throw new AutomationNotFoundError('Approval');
             const approval = toApproval(lockR.rows[0]);
@@ -1492,7 +1511,7 @@ export class AutomationRepository {
          SET status = 'rejected', rejected_by = $3, rejection_reason = $4,
              decision_payload = $5::jsonb, decided_at = NOW(), updated_at = NOW()
          WHERE id = $1 AND organization_id = $2
-         RETURNING *`, [approvalId, orgId, rejectedBy, reason ?? null, JSON.stringify(decisionPayload ?? {})]);
+         RETURNING ${AUTOMATION_RUN_COLUMNS}`, [approvalId, orgId, rejectedBy, reason ?? null, JSON.stringify(decisionPayload ?? {})]);
             const updated = toApproval(updR.rows[0]);
             // Fail the step
             if (updated.stepId) {
@@ -1701,7 +1720,7 @@ export class AutomationRepository {
         const countR = await db.query(`SELECT COUNT(*)::int AS total FROM automation_audit_logs WHERE ${where}`, params);
         const total = countR.rows[0]?.total ?? 0;
         const dataParams = [...params, q.limit, q.offset];
-        const dataR = await db.query(`SELECT * FROM automation_audit_logs WHERE ${where}
+        const dataR = await db.query(`SELECT ${AUTOMATION_AUDIT_LOG_COLUMNS} FROM automation_audit_logs WHERE ${where}
        ORDER BY occurred_at DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`, dataParams);
         return { data: dataR.rows, total };
     }

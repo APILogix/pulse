@@ -23,14 +23,30 @@ export function toUser(row) {
         email_is_verified: Boolean(row.email_verified ?? row.email_is_verified),
     };
 }
+export const USER_COLUMNS = `
+  id, email, email_hash, email_verified, email_verified_at, full_name, avatar_url,
+  password_hash, last_password_change, password_history, status, status_reason,
+  is_admin, current_org_id, mfa_enabled, mfa_enforced_at, mfa_backup_codes_generated_at,
+  login_attempts, locked_until, last_login_at, last_login_ip, last_login_user_agent,
+  last_failed_login_at, last_failed_login_ip, timezone, locale, preferred_mfa_method,
+  accepted_terms_at, accepted_terms_version, accepted_privacy_at, accepted_privacy_version,
+  marketing_consent, marketing_consent_updated_at, data_processing_consent,
+  suspended_at, suspended_by, deleted_at, deleted_by, deletion_reason,
+  deletion_scheduled_at, created_at, updated_at, created_by, version
+`;
+export const USER_SUMMARY_COLUMNS = `
+  id, email, email_hash, email_verified, full_name, avatar_url, status, status_reason,
+  is_admin, current_org_id, mfa_enabled, timezone, locale, last_login_at, locked_until,
+  deleted_at, created_at, updated_at, version
+`;
 export async function findUserById(id, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL`, [id]);
+    const result = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL`, [id]);
     return toUser(result.rows[0]);
 }
 export async function findUserByEmailHash(emailHash, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM users WHERE email_hash = $1 AND deleted_at IS NULL`, [emailHash]);
+    const result = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE email_hash = $1 AND deleted_at IS NULL`, [emailHash]);
     return toUser(result.rows[0]);
 }
 /**
@@ -38,7 +54,7 @@ export async function findUserByEmailHash(emailHash, client) {
  */
 export async function findUserByIdIncludingDeleted(id, client) {
     const db = client || pool;
-    const result = await db.query(`SELECT * FROM users WHERE id = $1`, [id]);
+    const result = await db.query(`SELECT ${USER_COLUMNS} FROM users WHERE id = $1`, [id]);
     return toUser(result.rows[0]);
 }
 export async function createUser(data, client) {
@@ -58,7 +74,7 @@ export async function createUser(data, client) {
        $9, NOW(),
        TRUE
      )
-     RETURNING *`, [
+     RETURNING ${USER_COLUMNS}`, [
         data.id,
         data.email,
         data.full_name,
@@ -99,10 +115,9 @@ export async function updateUser(id, requestingUserId, data, client) {
     if (fields.length === 0)
         return findUserById(id, client);
     values.push(id);
-    values.push(requestingUserId);
     const result = await db.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW()
-     WHERE id = $${idx++} AND deleted_at IS NULL AND id = $${idx}
-     RETURNING *`, values);
+     WHERE id = $${idx++} AND deleted_at IS NULL
+     RETURNING ${USER_COLUMNS}`, values);
     return toUser(result.rows[0]);
 }
 export async function softDeleteUser(id, reason, deletedBy, client) {
@@ -119,7 +134,7 @@ export async function restoreUser(id, client) {
      SET deleted_at = NULL, deleted_by = NULL, deletion_reason = NULL,
          status = 'active', updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NOT NULL
-     RETURNING *`, [id]);
+     RETURNING ${USER_COLUMNS}`, [id]);
     return toUser(result.rows[0]);
 }
 /**
@@ -135,7 +150,7 @@ export async function suspendUser(id, reason, suspendedBy, client) {
          suspended_by = $3,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`, [id, reason, suspendedBy]);
+     RETURNING ${USER_COLUMNS}`, [id, reason, suspendedBy]);
     return toUser(result.rows[0]);
 }
 /**
@@ -152,7 +167,7 @@ export async function unsuspendUser(id, client) {
      WHERE id = $1
        AND deleted_at IS NULL
        AND status = 'suspended'
-     RETURNING *`, [id]);
+     RETURNING ${USER_COLUMNS}`, [id]);
     return toUser(result.rows[0]);
 }
 /**
@@ -168,7 +183,7 @@ export async function adminLockUser(id, reason, lockedBy, client) {
      WHERE id = $1
        AND deleted_at IS NULL
        AND status != 'deleted'
-     RETURNING *`, [id, `[admin_lock:${lockedBy}] ${reason}`]);
+     RETURNING ${USER_COLUMNS}`, [id, `[admin_lock:${lockedBy}] ${reason}`]);
     return toUser(result.rows[0]);
 }
 /**
@@ -181,7 +196,7 @@ export async function adminUnlockUser(id, client) {
          login_attempts = 0,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`, [id]);
+     RETURNING ${USER_COLUMNS}`, [id]);
     return toUser(result.rows[0]);
 }
 export async function listUsers(options, client) {
@@ -201,7 +216,7 @@ export async function listUsers(options, client) {
     }
     const whereSql = `WHERE ${where.join(' AND ')}`;
     const countResult = await db.query(`SELECT COUNT(*) AS count FROM users ${whereSql}`, params);
-    const usersResult = await db.query(`SELECT * FROM users ${whereSql}
+    const usersResult = await db.query(`SELECT ${USER_SUMMARY_COLUMNS} FROM users ${whereSql}
      ORDER BY created_at DESC, id DESC
      LIMIT $${idx++} OFFSET $${idx++}`, [...params, limit, offset]);
     return {
@@ -251,7 +266,7 @@ export async function recordLogin(id, ip, userAgent, client) {
          login_attempts = 0,
          locked_until = NULL,
          updated_at = NOW()
-     WHERE id = $1`, [id, ip, userAgent]);
+     WHERE id = $1 AND deleted_at IS NULL`, [id, ip, userAgent]);
 }
 export async function updateUserPassword(id, passwordHash, passwordHistory, client) {
     const db = client || pool;
@@ -263,7 +278,7 @@ export async function updateUserPassword(id, passwordHash, passwordHistory, clie
          locked_until = NULL,
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
-     RETURNING *`, [id, passwordHash, JSON.stringify(passwordHistory)]);
+     RETURNING ${USER_COLUMNS}`, [id, passwordHash, JSON.stringify(passwordHistory)]);
     return toUser(result.rows[0]);
 }
 //# sourceMappingURL=user.repository.js.map

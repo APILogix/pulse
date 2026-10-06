@@ -3,6 +3,7 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_TEMPLATES_COLUMNS = 'id, organization_id, name, template_type, content, variables_schema, default_for_severity, connector_type, is_default, sample_data, created_at, updated_at, deleted_at';
 export class TemplatesRepository {
     db;
     /** ADR-0006: templates are control-plane configuration. */
@@ -36,7 +37,7 @@ export class TemplatesRepository {
         try {
             const r = await this.db.query(`INSERT INTO alert_templates
            (organization_id, name, template_type, content, variables_schema, default_for_severity, connector_type, is_default, sample_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${ALERT_TEMPLATES_COLUMNS}`, [
                 input.organizationId, input.name, input.templateType, input.content,
                 JSON.stringify(input.variablesSchema), input.defaultForSeverity, input.connectorType,
                 input.isDefault, JSON.stringify(input.sampleData),
@@ -50,13 +51,12 @@ export class TemplatesRepository {
         }
     }
     async findTemplate(organizationId, id) {
-        const r = await this.db.query(`SELECT * FROM alert_templates WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_TEMPLATES_COLUMNS} FROM alert_templates WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
     async listTemplates(organizationId, limit, offset) {
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL`, [organizationId]);
-        const r = await this.db.query(`SELECT * FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL
-       ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset]);
+        const r = await this.db.query(`SELECT ${ALERT_TEMPLATES_COLUMNS} FROM alert_templates WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset]);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async deleteTemplate(organizationId, id) {

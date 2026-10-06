@@ -312,6 +312,9 @@ export interface ThrottleWindowState {
     notificationCount: number;
     lastNotifiedAt: Date | null;
 }
+export declare const ALERT_EVENTS_V2_COLUMNS = "id, organization_id, project_id, environment, service, endpoint, rule_id, binding_id, rule_revision, kind, severity, priority, fingerprint, dedup_key, correlation_key, group_key, source, engine, idempotency_key, observed_value, threshold_value, evidence, policy_snapshot, labels, annotations, occurred_at, created_at";
+export declare const ALERT_EVENT_STATE_COLUMNS = "alert_key, organization_id, project_id, latest_event_id, state, severity, duplicate_count, first_seen_at, last_seen_at, last_notified_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_at, resolution_reason, auto_resolve_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, next_escalation_at, incident_id, updated_at";
+export declare const ALERT_DELIVERY_ATTEMPTS_V2_COLUMNS = "id, organization_id, project_id, alert_event_id, notification_job_id, channel_kind, connector_id, route_id, recipient_user_id, attempt_number, status, response_status_code, external_message_id, error_category, error_message, latency_ms, created_at";
 export declare class AlertRuntimeRepository {
     private readonly db;
     /**

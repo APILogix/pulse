@@ -3,6 +3,8 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_ESCALATION_POLICIES_COLUMNS = 'id, organization_id, name, description, repeat_interval_minutes, max_repeats, is_active, created_at, updated_at, deleted_at';
+export const ALERT_ESCALATION_STEPS_COLUMNS = 'id, policy_id, step_number, wait_minutes, connector_ids, route_ids, notify_on_call, custom_message_template, template_id, is_active, created_at, updated_at';
 export class PoliciesRepository {
     db;
     /** ADR-0006: escalation policies/steps are control-plane configuration. */
@@ -34,7 +36,7 @@ export class PoliciesRepository {
     async createEscalationPolicy(input) {
         try {
             const r = await this.db.query(`INSERT INTO alert_escalation_policies (organization_id, name, description, repeat_interval_minutes, max_repeats, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`, [input.organizationId, input.name, input.description, input.repeatIntervalMinutes, input.maxRepeats, input.isActive]);
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING ${ALERT_ESCALATION_POLICIES_COLUMNS}`, [input.organizationId, input.name, input.description, input.repeatIntervalMinutes, input.maxRepeats, input.isActive]);
             return r.rows[0];
         }
         catch (e) {
@@ -45,12 +47,11 @@ export class PoliciesRepository {
     }
     async listEscalationPolicies(organizationId, limit, offset) {
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL`, [organizationId]);
-        const r = await this.db.query(`SELECT * FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL
-       ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset]);
+        const r = await this.db.query(`SELECT ${ALERT_ESCALATION_POLICIES_COLUMNS} FROM alert_escalation_policies WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3`, [organizationId, limit, offset]);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async findEscalationPolicy(organizationId, id) {
-        const r = await this.db.query(`SELECT * FROM alert_escalation_policies WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_ESCALATION_POLICIES_COLUMNS} FROM alert_escalation_policies WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
     async deleteEscalationPolicy(organizationId, id) {
@@ -67,21 +68,19 @@ export class PoliciesRepository {
          route_ids=EXCLUDED.route_ids, notify_on_call=EXCLUDED.notify_on_call,
          custom_message_template=EXCLUDED.custom_message_template, template_id=EXCLUDED.template_id,
          is_active=EXCLUDED.is_active, updated_at=NOW()
-       RETURNING *`, [policyId, input.stepNumber, input.waitMinutes, input.connectorIds, input.routeIds,
+       RETURNING ${ALERT_ESCALATION_STEPS_COLUMNS}`, [policyId, input.stepNumber, input.waitMinutes, input.connectorIds, input.routeIds,
             input.notifyOnCall, input.customMessageTemplate, input.templateId, input.isActive]);
         return r.rows[0];
     }
     async listEscalationSteps(policyId) {
-        const r = await this.db.query(`SELECT * FROM alert_escalation_steps WHERE policy_id=$1 ORDER BY step_number ASC`, [policyId]);
+        const r = await this.db.query(`SELECT ${ALERT_ESCALATION_STEPS_COLUMNS} FROM alert_escalation_steps WHERE policy_id=$1 ORDER BY step_number ASC`, [policyId]);
         return r.rows;
     }
     /** Bulk-load active steps for many policies in ONE query (batch/escalation workers). */
     async listEscalationStepsByPolicyIds(policyIds) {
         if (policyIds.length === 0)
             return [];
-        const r = await this.db.query(`SELECT * FROM alert_escalation_steps
-       WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE
-       ORDER BY policy_id, step_number ASC`, [policyIds]);
+        const r = await this.db.query(`SELECT ${ALERT_ESCALATION_STEPS_COLUMNS} FROM alert_escalation_steps WHERE policy_id = ANY($1::uuid[]) AND is_active = TRUE ORDER BY policy_id, step_number ASC`, [policyIds]);
         return r.rows;
     }
 }

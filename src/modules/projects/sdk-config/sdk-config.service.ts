@@ -270,6 +270,31 @@ export class RemoteSdkConfigService {
       loaded = await this.store.loadCompiledByEnvironment(scope.organizationId, scope.environmentId);
     }
     if (!loaded) {
+      // Fallback 1: If requested environment is not committed, try production environment for the same project
+      if (scope.environment && scope.environment !== "production") {
+        const prodLoaded = await this.store.loadCompiledBySdkMetadata(
+          scope.organizationId,
+          scope.projectId,
+          "production",
+        );
+        if (prodLoaded) {
+          environmentId = prodLoaded.environmentId;
+          loaded = prodLoaded;
+        }
+      }
+      // Fallback 2: Try default environment from the authenticated API key mapping
+      if (!loaded && mapping.defaultEnvironmentId) {
+        const defaultLoaded = await this.store.loadCompiledByEnvironment(
+          scope.organizationId,
+          mapping.defaultEnvironmentId,
+        );
+        if (defaultLoaded) {
+          environmentId = mapping.defaultEnvironmentId;
+          loaded = defaultLoaded;
+        }
+      }
+    }
+    if (!loaded) {
       // No safe committed representation -> 503 so the SDK keeps LKG/defaults.
       throw new SdkConfigError("not_found", "No committed configuration available", 503);
     }

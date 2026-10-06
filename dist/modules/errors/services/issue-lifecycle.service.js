@@ -76,8 +76,6 @@ export class IssueLifecycleService {
             await client.query(`UPDATE error_groups
             SET occurrence_count = occurrence_count + $1, version = version + 1, updated_at = NOW()
           WHERE id = $2 AND project_id = $3`, [Number(source.occurrence_count), targetId, projectId]);
-            await client.query(`UPDATE events_errors SET error_group_id = $1
-          WHERE project_id = $2 AND error_group_id = $3`, [targetId, projectId, sourceId]);
             await this.historyRepo.insertHistory(client, {
                 groupId: sourceId,
                 action: 'MERGED',

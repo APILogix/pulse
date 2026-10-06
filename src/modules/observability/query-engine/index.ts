@@ -40,10 +40,12 @@ export {
   buildListStatement,
   buildSummaryStatement,
   buildStatisticsStatement,
+  buildCombinedAggregateStatement,
   buildTimelineStatement,
   buildScopePredicates,
   type BuiltStatement,
   type BuiltListStatement,
+  type CombinedAggregateStatement,
   type TimelineInterval,
 } from './sql-builder.js';
 export { ExplorerQueryEngine, type QueryExecutor } from './engine.js';

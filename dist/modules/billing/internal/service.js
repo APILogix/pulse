@@ -85,11 +85,18 @@ export class InternalBillingService {
             const usage = await this.repository.getCurrentUsageForUpdate(body.organizationId, db);
             if (!usage)
                 throw new BillingError('Subscription not found', ERROR_CODES.SUBSCRIPTION_NOT_FOUND, 404);
+            // Look up weight for event type
+            let weight = 1.0;
+            if (body.eventType) {
+                weight = await this.repository.getCreditWeight(body.eventType, db);
+            }
+            // Calculate raw count and billable weighted credits
+            const rawCount = body.rawCount ?? Math.round(body.count);
+            const requested = body.weightedCredits ?? Math.round(rawCount * weight * 10000) / 10000;
             const eventEntitlement = await this.getQuotaFeature(body.organizationId, 'quota.monthly_events', 'monthly_events', db);
             const eventLimit = numericLimit(eventEntitlement);
             const used = Number(usage.events_used ?? 0);
             const remainingBefore = isUnlimited(eventLimit) ? Number.POSITIVE_INFINITY : Math.max(eventLimit - used, 0);
-            const requested = body.count;
             const overageRequested = Math.max(requested - remainingBefore, 0);
             const canExceedLimit = overageRequested > 0 && allowsUsageBeyondLimit(eventEntitlement?.usage_behavior);
             if (overageRequested > 0 && !canExceedLimit) {
@@ -104,12 +111,14 @@ export class InternalBillingService {
                 }
                 return result;
             }
-            await this.repository.incrementEventUsage(body, requested, overageRequested, db);
+            await this.repository.incrementEventUsage(body, requested, overageRequested, db, rawCount);
             const result = {
                 accepted: true,
                 remaining: Number.isFinite(remainingBefore) ? Math.max(remainingBefore - requested, 0) : null,
                 overage: overageRequested > 0,
                 overageEvents: overageRequested,
+                rawEventsCount: rawCount,
+                weightedCredits: requested,
                 code: overageRequested > 0 && eventEntitlement?.usage_behavior === 'overage'
                     ? ERROR_CODES.QUOTA_OVERAGE_ALLOWED
                     : undefined,

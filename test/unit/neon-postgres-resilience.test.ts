@@ -42,6 +42,24 @@ describe('Neon Postgres SSL Resolution', () => {
     const ssl = resolvePostgresSslConfig(url, { rejectUnauthorized: true });
     expect(ssl).toEqual({ rejectUnauthorized: true });
   });
+
+  it('honors explicit rejectUnauthorized=true even when sslmode=require is in URL', () => {
+    const url = 'postgresql://user:pass@ep-cool-project-123456.us-east-2.aws.neon.tech/neondb?sslmode=require';
+    const ssl = resolvePostgresSslConfig(url, { rejectUnauthorized: true });
+    expect(ssl).toEqual({ rejectUnauthorized: true });
+  });
+
+  it('automatically sets rejectUnauthorized=true for sslmode=verify-full', () => {
+    const url = 'postgresql://user:pass@ep-cool-project-123456.us-east-2.aws.neon.tech/neondb?sslmode=verify-full';
+    const ssl = resolvePostgresSslConfig(url);
+    expect(ssl).toEqual({ rejectUnauthorized: true });
+  });
+
+  it('automatically sets rejectUnauthorized=true for sslmode=verify-ca', () => {
+    const url = 'postgresql://user:pass@ep-cool-project-123456.us-east-2.aws.neon.tech/neondb?sslmode=verify-ca';
+    const ssl = resolvePostgresSslConfig(url);
+    expect(ssl).toEqual({ rejectUnauthorized: true });
+  });
 });
 
 describe('Postgres Serverless & Transient Error Classification', () => {

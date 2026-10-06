@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { LRUCache } from 'lru-cache';
 import type { AlertRuleConditionRow, AlertRuleRow } from '../rules/rules.types.js';
+import { ALERT_RULE_CONDITIONS_COLUMNS } from '../rules/rules.repository.js';
 import {
   resolveEffectiveRule,
   type AlertRuleBindingRow,
@@ -406,7 +407,7 @@ export class AlertRuntimeRuleCatalog {
     const grouped = new Map<string, AlertRuleConditionRow[]>();
     if (ruleIds.length === 0) return grouped;
     const result = await this.db.query<AlertRuleConditionRow>(
-      `SELECT *
+      `SELECT ${ALERT_RULE_CONDITIONS_COLUMNS}
          FROM alert_rule_conditions
         WHERE rule_id = ANY($1::uuid[])
         ORDER BY rule_id, order_index ASC, id ASC`,

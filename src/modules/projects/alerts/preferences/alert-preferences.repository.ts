@@ -183,7 +183,7 @@ export class AlertPreferencesRepository {
           WHERE id = $${values.length - 3} AND organization_id = $${values.length - 2}
             AND project_id = $${values.length - 1} AND user_id = $${values.length}
             AND deleted_at IS NULL
-          RETURNING *
+          RETURNING id, project_alert_channel_id, organization_id, project_id, user_id, category, enabled, severity_threshold, digest_mode, quiet_hours, created_at, updated_at
        )
        SELECT ${MEMBER_PREF_COLUMNS}
          FROM updated p

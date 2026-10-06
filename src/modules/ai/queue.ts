@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 
-import { pgboss } from '../../lib/pgboss.js';
+import { pgmq, type PgmqMessage } from '../../lib/pgmq.js';
+import { PgmqWorker } from '../../lib/pgmq-worker.js';
 import { aiConfig } from '../../config/ai.js';
 import { env } from '../../config/env.js';
 import { decrypt } from '../../shared/utils/encryption.js';
@@ -9,68 +10,61 @@ import { OpenAIProvider } from './openai-client.js';
 import { AIAnalyzer, type AnalysisExecution } from './analyzer.js';
 import { aiRequestInputSchema } from './types.js';
 
-const QUEUE_NAME = 'ai-reliability-analysis';
-const DEAD_LETTER_QUEUE_NAME = 'ai-reliability-analysis-dlq';
-const RECONCILE_QUEUE_NAME = 'ai-credit-reservation-reconcile';
-const CHAT_USAGE_RECONCILE_QUEUE_NAME = 'ai-chat-usage-reconcile';
-
-async function safeCreateQueue(name = QUEUE_NAME): Promise<void> {
-  const boss = pgboss as unknown as { createQueue?: (name: string) => Promise<void> };
-  if (typeof boss.createQueue === 'function') await boss.createQueue(name).catch(() => undefined);
-}
+const QUEUE_NAME = 'ai_reliability_analysis';
+const DEAD_LETTER_QUEUE_NAME = 'ai_reliability_analysis_dlq';
+const RECONCILE_QUEUE_NAME = 'ai_credit_reservation_reconcile';
+const CHAT_USAGE_RECONCILE_QUEUE_NAME = 'ai_chat_usage_reconcile';
 
 export async function enqueueAIJob(jobId: string): Promise<string> {
-  await safeCreateQueue();
-  await safeCreateQueue(DEAD_LETTER_QUEUE_NAME);
-  const queueId = await pgboss.send(QUEUE_NAME, { jobId }, {
-    retryLimit: 3,
-    retryDelay: 10,
-    retryBackoff: true,
-    expireInSeconds: 600,
-    deadLetter: DEAD_LETTER_QUEUE_NAME,
-  });
-  if (!queueId) throw new Error('Failed to enqueue AI analysis job');
-  return queueId;
+  return pgmq.send(QUEUE_NAME, { jobId });
 }
 
 export async function registerAIWorkers(
   log: FastifyBaseLogger,
 ): Promise<{ stop: () => Promise<void> }> {
-  await safeCreateQueue();
-  await safeCreateQueue(DEAD_LETTER_QUEUE_NAME);
+  await pgmq.createQueues(
+    [
+      QUEUE_NAME,
+      DEAD_LETTER_QUEUE_NAME,
+      RECONCILE_QUEUE_NAME,
+      CHAT_USAGE_RECONCILE_QUEUE_NAME,
+    ],
+    { concurrency: 4 },
+  );
+
   const repository = new AIRepository();
   const provider = new OpenAIProvider(aiConfig, log);
   const analyzer = new AIAnalyzer(repository, provider, aiConfig, log);
-  await safeCreateQueue(RECONCILE_QUEUE_NAME);
+
   await repository.releaseStaleReservations().catch((error) => {
     log.warn({ err: error }, 'Initial AI reservation reconciliation failed');
   });
-  await pgboss.work(
-    RECONCILE_QUEUE_NAME,
-    {} as never,
-    (async () => {
+
+  // Reconcile worker
+  const reconcileWorker = new PgmqWorker(
+    pgmq,
+    async () => {
       const released = await repository.releaseStaleReservations();
       if (released > 0) log.warn({ released }, 'Released stale AI credit reservations');
-    }) as never,
+    },
+    { queue: RECONCILE_QUEUE_NAME, batchSize: 1, concurrency: 1 },
   );
-  await pgboss.schedule(RECONCILE_QUEUE_NAME, '*/5 * * * *', {}, {} as never);
 
-  await safeCreateQueue(CHAT_USAGE_RECONCILE_QUEUE_NAME);
-  await pgboss.work(
-    CHAT_USAGE_RECONCILE_QUEUE_NAME,
-    {} as never,
-    (async () => {
+  // Chat usage reconcile worker
+  const chatWorker = new PgmqWorker(
+    pgmq,
+    async () => {
       const logged = await repository.reconcilePendingChatUsage();
       if (logged > 0) log.info({ logged }, 'Reconciled completed AI chat usage logs');
-    }) as never,
+    },
+    { queue: CHAT_USAGE_RECONCILE_QUEUE_NAME, batchSize: 1, concurrency: 1 },
   );
-  await pgboss.schedule(CHAT_USAGE_RECONCILE_QUEUE_NAME, '* * * * *', {}, {} as never);
 
-  await pgboss.work(
-    QUEUE_NAME,
-    { teamSize: 2, teamConcurrency: 1 } as never,
-    (async (job: { id?: string; data?: { jobId?: string } }) => {
-      const jobId = job.data?.jobId;
+  // Main AI reliability worker
+  const aiWorker = new PgmqWorker(
+    pgmq,
+    async (msg: PgmqMessage<{ jobId?: string }>) => {
+      const jobId = msg.message?.jobId;
       if (!jobId) throw new Error('AI job payload is missing jobId');
       const record = await repository.loadJob(jobId);
       if (!record) return;
@@ -98,14 +92,32 @@ export async function registerAIWorkers(
         await repository.failJob(jobId, error instanceof Error ? error.message : 'Unknown AI job failure');
         throw error;
       }
-    }) as never,
+    },
+    {
+      queue: QUEUE_NAME,
+      batchSize: 1,
+      concurrency: 2,
+      visibilityTimeoutSeconds: 600,
+      deadLetterQueue: DEAD_LETTER_QUEUE_NAME,
+      maxAttempts: 3,
+    },
   );
 
-  log.info({ queue: QUEUE_NAME }, 'AI reliability worker registered');
+  const workers = [reconcileWorker, chatWorker, aiWorker];
+  await Promise.all(workers.map((w) => w.start()));
+
+  // Periodic dispatch timers
+  const timers = [
+    setInterval(() => void pgmq.send(RECONCILE_QUEUE_NAME, {}).catch(() => undefined), 300_000),
+    setInterval(() => void pgmq.send(CHAT_USAGE_RECONCILE_QUEUE_NAME, {}).catch(() => undefined), 60_000),
+  ];
+  for (const t of timers) t.unref();
+
+  log.info({ queue: QUEUE_NAME }, 'AI reliability worker registered with PGMQ');
   return {
     stop: async () => {
-      await pgboss.unschedule(RECONCILE_QUEUE_NAME).catch(() => undefined);
-      await pgboss.unschedule(CHAT_USAGE_RECONCILE_QUEUE_NAME).catch(() => undefined);
+      for (const t of timers) clearInterval(t);
+      await Promise.all(workers.map((w) => w.stop()));
     },
   };
 }

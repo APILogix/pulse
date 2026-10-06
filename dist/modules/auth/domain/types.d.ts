@@ -18,9 +18,9 @@ export declare const UserStatus: z.ZodEnum<{
 }>;
 export type UserStatus = z.infer<typeof UserStatus>;
 export declare const MFAType: z.ZodEnum<{
+    email: "email";
     totp: "totp";
     sms: "sms";
-    email: "email";
     hardware_key: "hardware_key";
     backup_codes: "backup_codes";
 }>;
@@ -252,9 +252,9 @@ export declare const UpdateUserSchema: z.ZodObject<{
     timezone: z.ZodOptional<z.ZodString>;
     locale: z.ZodOptional<z.ZodString>;
     preferred_mfa_method: z.ZodOptional<z.ZodEnum<{
+        email: "email";
         totp: "totp";
         sms: "sms";
-        email: "email";
         hardware_key: "hardware_key";
         backup_codes: "backup_codes";
     }>>;
@@ -293,8 +293,8 @@ export declare const VerifyEmailConfirmSchema: z.ZodObject<{
 export type VerifyEmailInput = z.infer<typeof VerifyEmailConfirmSchema>;
 export declare const MFASetupSchema: z.ZodObject<{
     type: z.ZodEnum<{
-        totp: "totp";
         email: "email";
+        totp: "totp";
     }>;
     device_name: z.ZodString;
 }, z.core.$strip>;

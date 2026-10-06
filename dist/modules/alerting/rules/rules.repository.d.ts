@@ -66,6 +66,8 @@ export interface CreateRuleInput {
     /** Backend evaluation category: 'fast' or 'analytics'. Defaults to 'analytics'. */
     evaluationCategory?: 'fast' | 'analytics';
 }
+export declare const ALERT_RULE_CONDITIONS_COLUMNS = "id, rule_id, condition_type, condition_group_id, field_path, operator, threshold_value, lookback_minutes, aggregate_function, sub_query, is_required, order_index, created_at, updated_at";
+export declare const ALERT_RULE_ACTIONS_COLUMNS = "id, rule_id, action_type, priority, order_index, connector_id, route_id, template_id, escalation_policy_id, throttle_duration_seconds, max_notifications_per_hour, action_conditions, is_active, created_at, updated_at";
 export declare class RulesRepository {
     private readonly db;
     private readonly bindingsForRevision;

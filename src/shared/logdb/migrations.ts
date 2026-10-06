@@ -3,12 +3,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
+import { isTransientPostgresError } from '../../config/postgres-ssl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const LOGDB_MIGRATIONS_DIR = path.resolve(
   __dirname,
-  '../../../database/migrations/logdb',
+  '../../../database/logdbv2/migrations',
 );
 
 export const LOGDB_MIGRATION_LOCK_KEY = 74_373_201;
@@ -111,12 +112,11 @@ async function ensureMigrationsTable(client: PoolClient): Promise<void> {
   `);
 }
 
-async function hasMigrationBeenApplied(client: PoolClient, filename: string): Promise<boolean> {
-  const applied = await client.query<{ id: number }>(
-    'SELECT id FROM logdb_migrations WHERE filename = $1',
-    [filename],
+async function getAppliedMigrationFilenames(client: PoolClient): Promise<Set<string>> {
+  const applied = await client.query<{ filename: string }>(
+    'SELECT filename FROM logdb_migrations',
   );
-  return applied.rows.length > 0;
+  return new Set(applied.rows.map((row) => row.filename));
 }
 
 async function recordMigration(
@@ -168,8 +168,9 @@ async function applyOneMigration(
   migration: LogDbMigrationFile,
   dryRun: boolean,
   executionMode: LogDbMigrationExecutionMode,
+  appliedFilenames: Set<string>,
 ): Promise<ApplyOneMigrationResult> {
-  if (await hasMigrationBeenApplied(client, migration.filename)) {
+  if (appliedFilenames.has(migration.filename)) {
     return { status: 'already-applied', durationMs: 0 };
   }
 
@@ -184,6 +185,7 @@ async function applyOneMigration(
 
   if (sql.trim().length === 0) {
     await recordMigration(client, migration.filename, 0);
+    appliedFilenames.add(migration.filename);
     return { status: 'applied', durationMs: 0 };
   }
 
@@ -207,6 +209,7 @@ async function applyOneMigration(
 
   const durationMs = Date.now() - startedAt;
   await recordMigration(client, migration.filename, durationMs);
+  appliedFilenames.add(migration.filename);
   return { status: 'applied', durationMs };
 }
 
@@ -235,12 +238,27 @@ export async function applyLogDbMigrations(
     failed: 0,
   };
 
-  const client = await pool.connect();
+  let client: PoolClient;
+  let attempts = 0;
+  while (true) {
+    try {
+      client = await pool.connect();
+      break;
+    } catch (err) {
+      attempts++;
+      if (attempts < 5 && isTransientPostgresError(err)) {
+        await new Promise((r) => setTimeout(r, Math.min(3000, 500 * 2 ** (attempts - 1))));
+        continue;
+      }
+      throw err;
+    }
+  }
   let lockAcquired = false;
   try {
     await acquireLogDbMigrationLock(client);
     lockAcquired = true;
     await ensureMigrationsTable(client);
+    const appliedFilenames = await getAppliedMigrationFilenames(client);
 
     for (const migration of migrations) {
       try {
@@ -249,6 +267,7 @@ export async function applyLogDbMigrations(
           migration,
           dryRun,
           executionMode,
+          appliedFilenames,
         );
         if (outcome.status === 'applied') {
           result.applied += 1;

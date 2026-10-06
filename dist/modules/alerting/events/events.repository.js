@@ -3,6 +3,11 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_EVENTS_COLUMNS = 'id, organization_id, rule_id, status, severity, fingerprint, source, source_id, payload, payload_size_bytes, normalized_payload, group_id, group_key, is_group_parent, parent_event_id, duplicate_count, started_at, ended_at, last_notified_at, next_escalation_at, auto_resolve_at, acknowledged_by, acknowledged_at, acknowledgment_expires_at, resolved_by, resolved_at, resolution_reason, suppressed_by, suppressed_at, suppression_reason, labels, annotations, created_at, updated_at, escalation_policy_id, escalation_step_number, escalation_repeat_count, project_id';
+export const ALERT_DELIVERY_ATTEMPTS_COLUMNS = 'id, organization_id, event_id, connector_id, route_id, batch_id, status, request_payload, request_headers, response_payload, response_status_code, error_message, error_details, error_category, latency_ms, retry_count, next_retry_at, max_retries, external_message_id, external_delivery_id, created_at, updated_at';
+export const ALERT_EVENT_BATCHES_COLUMNS = 'id, organization_id, status, worker_id, event_count, processed_count, success_count, failure_count, started_at, completed_at, duration_ms, error_message, error_details, retry_count, metadata, created_at, updated_at, event_ids, skipped_count, pg_boss_job_id';
+export const ALERT_THROTTLE_WINDOWS_COLUMNS = 'id, rule_action_id, window_start, notification_count, last_notified_at, created_at, updated_at';
+export const ALERT_DEAD_LETTER_EVENTS_COLUMNS = 'id, organization_id, source_queue, pg_boss_job_id, batch_id, event_ids, job_payload, error_message, status, retry_count, max_retries, last_retry_at, retried_at, discarded_at, discarded_by, metadata, created_at, updated_at';
 export class EventsRepository {
     /**
      * Pool is injected explicitly (ADR-0006). This is the LEGACY runtime repository: it
@@ -34,16 +39,11 @@ export class EventsRepository {
     // ── Events: ingestion + deduplication ────────────────────────────────────
     /** Find an active (firing/acknowledged) event matching a fingerprint within the dedup window. */
     async findActiveEventByFingerprint(organizationId, fingerprint, windowSeconds, projectId) {
-        const r = await this.db.query(`SELECT * FROM alert_events
-       WHERE organization_id=$1 AND fingerprint=$2
-         AND status IN ('firing','acknowledged','pending','processing')
-         AND started_at >= NOW() - ($3 || ' seconds')::interval
-         AND ($4::uuid IS NULL OR project_id = $4)
-       ORDER BY started_at DESC LIMIT 1`, [organizationId, fingerprint, String(windowSeconds), projectId ?? null]);
+        const r = await this.db.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE organization_id=$1 AND fingerprint=$2 AND status IN ('firing','acknowledged','pending','processing') AND started_at >= NOW() - ($3 || ' seconds')::interval AND ($4::uuid IS NULL OR project_id = $4) ORDER BY started_at DESC LIMIT 1`, [organizationId, fingerprint, String(windowSeconds), projectId ?? null]);
         return r.rows[0] ?? null;
     }
     async incrementDuplicate(eventId) {
-        const r = await this.db.query(`UPDATE alert_events SET duplicate_count = duplicate_count + 1 WHERE id=$1 RETURNING *`, [eventId]);
+        const r = await this.db.query(`UPDATE alert_events SET duplicate_count = duplicate_count + 1 WHERE id=$1 RETURNING ${ALERT_EVENTS_COLUMNS}`, [eventId]);
         if (!r.rows[0])
             throw new AlertNotFoundError('Alert event');
         return r.rows[0];
@@ -54,7 +54,7 @@ export class EventsRepository {
          (organization_id, rule_id, project_id, status, severity, fingerprint, source, source_id,
           payload, payload_size_bytes, normalized_payload, labels, annotations, auto_resolve_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       RETURNING *`, [
+       RETURNING ${ALERT_EVENTS_COLUMNS}`, [
             input.organizationId, input.ruleId, input.projectId, input.status, input.severity, input.fingerprint,
             input.source, input.sourceId, payloadJson, Buffer.byteLength(payloadJson, 'utf8'),
             input.normalizedPayload ? JSON.stringify(input.normalizedPayload) : null,
@@ -63,7 +63,7 @@ export class EventsRepository {
         return r.rows[0];
     }
     async findEventById(organizationId, id) {
-        const r = await this.db.query(`SELECT * FROM alert_events WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
     async listEvents(organizationId, query) {
@@ -88,7 +88,7 @@ export class EventsRepository {
         const where = conditions.join(' AND ');
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_events WHERE ${where}`, params);
         params.push(query.limit, query.offset);
-        const r = await this.db.query(`SELECT * FROM alert_events WHERE ${where}
+        const r = await this.db.query(`SELECT  FROM alert_events WHERE ${where}
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
@@ -96,9 +96,7 @@ export class EventsRepository {
         const statuses = ['pending', 'processing', 'firing', 'acknowledged'];
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_events
        WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])`, [organizationId, statuses]);
-        const result = await this.db.query(`SELECT * FROM alert_events
-       WHERE organization_id=$1 AND status=ANY($2::alert_event_status[])
-       ORDER BY started_at DESC LIMIT $3`, [organizationId, statuses, Math.max(1, Math.min(limit, 20))]);
+        const result = await this.db.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE organization_id=$1 AND status=ANY($2::alert_event_status[]) ORDER BY started_at DESC LIMIT $3`, [organizationId, statuses, Math.max(1, Math.min(limit, 20))]);
         return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async listIncidentProxyEvents(organizationId, from, to, severity, limit, rankByImpact) {
@@ -115,7 +113,7 @@ export class EventsRepository {
             ? `CASE severity WHEN 'critical' THEN 4 WHEN 'error' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END DESC,
          COALESCE(ended_at, NOW()) - started_at DESC`
             : 'started_at DESC';
-        const result = await this.db.query(`SELECT * FROM alert_events WHERE ${where} ORDER BY ${ordering} LIMIT $${params.length}`, params);
+        const result = await this.db.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE ${where} ORDER BY ${ordering} LIMIT $${params.length}`, params);
         return { data: result.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async acknowledgeEvent(organizationId, eventId, userId, expiresAt, comment) {
@@ -124,7 +122,7 @@ export class EventsRepository {
          SET status='acknowledged', acknowledged_by=$3, acknowledged_at=NOW(),
              acknowledgment_expires_at=$4, next_escalation_at=NULL
          WHERE id=$1 AND organization_id=$2 AND status IN ('firing','pending','processing')
-         RETURNING *`, [eventId, organizationId, userId, expiresAt]);
+         RETURNING ${ALERT_EVENTS_COLUMNS}`, [eventId, organizationId, userId, expiresAt]);
             if (!r.rows[0])
                 throw new AlertNotFoundError('Active alert event');
             // Deactivate any prior active ack, then insert the new one (partial unique idx).
@@ -139,7 +137,7 @@ export class EventsRepository {
        SET status='resolved', resolved_by=$3, resolved_at=NOW(), ended_at=NOW(),
            resolution_reason=$4, next_escalation_at=NULL, auto_resolve_at=NULL
        WHERE id=$1 AND organization_id=$2 AND status NOT IN ('resolved')
-       RETURNING *`, [eventId, organizationId, userId, reason.slice(0, 100)]);
+       RETURNING ${ALERT_EVENTS_COLUMNS}`, [eventId, organizationId, userId, reason.slice(0, 100)]);
         if (!r.rows[0])
             throw new AlertNotFoundError('Unresolved alert event');
         return r.rows[0];
@@ -161,8 +159,8 @@ export class EventsRepository {
        FROM alert_event_history WHERE event_id=$1 ORDER BY created_at ASC`, [eventId]);
         return r.rows;
     }
-    async getEventDeliveries(eventId) {
-        const r = await this.db.query(`SELECT * FROM alert_delivery_attempts WHERE event_id=$1 ORDER BY created_at DESC`, [eventId]);
+    async getEventDeliveries(eventId, limit = 100) {
+        const r = await this.db.query(`SELECT ${ALERT_DELIVERY_ATTEMPTS_COLUMNS} FROM alert_delivery_attempts WHERE event_id=$1 ORDER BY created_at DESC LIMIT $2`, [eventId, limit]);
         return r.rows;
     }
     // ── Batch lifecycle ──────────────────────────────────────────────────────
@@ -182,17 +180,17 @@ export class EventsRepository {
                 return null;
             await client.query(`UPDATE alert_events SET status='processing' WHERE id = ANY($1::uuid[])`, [ids]);
             const batch = await client.query(`INSERT INTO alert_event_batches (organization_id, status, event_ids, event_count, worker_id, started_at)
-         VALUES ($1,'processing',$2,$3,$4,NOW()) RETURNING *`, [organizationId, ids, ids.length, workerId]);
+         VALUES ($1,'processing',$2,$3,$4,NOW()) RETURNING ${ALERT_EVENT_BATCHES_COLUMNS}`, [organizationId, ids, ids.length, workerId]);
             return batch.rows[0];
         });
     }
     /** Fetch a batch and ALL its events in a single round-trip (no N+1). */
     async getBatchWithEvents(batchId, organizationId) {
-        const batchRes = await this.db.query(`SELECT * FROM alert_event_batches WHERE id=$1 AND organization_id=$2`, [batchId, organizationId]);
+        const batchRes = await this.db.query(`SELECT ${ALERT_EVENT_BATCHES_COLUMNS} FROM alert_event_batches WHERE id=$1 AND organization_id=$2`, [batchId, organizationId]);
         const batch = batchRes.rows[0];
         if (!batch)
             return null;
-        const eventsRes = await this.db.query(`SELECT * FROM alert_events WHERE id = ANY($1::uuid[]) AND organization_id=$2`, [batch.event_ids, organizationId]);
+        const eventsRes = await this.db.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE id = ANY($1::uuid[]) AND organization_id=$2`, [batch.event_ids, organizationId]);
         return { batch, events: eventsRes.rows };
     }
     async completeBatch(batchId, counts, durationMs, status, errorMessage) {
@@ -216,7 +214,7 @@ export class EventsRepository {
            escalation_policy_id = COALESCE(u.escalation_policy_id, e.escalation_policy_id),
            escalation_step_number = COALESCE(u.escalation_step_number, e.escalation_step_number),
            next_escalation_at = COALESCE(u.next_escalation_at, e.next_escalation_at)
-       FROM (SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::uuid[], $4::int[], $5::timestamptz[])
+       FROM (SELECT id, status, escalation_policy_id, escalation_step_number, next_escalation_at FROM UNNEST($1::uuid[], $2::text[], $3::uuid[], $4::int[], $5::timestamptz[])
              AS t(id, status, escalation_policy_id, escalation_step_number, next_escalation_at)) u
        WHERE e.id = u.id AND e.organization_id = $6`, [
             updates.map((u) => u.id),
@@ -233,18 +231,15 @@ export class EventsRepository {
             return;
         await this.db.query(`INSERT INTO alert_delivery_attempts
          (organization_id, event_id, connector_id, route_id, batch_id, status,
-          response_status_code, error_message, error_category, latency_ms, external_message_id,
-          project_alert_channel_id, recipient_user_id)
+          response_status_code, error_message, error_category, latency_ms, external_message_id)
        SELECT t.organization_id, t.event_id, t.connector_id, t.route_id, t.batch_id,
               t.status::delivery_attempt_status, t.response_status_code, t.error_message,
-              t.error_category, t.latency_ms, t.external_message_id,
-              t.project_alert_channel_id, t.recipient_user_id
+              t.error_category, t.latency_ms, t.external_message_id
        FROM UNNEST(
          $1::uuid[], $2::uuid[], $3::uuid[], $4::uuid[], $5::uuid[], $6::text[],
-         $7::int[], $8::text[], $9::text[], $10::int[], $11::text[], $12::uuid[], $13::uuid[]
+         $7::int[], $8::text[], $9::text[], $10::int[], $11::text[]
        ) AS t(organization_id, event_id, connector_id, route_id, batch_id, status,
-              response_status_code, error_message, error_category, latency_ms, external_message_id,
-              project_alert_channel_id, recipient_user_id)`, [
+              response_status_code, error_message, error_category, latency_ms, external_message_id)`, [
             rows.map((r) => r.organizationId),
             rows.map((r) => r.eventId),
             rows.map((r) => r.connectorId),
@@ -256,8 +251,6 @@ export class EventsRepository {
             rows.map((r) => r.errorCategory),
             rows.map((r) => r.latencyMs),
             rows.map((r) => r.externalMessageId),
-            rows.map((r) => r.projectAlertChannelId ?? null),
-            rows.map((r) => r.recipientUserId ?? null),
         ]);
     }
     // ── Auto-resolve + escalation sweeps ─────────────────────────────────────
@@ -268,10 +261,7 @@ export class EventsRepository {
     }
     async claimAutoResolvable(limit) {
         return this.withTransaction(async (client) => {
-            const r = await client.query(`SELECT * FROM alert_events
-         WHERE status='firing' AND auto_resolve_at IS NOT NULL AND auto_resolve_at <= NOW()
-         ORDER BY auto_resolve_at ASC LIMIT $1
-         FOR UPDATE SKIP LOCKED`, [limit]);
+            const r = await client.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE status='firing' AND auto_resolve_at IS NOT NULL AND auto_resolve_at <= NOW() ORDER BY auto_resolve_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit]);
             return r.rows;
         });
     }
@@ -282,13 +272,7 @@ export class EventsRepository {
      */
     async claimEscalationDue(limit) {
         return this.withTransaction(async (client) => {
-            const r = await client.query(`SELECT * FROM alert_events
-         WHERE status='firing'
-           AND escalation_policy_id IS NOT NULL
-           AND next_escalation_at IS NOT NULL
-           AND next_escalation_at <= NOW()
-         ORDER BY next_escalation_at ASC LIMIT $1
-         FOR UPDATE SKIP LOCKED`, [limit]);
+            const r = await client.query(`SELECT ${ALERT_EVENTS_COLUMNS} FROM alert_events WHERE status='firing' AND escalation_policy_id IS NOT NULL AND next_escalation_at IS NOT NULL AND next_escalation_at <= NOW() ORDER BY next_escalation_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit]);
             return r.rows;
         });
     }
@@ -315,7 +299,7 @@ export class EventsRepository {
          ORDER BY acknowledgment_expires_at ASC LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING *`, [limit]);
+       RETURNING ${ALERT_EVENTS_COLUMNS}`, [limit]);
         return r.rows;
     }
     // ── Orphan (stuck processing) recovery ───────────────────────────────────
@@ -334,7 +318,7 @@ export class EventsRepository {
          ORDER BY updated_at ASC LIMIT $2
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING *`, [String(staleMinutes), limit]);
+       RETURNING ${ALERT_EVENTS_COLUMNS}`, [String(staleMinutes), limit]);
         return r.rows;
     }
     /** Fail batches stuck in 'processing' for longer than `staleMinutes`. */
@@ -353,9 +337,7 @@ export class EventsRepository {
     async getThrottleStates(actionIds) {
         if (actionIds.length === 0)
             return [];
-        const r = await this.db.query(`SELECT * FROM alert_throttle_windows
-       WHERE rule_action_id = ANY($1::uuid[])
-         AND window_start = date_trunc('hour', NOW())`, [actionIds]);
+        const r = await this.db.query(`SELECT ${ALERT_THROTTLE_WINDOWS_COLUMNS} FROM alert_throttle_windows WHERE rule_action_id = ANY($1::uuid[]) AND window_start = date_trunc('hour', NOW())`, [actionIds]);
         return r.rows;
     }
     /** Increment the current-hour window for each action (bulk upsert). */
@@ -375,7 +357,7 @@ export class EventsRepository {
          (organization_id, source_queue, pg_boss_job_id, batch_id, event_ids,
           job_payload, error_message, max_retries)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING *`, [
+       RETURNING ${ALERT_DEAD_LETTER_EVENTS_COLUMNS}`, [
             input.organizationId, input.sourceQueue, input.pgBossJobId, input.batchId,
             input.eventIds, JSON.stringify(input.jobPayload), input.errorMessage, input.maxRetries,
         ]);
@@ -391,21 +373,18 @@ export class EventsRepository {
         const where = conditions.join(' AND ');
         const countRes = await this.db.query(`SELECT COUNT(*)::text AS count FROM alert_dead_letter_events WHERE ${where}`, params);
         params.push(query.limit, query.offset);
-        const r = await this.db.query(`SELECT * FROM alert_dead_letter_events WHERE ${where}
+        const r = await this.db.query(`SELECT  FROM alert_dead_letter_events WHERE ${where}
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
         return { data: r.rows, total: Number(countRes.rows[0]?.count ?? 0) };
     }
     async findDeadLetterById(organizationId, id) {
-        const r = await this.db.query(`SELECT * FROM alert_dead_letter_events WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_DEAD_LETTER_EVENTS_COLUMNS} FROM alert_dead_letter_events WHERE id=$1 AND organization_id=$2`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
     /** Retryable dead letters for the scheduled retry sweep (SKIP LOCKED claim). */
     async claimRetryableDeadLetters(limit) {
         return this.withTransaction(async (client) => {
-            const r = await client.query(`SELECT * FROM alert_dead_letter_events
-         WHERE status='pending_retry' AND retry_count < max_retries
-         ORDER BY created_at ASC LIMIT $1
-         FOR UPDATE SKIP LOCKED`, [limit]);
+            const r = await client.query(`SELECT ${ALERT_DEAD_LETTER_EVENTS_COLUMNS} FROM alert_dead_letter_events WHERE status='pending_retry' AND retry_count < max_retries ORDER BY created_at ASC LIMIT $1 FOR UPDATE SKIP LOCKED`, [limit]);
             return r.rows;
         });
     }

@@ -2,45 +2,39 @@ import type { NotificationSeverity } from './types.js';
 
 /**
  * Connector control-plane job queues.
- *
- * NOTE: there is deliberately NO `send` queue here any more. Notification
- * transport happens exclusively on the canonical V2 provider queues built by
- * {@link connectorTransportQueue}. The former `connector-send-<provider>`
- * family (and the never-used `connector-send-<severity>` variant) were a second,
- * parallel transport implementation with weaker tenant verification; they have
- * been removed so exactly one delivery path exists.
  */
 export const CONNECTOR_JOBS = {
-  healthCheck: 'connector-health-check',
-  test: 'connector-test',
-  secretRotation: 'connector-secret-rotation',
-  oauthRefresh: 'connector-oauth-refresh',
-  cleanup: 'connector-cleanup',
-  deadLetterRetry: 'connector-dead-letter-retry',
-  deliveryRetry: 'connector-delivery-retry',
+  healthCheck: 'connector_health_check',
+  test: 'connector_test',
+  secretRotation: 'connector_secret_rotation',
+  oauthRefresh: 'connector_oauth_refresh',
+  cleanup: 'connector_cleanup',
+  deadLetterRetry: 'connector_dead_letter_retry',
+  deliveryRetry: 'connector_delivery_retry',
 } as const;
 
 export type ConnectorJobName = (typeof CONNECTOR_JOBS)[keyof typeof CONNECTOR_JOBS] | string;
 
 /** Canonical prefix for provider transport queues. */
-export const CONNECTOR_TRANSPORT_QUEUE_PREFIX = 'connector.v2.';
+export const CONNECTOR_TRANSPORT_QUEUE_PREFIX = 'connector_v2_';
 
 /**
  * THE canonical transport queue name for a provider.
- *
- * Every producer (notification router, escalation) and every consumer
- * (registerConnectorWorkers) must derive the queue name from this function so
- * producer and consumer topology can never drift apart.
  */
 export function connectorTransportQueue(provider: string): string {
-  return `${CONNECTOR_TRANSPORT_QUEUE_PREFIX}${provider.trim().toLowerCase()}`;
+  const clean = provider.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  return `${CONNECTOR_TRANSPORT_QUEUE_PREFIX}${clean}`;
 }
 
 /** Extract the provider from a canonical transport queue name. */
 export function providerFromTransportQueue(queue: string): string {
-  return queue.startsWith(CONNECTOR_TRANSPORT_QUEUE_PREFIX)
-    ? queue.slice(CONNECTOR_TRANSPORT_QUEUE_PREFIX.length)
-    : queue;
+  if (queue.startsWith('connector.v2.')) {
+    return queue.slice('connector.v2.'.length);
+  }
+  if (queue.startsWith(CONNECTOR_TRANSPORT_QUEUE_PREFIX)) {
+    return queue.slice(CONNECTOR_TRANSPORT_QUEUE_PREFIX.length);
+  }
+  return queue;
 }
 
 export const CONNECTOR_PRIORITY: Record<NotificationSeverity, number> = {

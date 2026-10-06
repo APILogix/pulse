@@ -11,6 +11,6 @@ export { ResourceRegistry, resolveField, operatorsForField, defaultOperatorsFor,
 export { encodeCursor, decodeCursor } from './cursor.js';
 export { parseSearch } from './search-parser.js';
 export { buildExplorerQuery, resolveTimeRange, RawExplorerQuerySchema, RANGE_MS, } from './query-schema.js';
-export { buildListStatement, buildSummaryStatement, buildStatisticsStatement, buildTimelineStatement, buildScopePredicates, } from './sql-builder.js';
+export { buildListStatement, buildSummaryStatement, buildStatisticsStatement, buildCombinedAggregateStatement, buildTimelineStatement, buildScopePredicates, } from './sql-builder.js';
 export { ExplorerQueryEngine } from './engine.js';
 //# sourceMappingURL=index.js.map

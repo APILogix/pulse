@@ -261,47 +261,47 @@ describe('Queue Registration', () => {
   it('AUTOMATION_QUEUES defines all required queue names', () => {
     // These are the expected queue names matching workers.ts constants
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
-    expect(AUTOMATION_QUEUES).toHaveProperty('inbox', 'automation-inbox');
-    expect(AUTOMATION_QUEUES).toHaveProperty('execute', 'automation-run-execute');
-    expect(AUTOMATION_QUEUES).toHaveProperty('maintenance', 'automation-maintenance');
-    expect(AUTOMATION_QUEUES).toHaveProperty('deadLetter', 'automation-dead-letter');
-    expect(AUTOMATION_QUEUES).toHaveProperty('schedule', 'automation-schedule');
+    expect(AUTOMATION_QUEUES).toHaveProperty('inbox', 'automation_inbox');
+    expect(AUTOMATION_QUEUES).toHaveProperty('execute', 'automation_run_execute');
+    expect(AUTOMATION_QUEUES).toHaveProperty('maintenance', 'automation_maintenance');
+    expect(AUTOMATION_QUEUES).toHaveProperty('deadLetter', 'automation_dead_letter');
+    expect(AUTOMATION_QUEUES).toHaveProperty('schedule', 'automation_schedule');
   });
 
   it('enqueueAutomationJob routes execute jobs to correct queue', () => {
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
     const jobType = 'automation.run.execute';
     const expectedQueue = jobType === 'automation.run.execute'
       ? AUTOMATION_QUEUES.execute
       : AUTOMATION_QUEUES.inbox;
-    expect(expectedQueue).toBe('automation-run-execute');
+    expect(expectedQueue).toBe('automation_run_execute');
   });
 
   it('enqueueAutomationJob routes inbox jobs to inbox queue', () => {
     const AUTOMATION_QUEUES = {
-      inbox: 'automation-inbox',
-      execute: 'automation-run-execute',
-      maintenance: 'automation-maintenance',
-      deadLetter: 'automation-dead-letter',
-      schedule: 'automation-schedule',
+      inbox: 'automation_inbox',
+      execute: 'automation_run_execute',
+      maintenance: 'automation_maintenance',
+      deadLetter: 'automation_dead_letter',
+      schedule: 'automation_schedule',
     };
     const jobType = 'automation.inbox.process';
     const expectedQueue = jobType === 'automation.run.execute'
       ? AUTOMATION_QUEUES.execute
       : AUTOMATION_QUEUES.inbox;
-    expect(expectedQueue).toBe('automation-inbox');
+    expect(expectedQueue).toBe('automation_inbox');
   });
 });
 

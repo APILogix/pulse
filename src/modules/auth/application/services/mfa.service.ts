@@ -882,14 +882,14 @@ export async function confirmMfaDisable(
       );
     }
 
-    const userRes = await client.query<User>(
-      `SELECT *, email_verified AS email_is_verified
+    const userRes = await client.query<repository.UserDbRow>(
+      `SELECT ${repository.USER_COLUMNS}
          FROM users
         WHERE id = $1 AND deleted_at IS NULL
         FOR UPDATE`,
       [consumed.user_id],
     );
-    const user = userRes.rows[0];
+    const user = userRes.rows[0] ? repository.toUser(userRes.rows[0]) : null;
     if (
       !user ||
       user.status !== 'active' ||

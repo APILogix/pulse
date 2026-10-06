@@ -1,5 +1,8 @@
 import { pool } from '../../../config/database.js';
 import { BillingInterval, PlanTier } from '../shared/types.js';
+export const PLAN_COLUMNS = `
+  id, key, version, name, tier, description, trial_days, is_active, is_public, sort_order, created_at, updated_at
+`;
 export class PlansRepository {
     db;
     constructor(db = pool) {
@@ -7,13 +10,13 @@ export class PlansRepository {
     }
     async listActivePlans(includeHidden = false, db = this.db) {
         const query = includeHidden
-            ? `SELECT * FROM plans WHERE is_active = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`
-            : `SELECT * FROM plans WHERE is_active = TRUE AND is_public = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`;
+            ? `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`
+            : `SELECT ${PLAN_COLUMNS} FROM plans WHERE is_active = TRUE AND is_public = TRUE AND deleted_at IS NULL ORDER BY sort_order ASC, key ASC, version DESC`;
         const result = await db.query(query);
         return result.rows;
     }
     async getPlanById(planId, db = this.db) {
-        const result = await db.query(`SELECT * FROM plans WHERE id = $1 AND deleted_at IS NULL`, [planId]);
+        const result = await db.query(`SELECT ${PLAN_COLUMNS} FROM plans WHERE id = $1 AND deleted_at IS NULL`, [planId]);
         return result.rows[0] || null;
     }
     async getPlanPrices(planId, db = this.db) {

@@ -5,23 +5,21 @@
  * live in `./components.ts`; this file is copy and composition only.
  *
  * ── Public contract ──────────────────────────────────────────────────────
- * Every exported function name and input shape is unchanged from the previous
- * revision, so existing call sites in `modules/auth`, `modules/organization`
- * and `modules/user-account` keep compiling untouched. Optional `context`
- * fields were *added* (never required) so security mails can start reporting
+ * Every exported function name and input shape is unchanged, so existing call
+ * sites in `modules/auth`, `modules/organization` and `modules/user-account`
+ * keep compiling untouched. Optional `context` fields let security mails report
  * request provenance — IP, device, timestamp — as callers adopt them.
  *
- * ── What changed visually ────────────────────────────────────────────────
- *   · Brand channel is white, not green. Green now means only "resolved /
- *     healthy / succeeded", per the three-channel law (sentinel-design.md §0).
- *     The old templates used green as the brand colour, which made every
- *     verdict colour ambiguous.
- *   · Inline SVG logo and hero icons removed — Gmail, Outlook and Yahoo strip
- *     `<svg>`, so those were rendering as blank space for most recipients.
- *   · Header gradient removed (§3 forbids gradients in chrome; the logo mark is
- *     the only permitted gradient).
- *   · Added preheaders, a severity rail, bulletproof VML buttons, a responsive
- *     breakpoint, dark-mode locks and real plaintext bodies.
+ * ── Composition ──────────────────────────────────────────────────────────
+ * These mails continue the console's auth pages rather than a generic email
+ * kit. Each one follows the same anatomy the sign-in page does:
+ *
+ *   headline        the outcome or the ask, in the auth heading's voice
+ *   state line      only when the mail reports a verdict (MFA off, locked)
+ *   one action      a single white button; red only for destruction
+ *   quiet notes     expiry and the copy-me link sit under the action
+ *   facts           request provenance as hairline rows
+ *   one callout     only when it changes what the reader does next
  */
 
 import {
@@ -32,22 +30,24 @@ import {
   codeBlock,
   dataTable,
   esc,
-  glyph,
   linkFallback,
   metricCompare,
+  note,
   otpBlock,
   p,
-  pill,
   renderLayout,
   safeUrlText,
+  section,
   stack,
   strong,
   stripControl,
   textBody,
   textGreeting,
   textRows,
+  type ButtonOptions,
   type DataRow,
   type FooterKind,
+  type LayoutStatus,
 } from './components.js';
 import type { Tone } from './theme.js';
 
@@ -64,8 +64,8 @@ export type EmailTemplate = {
 /**
  * Where a security-sensitive request came from.
  *
- * Optional on every template. When supplied it is rendered as a provenance
- * table, which is what turns "someone asked to reset your password" into an
+ * Optional on every template. When supplied it is rendered as provenance
+ * facts, which is what turns "someone asked to reset your password" into an
  * actionable statement the recipient can verify or dispute.
  */
 export interface RequestContext {
@@ -111,9 +111,8 @@ export type OrgInvitationTemplateInput = TemplateInput & {
 /**
  * Subject format is `AppName: detail`.
  *
- * Preserved verbatim from the previous revision — tenants build inbox rules and
- * SIEM parsers against this prefix, so changing it is a breaking change even
- * though it is "just a string".
+ * Tenants build inbox rules and SIEM parsers against this prefix, so changing
+ * it is a breaking change even though it is "just a string".
  */
 function subjectLine(appName: string, detail: string): string {
   return `${stripControl(appName)}: ${detail}`;
@@ -132,7 +131,7 @@ function contextRows(context: RequestContext | undefined): DataRow[] | null {
 
 function contextTable(context: RequestContext | undefined): string {
   const rows = contextRows(context);
-  return rows ? dataTable(rows) : '';
+  return rows ? section('Request details', dataTable(rows)) : '';
 }
 
 function contextText(context: RequestContext | undefined): string {
@@ -141,13 +140,42 @@ function contextText(context: RequestContext | undefined): string {
   return `Request details\n${TEXT_RULE}\n${textRows(rows.map((r) => ({ label: r.label, value: r.value })))}`;
 }
 
-/** `Expires in 15 minutes` — a pill so the deadline is scannable, not buried. */
-function expiryPill(minutes: number): string {
-  const label =
-    minutes >= 120
-      ? `Expires in ${Math.round(minutes / 60)} hours`
-      : `Expires in ${minutes} minute${minutes === 1 ? '' : 's'}`;
-  return pill(label, 'neutral');
+/** When the request happened, for the state line — or nothing. */
+function requestedAt(context: RequestContext | undefined): string | undefined {
+  const at = stripControl(context?.requestedAt).trim();
+  return at || undefined;
+}
+
+/** `Expires in 15 minutes` / `Expires in 3 hours`. */
+function expiryLabel(minutes: number): string {
+  return minutes >= 120
+    ? `Expires in ${Math.round(minutes / 60)} hours`
+    : `Expires in ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+/**
+ * The action: one button, its expiry as a quiet note directly beneath it, then
+ * the copy-me link. Grouped tighter than the surrounding stack so the three
+ * read as one decision.
+ */
+function actionGroup(
+  url: string,
+  labelText: string,
+  opts: { expiresInMinutes?: number | undefined; button?: ButtonOptions | undefined } = {},
+): string {
+  return stack(
+    [
+      stack(
+        [
+          button(url, labelText, opts.button ?? {}),
+          opts.expiresInMinutes !== undefined ? note(esc(expiryLabel(opts.expiresInMinutes))) : '',
+        ],
+        12,
+      ),
+      linkFallback(url),
+    ],
+    18,
+  );
 }
 
 /** Standard "wasn't me" escape hatch for link-based flows. */
@@ -165,9 +193,7 @@ export function passwordResetTemplate(input: ActionTemplateInput): EmailTemplate
     p(
       `Use the button below to choose a new password for your ${esc(input.appName)} account. The link works once and then expires.`,
     ),
-    expiryPill(input.expiresInMinutes),
-    button(input.actionUrl, 'Reset password'),
-    linkFallback(input.actionUrl),
+    actionGroup(input.actionUrl, 'Reset password', { expiresInMinutes: input.expiresInMinutes }),
     contextTable(input.context),
     callout('warning', IGNORE_NOTE, 'Not you?'),
   ]);
@@ -177,10 +203,8 @@ export function passwordResetTemplate(input: ActionTemplateInput): EmailTemplate
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · password reset',
+      context: 'Security',
       preheader: `Your password reset link expires in ${input.expiresInMinutes} minutes.`,
-      tone: 'brand',
-      chip: glyph.key,
       body,
       footer: 'security',
       closing: null,
@@ -206,9 +230,7 @@ export function emailVerificationTemplate(input: ActionTemplateInput): EmailTemp
     p(
       `Confirm this address to finish setting up your ${esc(input.appName)} account. Verification also unlocks email-based recovery, so you are not locked out if you lose your password.`,
     ),
-    expiryPill(input.expiresInMinutes),
-    button(input.actionUrl, 'Verify email'),
-    linkFallback(input.actionUrl),
+    actionGroup(input.actionUrl, 'Verify email', { expiresInMinutes: input.expiresInMinutes }),
     contextTable(input.context),
   ]);
 
@@ -217,10 +239,8 @@ export function emailVerificationTemplate(input: ActionTemplateInput): EmailTemp
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Account · verification',
+      context: 'Account',
       preheader: `Confirm your email address to activate your ${input.appName} account.`,
-      tone: 'brand',
-      chip: glyph.mail,
       body,
       footer: 'security',
       closing: 'If you did not create this account, you can safely ignore this email.',
@@ -247,20 +267,14 @@ export function mfaCodeTemplate(input: MfaCodeTemplateInput): EmailTemplate {
         ? 'Your sign-in code'
         : 'Your verification code';
 
-  const eyebrowText =
-    input.purpose === 'setup'
-      ? 'Security · MFA setup'
-      : input.purpose === 'login'
-        ? 'Security · sign-in code'
-        : 'Security · verification';
-
   const forDevice = input.deviceName ? ` for ${esc(input.deviceName)}` : '';
 
+  // The code is the page: it sits in the same well the console's code input
+  // uses, with its expiry directly beneath it.
   const body = stack([
     p(esc(textGreeting(input.userName))),
     p(`Enter this code to continue${forDevice}.`),
-    otpBlock(input.code),
-    expiryPill(input.expiresInMinutes),
+    stack([otpBlock(input.code), note(esc(expiryLabel(input.expiresInMinutes)))], 12),
     contextTable(input.context),
     callout(
       'warning',
@@ -277,12 +291,10 @@ export function mfaCodeTemplate(input: MfaCodeTemplateInput): EmailTemplate {
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText,
+      context: 'Security',
       // The code is repeated in the preheader so a phone or watch preview is
       // often enough — no need to open the message at all.
       preheader: `${stripControl(input.code)} — expires in ${input.expiresInMinutes} minutes. Never share this code.`,
-      tone: 'brand',
-      chip: glyph.key,
       body,
       footer: 'security',
       closing: null,
@@ -312,7 +324,6 @@ export function mfaStatusTemplate(input: TemplateInput & { enabled: boolean }): 
         ? `Multi-factor authentication is now active on your ${esc(input.appName)} account. Sign-ins from a new device will require a second factor.`
         : `Multi-factor authentication was turned off on your ${esc(input.appName)} account. A password alone can now sign in.`,
     ),
-    pill(enabled ? 'MFA enabled' : 'MFA disabled', enabled ? 'success' : 'warning'),
     contextTable(input.context),
     enabled
       ? callout(
@@ -335,12 +346,15 @@ export function mfaStatusTemplate(input: TemplateInput & { enabled: boolean }): 
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: enabled ? 'Security · MFA enabled' : 'Security · MFA disabled',
+      context: 'Security',
+      status: {
+        label: enabled ? 'MFA enabled' : 'MFA disabled',
+        tone: enabled ? 'success' : 'warning',
+        meta: requestedAt(input.context),
+      },
       preheader: enabled
         ? 'A second factor is now required to sign in.'
         : 'Your account is now protected by a password alone.',
-      tone: enabled ? 'success' : 'warning',
-      chip: enabled ? glyph.check : glyph.bang,
       body,
       footer: 'security',
       closing: null,
@@ -367,9 +381,7 @@ export function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate
     p(
       'Your account was locked automatically after too many failed sign-in attempts. That lock is a brute-force defence, not a penalty — use the button below to restore access.',
     ),
-    expiryPill(input.expiresInMinutes),
-    button(input.actionUrl, 'Unlock account'),
-    linkFallback(input.actionUrl),
+    actionGroup(input.actionUrl, 'Unlock account', { expiresInMinutes: input.expiresInMinutes }),
     contextTable(input.context),
     callout(
       'warning',
@@ -383,10 +395,9 @@ export function accountUnlockTemplate(input: ActionTemplateInput): EmailTemplate
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · account locked',
+      context: 'Security',
+      status: { label: 'Account locked', tone: 'warning', meta: requestedAt(input.context) },
       preheader: `Restore access to your ${input.appName} account — link expires in ${input.expiresInMinutes} minutes.`,
-      tone: 'warning',
-      chip: glyph.square,
       body,
       footer: 'security',
       closing: null,
@@ -422,8 +433,7 @@ export function accountDeletionConfirmTemplate(
       `You asked to delete your ${esc(input.appName)} account. Confirming schedules permanent erasure &mdash; it does not happen straight away, which gives you a window to change your mind.`,
     ),
     dataTable(rows),
-    button(input.actionUrl, 'Confirm deletion', { tone: 'danger' }),
-    linkFallback(input.actionUrl),
+    actionGroup(input.actionUrl, 'Confirm deletion', { button: { variant: 'danger' } }),
     contextTable(input.context),
     callout(
       'danger',
@@ -437,10 +447,9 @@ export function accountDeletionConfirmTemplate(
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Account · deletion requested',
+      context: 'Account',
+      status: { label: 'Deletion requested', tone: 'danger', meta: requestedAt(input.context) },
       preheader: `Deletion is scheduled for ${input.scheduledFor}. Confirm to proceed, or ignore to cancel.`,
-      tone: 'danger',
-      chip: glyph.cross,
       body,
       footer: 'security',
       closing: 'Did not request this? Do nothing — the request expires on its own and your account stays active.',
@@ -467,9 +476,11 @@ export function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemp
     p(
       `Someone asked to disable multi-factor authentication on your ${esc(input.appName)} account. Because that removes a security layer, it needs confirmation from this inbox.`,
     ),
-    expiryPill(input.expiresInMinutes),
-    button(input.actionUrl, 'Confirm and disable MFA', { tone: 'warning' }),
-    linkFallback(input.actionUrl),
+    // Removing a factor is the destructive path, so it takes the red voice.
+    actionGroup(input.actionUrl, 'Confirm and disable MFA', {
+      expiresInMinutes: input.expiresInMinutes,
+      button: { variant: 'danger' },
+    }),
     contextTable(input.context),
     callout(
       'danger',
@@ -483,10 +494,9 @@ export function mfaDisableConfirmTemplate(input: ActionTemplateInput): EmailTemp
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · MFA disable',
+      context: 'Security',
+      status: { label: 'Confirmation required', tone: 'warning', meta: requestedAt(input.context) },
       preheader: 'Confirmation required to remove your second factor. Ignore this email to keep MFA on.',
-      tone: 'warning',
-      chip: glyph.bang,
       body,
       footer: 'security',
       closing: null,
@@ -524,13 +534,12 @@ export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailT
     ? 'Sign in with this email address to accept.'
     : 'You will create your account as part of accepting — it takes about a minute.';
 
+  const days = `${input.expiresInDays} day${input.expiresInDays === 1 ? '' : 's'}`;
+
   const rows: DataRow[] = [
     { label: 'Organization', value: input.orgName, sans: true },
     { label: 'Your role', value: input.roleLabel, sans: true },
-    {
-      label: 'Invite expires',
-      value: `${input.expiresInDays} day${input.expiresInDays === 1 ? '' : 's'}`,
-    },
+    { label: 'Invite expires', value: days },
   ];
 
   const body = stack([
@@ -538,8 +547,7 @@ export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailT
     p(inviterLine),
     dataTable(rows),
     p(esc(nextStep), { muted: true }),
-    button(input.actionUrl, 'Accept invitation'),
-    linkFallback(input.actionUrl),
+    actionGroup(input.actionUrl, 'Accept invitation'),
   ]);
 
   return {
@@ -547,13 +555,12 @@ export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailT
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Invitation',
+      context: 'Invitation',
       preheader: `${input.inviterName ? `${stripControl(input.inviterName)} invited you` : 'You have been invited'} to ${stripControl(input.orgName)} as ${stripControl(input.roleLabel)}.`,
-      tone: 'brand',
-      chip: glyph.plus,
       body,
       footer: 'plain',
-      closing: `Not expecting this? You can ignore it &mdash; the invitation expires on its own in ${input.expiresInDays} day${input.expiresInDays === 1 ? '' : 's'}.`,
+      // `closing` is escaped by the shell, so it takes a literal dash, not an entity.
+      closing: `Not expecting this? You can ignore it — the invitation expires on its own in ${days}.`,
     }),
     text: textBody(
       textGreeting(input.userName),
@@ -562,7 +569,7 @@ export function orgInvitationTemplate(input: OrgInvitationTemplateInput): EmailT
       nextStep,
       'Accept:',
       safeUrlText(input.actionUrl),
-      `This invitation expires in ${input.expiresInDays} day${input.expiresInDays === 1 ? '' : 's'}.`,
+      `This invitation expires in ${days}.`,
     ),
   };
 }
@@ -578,7 +585,6 @@ export function passwordChangedTemplate(input: TemplateInput): EmailTemplate {
     p(
       `The password on your ${esc(input.appName)} account was changed. If that was you, nothing more is needed &mdash; this message exists so an unexpected change cannot go unnoticed.`,
     ),
-    pill('Password updated', 'success'),
     contextTable(input.context),
     callout(
       'warning',
@@ -592,10 +598,9 @@ export function passwordChangedTemplate(input: TemplateInput): EmailTemplate {
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · password changed',
+      context: 'Security',
+      status: { label: 'Password updated', tone: 'success', meta: requestedAt(input.context) },
       preheader: 'Confirming a password change on your account. If this was not you, act now.',
-      tone: 'success',
-      chip: glyph.check,
       body,
       footer: 'security',
       closing: null,
@@ -610,7 +615,7 @@ export function passwordChangedTemplate(input: TemplateInput): EmailTemplate {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   NEW SIGN-IN  (new template)
+   NEW SIGN-IN
    ════════════════════════════════════════════════════════════════════════ */
 
 /**
@@ -626,9 +631,8 @@ export function newSignInTemplate(
   const body = stack([
     p(esc(textGreeting(input.userName))),
     p(`Your ${esc(input.appName)} account was signed in to from a device we have not seen before.`),
-    contextTable(input.context) || pill('New device', 'info'),
-    input.reviewUrl ? button(input.reviewUrl, 'Review active sessions') : '',
-    input.reviewUrl ? linkFallback(input.reviewUrl) : '',
+    contextTable(input.context),
+    input.reviewUrl ? actionGroup(input.reviewUrl, 'Review active sessions') : '',
     callout(
       'warning',
       'If this was not you, change your password and sign out every session right away. Anyone still signed in keeps their access until you do.',
@@ -641,10 +645,9 @@ export function newSignInTemplate(
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · new sign-in',
+      context: 'Security',
+      status: { label: 'New device', tone: 'info', meta: requestedAt(input.context) },
       preheader: 'A device we have not seen before signed in to your account.',
-      tone: 'info',
-      chip: glyph.dot,
       body,
       footer: 'security',
       closing: null,
@@ -660,7 +663,7 @@ export function newSignInTemplate(
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   API KEY CREATED  (new template)
+   API KEY CREATED
    ════════════════════════════════════════════════════════════════════════ */
 
 /**
@@ -685,7 +688,7 @@ export function apiKeyCreatedTemplate(
     { label: 'Prefix', value: `${input.keyPrefix}…` },
   ];
   if (input.projectName) rows.push({ label: 'Project', value: input.projectName, sans: true });
-  if (input.scopes) rows.push({ label: 'Scopes', value: input.scopes, sans: true });
+  if (input.scopes) rows.push({ label: 'Scopes', value: input.scopes });
 
   const body = stack([
     p(esc(textGreeting(input.userName))),
@@ -705,10 +708,9 @@ export function apiKeyCreatedTemplate(
     html: renderLayout({
       appName: input.appName,
       title,
-      eyebrowText: 'Security · API key created',
+      context: 'Security',
+      status: { label: 'API key created', tone: 'info', meta: requestedAt(input.context) },
       preheader: `${stripControl(input.keyName)} (${stripControl(input.keyPrefix)}…) was just created.`,
-      tone: 'info',
-      chip: glyph.key,
       body,
       footer: 'security',
       closing: null,
@@ -725,16 +727,21 @@ export function apiKeyCreatedTemplate(
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   STANDARD MONO NOTIFICATION TEMPLATE
+   STANDARD NOTIFICATION
    ════════════════════════════════════════════════════════════════════════ */
 
 export interface StandardNotificationInput {
   appName?: string | undefined;
   title: string;
   subject?: string | undefined;
+  /**
+   * For a verdict tone this becomes the state-line label ("Critical",
+   * "Degraded"); otherwise it names the header context.
+   */
   eyebrowText?: string | undefined;
   preheader?: string | undefined;
   tone?: Tone | undefined;
+  /** @deprecated Glyph chips are retired; the value is ignored. */
   chip?: string | undefined;
   userName?: string | undefined;
   summary?: string | undefined;
@@ -749,6 +756,7 @@ export interface StandardNotificationInput {
   primaryAction?: {
     label: string;
     url: string;
+    /** Only `danger` changes the button — every other action is white. */
     tone?: Tone | undefined;
   } | undefined;
   secondaryAction?: {
@@ -772,54 +780,67 @@ export interface StandardNotificationInput {
   } | undefined;
 }
 
+const TONE_STATE_LABEL: Partial<Record<Tone, string>> = {
+  success: 'Success',
+  danger: 'Error',
+  warning: 'Warning',
+  info: 'Info',
+  ai: 'AI insight',
+};
+
 /**
- * Standard multi-purpose notification email template rendered in Sentinel Mono design.
- * Suitable for general alerts, system reports, digests, and operational notifications.
+ * Multi-purpose notification in the same sheet — general alerts, system
+ * reports and connector notifications that have no dedicated template.
  */
 export function standardNotificationTemplate(input: StandardNotificationInput): EmailTemplate {
   const app = input.appName || 'Pulsiv';
   const tone = input.tone ?? 'brand';
   const title = stripControl(input.title);
-  const eyebrow = input.eyebrowText ?? `${app} · notification`;
   const subject = input.subject ?? subjectLine(app, title);
   const rows: DataRow[] = input.details ? [...input.details] : [];
+  const verdict = tone !== 'brand' && tone !== 'neutral';
+
+  const status: LayoutStatus | undefined = verdict
+    ? { label: stripControl(input.eyebrowText ?? TONE_STATE_LABEL[tone] ?? 'Notification'), tone }
+    : undefined;
 
   let actionsHtml = '';
   if (input.primaryAction && input.secondaryAction) {
     actionsHtml = buttonRow(input.primaryAction, input.secondaryAction);
   } else if (input.primaryAction) {
-    actionsHtml = stack([
-      button(input.primaryAction.url, input.primaryAction.label, { tone: input.primaryAction.tone ?? tone }),
-      linkFallback(input.primaryAction.url),
-    ]);
+    actionsHtml = stack(
+      [
+        button(
+          input.primaryAction.url,
+          input.primaryAction.label,
+          input.primaryAction.tone === 'danger' ? { variant: 'danger' } : {},
+        ),
+        linkFallback(input.primaryAction.url),
+      ],
+      18,
+    );
   }
 
-  const metricHtml = input.metric
+  const hero = input.metric
     ? metricCompare({
         label: input.metric.window ? `${input.metric.label} · ${input.metric.window}` : input.metric.label,
         value: String(input.metric.value),
         threshold: input.metric.threshold !== undefined ? String(input.metric.threshold) : '—',
         tone,
       })
-    : '';
+    : undefined;
 
-  const calloutHtml = input.callout
-    ? callout(input.callout.tone ?? 'neutral', esc(input.callout.message), input.callout.title)
-    : '';
-
-  const codeHtml = input.codeSnippet
-    ? codeBlock(input.codeSnippet.code)
-    : '';
+  // Connector payloads arrive as plain text with newlines; keep their breaks.
+  const message = input.message ? esc(input.message).replace(/\r?\n/g, '<br />') : '';
 
   const body = stack([
     input.userName ? p(esc(textGreeting(input.userName))) : '',
     input.summary ? p(esc(input.summary)) : '',
-    input.message ? p(esc(input.message)) : '',
-    metricHtml,
-    rows.length > 0 ? dataTable(rows) : '',
+    message ? p(message) : '',
+    input.callout ? callout(input.callout.tone ?? 'neutral', esc(input.callout.message), input.callout.title) : '',
     actionsHtml,
-    calloutHtml,
-    codeHtml,
+    rows.length > 0 ? section('Details', dataTable(rows)) : '',
+    input.codeSnippet ? codeBlock(input.codeSnippet.code, input.codeSnippet.caption) : '',
     contextTable(input.context),
   ]);
 
@@ -834,10 +855,10 @@ export function standardNotificationTemplate(input: StandardNotificationInput): 
     html: renderLayout({
       appName: app,
       title,
-      eyebrowText: eyebrow,
+      context: verdict ? 'Notification' : stripControl(input.eyebrowText ?? 'Notification'),
+      status,
       preheader: preheaderText,
-      tone,
-      chip: input.chip,
+      hero,
       body,
       footer: input.footerKind ?? 'alert',
       footerLink: input.footerLink,

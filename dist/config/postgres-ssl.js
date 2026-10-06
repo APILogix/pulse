@@ -1,3 +1,4 @@
+import './dns.js';
 const MANAGED_POSTGRES_HOST_SUFFIXES = [
     '.neon.tech',
     '.aws.neon.tech',
@@ -32,8 +33,8 @@ export function sanitizePostgresConnectionString(connectionString) {
  * while respecting explicit overrides and URL query parameters.
  */
 export function resolvePostgresSslConfig(connectionString, options = {}) {
-    if (options.enabled !== undefined) {
-        return options.enabled ? { rejectUnauthorized: options.rejectUnauthorized ?? false } : false;
+    if (options.enabled === false) {
+        return false;
     }
     try {
         const url = new URL(connectionString);
@@ -42,16 +43,24 @@ export function resolvePostgresSslConfig(connectionString, options = {}) {
         if (sslMode === 'disable' || sslParam === 'false' || sslParam === '0') {
             return false;
         }
-        if (sslMode === 'require' || sslMode === 'verify-ca' || sslMode === 'verify-full') {
-            return { rejectUnauthorized: sslMode !== 'require' && (options.rejectUnauthorized ?? false) };
+        // Explicit rejectUnauthorized option takes highest precedence
+        if (options.rejectUnauthorized !== undefined) {
+            return { rejectUnauthorized: options.rejectUnauthorized };
         }
-        if (sslMode === 'prefer' || sslMode === 'allow' || sslParam === 'true' || sslParam === '1') {
-            return { rejectUnauthorized: options.rejectUnauthorized ?? false };
+        // Full certificate validation requested by URL query parameters
+        if (sslMode === 'verify-full' || sslMode === 'verify-ca') {
+            return { rejectUnauthorized: true };
+        }
+        if (options.enabled === true) {
+            return { rejectUnauthorized: false };
+        }
+        if (sslMode === 'require' || sslMode === 'prefer' || sslMode === 'allow' || sslParam === 'true' || sslParam === '1') {
+            return { rejectUnauthorized: false };
         }
         const host = url.hostname.toLowerCase();
         const isManagedCloudDb = MANAGED_POSTGRES_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(suffix));
         if (isManagedCloudDb) {
-            return { rejectUnauthorized: options.rejectUnauthorized ?? false };
+            return { rejectUnauthorized: false };
         }
     }
     catch {

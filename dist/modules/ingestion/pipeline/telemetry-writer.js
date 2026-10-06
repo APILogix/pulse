@@ -203,24 +203,56 @@ function deleteAttrPath(attrs, path) {
             delete parent[key];
     }
 }
+function resolveDbSystem(attrs, fallback) {
+    const val = attrValue(attrs, 'db.system.name') ?? attrValue(attrs, 'db.system') ?? fallback;
+    return str(val, 50);
+}
+function resolveDbName(attrs, fallback) {
+    const val = attrValue(attrs, 'db.namespace') ?? attrValue(attrs, 'db.name') ?? fallback;
+    return str(val, 100);
+}
+function resolveDbOperation(attrs, fallback) {
+    const val = attrValue(attrs, 'db.operation.name') ?? attrValue(attrs, 'db.operation') ?? fallback;
+    return str(val, 50);
+}
+function resolveDbCollection(attrs, fallback) {
+    const val = attrValue(attrs, 'db.collection.name') ?? attrValue(attrs, 'db.collection') ?? fallback;
+    return str(val, 100);
+}
+function resolveDbStatement(attrs, fallback) {
+    const val = attrValue(attrs, 'db.query.text') ?? attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query') ?? fallback;
+    return str(val, 8192);
+}
+function resolvePeerAddress(attrs, fallback) {
+    const val = attrValue(attrs, 'server.address') ?? attrValue(attrs, 'net.peer.name') ?? attrValue(attrs, 'net.peer.ip') ?? fallback;
+    return str(val, 255);
+}
+function resolvePeerPort(attrs, fallback) {
+    const val = attrValue(attrs, 'server.port') ?? attrValue(attrs, 'net.peer.port') ?? fallback;
+    return num(val);
+}
 function normalizedSpanAttributes(attrs) {
-    const out = attrs ? { ...attrs } : {};
-    for (const path of SPAN_ATTRIBUTE_DUPLICATES)
-        deleteAttrPath(out, path);
-    return out;
+    // Preserve full attributes so users can inspect queries, parameters, and telemetry context without loss
+    return attrs ? { ...attrs } : {};
 }
 function classifySpan(kind, name, attrs) {
     const n = (name ?? '').toLowerCase();
-    const dbSystem = attrValue(attrs, 'db.system');
+    const dbSystem = resolveDbSystem(attrs);
     const msgSystem = attrValue(attrs, 'messaging.system');
     if (attrValue(attrs, 'http.method') || attrValue(attrs, 'http.route') || attrValue(attrs, 'http.url'))
         return 'http';
     if (dbSystem)
         return n.includes('redis') || n.includes('memcache') ? 'cache' : 'database';
+    if (attrValue(attrs, 'db.operation') || attrValue(attrs, 'db.operation.name') || attrValue(attrs, 'db.collection') || attrValue(attrs, 'db.collection.name') || attrValue(attrs, 'db.statement') || attrValue(attrs, 'db.query.text'))
+        return 'database';
     if (msgSystem)
         return kind === 'producer' ? 'producer' : kind === 'consumer' ? 'consumer' : 'messaging';
     if (n.includes('redis') || n.includes('cache') || n.includes('memcache'))
         return 'cache';
+    if (n.startsWith('mongodb.') || n.startsWith('prisma.') || n.startsWith('pg.') || n.startsWith('mysql.') || n.startsWith('postgres.') || n.startsWith('mongo.'))
+        return 'database';
+    if (n.startsWith('find ') || n.includes('findone') || n.startsWith('insert') || n.startsWith('update') || n.startsWith('delete') || n.includes('createindexes') || n.startsWith('aggregate'))
+        return 'database';
     if (n.includes('queue'))
         return 'queue';
     if (n.includes('rpc') || n.includes('grpc'))
@@ -476,47 +508,74 @@ export function errorFingerprint(event, errorName = errorNameOf(event)) {
  */
 const PG_MAX_BIND_PARAMS = 65535;
 /**
- * Insert `rows` using as few multi-row statements as the bind-parameter limit
- * allows, returning the total inserted count.
+ * Target maximum parameters per INSERT statement. Kept bounded (~3500) to avoid
+ * CPU-intensive AST planning and index leaf page latch (LWLock) serialization
+ * across concurrent workers on the active partition tables.
+ */
+const PG_TARGET_BIND_PARAMS = 3500;
+/**
+ * Insert `rows` using bounded multi-row statements, returning the total inserted count.
  *
  * ## Why this is needed
  *
- * Most event types are 1 event -> 1 row, so a job capped at
- * INGESTION_JOB_CHUNK_SIZE (200) events can never approach the parameter limit
- * (200 x ~67 cols = ~13.4k params, ~5x headroom).
+ * Most event types are 1 event -> 1 row, but tables with 40-65 columns (like events_requests
+ * and events_spans) with batches of 200 events produce 8,000 to 13,000 parameters per statement.
  *
- * Trace ingestion is the exception: it is 1 event -> N rows. `writeTraceSpanTree`
- * flattens each trace's span tree recursively with no cap, and the normalizer
- * permits a declared `spanCount` up to LIMITS.maxTraceSpanCount (10,000). With
- * `events_spans` at 67 columns the ceiling is floor(65535/67) = 978 rows, so:
+ * Executing multiple 13,000-parameter statements concurrently across 16 workers saturates
+ * PostgreSQL buffer headers and index leaf blocks, causing severe LWLock serialization.
  *
- *   - one trace with >= 978 spans, OR
- *   - 200 traces averaging >= 5 spans (200 x 5 = 1000 > 978)
+ * Chunking into bounded statements (~3,500 parameters max) bounds memory allocation and
+ * allows page latching to be interleaved fairly across parallel workers.
  *
- * would emit a single INSERT that PostgreSQL refuses. Five spans per trace is
- * entirely ordinary, so this was reachable with realistic production traffic.
- * The failure surfaces as a rejected statement, which fails the job, burns its
- * three retries, and dead-letters the batch — losing the traces.
- *
- * Chunking preserves set-based batching (normal batches still emit exactly one
- * statement) and stays inside the caller's transaction, so atomicity is
- * unchanged: either every chunk commits or the transaction rolls back.
+ * Chunking stays inside the caller's transaction, so atomicity is unchanged: either every
+ * chunk commits or the transaction rolls back.
  */
+async function salvageRows(db, table, cols, rows) {
+    let salvaged = 0;
+    for (const row of rows) {
+        try {
+            await db.query('SAVEPOINT row_salvage');
+            const { text, values } = buildInsert(table, cols, [row]);
+            const res = await db.query(text, values);
+            salvaged += res.rowCount ?? 0;
+            await db.query('RELEASE SAVEPOINT row_salvage');
+        }
+        catch {
+            await db.query('ROLLBACK TO SAVEPOINT row_salvage').catch(() => undefined);
+        }
+    }
+    return salvaged;
+}
 async function insertChunked(db, table, cols, rows) {
     if (rows.length === 0)
         return 0;
     const maxRowsPerStatement = Math.max(1, Math.floor(PG_MAX_BIND_PARAMS / cols.length));
     // Common case: the whole batch fits in one statement.
     if (rows.length <= maxRowsPerStatement) {
-        const { text, values } = buildInsert(table, cols, rows);
-        const res = await db.query(text, values);
-        return res.rowCount ?? 0;
+        try {
+            const { text, values } = buildInsert(table, cols, rows);
+            const res = await db.query(text, values);
+            return res.rowCount ?? 0;
+        }
+        catch (err) {
+            if (rows.length <= 1)
+                throw err;
+            return salvageRows(db, table, cols, rows);
+        }
     }
     let inserted = 0;
     for (let offset = 0; offset < rows.length; offset += maxRowsPerStatement) {
-        const { text, values } = buildInsert(table, cols, rows.slice(offset, offset + maxRowsPerStatement));
-        const res = await db.query(text, values);
-        inserted += res.rowCount ?? 0;
+        const chunk = rows.slice(offset, offset + maxRowsPerStatement);
+        try {
+            const { text, values } = buildInsert(table, cols, chunk);
+            const res = await db.query(text, values);
+            inserted += res.rowCount ?? 0;
+        }
+        catch (err) {
+            if (chunk.length <= 1)
+                throw err;
+            inserted += await salvageRows(db, table, cols, chunk);
+        }
     }
     return inserted;
 }
@@ -536,7 +595,7 @@ function buildInsert(table, cols, rows, returning) {
 }
 export async function applyIngestionTransactionSettings(client) {
     const statements = [
-        `SET LOCAL synchronous_commit = ${env.INGESTION_LOG_DB_SYNCHRONOUS_COMMIT ?? 'on'}`,
+        `SET LOCAL synchronous_commit = ${env.INGESTION_LOG_DB_SYNCHRONOUS_COMMIT ?? 'off'}`,
     ];
     if (env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS > 0) {
         statements.push(`SET LOCAL lock_timeout = '${env.INGESTION_LOG_DB_LOCK_TIMEOUT_MS}ms'`);
@@ -646,6 +705,103 @@ export class TelemetryWriter {
         }
         return result;
     }
+    async recordSessions(scoped, db) {
+        const sessionMap = new Map();
+        for (const s of scoped) {
+            if (!s.orgId || !s.projectId)
+                continue;
+            const recObj = rec(s.event);
+            const rawObj = s.event;
+            const sessionId = str(s.event.sessionId ?? recObj.sessionId ?? recObj.session_id ?? rawObj.sessionId ?? rawObj.session_id, 64);
+            if (!sessionId)
+                continue;
+            const key = `${s.orgId}:${s.projectId}:${sessionId}`;
+            const ts = iso(resolveScopedTimestamp(s.event, s.occurredAtMs));
+            const isErr = s.event.type === 'error' || (recObj.statusCode != null && Number(recObj.statusCode) >= 500);
+            const isCrashed = isErr && (bool(recObj.handled) === false || recObj.crashed === true);
+            const userId = str(recObj.userId ?? recObj.user_id ?? recObj.user?.id, 255);
+            const existing = sessionMap.get(key);
+            if (existing) {
+                existing.eventCount += 1;
+                if (isErr)
+                    existing.errorCount += 1;
+                if (isCrashed)
+                    existing.isCrashed = true;
+                if (userId && !existing.userId)
+                    existing.userId = userId;
+                if (ts < existing.startedAt)
+                    existing.startedAt = ts;
+                if (ts > existing.endedAt)
+                    existing.endedAt = ts;
+            }
+            else {
+                sessionMap.set(key, {
+                    orgId: s.orgId,
+                    projectId: s.projectId,
+                    sessionId,
+                    userId,
+                    environment: s.environment,
+                    startedAt: ts,
+                    endedAt: ts,
+                    eventCount: 1,
+                    errorCount: isErr ? 1 : 0,
+                    isCrashed,
+                });
+            }
+        }
+        if (sessionMap.size === 0)
+            return;
+        try {
+            const rows = Array.from(sessionMap.values());
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+                const batch = rows.slice(i, i + BATCH_SIZE);
+                await db.query(`INSERT INTO analytics_user_sessions (
+            organization_id, project_id, session_id, user_id, environment,
+            started_at, ended_at, duration_seconds, event_count, error_count, is_crashed
+          )
+          SELECT t.org_id, t.proj_id, t.sess_id, t.user_id, t.env,
+                 t.started_at, t.ended_at,
+                 GREATEST(0, EXTRACT(EPOCH FROM (t.ended_at - t.started_at))::integer),
+                 t.event_count, t.error_count, t.is_crashed
+          FROM UNNEST(
+            $1::uuid[],
+            $2::uuid[],
+            $3::text[],
+            $4::text[],
+            $5::text[],
+            $6::timestamptz[],
+            $7::timestamptz[],
+            $8::integer[],
+            $9::integer[],
+            $10::boolean[]
+          ) AS t(org_id, proj_id, sess_id, user_id, env, started_at, ended_at, event_count, error_count, is_crashed)
+          ON CONFLICT (organization_id, project_id, session_id)
+          DO UPDATE SET
+            ended_at = GREATEST(analytics_user_sessions.ended_at, EXCLUDED.ended_at),
+            duration_seconds = GREATEST(0, EXTRACT(EPOCH FROM (GREATEST(analytics_user_sessions.ended_at, EXCLUDED.ended_at) - analytics_user_sessions.started_at))::integer),
+            event_count = analytics_user_sessions.event_count + EXCLUDED.event_count,
+            error_count = analytics_user_sessions.error_count + EXCLUDED.error_count,
+            is_crashed = analytics_user_sessions.is_crashed OR EXCLUDED.is_crashed,
+            user_id = COALESCE(analytics_user_sessions.user_id, EXCLUDED.user_id),
+            environment = COALESCE(analytics_user_sessions.environment, EXCLUDED.environment)`, [
+                    batch.map((r) => r.orgId),
+                    batch.map((r) => r.projectId),
+                    batch.map((r) => r.sessionId),
+                    batch.map((r) => r.userId),
+                    batch.map((r) => r.environment),
+                    batch.map((r) => r.startedAt),
+                    batch.map((r) => r.endedAt),
+                    batch.map((r) => r.eventCount),
+                    batch.map((r) => r.errorCount),
+                    batch.map((r) => r.isCrashed),
+                ]);
+            }
+        }
+        catch (err) {
+            this.log?.debug({ err }, 'Failed to record session tracking rows');
+        }
+    }
     async appendTelemetryOutbox(scoped, db = this.pool) {
         const rows = scoped
             .filter((event) => event.orgId !== null)
@@ -704,7 +860,8 @@ export class TelemetryWriter {
         if (rows.length === 0)
             return 0;
         const result = await db.query(`WITH input AS (
-         SELECT *
+         SELECT organization_id, project_id, environment, signal_kind, event_id,
+                severity, fast_path, attributes, occurred_at
            FROM UNNEST(
              $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[],
              $6::logdb_severity[], $7::boolean[], $8::jsonb[], $9::timestamptz[]
@@ -793,14 +950,40 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_errors', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'fingerprint_version', 'message',
+        const errorCols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'fingerprint', 'fingerprint_version', 'message',
             'error_name', 'severity', 'trace_id', 'span_id', 'request_id', 'session_id',
             'mechanism', 'service', 'environment', 'release', 'server_name',
             'application_name', 'application_version',
             'stack_frames', 'breadcrumbs', 'context', 'method', 'route', 'url',
             'status_code', 'status_text', 'handled', 'user_id',
-            'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response'], rows, 'event_id');
-        const res = await db.query(text, values);
+            'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response'
+        ];
+        let res;
+        try {
+            const { text, values } = buildInsert('events_errors', errorCols, rows, 'event_id');
+            res = await db.query(text, values);
+        }
+        catch (err) {
+            if (rows.length <= 1)
+                throw err;
+            const salvagedRows = [];
+            for (const row of rows) {
+                try {
+                    await db.query('SAVEPOINT err_salvage');
+                    const { text, values } = buildInsert('events_errors', errorCols, [row], 'event_id');
+                    const singleRes = await db.query(text, values);
+                    if (singleRes.rows && singleRes.rows.length > 0) {
+                        salvagedRows.push(...singleRes.rows);
+                    }
+                    await db.query('RELEASE SAVEPOINT err_salvage');
+                }
+                catch {
+                    await db.query('ROLLBACK TO SAVEPOINT err_salvage').catch(() => undefined);
+                }
+            }
+            res = { rows: salvagedRows, rowCount: salvagedRows.length };
+        }
         // Pair each returned event_id with its first unpaired input occurrence, so
         // a duplicate event_id WITHIN one batch (only the first occurrence inserts)
         // is not double-counted by downstream error grouping.
@@ -850,15 +1033,17 @@ export class TelemetryWriter {
                 name, JSON.stringify(attrs)
             ];
         });
-        const { text, values } = buildInsert('events_messages', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'message', 'severity',
             'trace_id', 'span_id', 'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
             'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
             'tenant_id', 'logger_name', 'message_category', 'message_source',
-            'endpoint', 'status_code', 'name', 'attributes'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'endpoint', 'status_code', 'name', 'attributes'
+        ];
+        const inserted = await insertChunked(db, 'events_messages', cols, rows);
+        return { inserted };
     }
     // ── events_requests ─────────────────────────────────────────────────────────
     async writeRequests(list, db) {
@@ -935,15 +1120,17 @@ export class TelemetryWriter {
         });
         // is_slow / is_error are GENERATED columns — do NOT insert them.
         // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
-        const { text, values } = buildInsert('events_requests', ['id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
+        const cols = [
+            'id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
             'parent_span_id', 'session_id', 'user_id', 'tenant_id', 'endpoint', 'name', 'method',
             'status_code', 'duration_ms', 'body_size', 'response_size', 'span_count', 'root_span_status', 'is_partial',
             'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
             'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
             'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
-            'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'
+        ];
+        const inserted = await insertChunked(db, 'events_requests', cols, rows);
+        return { inserted };
     }
     // ── events_spans ─────────────────────────────────────────────────────────
     async writeSpans(list, db) {
@@ -977,10 +1164,10 @@ export class TelemetryWriter {
                 str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
                 str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255),
                 str(attrValue(attrs, 'net.host.ip'), 255), num(attrValue(attrs, 'net.host.port')),
-                str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
-                str(attrValue(attrs, 'db.system') ?? r.dbSystem, 50), str(attrValue(attrs, 'db.name') ?? r.dbName, 100),
-                str(attrValue(attrs, 'db.operation') ?? r.dbOperation, 50), str(attrValue(attrs, 'db.collection') ?? r.dbCollection, 100),
-                str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query') ?? r.dbStatement, 8192),
+                resolvePeerAddress(attrs, attrValue(attrs, 'net.peer.ip')), resolvePeerPort(attrs, attrValue(attrs, 'net.peer.port')),
+                resolveDbSystem(attrs, r.dbSystem), resolveDbName(attrs, r.dbName),
+                resolveDbOperation(attrs, r.dbOperation), resolveDbCollection(attrs, r.dbCollection),
+                resolveDbStatement(attrs, r.dbStatement),
                 str(attrValue(attrs, 'messaging.system') ?? r.messagingSystem, 50),
                 str(attrValue(attrs, 'messaging.destination') ?? r.messagingDestination, 255),
                 str(attrValue(attrs, 'messaging.operation') ?? r.messagingOperation, 50),
@@ -992,7 +1179,8 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_spans', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'span_id', 'trace_id', 'parent_span_id',
             'span_kind', 'span_type', 'span_status', 'is_root_span', 'is_http_span', 'is_db_span', 'is_cache_span', 'is_messaging_span',
             'name', 'message', 'endpoint', 'start_time', 'end_time',
             'duration_ms', 'exclusive_duration_ms', 'occurred_at',
@@ -1003,9 +1191,10 @@ export class TelemetryWriter {
             'messaging_system', 'messaging_destination', 'messaging_operation',
             'attributes', 'events', 'links',
             'request_id', 'session_id', 'user_id', 'tenant_id',
-            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response'
+        ];
+        const inserted = await insertChunked(db, 'events_spans', cols, rows);
+        return { inserted };
     }
     // ── events_traces ─────────────────────────────────────────────────────────
     async writeTraces(list, db) {
@@ -1188,9 +1377,9 @@ export class TelemetryWriter {
                 num(attrValue(attrs, 'http.status_code')), str(attrValue(attrs, 'http.status_text'), 255),
                 num(attrValue(attrs, 'http.response.body.size')), str(attrValue(attrs, 'http.user_agent'), 1024), str(attrValue(attrs, 'http.client_ip'), 255),
                 str(attrValue(attrs, 'net.transport'), 64), str(attrValue(attrs, 'net.host.name'), 255), str(attrValue(attrs, 'net.host.ip'), 255),
-                num(attrValue(attrs, 'net.host.port')), str(attrValue(attrs, 'net.peer.ip'), 255), num(attrValue(attrs, 'net.peer.port')),
-                str(attrValue(attrs, 'db.system'), 50), str(attrValue(attrs, 'db.name'), 100), str(attrValue(attrs, 'db.operation'), 50),
-                str(attrValue(attrs, 'db.collection'), 100), str(attrValue(attrs, 'db.statement') ?? attrValue(attrs, 'query'), 8192),
+                num(attrValue(attrs, 'net.host.port')), resolvePeerAddress(attrs, attrValue(attrs, 'net.peer.ip')), resolvePeerPort(attrs, attrValue(attrs, 'net.peer.port')),
+                resolveDbSystem(attrs), resolveDbName(attrs), resolveDbOperation(attrs),
+                resolveDbCollection(attrs), resolveDbStatement(attrs),
                 str(attrValue(attrs, 'messaging.system'), 50), str(attrValue(attrs, 'messaging.destination'), 255), str(attrValue(attrs, 'messaging.operation'), 50),
                 event.requestId ?? str(attrValue(attrs, 'pulse.request_id'), 255), event.sessionId ?? null, str(rec(event).userId, 255),
                 str(rec(event).tenantId, 255) ?? str(attrValue(attrs, 'pulse.tenant_id'), 255),
@@ -1379,16 +1568,18 @@ export class TelemetryWriter {
                 payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
             ];
         });
-        const { text, values } = buildInsert('events_logs', ['organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
+        const cols = [
+            'organization_id', 'project_id', 'api_key_name', 'event_id', 'level', 'message',
             'args', 'trace_id', 'span_id', 'parent_span_id', 'tenant_id',
             'name', 'logger_name', 'log_source', 'log_category', 'endpoint', 'http_method', 'status_code', 'duration_ms',
             'request_id', 'session_id',
             'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
             'user_id', 'user_ip',
             'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
-            'metadata', 'occurred_at', 'payload', 'ai_response'], rows);
-        const res = await db.query(text, values);
-        return { inserted: res.rowCount ?? 0 };
+            'metadata', 'occurred_at', 'payload', 'ai_response'
+        ];
+        const inserted = await insertChunked(db, 'events_logs', cols, rows);
+        return { inserted };
     }
     // ── events_profiles ─────────────────────────────────────────────────────────
     async writeProfiles(list, db) {

@@ -25,12 +25,7 @@ export declare class CoreService {
     createOrganization(meta: RequestMeta, data: {
         name: string;
         slug?: string;
-        description?: string;
-        industry?: string;
-        companySize?: string;
-        country?: string;
         timezone?: string;
-        billingEmail?: string;
     }): Promise<OrganizationDto>;
     switchOrganization(meta: RequestMeta, orgId: string): Promise<OrganizationDto>;
     getOrganization(orgId: string, userId: string): Promise<OrganizationDto>;

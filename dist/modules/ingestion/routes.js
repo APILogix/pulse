@@ -126,12 +126,6 @@ export async function ingestionRoutes(fastify) {
             contentLength: request.headers["content-length"],
         }, "Ingestion request failed");
     });
-    // ── SDK ingestion endpoints ─────────────────────────────────────────────
-    // Typed ingestion endpoints validate their bodies via JSON Schema. This
-    // plugin installs its own encapsulated AJV compiler because the rest of the
-    // app uses a Zod validator compiler.
-    fastify.post("/v1/init", controller.init.bind(controller));
-    fastify.post("/v1/sdk-config", controller.init.bind(controller));
     // Per-signal typed write endpoints — the PRIMARY SDK transport. Registration
     // is DATA-DRIVEN from TYPED_INGEST_ROUTES so there is exactly one dedicated
     // POST route per SDK event family and no hand-written handler per type. Each

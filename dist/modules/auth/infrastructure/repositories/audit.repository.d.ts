@@ -13,7 +13,9 @@ import type { PoolClient } from 'pg';
 import type { MFADevice, User, UserSession } from '../../domain/types.js';
 export declare function scheduleAccountDeletion(userId: string, scheduledAt: Date, client?: PoolClient): Promise<User | null>;
 export declare function clearScheduledAccountDeletion(userId: string, client?: PoolClient): Promise<User | null>;
-export declare function listUsersDueForDeletion(client?: PoolClient): Promise<User[]>;
+export declare function listUsersDueForDeletion(client?: PoolClient, limit?: number): Promise<Array<{
+    id: string;
+}>>;
 export interface OrgAuthPolicyRow {
     org_id: string;
     org_name: string;

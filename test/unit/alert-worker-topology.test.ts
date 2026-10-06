@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALERT_JOBS, ALERT_DELIVERY_WORKER_JOBS } from '../../src/modules/alerting/queue.js';
 
-const { work, send, schedule, unschedule, createQueue } = vi.hoisted(() => ({
-  work: vi.fn(),
+const { send, createQueue, createQueues } = vi.hoisted(() => ({
   send: vi.fn(),
-  schedule: vi.fn(),
-  unschedule: vi.fn(),
   createQueue: vi.fn(),
+  createQueues: vi.fn(),
 }));
 
-vi.mock('../../src/lib/pgboss.js', () => ({
-  pgboss: { createQueue, work, send, schedule, unschedule },
+vi.mock('../../src/lib/pgmq.js', () => ({
+  pgmq: {
+    createQueue,
+    createQueues,
+    send,
+    readWithPoll: vi.fn().mockResolvedValue([]),
+    setVt: vi.fn(),
+    delete: vi.fn(),
+  },
 }));
 
 vi.mock('../../src/config/database.js', () => ({
@@ -104,14 +109,12 @@ function logger() {
 
 describe('alert-only worker topology', () => {
   beforeEach(() => {
-    work.mockReset().mockResolvedValue(undefined);
     send.mockReset().mockResolvedValue(undefined);
-    schedule.mockReset().mockResolvedValue(undefined);
-    unschedule.mockReset().mockResolvedValue(undefined);
     createQueue.mockReset().mockResolvedValue(undefined);
+    createQueues.mockReset().mockResolvedValue(undefined);
   });
 
-  it('registers every alert delivery consumer and skips retention cleanup', async () => {
+  it('registers every alert delivery consumer with PGMQ', async () => {
     const { registerAlertingWorkers } = await import('../../src/modules/alerting/queue.js');
     const workers = await registerAlertingWorkers(
       logger() as never,
@@ -121,21 +124,9 @@ describe('alert-only worker topology', () => {
     );
 
     try {
-      const registeredQueues = work.mock.calls.map((call) => call[0] as string);
-      expect(registeredQueues).toEqual(expect.arrayContaining([...ALERT_DELIVERY_WORKER_JOBS]));
-      expect(registeredQueues).not.toContain(ALERT_JOBS.cleanup);
-      expect(new Set(registeredQueues).size).toBe(registeredQueues.length);
-      expect(schedule).toHaveBeenCalledWith(
-        ALERT_JOBS.escalationSweep,
-        '* * * * *',
-        {},
-        { singletonKey: 'alert-escalation-sweep' },
-      );
-      expect(schedule).not.toHaveBeenCalledWith(
-        ALERT_JOBS.cleanup,
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
+      expect(createQueues).toHaveBeenCalledWith(
+        expect.arrayContaining([...ALERT_DELIVERY_WORKER_JOBS]),
+        { concurrency: 4 },
       );
     } finally {
       await workers.stop();

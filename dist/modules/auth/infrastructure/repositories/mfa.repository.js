@@ -38,6 +38,42 @@ const MFA_DEVICE_SELECT = `
   NULL::timestamptz AS last_failed_at,
   0::integer AS use_count
 `;
+const MFA_DEVICE_SUMMARY_SELECT = `
+  id,
+  user_id,
+  CASE
+    WHEN type::text = 'webauthn' THEN 'hardware_key'
+    WHEN type::text = 'backup_code' THEN 'backup_codes'
+    ELSE type::text
+  END AS device_type,
+  type::text AS type,
+  device_type AS mfa_device_type,
+  device_name,
+  NULL::text AS secret_encrypted,
+  phone_e164,
+  email,
+  credential_id,
+  public_key,
+  sign_count,
+  is_verified,
+  verified_at,
+  last_used_at,
+  last_used_ip,
+  is_primary,
+  is_active,
+  disabled_at,
+  disabled_reason,
+  device_metadata,
+  created_at,
+  updated_at,
+  CASE WHEN is_active THEN NULL ELSE COALESCE(disabled_at, updated_at) END AS deleted_at,
+  NULL::text AS display_hint,
+  NULL::text AS phone_number_encrypted,
+  NULL::jsonb AS backup_codes_hash,
+  0::integer AS failed_attempts,
+  NULL::timestamptz AS last_failed_at,
+  0::integer AS use_count
+`;
 function toDbMfaType(deviceType) {
     if (deviceType === 'hardware_key')
         return 'webauthn';
@@ -64,7 +100,7 @@ function shouldDestroyTransactionClient(error) {
 // ============================================================================
 export async function findMFADevicesByUserId(userId, activeOnly = true, client) {
     const db = client || pool;
-    let query = `SELECT ${MFA_DEVICE_SELECT} FROM user_mfa_devices WHERE user_id = $1`;
+    let query = `SELECT ${MFA_DEVICE_SUMMARY_SELECT} FROM user_mfa_devices WHERE user_id = $1`;
     if (activeOnly)
         query += ` AND is_active = TRUE`;
     query += ` ORDER BY is_primary DESC, created_at DESC`;

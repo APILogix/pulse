@@ -41,6 +41,7 @@ export interface InvoicePaymentResult {
         payment_method_last4: string | null;
     };
 }
+export declare const INVOICE_COLUMNS = "\n  id, organization_id, subscription_id, provider, provider_invoice_id, invoice_number,\n  status, currency, subtotal_amount, tax_amount, discount_amount, total_amount,\n  amount_paid, period_start, period_end, due_at, paid_at, pdf_url, created_at\n";
 export declare class InvoicesRepository {
     private readonly db;
     constructor(db?: Pool);

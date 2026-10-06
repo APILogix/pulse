@@ -35,6 +35,7 @@ export interface SubscriptionAddonRow {
     created_at: Date;
     updated_at: Date;
 }
+export declare const SUBSCRIPTION_ADDON_COLUMNS = "\n  id, subscription_id, organization_id, feature_id, quantity, starts_at, expires_at,\n  provider, provider_reference, status, metadata, addon_id, addon_key, module,\n  created_at, updated_at\n";
 export declare class AddonsRepository {
     private readonly db;
     constructor(db?: Pool);

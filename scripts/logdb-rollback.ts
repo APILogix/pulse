@@ -23,6 +23,11 @@ import path from 'path';
 import { Pool } from 'pg';
 import { env } from '../src/config/env.js';
 import {
+  getSafePostgresConnectionTarget,
+  withPostgresAddressFamily,
+} from '../src/config/postgres-network.js';
+import { resolvePostgresSslConfig, sanitizePostgresConnectionString } from '../src/config/postgres-ssl.js';
+import {
   LOGDB_MIGRATIONS_DIR,
   acquireLogDbMigrationLock,
   releaseLogDbMigrationLock,
@@ -65,7 +70,17 @@ async function main(): Promise<void> {
   }
 
   const connectionString = env.LOG_DB_PRIMARY ?? env.DATABASE_URL;
-  const pool = new Pool({ connectionString, max: 2 });
+  const pool = new Pool(withPostgresAddressFamily(
+    {
+      connectionString: sanitizePostgresConnectionString(connectionString),
+      ssl: resolvePostgresSslConfig(connectionString, {
+        enabled: env.LOG_DB_SSL_ENABLED,
+        rejectUnauthorized: env.LOG_DB_SSL_REJECT_UNAUTHORIZED,
+      }),
+      max: 2,
+    },
+    env.DB_FAMILY,
+  ));
   const client = await pool.connect();
   let lockAcquired = false;
 
@@ -78,7 +93,10 @@ async function main(): Promise<void> {
     console.log('='.repeat(64));
     console.log('Log DB rollback');
     console.log('='.repeat(64));
-    console.log(`Target   : ${redact(connectionString)} (database=${database})`);
+    const connectionTarget = getSafePostgresConnectionTarget(connectionString);
+    console.log(
+      `Target   : ${connectionTarget.host}:${connectionTarget.port}/${connectionTarget.database} (database=${database})`,
+    );
     console.log(`File     : ${target}`);
     console.log(`Mode     : ${dryRun ? 'DRY-RUN' : 'LIVE (DESTRUCTIVE)'}`);
 

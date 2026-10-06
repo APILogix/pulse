@@ -276,13 +276,13 @@ describe('canonical project usage and AI access', () => {
     expect(sql).not.toMatch(/bucket_date|event_count/);
   });
 
-  it('builds project overview from current usage tables without telemetry_event_types', async () => {
+  it('builds project overview from current usage tables with telemetry_event_types', async () => {
     const query = vi.fn(async (sql: string) => {
       if (sql.includes('FROM project_usage_minute')) {
         return { rows: [{ member_count: '1', api_key_count: '1', total_events: '7', total_bytes: '0', current_hour_events: '3' }] };
       }
       if (sql.includes('FROM project_usage_hourly') && sql.includes("INTERVAL '23 hours'")) {
-        return { rows: [{ bucket: new Date('2026-01-01T01:00:00Z'), total_events: '3', total_bytes: '12' }] };
+        return { rows: [{ bucket: new Date('2026-01-01T01:00:00Z'), total_events: '3', total_events_bytes: '12', total_bytes: '12' }] };
       }
       if (sql.includes('FROM project_usage_daily')) {
         return { rows: [{ bucket: new Date('2026-01-01T00:00:00Z'), total_events: '7', total_bytes: '12' }] };
@@ -301,10 +301,8 @@ describe('canonical project usage and AI access', () => {
     const sql = query.mock.calls.map(([statement]) => statement).join('\n');
 
     expect(sql).toContain('FROM api_key_usage_minute');
-    expect(sql).toContain('m.event_type');
-    expect(sql).toContain('SUM(m.events)');
-    expect(sql).not.toContain('telemetry_event_types');
-    expect(sql).not.toContain('event_type_id');
+    expect(sql).toContain('JOIN telemetry_event_types t ON t.id = m.event_type_id');
+    expect(sql).toContain('SUM(m.accepted_event_count)');
     expect(overview.eventTypeBreakdown).toEqual({ span: 7 });
   });
 

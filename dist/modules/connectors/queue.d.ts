@@ -1,23 +1,17 @@
 /**
- * Connector pg-boss queue wiring.
+ * Connector PGMQ queue wiring (Canonical V2 Delivery & Control Planes).
  *
  * TRANSPORT (notification delivery) - canonical V2 only:
- *   - connector.v2.<provider>       one consumer per registered provider
- *
- * There is exactly ONE transport implementation. The former
- * `connector-send-<provider>` family was a second, parallel transport with
- * weaker tenant verification and a circuit guard that was written but never
- * enforced; it has been removed rather than feature-flagged off, so it cannot be
- * accidentally reactivated.
+ *   - connector_v2_<provider>       one consumer per registered provider
  *
  * CONTROL PLANE queues:
- *   - connector-health-check
- *   - connector-test
- *   - connector-secret-rotation
- *   - connector-oauth-refresh
- *   - connector-cleanup
- *   - connector-dead-letter-retry
- *   - connector-delivery-retry
+ *   - connector_health_check
+ *   - connector_test
+ *   - connector_secret_rotation
+ *   - connector_oauth_refresh
+ *   - connector_cleanup
+ *   - connector_dead_letter_retry
+ *   - connector_delivery_retry
  */
 import type { FastifyBaseLogger } from 'fastify';
 import type { NotificationPayload } from './types.js';
@@ -45,16 +39,16 @@ export interface ConnectorSecretRotationJobData {
     config: Record<string, unknown>;
     actorUserId?: string | null;
 }
+export interface ConnectorOAuthRefreshJobData {
+    organizationId: string;
+    connectorId: string;
+}
 export interface ConnectorDeliveryRetryJobData {
     organizationId: string;
     deliveryId: string;
     actorUserId?: string | null;
 }
 export type ConnectorWorkerGroup = 'all' | 'alert-delivery';
-export interface ConnectorOAuthRefreshJobData {
-    organizationId: string;
-    connectorId: string;
-}
 export interface ConnectorWorkerConfig {
     group?: ConnectorWorkerGroup;
     strictQueueCreation?: boolean;

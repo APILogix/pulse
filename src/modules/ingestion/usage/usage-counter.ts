@@ -1,5 +1,6 @@
-﻿import type { Pool } from 'pg';
+import type { Pool, QueryResult, QueryResultRow } from 'pg';
 import type { Logger } from 'pino';
+import { isExpectedServerlessDisconnect, isTransientPostgresError } from '../../../config/postgres-ssl.js';
 
 export type CounterType = 'events' | 'requests' | 'errors' | 'bytes_ingested' | 'rate_limited' | string;
 
@@ -48,6 +49,9 @@ export class UsageCounter {
   private stopped = false;
   private schemaReady: Promise<void> | null = null;
 
+  // Hard bound to guarantee memory cannot grow without limit under sustained sink failure
+  private static readonly MAX_BUFFER_HARD_LIMIT = 20_000;
+
   constructor(private readonly pool: Pool, private readonly log: Logger, opts: UsageCounterOptions = {}) {
     this.flushIntervalMs = opts.flushIntervalMs ?? 30_000;
     this.bufferLimit = opts.bufferLimit ?? 10_000;
@@ -76,8 +80,21 @@ export class UsageCounter {
     const eventType = dimensions.eventType?.trim() || 'all';
     const key = [projectId, orgId, counterType, apiKeyId ?? '', eventType].join('\u0000');
     const existing = this.buffer.get(key);
-    if (existing) existing.value += by;
-    else this.buffer.set(key, { projectId, orgId, counterType, value: by, apiKeyId, eventType });
+    if (existing) {
+      existing.value = Math.round((existing.value + by) * 10000) / 10000;
+    } else {
+      if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT) {
+        const oldestKey = this.buffer.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.buffer.delete(oldestKey);
+        }
+        this.log.warn(
+          { bufferSize: this.buffer.size, hardLimit: UsageCounter.MAX_BUFFER_HARD_LIMIT },
+          'UsageCounter buffer reached hard cap; evicted oldest entry to bound memory',
+        );
+      }
+      this.buffer.set(key, { projectId, orgId, counterType, value: Math.round(by * 10000) / 10000, apiKeyId, eventType });
+    }
     if (this.buffer.size >= this.bufferLimit) {
       void this.flush().catch(() => undefined);
     }
@@ -105,6 +122,31 @@ export class UsageCounter {
     });
     this.flushPromise = tracked;
     return tracked;
+  }
+
+  private async executeWithRetry<R extends QueryResultRow = any>(
+    sql: string,
+    params?: unknown[],
+    maxRetries = 2,
+  ): Promise<QueryResult<R>> {
+    let attempt = 0;
+    while (true) {
+      try {
+        return await this.pool.query<R>(sql, params);
+      } catch (err: unknown) {
+        attempt++;
+        if (attempt <= maxRetries && isTransientPostgresError(err)) {
+          const delayMs = Math.min(2000, 150 * 2 ** (attempt - 1));
+          this.log.debug(
+            { attempt, maxRetries, delayMs, err: err instanceof Error ? err.message : String(err) },
+            'Transient database error in UsageCounter query; retrying...',
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   private async flushOnce(): Promise<void> {
@@ -142,7 +184,7 @@ export class UsageCounter {
           entry.value,
         );
       }
-      await this.pool.query(
+      await this.executeWithRetry(
         `INSERT INTO usage_counter_staging (
            project_id, org_id, api_key_id, event_type, counter_type, increment_by
          ) VALUES ${tuples.join(', ')}`,
@@ -150,12 +192,16 @@ export class UsageCounter {
       );
     } catch (err) {
       for (const [key, entry] of draining) {
+        if (this.buffer.size >= UsageCounter.MAX_BUFFER_HARD_LIMIT && !this.buffer.has(key)) {
+          continue; // Respect hard cap on re-buffering
+        }
         const current = this.buffer.get(key);
         if (current) current.value += entry.value;
         else this.buffer.set(key, entry);
       }
       const bufferedEntries = this.buffer.size;
-      this.log.warn(
+      const isExpected = isExpectedServerlessDisconnect(err);
+      this.log[isExpected ? 'debug' : 'warn'](
         {
           err,
           bufferedEntries,
@@ -173,7 +219,7 @@ export class UsageCounter {
   }
 
   private async ensureSchema(): Promise<void> {
-    this.schemaReady ??= this.pool.query(`
+    this.schemaReady ??= this.executeWithRetry(`
       CREATE UNLOGGED TABLE IF NOT EXISTS usage_counter_staging (
         id BIGSERIAL PRIMARY KEY,
         project_id UUID NOT NULL,
@@ -181,7 +227,7 @@ export class UsageCounter {
         api_key_id UUID,
         event_type TEXT NOT NULL DEFAULT 'all',
         counter_type VARCHAR(64) NOT NULL,
-        increment_by BIGINT NOT NULL DEFAULT 1 CHECK (increment_by > 0),
+        increment_by NUMERIC(14, 4) NOT NULL DEFAULT 1 CHECK (increment_by > 0),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
@@ -209,7 +255,7 @@ export class UsageCounter {
     if (!this.driveRollup) return;
     try {
       for (let i = 0; i < 20; i++) {
-        const result = await this.pool.query<{ flushed_count: string }>(
+        const result = await this.executeWithRetry<{ flushed_count: string }>(
           'SELECT flushed_count FROM flush_usage_counters()',
         );
         if (result.rowCount === 0) break;
@@ -225,7 +271,7 @@ export class UsageCounter {
     const params: unknown[] = [projectId];
     const bucketClause = periodStart ? ' AND bucket = $2' : '';
     if (periodStart) params.push(periodStart);
-    const result = await this.pool.query<{ total_value: string }>(
+    const result = await this.executeWithRetry<{ total_value: string }>(
       `SELECT COALESCE(SUM(${column}), 0)::text AS total_value
          FROM project_usage_realtime
         WHERE project_id = $1${bucketClause}`,

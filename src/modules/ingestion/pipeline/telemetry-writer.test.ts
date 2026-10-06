@@ -38,7 +38,7 @@ vi.mock('../../../config/env.js', () => ({
     INGESTION_LOG_DB_SYNCHRONOUS_COMMIT: 'on',
     INGESTION_LOG_DB_LOCK_TIMEOUT_MS: 2000,
     INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS: 60000,
-    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: 30000,
+    INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS: 0,
     INGESTION_FAST_REQUEST_MIN_DURATION_MS: 1000,
     LOG_DB_WRITE_TIMEOUT: 0,
   },
@@ -213,5 +213,31 @@ describe('TelemetryWriter batching', () => {
     expect(tupleCount(insertsInto('events_logs')[0]!.sql)).toBe(10);
     expect(insertsInto('events_traces')).toHaveLength(1);
     expect(tupleCount(insertsInto('events_traces')[0]!.sql)).toBe(5);
+  });
+
+  it('salvages valid rows individually with SAVEPOINT when a multi-row statement fails', async () => {
+    let multiRowFailed = false;
+    const salvageDb = {
+      query: vi.fn(async (sql: unknown, values?: unknown[]) => {
+        const sqlStr = String(sql);
+        calls.push({ sql: sqlStr, values: values ?? [] });
+        if (/INSERT INTO events_logs/i.test(sqlStr) && (values?.length ?? 0) > 40 && !multiRowFailed) {
+          multiRowFailed = true;
+          throw new Error('simulated bulk insertion constraint failure');
+        }
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+
+    const writer = new TelemetryWriter(salvageDb as never, { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never);
+    const batch = [scopedLog(1), scopedLog(2)];
+
+    const result = await writer.writeBatchDetailedInTransaction(salvageDb as never, batch as never);
+
+    // Salvage should succeed for both individual rows
+    expect(result.totalInserted).toBe(2);
+    // Verify SAVEPOINT row_salvage was issued
+    const savepoints = calls.filter((c) => /^SAVEPOINT row_salvage/i.test(c.sql));
+    expect(savepoints.length).toBe(2);
   });
 });

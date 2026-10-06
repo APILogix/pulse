@@ -131,6 +131,23 @@ export class WorkerMetrics {
     errorGroupUpsertMs = new Map();
     errorTransactionMs = new Map();
     errorDomainEventMs = new Map();
+    // ── Database, Pool, Lock, and Queue Observability ────────────────────────
+    poolAcquireMs = new Map();
+    poolAcquireTimeouts = new Map();
+    transactionMs = new Map();
+    transactionCommitMs = new Map();
+    transactionRollbacks = new Map();
+    longTransactions = new Map();
+    querySlowCount = new Map();
+    queryErrors = new Map();
+    lockWaitMs = new Map();
+    lockWaits = new Map();
+    deadlocks = new Map();
+    queuePollMs = new Map();
+    queueMessagesFetched = new Map();
+    queueEmptyPolls = new Map();
+    queueVisibilityTimeouts = new Map();
+    startupPhaseMs = new Map();
     observe(map, key, ms) {
         if (!Number.isFinite(ms) || ms < 0)
             return;
@@ -274,6 +291,58 @@ export class WorkerMetrics {
             this.observe(this.errorTransactionMs, 'transaction', transaction);
         if (domain !== null)
             this.observe(this.errorDomainEventMs, 'domain_event', domain);
+    }
+    recordPoolAcquire(pool, durationMs) {
+        this.observe(this.poolAcquireMs, pool, durationMs);
+    }
+    recordPoolAcquireTimeout(pool) {
+        this.poolAcquireTimeouts.set(pool, (this.poolAcquireTimeouts.get(pool) ?? 0) + 1);
+    }
+    recordTransaction(op, durationMs, committed, commitDurationMs) {
+        this.observe(this.transactionMs, op, durationMs);
+        if (commitDurationMs != null && commitDurationMs >= 0) {
+            this.observe(this.transactionCommitMs, op, commitDurationMs);
+        }
+        if (!committed) {
+            this.transactionRollbacks.set(op, (this.transactionRollbacks.get(op) ?? 0) + 1);
+        }
+        if (durationMs > 1000) {
+            this.longTransactions.set(op, (this.longTransactions.get(op) ?? 0) + 1);
+        }
+    }
+    recordDbQuery(op, durationMs, isSlow = false) {
+        this.observe(this.dbQueryMs, op, durationMs);
+        if (isSlow || durationMs > 1000) {
+            this.querySlowCount.set(op, (this.querySlowCount.get(op) ?? 0) + 1);
+        }
+    }
+    recordDbQueryError(op, reason = 'unknown') {
+        const key = `${op}|${reason}`;
+        this.queryErrors.set(key, (this.queryErrors.get(key) ?? 0) + 1);
+    }
+    recordLockWait(table, durationMs) {
+        this.observe(this.lockWaitMs, table, durationMs);
+        this.lockWaits.set(table, (this.lockWaits.get(table) ?? 0) + 1);
+    }
+    recordDeadlock(table) {
+        this.deadlocks.set(table, (this.deadlocks.get(table) ?? 0) + 1);
+    }
+    recordQueuePoll(queue, durationMs, messagesFetched) {
+        this.observe(this.queuePollMs, queue, durationMs);
+        if (messagesFetched > 0) {
+            this.queueMessagesFetched.set(queue, (this.queueMessagesFetched.get(queue) ?? 0) + messagesFetched);
+        }
+        else {
+            this.queueEmptyPolls.set(queue, (this.queueEmptyPolls.get(queue) ?? 0) + 1);
+        }
+    }
+    recordVisibilityTimeoutFailure(queue) {
+        this.queueVisibilityTimeouts.set(queue, (this.queueVisibilityTimeouts.get(queue) ?? 0) + 1);
+    }
+    recordStartupPhase(phase, durationMs) {
+        if (Number.isFinite(durationMs) && durationMs >= 0) {
+            this.startupPhaseMs.set(phase, durationMs);
+        }
     }
     recordRollupSuccess(stats) {
         this.rollupRuns += 1;
@@ -485,6 +554,15 @@ export class WorkerMetrics {
                     state: row.state,
                 }));
             }
+            if (depth.perEventType) {
+                out.push('# HELP ingest_queue_jobs_by_event_type Jobs per event type broken down by lifecycle status (pending, inserting, failed).');
+                out.push('# TYPE ingest_queue_jobs_by_event_type gauge');
+                for (const [type, info] of Object.entries(depth.perEventType)) {
+                    out.push(formatSample('ingest_queue_jobs_by_event_type', info.pending, { event_type: type, status: 'pending' }));
+                    out.push(formatSample('ingest_queue_jobs_by_event_type', info.inserting, { event_type: type, status: 'inserting' }));
+                    out.push(formatSample('ingest_queue_jobs_by_event_type', info.failed, { event_type: type, status: 'failed' }));
+                }
+            }
         }
         if (dbPools.length > 0) {
             out.push('# HELP ingest_db_pool_connections PostgreSQL pool connection counts observed by the ingestion worker.');
@@ -496,6 +574,73 @@ export class WorkerMetrics {
                 out.push(formatSample('ingest_db_pool_connections', inUse, { pool: pool.name, state: 'in_use' }));
                 out.push(formatSample('ingest_db_pool_connections', pool.waiting, { pool: pool.name, state: 'waiting' }));
             }
+        }
+        // Database Pool Latency & Timeouts
+        latency('ingest_db_pool_acquire_duration_ms', 'Database connection acquisition latency', this.poolAcquireMs, (pool) => ({ pool }));
+        out.push('# HELP ingest_db_pool_acquire_timeout_total Connection acquisition timeouts on pool.');
+        out.push('# TYPE ingest_db_pool_acquire_timeout_total counter');
+        for (const [pool, count] of this.poolAcquireTimeouts) {
+            out.push(formatSample('ingest_db_pool_acquire_timeout_total', count, { pool }));
+        }
+        // Database Transactions
+        latency('ingest_db_transaction_duration_ms', 'Database transaction duration', this.transactionMs, (op) => ({ op }));
+        latency('ingest_db_transaction_commit_duration_ms', 'Database transaction commit duration', this.transactionCommitMs, (op) => ({ op }));
+        out.push('# HELP ingest_db_transaction_rollbacks_total Database transactions rolled back.');
+        out.push('# TYPE ingest_db_transaction_rollbacks_total counter');
+        for (const [op, count] of this.transactionRollbacks) {
+            out.push(formatSample('ingest_db_transaction_rollbacks_total', count, { op }));
+        }
+        out.push('# HELP ingest_db_long_transactions_total Database transactions exceeding 1000ms threshold.');
+        out.push('# TYPE ingest_db_long_transactions_total counter');
+        for (const [op, count] of this.longTransactions) {
+            out.push(formatSample('ingest_db_long_transactions_total', count, { op }));
+        }
+        // Database Queries
+        out.push('# HELP ingest_db_slow_queries_total Individual SQL queries exceeding 1000ms threshold.');
+        out.push('# TYPE ingest_db_slow_queries_total counter');
+        for (const [op, count] of this.querySlowCount) {
+            out.push(formatSample('ingest_db_slow_queries_total', count, { op }));
+        }
+        out.push('# HELP ingest_db_query_errors_total Database query errors by operation and sanitized reason.');
+        out.push('# TYPE ingest_db_query_errors_total counter');
+        for (const [key, count] of this.queryErrors) {
+            const [op, reason] = key.split('|', 2);
+            out.push(formatSample('ingest_db_query_errors_total', count, { op: op ?? 'unknown', reason: reason ?? 'unknown' }));
+        }
+        // Locks & Deadlocks
+        latency('ingest_db_lock_wait_duration_ms', 'Lock acquisition wait duration', this.lockWaitMs, (table) => ({ table }));
+        out.push('# HELP ingest_db_lock_waits_total Database row/table lock wait events.');
+        out.push('# TYPE ingest_db_lock_waits_total counter');
+        for (const [table, count] of this.lockWaits) {
+            out.push(formatSample('ingest_db_lock_waits_total', count, { table }));
+        }
+        out.push('# HELP ingest_db_deadlocks_total Database 40P01 deadlock occurrences.');
+        out.push('# TYPE ingest_db_deadlocks_total counter');
+        for (const [table, count] of this.deadlocks) {
+            out.push(formatSample('ingest_db_deadlocks_total', count, { table }));
+        }
+        // Queue Polling
+        latency('ingest_queue_poll_duration_ms', 'Queue polling operation latency', this.queuePollMs, (queue) => ({ queue }));
+        out.push('# HELP ingest_queue_messages_fetched_total Messages fetched from queue polling.');
+        out.push('# TYPE ingest_queue_messages_fetched_total counter');
+        for (const [queue, count] of this.queueMessagesFetched) {
+            out.push(formatSample('ingest_queue_messages_fetched_total', count, { queue }));
+        }
+        out.push('# HELP ingest_queue_empty_polls_total Poll operations returning 0 messages.');
+        out.push('# TYPE ingest_queue_empty_polls_total counter');
+        for (const [queue, count] of this.queueEmptyPolls) {
+            out.push(formatSample('ingest_queue_empty_polls_total', count, { queue }));
+        }
+        out.push('# HELP ingest_queue_visibility_timeout_failures_total Queue visibility timeout expiration failures.');
+        out.push('# TYPE ingest_queue_visibility_timeout_failures_total counter');
+        for (const [queue, count] of this.queueVisibilityTimeouts) {
+            out.push(formatSample('ingest_queue_visibility_timeout_failures_total', count, { queue }));
+        }
+        // Startup Phase Timing
+        out.push('# HELP ingest_startup_phase_duration_ms Startup stage duration in milliseconds.');
+        out.push('# TYPE ingest_startup_phase_duration_ms gauge');
+        for (const [phase, ms] of this.startupPhaseMs) {
+            out.push(formatSample('ingest_startup_phase_duration_ms', ms, { phase }));
         }
         out.push('');
         return out.join('\n');

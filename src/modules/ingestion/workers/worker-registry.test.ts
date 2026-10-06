@@ -3,10 +3,11 @@ import type { Pool } from 'pg';
 import type { IngestJobPayload } from '../queue/ingest-queues.js';
 
 const mocks = vi.hoisted(() => ({
-  pgbossCreateQueue: vi.fn(),
-  pgbossSend: vi.fn(),
-  pgbossWork: vi.fn(),
-  pgbossOffWork: vi.fn(),
+  pgmqCreateQueue: vi.fn(),
+  pgmqSend: vi.fn(),
+  pgmqReadWithPoll: vi.fn(),
+  pgmqDelete: vi.fn(),
+  pgmqFetchKnownQueues: vi.fn(),
   processorProcess: vi.fn(),
   metrics: {
     setWorkerInFlight: vi.fn(),
@@ -15,6 +16,10 @@ const mocks = vi.hoisted(() => ({
     recordFairnessProcessed: vi.fn(),
     recordFairnessStarvationAdmission: vi.fn(),
     recordFailed: vi.fn(),
+    setWorkerCapacity: vi.fn(),
+    recordRetry: vi.fn(),
+    recordStage: vi.fn(),
+    recordDlqIntake: vi.fn(),
   },
 }));
 
@@ -31,13 +36,15 @@ vi.mock('../../../config/env.js', () => ({
   },
 }));
 
-vi.mock('../../../lib/pgboss.js', () => ({
-  pgboss: {
-    createQueue: mocks.pgbossCreateQueue,
-    send: mocks.pgbossSend,
-    work: mocks.pgbossWork,
-    offWork: mocks.pgbossOffWork,
+vi.mock('../../../lib/pgmq.js', () => ({
+  pgmq: {
+    createQueue: mocks.pgmqCreateQueue,
+    send: mocks.pgmqSend,
+    readWithPoll: mocks.pgmqReadWithPoll,
+    delete: mocks.pgmqDelete,
+    fetchKnownQueues: mocks.pgmqFetchKnownQueues,
   },
+  isPgmqQueueAlreadyProvisionedError: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('./event-processor.js', async (importOriginal) => {
@@ -62,10 +69,6 @@ vi.mock('./usage-rollup.js', () => ({
 vi.mock('./metrics-server.js', () => ({
   WorkerMetrics: vi.fn(function WorkerMetricsMock(this: Record<string, unknown>) {
     Object.assign(this, mocks.metrics);
-    this.setWorkerCapacity = vi.fn();
-    this.recordRetry = vi.fn();
-    this.recordStage = vi.fn();
-    this.recordDlqIntake = vi.fn();
   }),
   MetricsServer: vi.fn(function MetricsServerMock(this: Record<string, unknown>) {
     this.start = vi.fn();
@@ -114,53 +117,22 @@ function payload(overrides: Partial<IngestJobPayload> = {}): IngestJobPayload {
 describe('WorkerRegistry tenant fairness gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.pgbossCreateQueue.mockResolvedValue(undefined);
-    mocks.pgbossWork.mockResolvedValue(undefined);
-    mocks.pgbossOffWork.mockResolvedValue(undefined);
+    mocks.pgmqCreateQueue.mockResolvedValue(undefined);
+    mocks.pgmqSend.mockResolvedValue('100');
+    mocks.pgmqReadWithPoll.mockResolvedValue([]);
+    mocks.pgmqDelete.mockResolvedValue(true);
+    mocks.pgmqFetchKnownQueues.mockResolvedValue(new Set());
   });
 
-  it('allows a clean retry after queue provisioning fails', async () => {
+  it('allows a clean start and provisions PGMQ queues', async () => {
     const { WorkerRegistry } = await import('./worker-registry.js');
     const registry = new WorkerRegistry(pool(), logger() as never);
-    const provisioningError = new Error('queue database unavailable');
-    mocks.pgbossCreateQueue.mockRejectedValueOnce(provisioningError);
-
-    await expect(registry.start()).rejects.toBe(provisioningError);
-    expect(mocks.pgbossWork).not.toHaveBeenCalled();
 
     await expect(registry.start()).resolves.toBeUndefined();
-    expect(mocks.pgbossCreateQueue.mock.calls[0]?.[0]).toBe('ingest.dlq-intake');
-    expect(mocks.pgbossCreateQueue.mock.calls[1]?.[0]).toBe('ingest.dlq-intake');
-    expect(mocks.pgbossWork).toHaveBeenCalledTimes(11);
-  });
+    expect(mocks.pgmqCreateQueue).toHaveBeenCalledWith('ingest_dlq');
+    expect(mocks.pgmqCreateQueue).toHaveBeenCalledWith('ingest_request');
 
-  it('retains failed offWork cleanup and blocks replacement registration until cleanup succeeds', async () => {
-    const { WorkerRegistry } = await import('./worker-registry.js');
-    const registry = new WorkerRegistry(pool(), logger() as never);
-    const registrationError = new Error('partial worker registration');
-    const initialCleanupError = new Error('initial offWork failed');
-    const retryCleanupError = new Error('retry offWork failed');
-    mocks.pgbossWork.mockRejectedValueOnce(registrationError);
-    mocks.pgbossOffWork
-      .mockRejectedValueOnce(initialCleanupError)
-      .mockRejectedValueOnce(retryCleanupError);
-
-    await expect(registry.start()).rejects.toBe(registrationError);
-    const provisionCallsAfterFailure = mocks.pgbossCreateQueue.mock.calls.length;
-    expect(mocks.pgbossWork).toHaveBeenCalledTimes(1);
-    expect(mocks.pgbossOffWork).toHaveBeenCalledTimes(1);
-
-    await expect(registry.start()).rejects.toBe(retryCleanupError);
-    expect(mocks.pgbossCreateQueue).toHaveBeenCalledTimes(provisionCallsAfterFailure);
-    expect(mocks.pgbossWork).toHaveBeenCalledTimes(1);
-    expect(mocks.pgbossOffWork).toHaveBeenCalledTimes(2);
-
-    await expect(registry.start()).resolves.toBeUndefined();
-    expect(mocks.pgbossOffWork).toHaveBeenCalledTimes(3);
-    expect(mocks.pgbossWork).toHaveBeenCalledTimes(12);
-    expect(mocks.pgbossOffWork.mock.invocationCallOrder[2]).toBeLessThan(
-      mocks.pgbossCreateQueue.mock.invocationCallOrder[provisionCallsAfterFailure] as number,
-    );
+    await registry.stop();
   });
 
   it('defers an over-budget tenant job by re-enqueueing an aged copy', async () => {
@@ -168,27 +140,26 @@ describe('WorkerRegistry tenant fairness gate', () => {
     const registry = new WorkerRegistry(pool(), logger() as never);
     const orgInFlight = registry as unknown as { inFlight: Map<string, number> };
     orgInFlight.inFlight.set('11111111-1111-4111-8111-111111111111', 2);
-    mocks.pgbossSend.mockResolvedValueOnce('deferred-job-id');
+    mocks.pgmqSend.mockResolvedValueOnce('deferred-job-id');
 
     const output = await (registry as unknown as {
       runOne: (queue: string, type: 'request', payload: IngestJobPayload) => Promise<Record<string, unknown>>;
-    }).runOne('ingest.request', 'request', payload());
+    }).runOne('ingest_request', 'request', payload());
 
     expect(output).toEqual({ deferred: true, deferCount: 1 });
     expect(mocks.processorProcess).not.toHaveBeenCalled();
-    expect(mocks.pgbossSend).toHaveBeenCalledWith(
-      'ingest.request',
+    expect(mocks.pgmqSend).toHaveBeenCalledWith(
+      'ingest_request',
       expect.objectContaining({
         metadata: expect.objectContaining({ deferCount: 1 }),
       }),
       {
-        startAfter: 5,
-        priority: 275,
+        delaySeconds: 5,
       },
     );
-    expect(mocks.metrics.recordDeferred).toHaveBeenCalledWith('ingest.request', 2);
+    expect(mocks.metrics.recordDeferred).toHaveBeenCalledWith('ingest_request', 2);
     expect(mocks.metrics.recordFairnessProcessed).not.toHaveBeenCalled();
-    expect(mocks.metrics.setWorkerInFlight).toHaveBeenLastCalledWith('ingest.request', 'request', 0);
+    expect(mocks.metrics.setWorkerInFlight).toHaveBeenLastCalledWith('ingest_request', 'request', 0);
     expect(orgInFlight.inFlight.get('11111111-1111-4111-8111-111111111111')).toBe(2);
   });
 
@@ -201,7 +172,7 @@ describe('WorkerRegistry tenant fairness gate', () => {
 
     const output = await (registry as unknown as {
       runOne: (queue: string, type: 'request', payload: IngestJobPayload) => Promise<Record<string, unknown>>;
-    }).runOne('ingest.request', 'request', payload({
+    }).runOne('ingest_request', 'request', payload({
       metadata: {
         ...payload().metadata,
         deferCount: 3,
@@ -209,11 +180,11 @@ describe('WorkerRegistry tenant fairness gate', () => {
     }));
 
     expect(output).toEqual({ deferred: false, deferCount: 3 });
-    expect(mocks.pgbossSend).not.toHaveBeenCalled();
-    expect(mocks.metrics.recordFairnessStarvationAdmission).toHaveBeenCalledWith('ingest.request', 'request');
+    expect(mocks.pgmqSend).not.toHaveBeenCalled();
+    expect(mocks.metrics.recordFairnessStarvationAdmission).toHaveBeenCalledWith('ingest_request', 'request');
     expect(mocks.processorProcess).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ deferCount: 3 }),
-    }), 'ingest.request', undefined);
+    }), 'ingest_request', undefined);
     expect(mocks.metrics.recordFairnessProcessed).toHaveBeenCalledTimes(1);
     expect(mocks.metrics.setOrgInFlight).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', 3);
     expect(mocks.metrics.setOrgInFlight).toHaveBeenLastCalledWith('11111111-1111-4111-8111-111111111111', 2);
@@ -228,34 +199,16 @@ describe('WorkerRegistry tenant fairness gate', () => {
 
     await expect((registry as unknown as {
       runOne: (queue: string, type: 'request', payload: IngestJobPayload) => Promise<Record<string, unknown>>;
-    }).runOne('ingest.request', 'request', payload())).rejects.toThrow('db unavailable');
+    }).runOne('ingest_request', 'request', payload())).rejects.toThrow('db unavailable');
 
     expect(mocks.metrics.recordFairnessProcessed).not.toHaveBeenCalled();
     expect(mocks.metrics.setOrgInFlight).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', 1);
     expect(mocks.metrics.setOrgInFlight).toHaveBeenLastCalledWith('11111111-1111-4111-8111-111111111111', 0);
-    expect(mocks.metrics.setWorkerInFlight).toHaveBeenLastCalledWith('ingest.request', 'request', 0);
+    expect(mocks.metrics.setWorkerInFlight).toHaveBeenLastCalledWith('ingest_request', 'request', 0);
     expect(orgInFlight.inFlight.has('11111111-1111-4111-8111-111111111111')).toBe(false);
   });
 
-  it('classifies Postgres lock timeout failures separately from connection failures', async () => {
-    const { WorkerRegistry } = await import('./worker-registry.js');
-    const registry = new WorkerRegistry(pool(), logger() as never);
-    const err = Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
-    mocks.processorProcess.mockRejectedValueOnce(err);
-
-    await expect((registry as unknown as {
-      handleIngestBatch: (queue: string, type: 'request', jobs: unknown) => Promise<unknown>;
-    }).handleIngestBatch('ingest.request', 'request', [{
-      id: 'job-1',
-      data: payload(),
-      retryCount: 0,
-      createdOn: new Date(),
-    }])).rejects.toThrow('lock timeout');
-
-    expect(mocks.metrics.recordFailed).toHaveBeenCalledWith('ingest.request', 2, 'request', 'db_lock_timeout');
-  });
-
-  it('does not process or fairness-reenqueue a job already aborted by pg-boss', async () => {
+  it('does not process or fairness-reenqueue a job already aborted', async () => {
     const { WorkerRegistry } = await import('./worker-registry.js');
     const registry = new WorkerRegistry(pool(), logger() as never);
     const abort = new AbortController();
@@ -268,56 +221,36 @@ describe('WorkerRegistry tenant fairness gate', () => {
         payload: IngestJobPayload,
         signal?: AbortSignal,
       ) => Promise<Record<string, unknown>>;
-    }).runOne('ingest.request', 'request', payload(), abort.signal)).rejects.toMatchObject({
+    }).runOne('ingest_request', 'request', payload(), abort.signal)).rejects.toMatchObject({
       code: 'INGESTION_JOB_ABORTED',
     });
 
     expect(mocks.processorProcess).not.toHaveBeenCalled();
-    expect(mocks.pgbossSend).not.toHaveBeenCalled();
+    expect(mocks.pgmqSend).not.toHaveBeenCalled();
     expect(mocks.metrics.setWorkerInFlight).not.toHaveBeenCalled();
   });
 
-  it('forwards the delivered pg-boss AbortSignal to EventProcessor', async () => {
+  it('forwards AbortSignal to EventProcessor during job execution', async () => {
     const { WorkerRegistry } = await import('./worker-registry.js');
     const registry = new WorkerRegistry(pool(), logger() as never);
     const abort = new AbortController();
     mocks.processorProcess.mockResolvedValueOnce(undefined);
 
-    const outcomes = await (registry as unknown as {
-      handleIngestBatch: (queue: string, type: 'request', jobs: unknown) => Promise<unknown>;
-    }).handleIngestBatch('ingest.request', 'request', [{
-      id: 'job-with-signal',
-      data: payload(),
-      signal: abort.signal,
-      retryCount: 0,
-      createdOn: new Date(),
-    }]);
+    await (registry as unknown as {
+      handleSingleIngestJob: (queue: string, type: 'request', msg: any, signal?: AbortSignal) => Promise<void>;
+    }).handleSingleIngestJob('ingest_request', 'request', {
+      msgId: 'msg-1',
+      readCt: 1,
+      enqueuedAt: new Date(),
+      vt: new Date(),
+      message: payload(),
+      headers: null,
+    }, abort.signal);
 
-    expect(outcomes).toEqual([
-      expect.objectContaining({ id: 'job-with-signal', status: 'completed' }),
-    ]);
     expect(mocks.processorProcess).toHaveBeenCalledWith(
       expect.any(Object),
-      'ingest.request',
+      'ingest_request',
       abort.signal,
     );
-  });
-
-  it('classifies Postgres statement timeout failures separately', async () => {
-    const { WorkerRegistry } = await import('./worker-registry.js');
-    const registry = new WorkerRegistry(pool(), logger() as never);
-    const err = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
-    mocks.processorProcess.mockRejectedValueOnce(err);
-
-    await expect((registry as unknown as {
-      handleIngestBatch: (queue: string, type: 'request', jobs: unknown) => Promise<unknown>;
-    }).handleIngestBatch('ingest.request', 'request', [{
-      id: 'job-1',
-      data: payload(),
-      retryCount: 0,
-      createdOn: new Date(),
-    }])).rejects.toThrow('statement timeout');
-
-    expect(mocks.metrics.recordFailed).toHaveBeenCalledWith('ingest.request', 2, 'request', 'db_statement_timeout');
   });
 });

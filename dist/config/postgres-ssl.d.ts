@@ -1,3 +1,4 @@
+import './dns.js';
 import type { PoolConfig } from 'pg';
 export interface PostgresSslOptions {
     enabled?: boolean | undefined;

@@ -162,7 +162,7 @@ function schemaDefaults(): SchemaV1Config {
     KILLSWITCH_KEYS.map((key) => [key, false]),
   ) as SchemaV1Config["killswitches"];
   const instrumentation = Object.fromEntries(
-    INSTRUMENTATION_KEYS.map((key) => [key, true]),
+    INSTRUMENTATION_KEYS.map((key) => [key, key !== "axios"]),
   ) as Instrumentation;
   const entitlements = Object.fromEntries(
     ENTITLEMENT_KEYS.map((key) => [key, true]),

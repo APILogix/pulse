@@ -1,5 +1,10 @@
 import { pool } from '../../../config/database.js';
 import { BillingProvider } from '../shared/types.js';
+export const SUBSCRIPTION_ADDON_COLUMNS = `
+  id, subscription_id, organization_id, feature_id, quantity, starts_at, expires_at,
+  provider, provider_reference, status, metadata, addon_id, addon_key, module,
+  created_at, updated_at
+`;
 export class AddonsRepository {
     db;
     constructor(db = pool) {
@@ -31,7 +36,9 @@ export class AddonsRepository {
         }
         const countResult = await db.query(`SELECT COUNT(*)::int AS total FROM addons a WHERE ${where.join(' AND ')}`, values);
         values.push(query.billingInterval ?? null, query.limit, (query.page - 1) * query.limit);
-        const result = await db.query(`SELECT a.*,
+        const result = await db.query(`SELECT a.id, a.key, a.name, a.description, a.category, a.target_module, a.target_feature_id,
+              a.available_in_tiers, a.not_available_in_tiers, a.is_active, a.sort_order, a.metadata,
+              a.created_at, a.updated_at,
               COALESCE(
                 jsonb_agg(to_jsonb(ap) ORDER BY ap.is_default DESC, ap.amount_minor)
                   FILTER (WHERE ap.id IS NOT NULL),
@@ -50,15 +57,15 @@ export class AddonsRepository {
         return { data: result.rows, total: countResult.rows[0]?.total ?? 0 };
     }
     async listSubscriptionAddons(orgId, db = this.db) {
-        const result = await db.query(`SELECT sa.*
-         FROM subscription_addons sa
-        WHERE sa.organization_id = $1
-          AND sa.status IN ('active','scheduled')
-        ORDER BY sa.created_at DESC`, [orgId]);
+        const result = await db.query(`SELECT ${SUBSCRIPTION_ADDON_COLUMNS}
+         FROM subscription_addons
+        WHERE organization_id = $1
+          AND status IN ('active','scheduled')
+        ORDER BY created_at DESC`, [orgId]);
         return result.rows;
     }
     async getActiveSubscription(orgId, db) {
-        const result = await db.query(`SELECT *
+        const result = await db.query(`SELECT id, organization_id, status, current_period_end, created_at
          FROM organization_subscriptions
         WHERE organization_id = $1
           AND status IN ('trialing','active')
@@ -70,10 +77,9 @@ export class AddonsRepository {
         return result.rows[0] ?? null;
     }
     async getAddonForUpdate(addonId, db) {
-        const result = await db.query(`SELECT *
+        const result = await db.query(`SELECT id, key, target_feature_id, target_module, is_active
          FROM addons
-        WHERE id = $1 AND is_active = TRUE
-        FOR UPDATE`, [addonId]);
+        WHERE id = $1 AND is_active = TRUE`, [addonId]);
         return result.rows[0] ?? null;
     }
     async subscribeAddon(orgId, body, db) {
@@ -87,7 +93,7 @@ export class AddonsRepository {
          subscription_id, organization_id, feature_id, quantity, provider,
          status, metadata, addon_id, addon_key, module
        ) VALUES ($1,$2,$3,$4,'system','active',$5,$6,$7,$8)
-       RETURNING *`, [
+       RETURNING ${SUBSCRIPTION_ADDON_COLUMNS}`, [
             subscription.id,
             orgId,
             addon.target_feature_id,
@@ -105,7 +111,7 @@ export class AddonsRepository {
         WHERE id = $1
           AND organization_id = $2
           AND status IN ('active','scheduled')
-        RETURNING *`, [subscriptionAddonId, orgId]);
+        RETURNING ${SUBSCRIPTION_ADDON_COLUMNS}`, [subscriptionAddonId, orgId]);
         return result.rows[0] ?? null;
     }
 }

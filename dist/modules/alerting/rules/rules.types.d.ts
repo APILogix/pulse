@@ -11,8 +11,8 @@ export declare const ConditionTypeSchema: z.ZodEnum<{
 }>;
 export type ConditionType = z.infer<typeof ConditionTypeSchema>;
 export declare const ConditionOperatorSchema: z.ZodEnum<{
-    in: "in";
     regex: "regex";
+    in: "in";
     gt: "gt";
     lt: "lt";
     gte: "gte";
@@ -43,8 +43,8 @@ export declare const RuleConditionSchema: z.ZodObject<{
     conditionGroupId: z.ZodOptional<z.ZodString>;
     fieldPath: z.ZodString;
     operator: z.ZodEnum<{
-        in: "in";
         regex: "regex";
+        in: "in";
         gt: "gt";
         lt: "lt";
         gte: "gte";
@@ -92,10 +92,10 @@ export declare const CreateRuleSchema: z.ZodObject<{
     name: z.ZodString;
     description: z.ZodOptional<z.ZodString>;
     severity: z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     enabled: z.ZodDefault<z.ZodBoolean>;
     projectId: z.ZodOptional<z.ZodString>;
@@ -121,8 +121,8 @@ export declare const CreateRuleSchema: z.ZodObject<{
         conditionGroupId: z.ZodOptional<z.ZodString>;
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
-            in: "in";
             regex: "regex";
+            in: "in";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -169,14 +169,14 @@ export type CreateRuleBody = z.infer<typeof CreateRuleSchema>;
 export declare const UpdateRuleSchema: z.ZodObject<{
     enabled: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
     projectId: z.ZodOptional<z.ZodOptional<z.ZodString>>;
-    description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     name: z.ZodOptional<z.ZodString>;
+    description: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     metadata: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     severity: z.ZodOptional<z.ZodDefault<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     labels: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     annotations: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
@@ -199,8 +199,8 @@ export declare const UpdateRuleSchema: z.ZodObject<{
         conditionGroupId: z.ZodOptional<z.ZodString>;
         fieldPath: z.ZodString;
         operator: z.ZodEnum<{
-            in: "in";
             regex: "regex";
+            in: "in";
             gt: "gt";
             lt: "lt";
             gte: "gte";
@@ -254,10 +254,10 @@ export declare const ListRulesQuerySchema: z.ZodObject<{
     }>>;
     enabled: z.ZodOptional<z.ZodCoercedBoolean<unknown>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     search: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;

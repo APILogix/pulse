@@ -121,7 +121,7 @@ export const PLAN_MATRIX: Readonly<Record<PlanKey, { readonly plan: PlanDefiniti
       },
       {
         featureKey: 'quota.monthly_events' as FeatureKey,
-        value: 100000,
+        value: 10000,
         overageRate: 50,
         overageUnit: 1000,
         gracePercent: 10,
@@ -628,7 +628,7 @@ export const PLAN_MATRIX: Readonly<Record<PlanKey, { readonly plan: PlanDefiniti
       },
       {
         featureKey: 'quota.monthly_events' as FeatureKey,
-        value: 1000000,
+        value: 150000,
         overageRate: 50,
         overageUnit: 1000,
         gracePercent: 10,
@@ -1135,7 +1135,7 @@ export const PLAN_MATRIX: Readonly<Record<PlanKey, { readonly plan: PlanDefiniti
       },
       {
         featureKey: 'quota.monthly_events' as FeatureKey,
-        value: 10000000,
+        value: 1000000,
         overageRate: 50,
         overageUnit: 1000,
         gracePercent: 10,
@@ -1642,7 +1642,7 @@ export const PLAN_MATRIX: Readonly<Record<PlanKey, { readonly plan: PlanDefiniti
       },
       {
         featureKey: 'quota.monthly_events' as FeatureKey,
-        value: 100000000,
+        value: 8000000,
         overageRate: 50,
         overageUnit: 1000,
         gracePercent: 10,
@@ -2149,7 +2149,7 @@ export const PLAN_MATRIX: Readonly<Record<PlanKey, { readonly plan: PlanDefiniti
       },
       {
         featureKey: 'quota.monthly_events' as FeatureKey,
-        value: 1000000000,
+        value: 'Custom',
         overageRate: 50,
         overageUnit: 1000,
         gracePercent: 10,

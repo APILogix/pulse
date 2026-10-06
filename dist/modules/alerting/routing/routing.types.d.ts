@@ -1,10 +1,10 @@
 import { z } from 'zod';
 export declare const RoutingConditionsSchema: z.ZodObject<{
     severity: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>>;
     source: z.ZodOptional<z.ZodArray<z.ZodString>>;
     labels: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -16,10 +16,10 @@ export declare const CreateRoutingRuleSchema: z.ZodObject<{
     priority: z.ZodDefault<z.ZodNumber>;
     conditions: z.ZodDefault<z.ZodObject<{
         severity: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+            critical: "critical";
             error: "error";
             info: "info";
             warning: "warning";
-            critical: "critical";
         }>>>;
         source: z.ZodOptional<z.ZodArray<z.ZodString>>;
         labels: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -37,10 +37,10 @@ export declare const UpdateRoutingRuleSchema: z.ZodObject<{
     priority: z.ZodOptional<z.ZodDefault<z.ZodNumber>>;
     conditions: z.ZodOptional<z.ZodDefault<z.ZodObject<{
         severity: z.ZodOptional<z.ZodArray<z.ZodEnum<{
+            critical: "critical";
             error: "error";
             info: "info";
             warning: "warning";
-            critical: "critical";
         }>>>;
         source: z.ZodOptional<z.ZodArray<z.ZodString>>;
         labels: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
@@ -54,10 +54,10 @@ export declare const UpdateRoutingRuleSchema: z.ZodObject<{
 export type UpdateRoutingRuleBody = z.infer<typeof UpdateRoutingRuleSchema>;
 export declare const TestRoutingSchema: z.ZodObject<{
     severity: z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>;
     source: z.ZodString;
     labels: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodString>>;

@@ -32,7 +32,7 @@ export declare class ErrorIngestionService {
     ingestError(groupParams: UpsertErrorGroupParams, eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'>): Promise<void>;
     private ingestErrorWithClient;
     private publishDomainEvents;
-    ingestBatch(client: PoolClient, errors: ErrorBatchItem[]): Promise<{
+    ingestBatch(client: PoolClient, errors: ErrorBatchItem[], alreadyPersisted?: boolean): Promise<{
         inserted: number;
         domainEvents: Array<{
             groupResult: GroupMutationResult;

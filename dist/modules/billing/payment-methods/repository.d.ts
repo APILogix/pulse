@@ -19,6 +19,7 @@ export interface PaymentMethodRow {
     created_at: Date;
     updated_at: Date;
 }
+export declare const PAYMENT_METHOD_COLUMNS = "\n  id, organization_id, provider, provider_payment_method_id, type,\n  last4, brand, expiry_month, expiry_year, is_default, is_active,\n  billing_details, metadata, created_at, updated_at\n";
 export declare class PaymentMethodsRepository {
     private readonly db;
     constructor(db?: Pool);

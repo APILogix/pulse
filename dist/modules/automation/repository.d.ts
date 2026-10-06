@@ -21,6 +21,21 @@
  */
 import type { Pool, PoolClient } from 'pg';
 import type { InsertAuditParams } from './audit.js';
+export declare const AUTOMATION_WORKFLOW_COLUMNS = "id, organization_id, project_id, created_by, updated_by, template_id, name, slug, description, workflow_type, scope, status, is_enabled, current_version, last_run_at, next_run_at, timezone, tags, metadata, created_at, updated_at, deleted_at";
+export declare const AUTOMATION_WORKFLOW_SUMMARY_COLUMNS = "id, organization_id, project_id, created_by, updated_by, template_id, name, slug, description, workflow_type, scope, status, is_enabled, current_version, last_run_at, next_run_at, timezone, tags, metadata, created_at, updated_at, deleted_at, trigger_count, trigger_type, action_count, action_types, action_requires_approval, last_run_status, last_run_created_at";
+export declare const AUTOMATION_TRIGGER_COLUMNS = "id, workflow_id, workflow_version_id, trigger_kind, trigger_type, source_module, source_event, schedule_cron, timezone, webhook_secret_hash, is_enabled, dedupe_key_template, cooldown_seconds, config, metadata, created_at, updated_at, deleted_at";
+export declare const AUTOMATION_CONDITION_COLUMNS = "id, workflow_id, workflow_version_id, condition_group, sort_order, left_path, operator, right_value, value_type, is_required, metadata, created_at, updated_at, deleted_at";
+export declare const AUTOMATION_ACTION_COLUMNS = "id, workflow_id, workflow_version_id, action_key, action_type, integration_key, sort_order, is_enabled, requires_approval, risk_level, timeout_seconds, max_attempts, retry_backoff_seconds, idempotency_key_template, config, metadata, created_at, updated_at, deleted_at";
+export declare const AUTOMATION_WORKFLOW_VERSION_COLUMNS = "id, workflow_id, version, status, definition, trigger_summary, condition_summary, action_summary, published_by, published_at, checksum, metadata, created_at";
+export declare const AUTOMATION_TEMPLATE_COLUMNS = "id, template_key, scope, organization_id, name, description, workflow_type, category, is_active, is_public, is_featured, minimum_plan_tier, required_feature_key, tags, sort_order, metadata, created_at, updated_at, deleted_at";
+export declare const AUTOMATION_TEMPLATE_VERSION_COLUMNS = "id, template_id, version, is_current, definition, trigger_summary, condition_summary, action_summary, created_by, published_at, checksum, metadata, created_at";
+export declare const AUTOMATION_EVENT_INBOX_COLUMNS = "id, organization_id, project_id, source_module, event_type, source_event_id, dedupe_key, payload, headers, status, received_at, locked_at, locked_by, processed_at, attempts, next_retry_at, last_error, metadata";
+export declare const AUTOMATION_RUN_COLUMNS = "id, organization_id, project_id, workflow_id, workflow_version_id, trigger_id, inbox_event_id, status, trigger_type, source_module, source_event_id, dedupe_key, idempotency_key, priority, queued_at, started_at, completed_at, cancelled_at, expires_at, attempt, max_attempts, input_payload, output_payload, error_code, error_message, metadata, created_at, updated_at";
+export declare const AUTOMATION_RUN_SUMMARY_COLUMNS = "run_id, workflow_id, workflow_name, organization_id, status, trigger_type, source_module, priority, queued_at, started_at, completed_at, created_at, step_count, failed_step_count, pending_approval_count";
+export declare const AUTOMATION_RUN_STEP_COLUMNS = "id, run_id, workflow_id, action_id, step_key, action_type, status, sort_order, attempt, max_attempts, started_at, completed_at, next_retry_at, timeout_at, requires_approval, approval_id, idempotency_key, input_payload, output_payload, error_code, error_message, metadata, created_at, updated_at";
+export declare const AUTOMATION_RUN_STEP_COLUMNS_WITH_S = "s.id, s.run_id, s.workflow_id, s.action_id, s.step_key, s.action_type, s.status, s.sort_order, s.attempt, s.max_attempts, s.started_at, s.completed_at, s.next_retry_at, s.timeout_at, s.requires_approval, s.approval_id, s.idempotency_key, s.input_payload, s.output_payload, s.error_code, s.error_message, s.metadata, s.created_at, s.updated_at";
+export declare const AUTOMATION_APPROVAL_COLUMNS = "id, organization_id, workflow_id, run_id, step_id, requested_by, approved_by, rejected_by, status, risk_level, approval_reason, rejection_reason, expires_at, decided_at, request_payload, decision_payload, metadata, created_at, updated_at";
+export declare const AUTOMATION_AUDIT_LOG_COLUMNS = "id, organization_id, project_id, workflow_id, run_id, step_id, approval_id, actor_user_id, actor_type, action, entity_type, entity_id, request_id, ip_address, user_agent, before_state, after_state, metadata, occurred_at";
 export type Db = Pool | PoolClient;
 export interface WorkflowRow {
     id: string;
@@ -504,8 +519,9 @@ export declare class AutomationRepository {
         created: boolean;
     }>;
     /**
-     * Claim up to `batchSize` pending events using CTE + FOR UPDATE SKIP LOCKED.
-     * Also recovers stuck events locked > 5 min ago.
+     * Claim up to `batchSize` pending events using bounded candidate CTEs + FOR UPDATE SKIP LOCKED.
+     * Splits due events and stale recovery into separate index-friendly branches to eliminate
+     * sequential table scans on 1-second worker polling ticks (AUT-Q012).
      */
     claimInboxEvents(workerId: string, batchSize: number, db?: Db): Promise<InboxEventRow[]>;
     completeInboxEvent(eventId: string, db?: Db): Promise<void>;

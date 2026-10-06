@@ -156,12 +156,18 @@ export class ErrorRepository {
         return (await this.insertIfNew(client, record)).inserted;
     }
     async find(projectId, eventId) {
-        const result = await this.pool.query(`SELECT * FROM events_errors WHERE project_id = $1 AND event_id = $2 ORDER BY occurred_at DESC LIMIT 1`, [projectId, eventId]);
+        const result = await this.pool.query(`SELECT ${ERROR_EVENT_COLUMNS.join(', ')} FROM events_errors WHERE project_id = $1 AND event_id = $2 ORDER BY occurred_at DESC LIMIT 1`, [projectId, eventId]);
         return result.rows[0] ?? null;
     }
     async findByGroup(projectId, errorGroupId, limit = 100) {
-        const result = await this.pool.query(`SELECT * FROM events_errors
-        WHERE project_id = $1 AND error_group_id = $2
+        const result = await this.pool.query(`SELECT ${ERROR_EVENT_COLUMNS.join(', ')} FROM events_errors
+        WHERE project_id = $1
+          AND (
+            error_group_id = $2
+            OR error_group_id IN (
+              SELECT id FROM error_groups WHERE project_id = $1 AND merged_into = $2
+            )
+          )
         ORDER BY occurred_at DESC, event_id DESC
         LIMIT $3`, [projectId, errorGroupId, Math.max(1, Math.min(limit, 500))]);
         return result.rows;

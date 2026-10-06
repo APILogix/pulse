@@ -38,8 +38,8 @@ export async function startAuthEmailWorker(): Promise<void> {
   isRunning = true;
   workerLogger.info('Starting auth email polling worker...');
   
-  // Kick off the initial poll
-  pollAuthEmailOutbox();
+  // Start polling immediately when commanded by the lifecycle coordinator
+  void pollAuthEmailOutbox();
 }
 
 /**

@@ -10,13 +10,15 @@ describe("project route utilities", () => {
         error: vi.fn(),
       },
     } as any;
+    let sent = false;
     const reply = {
-      sent: true,
+      get sent() { return sent; },
       code: vi.fn().mockReturnThis(),
       send: vi.fn(),
     } as any;
 
     const handler = withErrorHandling(async () => {
+      sent = true;
       throw new Error("late failure");
     });
 

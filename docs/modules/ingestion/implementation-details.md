@@ -145,7 +145,7 @@ Runtime ingestion and error processing:
 - `src/modules/ingestion/workers/event-processor.ts`
   - Adds worker-stage profiling.
   - Adds DB query count and duration instrumentation.
-  - Applies transaction-local Log DB settings after `BEGIN` in one `SET LOCAL` round trip: `synchronous_commit`, `lock_timeout`, optional `statement_timeout`, and `idle_in_transaction_session_timeout`.
+  - Applies transaction-local Log DB settings after `BEGIN` in one `SET LOCAL` round trip: `synchronous_commit`, `lock_timeout`, optional `statement_timeout`, and optional `idle_in_transaction_session_timeout`.
   - Emits `phase="ingestion_profile_failed"` on transaction failure with SQLSTATE/failure class, DB query count/duration, rollback timing, total processing time, batch shape, and validation counts before rethrowing for pg-boss retry.
   - Separates typed table `insertMs` from telemetry `outboxMs` for non-error batches.
   - Logs `outboxInserted` in ingestion batch profiles.

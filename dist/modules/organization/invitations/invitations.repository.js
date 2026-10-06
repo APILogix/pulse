@@ -1,17 +1,39 @@
 import { BaseRepository, cursorPage, pgErr } from "../shared/base.repository.js";
 import { NotFoundError, ConflictError } from "../shared/errors.js";
 import { quotaGuard } from "../../billing/entitlements/quota-guard.js";
+const ORG_INVITATION_COLUMNS = `
+  oi.id,
+  oi.org_id,
+  oi.invited_by,
+  oi.email,
+  oi.role,
+  oi.token_hash,
+  oi.expires_at,
+  oi.status,
+  oi.accepted_at,
+  oi.accepted_by,
+  oi.declined_at,
+  oi.revoked_at,
+  oi.revoked_by,
+  oi.resent_count,
+  oi.last_resent_at,
+  oi.created_at,
+  inv.email AS invited_by_email,
+  inv.full_name AS invited_by_name
+`;
 export class InvitationsRepository extends BaseRepository {
     async createInvitation(orgId, invitedBy, email, role, tokenHash, expiresAt) {
         try {
             return await this.withTransaction(async (client) => {
                 await client.query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
                 await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`organization_invitations:${orgId}:${email.trim().toLowerCase()}`]);
-                const existing = await client.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+                // Normalize at app boundary — plain equality enables B-Tree index scan.
+                const normalizedEmail = email.trim().toLowerCase();
+                const existing = await client.query(`SELECT ${ORG_INVITATION_COLUMNS}
            FROM organization_invitations oi
            LEFT JOIN users inv ON inv.id=oi.invited_by
-           WHERE oi.org_id=$1 AND lower(oi.email)=lower($2) AND oi.status='pending'
-           FOR UPDATE OF oi`, [orgId, email]);
+           WHERE oi.org_id=$1 AND lower(oi.email)=$2 AND oi.status='pending'
+           FOR UPDATE OF oi`, [orgId, normalizedEmail]);
                 if (existing.rows[0]) {
                     const updated = await client.query(`UPDATE organization_invitations oi
              SET token_hash=$1,
@@ -22,7 +44,7 @@ export class InvitationsRepository extends BaseRepository {
                  last_resent_at=NOW()
              WHERE oi.id=$5
              RETURNING oi.id`, [tokenHash, expiresAt, role, invitedBy, existing.rows[0].id]);
-                    const withInviter = await client.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+                    const withInviter = await client.query(`SELECT ${ORG_INVITATION_COLUMNS}
              FROM organization_invitations oi
              LEFT JOIN users inv ON inv.id=oi.invited_by
              WHERE oi.id=$1`, [updated.rows[0].id]);
@@ -31,7 +53,7 @@ export class InvitationsRepository extends BaseRepository {
                 const inserted = await client.query(`INSERT INTO organization_invitations (org_id,invited_by,email,role,token_hash,expires_at,status)
            VALUES ($1,$2,$3,$4,$5,$6,'pending')
            RETURNING id,org_id,invited_by,email,role,token_hash,expires_at,status,accepted_at,accepted_by,declined_at,revoked_at,revoked_by,resent_count,last_resent_at,created_at`, [orgId, invitedBy, email, role, tokenHash, expiresAt]);
-                const withInviter = await client.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+                const withInviter = await client.query(`SELECT ${ORG_INVITATION_COLUMNS}
            FROM organization_invitations oi
            LEFT JOIN users inv ON inv.id=oi.invited_by
            WHERE oi.id=$1`, [inserted.rows[0].id]);
@@ -50,12 +72,12 @@ export class InvitationsRepository extends BaseRepository {
         }
     }
     async findInvitationById(id) {
-        const r = await this.db.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+        const r = await this.db.query(`SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE oi.id=$1`, [id]);
         return r.rows[0] ?? null;
     }
     async findInvitationByTokenHash(hash) {
-        const r = await this.db.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name, oi.email_hash
+        const r = await this.db.query(`SELECT ${ORG_INVITATION_COLUMNS}, oi.email_hash
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE oi.token_hash=$1`, [hash]);
         return r.rows[0] ?? null;
     }
@@ -79,7 +101,7 @@ export class InvitationsRepository extends BaseRepository {
             where += ` AND oi.created_at < $${params.length}`;
         }
         params.push(q.limit + 1);
-        const r = await this.db.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+        const r = await this.db.query(`SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by WHERE ${where} ORDER BY oi.created_at DESC LIMIT $${params.length}`, params);
         return cursorPage(r.rows, q.limit, totalCount);
     }
@@ -176,7 +198,7 @@ export class InvitationsRepository extends BaseRepository {
         return r.rowCount ?? 0;
     }
     async findInvitationByOrgAndId(orgId, invitationId) {
-        const r = await this.db.query(`SELECT oi.*,inv.email AS invited_by_email,inv.full_name AS invited_by_name
+        const r = await this.db.query(`SELECT ${ORG_INVITATION_COLUMNS}
        FROM organization_invitations oi LEFT JOIN users inv ON inv.id=oi.invited_by
        WHERE oi.org_id=$1 AND oi.id=$2`, [orgId, invitationId]);
         return r.rows[0] ?? null;
@@ -186,10 +208,12 @@ export class InvitationsRepository extends BaseRepository {
         return r.rows[0] ?? null;
     }
     async findUserByEmail(email) {
+        // Normalize at app boundary — plain equality enables B-Tree index scan.
+        const normalized = email.trim().toLowerCase();
         const r = await this.db.query(`SELECT id, email, full_name
        FROM users
-       WHERE lower(email) = lower($1) AND deleted_at IS NULL
-       LIMIT 1`, [email]);
+       WHERE email = $1 AND deleted_at IS NULL
+       LIMIT 1`, [normalized]);
         return r.rows[0] ?? null;
     }
 }

@@ -3,6 +3,7 @@ import { AlertConflictError, AlertNotFoundError, } from '../types.js';
 function pgCode(e) {
     return typeof e === 'object' && e !== null ? e.code : undefined;
 }
+export const ALERT_ROUTING_RULES_COLUMNS = 'id, organization_id, name, description, priority, conditions, target_connector_ids, target_route_ids, fallback_connector_ids, template_id, is_active, created_at, updated_at, deleted_at';
 export class RoutingRepository {
     db;
     /** ADR-0006: routing rules are control-plane configuration. */
@@ -38,7 +39,7 @@ export class RoutingRepository {
             const r = await this.db.query(`INSERT INTO alert_routing_rules
            (organization_id, name, description, priority, conditions, target_connector_ids,
             target_route_ids, fallback_connector_ids, template_id, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`, [
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ${ALERT_ROUTING_RULES_COLUMNS}`, [
                 input.organizationId, input.name, input.description, input.priority,
                 JSON.stringify(input.conditions), input.targetConnectorIds, input.targetRouteIds,
                 input.fallbackConnectorIds, input.templateId, input.isActive,
@@ -52,11 +53,11 @@ export class RoutingRepository {
         }
     }
     async listRoutingRules(organizationId) {
-        const r = await this.db.query(`SELECT * FROM alert_routing_rules WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY priority DESC, created_at DESC`, [organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_ROUTING_RULES_COLUMNS} FROM alert_routing_rules WHERE organization_id=$1 AND deleted_at IS NULL ORDER BY priority DESC, created_at DESC`, [organizationId]);
         return r.rows;
     }
     async findRoutingRule(organizationId, id) {
-        const r = await this.db.query(`SELECT * FROM alert_routing_rules WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
+        const r = await this.db.query(`SELECT ${ALERT_ROUTING_RULES_COLUMNS} FROM alert_routing_rules WHERE id=$1 AND organization_id=$2 AND deleted_at IS NULL`, [id, organizationId]);
         return r.rows[0] ?? null;
     }
     async deleteRoutingRule(organizationId, id) {

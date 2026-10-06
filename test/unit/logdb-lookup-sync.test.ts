@@ -13,7 +13,10 @@
  *   - the primary DB is the read source and the Log DB is the write target,
  *   - the write always uses the Log DB PRIMARY pool ({ operation: 'write' }),
  *   - a missing source row is a no-op (returns false, no Log DB write),
- *   - the best-effort wrapper never throws even when the Log DB is down.
+ *   - the best-effort wrapper never throws even when the Log DB is down,
+ *   - queries contain ON CONFLICT WHERE clauses to avoid unnecessary row-locking and WAL bloat,
+ *   - in-flight calls are single-flight coalesced,
+ *   - read-path init triggers are throttled by TTL while mutation triggers bypass cache.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -37,6 +40,7 @@ import {
   syncEnvironmentLookupToLogDb,
   syncApiKeyLookupToLogDb,
   syncEnvironmentSdkConfigLookupToLogDb,
+  resetLookupSyncCachesForTest,
 } from '../../src/shared/logdb/lookup-sync.js';
 
 const PROJECT_ROW = {
@@ -85,13 +89,14 @@ const SDK_CONFIG_ROW = {
 };
 
 beforeEach(() => {
+  resetLookupSyncCachesForTest();
   poolQuery.mockReset();
   logQuery.mockReset();
   logQuery.mockResolvedValue({ rows: [], rowCount: 1 });
 });
 
 describe('syncProjectLookupToLogDb', () => {
-  it('reads the primary DB and upserts project_lookup on the Log DB primary pool', async () => {
+  it('reads the primary DB and upserts project_lookup on the Log DB primary pool with conditional WHERE guard', async () => {
     poolQuery.mockResolvedValue({ rows: [PROJECT_ROW], rowCount: 1 });
 
     const ok = await syncProjectLookupToLogDb(PROJECT_ROW.project_id, 'project.created');
@@ -104,6 +109,7 @@ describe('syncProjectLookupToLogDb', () => {
     expect(logQuery).toHaveBeenCalledTimes(1);
     const [sql, params, options] = logQuery.mock.calls[0];
     expect(sql).toContain('INSERT INTO project_lookup');
+    expect(sql).toContain('WHERE project_lookup.organization_id IS DISTINCT FROM EXCLUDED.organization_id');
     expect(params.slice(0, 4)).toEqual([
       PROJECT_ROW.project_id,
       PROJECT_ROW.organization_id,
@@ -143,7 +149,7 @@ describe('syncProjectLookupToLogDb', () => {
 });
 
 describe('syncEnvironmentLookupToLogDb', () => {
-  it('upserts environment_lookup with org + project scope and status metadata', async () => {
+  it('upserts environment_lookup with org + project scope, status metadata, and conditional WHERE guard', async () => {
     poolQuery.mockResolvedValue({ rows: [ENVIRONMENT_ROW], rowCount: 1 });
 
     const ok = await syncEnvironmentLookupToLogDb(ENVIRONMENT_ROW.environment_id, 'environment.created');
@@ -152,6 +158,7 @@ describe('syncEnvironmentLookupToLogDb', () => {
     expect(poolQuery.mock.calls[0][0]).toContain('FROM project_environments');
     const [sql, params, options] = logQuery.mock.calls[0];
     expect(sql).toContain('INSERT INTO environment_lookup');
+    expect(sql).toContain('WHERE environment_lookup.organization_id IS DISTINCT FROM EXCLUDED.organization_id');
     expect(params.slice(0, 5)).toEqual([
       ENVIRONMENT_ROW.environment_id,
       ENVIRONMENT_ROW.organization_id,
@@ -172,7 +179,7 @@ describe('syncEnvironmentLookupToLogDb', () => {
 });
 
 describe('syncApiKeyLookupToLogDb', () => {
-  it('upserts api_key_lookup with flat columns (no metadata JSONB)', async () => {
+  it('upserts api_key_lookup with flat columns and conditional WHERE guard', async () => {
     poolQuery.mockResolvedValue({ rows: [API_KEY_ROW], rowCount: 1 });
 
     const ok = await syncApiKeyLookupToLogDb(API_KEY_ROW.api_key_id, 'api_key.created');
@@ -181,6 +188,7 @@ describe('syncApiKeyLookupToLogDb', () => {
     expect(poolQuery.mock.calls[0][0]).toContain('FROM project_api_keys');
     const [sql, params, options] = logQuery.mock.calls[0];
     expect(sql).toContain('INSERT INTO api_key_lookup');
+    expect(sql).toContain('WHERE api_key_lookup.organization_id IS DISTINCT FROM EXCLUDED.organization_id');
     expect(params).toEqual([
       API_KEY_ROW.api_key_id,
       API_KEY_ROW.organization_id,
@@ -195,7 +203,7 @@ describe('syncApiKeyLookupToLogDb', () => {
 });
 
 describe('syncEnvironmentSdkConfigLookupToLogDb', () => {
-  it('upserts the published SDK config snapshot for the environment', async () => {
+  it('upserts the published SDK config snapshot for the environment with conditional WHERE guard', async () => {
     poolQuery.mockResolvedValue({ rows: [SDK_CONFIG_ROW], rowCount: 1 });
 
     const ok = await syncEnvironmentSdkConfigLookupToLogDb(
@@ -207,6 +215,7 @@ describe('syncEnvironmentSdkConfigLookupToLogDb', () => {
     expect(poolQuery.mock.calls[0][0]).toContain('FROM project_environment_sdk_configs');
     const [sql, params, options] = logQuery.mock.calls[0];
     expect(sql).toContain('INSERT INTO environment_sdk_config_lookup');
+    expect(sql).toContain('WHERE environment_sdk_config_lookup.revision_number IS DISTINCT FROM EXCLUDED.revision_number');
     expect(params.slice(0, 5)).toEqual([
       SDK_CONFIG_ROW.environment_id,
       SDK_CONFIG_ROW.organization_id,
@@ -221,5 +230,53 @@ describe('syncEnvironmentSdkConfigLookupToLogDb', () => {
       environment: { name: 'Production', slug: 'production' },
     });
     expect(options).toEqual({ operation: 'write' });
+  });
+
+  it('coalesces concurrent in-flight sync requests into a single execution', async () => {
+    let resolveQuery: (val: unknown) => void;
+    poolQuery.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveQuery = resolve;
+        }),
+    );
+
+    const promise1 = syncEnvironmentSdkConfigLookupToLogDb(SDK_CONFIG_ROW.environment_id, 'sdk.init');
+    const promise2 = syncEnvironmentSdkConfigLookupToLogDb(SDK_CONFIG_ROW.environment_id, 'sdk.init');
+    const promise3 = syncEnvironmentSdkConfigLookupToLogDb(SDK_CONFIG_ROW.environment_id, 'sdk.init');
+
+    resolveQuery!({ rows: [SDK_CONFIG_ROW], rowCount: 1 });
+
+    const [res1, res2, res3] = await Promise.all([promise1, promise2, promise3]);
+
+    expect(res1).toBe(true);
+    expect(res2).toBe(true);
+    expect(res3).toBe(true);
+    expect(poolQuery).toHaveBeenCalledTimes(1);
+    expect(logQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips redundant database queries on repeated sdk.init within TTL cache window', async () => {
+    poolQuery.mockResolvedValue({ rows: [SDK_CONFIG_ROW], rowCount: 1 });
+
+    const first = await syncEnvironmentSdkConfigLookupToLogDb(SDK_CONFIG_ROW.environment_id, 'sdk.init');
+    expect(first).toBe(true);
+    expect(poolQuery).toHaveBeenCalledTimes(1);
+    expect(logQuery).toHaveBeenCalledTimes(1);
+
+    // Second call with sdk.init immediately hits TTL cache without DB query
+    const second = await syncEnvironmentSdkConfigLookupToLogDb(SDK_CONFIG_ROW.environment_id, 'sdk.init');
+    expect(second).toBe(true);
+    expect(poolQuery).toHaveBeenCalledTimes(1);
+    expect(logQuery).toHaveBeenCalledTimes(1);
+
+    // Mutation call (e.g. sdk_config.published) bypasses cache and syncs immediately
+    const published = await syncEnvironmentSdkConfigLookupToLogDb(
+      SDK_CONFIG_ROW.environment_id,
+      'sdk_config.published',
+    );
+    expect(published).toBe(true);
+    expect(poolQuery).toHaveBeenCalledTimes(2);
+    expect(logQuery).toHaveBeenCalledTimes(2);
   });
 });

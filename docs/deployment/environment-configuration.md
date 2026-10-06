@@ -32,7 +32,7 @@ This document provides a comprehensive reference for all environment variables, 
 | `INGESTION_DB_POOL_SIZE` | Dedicated connection pool for Ingestion Worker. | `20` |
 | `INGESTION_LOG_DB_LOCK_TIMEOUT_MS` | Transaction-local Log DB lock wait bound for ingestion writes; lock stalls fail fast and retry through pg-boss instead of hiding as long `insertMs`. | `2000` |
 | `INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS` | Optional transaction-local Log DB statement timeout for ingestion writes; `0` leaves statement execution unbounded for large benchmark batches. | `0` |
-| `INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS` | Transaction-local idle-in-transaction guard for ingestion writes. | `30000` |
+| `INGESTION_LOG_DB_IDLE_TX_TIMEOUT_MS` | Optional transaction-local idle-in-transaction guard for ingestion writes. Keep disabled unless investigating connection leaks; active SQL is bounded by `INGESTION_LOG_DB_STATEMENT_TIMEOUT_MS`. | `0` |
 | `INGESTION_LOG_DB_SYNCHRONOUS_COMMIT` | Transaction-local commit durability mode for ingestion writes. Keep `on` unless durability trade-offs are explicitly accepted. | `on` |
 | `ANALYTICS_DB_POOL_MAX` | Dedicated connection pool for Analytics Worker. | `10` |
 

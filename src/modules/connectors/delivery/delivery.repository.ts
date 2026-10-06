@@ -41,6 +41,15 @@ export interface RateLimitCheckResult {
   retryAfterMs: number;
 }
 
+export const DELIVERY_COLUMNS = `
+  id, organization_id, connector_id, route_id, notification_type, severity,
+  payload, payload_size_bytes, status, attempts, max_attempts, scheduled_at,
+  sent_at, delivered_at, failed_at, external_message_id, response_body,
+  response_status_code, error_message, error_details, next_retry_at,
+  retry_count, delivery_latency_ms, correlation_id, parent_delivery_id,
+  created_at, updated_at
+`;
+
 export class DeliveryRepository {
   private readonly db: typeof pool;
 
@@ -77,7 +86,7 @@ export class DeliveryRepository {
          (organization_id, connector_id, route_id, notification_type, severity,
           payload, payload_size_bytes, status, max_attempts, correlation_id, parent_delivery_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING *`,
+       RETURNING ${DELIVERY_COLUMNS}`,
       [
         input.organizationId, input.connectorId, input.routeId, input.notificationType,
         input.severity, payloadJson, Buffer.byteLength(payloadJson, 'utf8'),
@@ -92,7 +101,7 @@ export class DeliveryRepository {
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1 || ':' || $2, 0))`, [input.connectorId, input.correlationId]);
 
       const existing = await client.query<DeliveryRow>(
-        `SELECT * FROM connector_deliveries
+        `SELECT ${DELIVERY_COLUMNS} FROM connector_deliveries
          WHERE connector_id = $1 AND correlation_id = $2
            AND created_at > now() - interval '24 hours'
          LIMIT 1`,
@@ -108,7 +117,7 @@ export class DeliveryRepository {
            (organization_id, connector_id, route_id, notification_type, severity,
             payload, payload_size_bytes, status, max_attempts, correlation_id, parent_delivery_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         RETURNING *`,
+         RETURNING ${DELIVERY_COLUMNS}`,
         [
           input.organizationId, input.connectorId, input.routeId, input.notificationType,
           input.severity, payloadJson, Buffer.byteLength(payloadJson, 'utf8'),
@@ -135,7 +144,7 @@ export class DeliveryRepository {
              external_message_id=$2, response_status_code=$3, response_body=$4::text,
              provider_response=$4::jsonb, http_status=$3, duration_ms=$5, delivery_latency_ms=$5
          WHERE id=$1
-         RETURNING *`,
+         RETURNING ${DELIVERY_COLUMNS}`,
         [
           id,
           update.externalMessageId,
@@ -163,7 +172,7 @@ export class DeliveryRepository {
          SET status='retrying', attempts=attempts+1, retry_count=retry_count+1,
              next_retry_at=$2, error_message=$3, updated_at=NOW()
          WHERE id=$1
-         RETURNING *`,
+         RETURNING ${DELIVERY_COLUMNS}`,
         [id, nextRetryAt, errorMessage.slice(0, 2000)],
       );
       const row = updated.rows[0];
@@ -190,7 +199,7 @@ export class DeliveryRepository {
          SET status='failed', attempts=attempts+1, failed_at=NOW(), updated_at=NOW(),
              error_message=$2, error_details=$3
          WHERE id=$1
-         RETURNING *`,
+         RETURNING ${DELIVERY_COLUMNS}`,
         [id, errorMessage.slice(0, 2000), errorDetails ? JSON.stringify(errorDetails) : null],
       );
       const row = updated.rows[0];
@@ -225,7 +234,7 @@ export class DeliveryRepository {
       );
 
       const r = await client.query<DeliveryRow>(
-        `SELECT * FROM connector_deliveries
+        `SELECT ${DELIVERY_COLUMNS} FROM connector_deliveries
          WHERE status='retrying' AND next_retry_at <= NOW()
          ORDER BY next_retry_at ASC
          LIMIT $1
@@ -252,7 +261,7 @@ export class DeliveryRepository {
     );
     params.push(filters.limit, filters.offset);
     const r = await this.db.query<DeliveryRow>(
-      `SELECT * FROM connector_deliveries WHERE ${where}
+      `SELECT ${DELIVERY_COLUMNS} FROM connector_deliveries WHERE ${where}
        ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -261,7 +270,7 @@ export class DeliveryRepository {
 
   async getDelivery(organizationId: string, id: string): Promise<DeliveryRow | null> {
     const r = await this.db.query<DeliveryRow>(
-      `SELECT * FROM connector_deliveries
+      `SELECT ${DELIVERY_COLUMNS} FROM connector_deliveries
        WHERE id=$1 AND organization_id=$2`,
       [id, organizationId],
     );
@@ -270,7 +279,7 @@ export class DeliveryRepository {
 
   async findDeliveryByDedupKey(connectorId: string, dedupKey: string, windowMinutes: number): Promise<DeliveryRow | null> {
     const r = await this.db.query<DeliveryRow>(
-      `SELECT * FROM connector_deliveries
+      `SELECT ${DELIVERY_COLUMNS} FROM connector_deliveries
        WHERE connector_id = $1
          AND payload->>'dedupKey' = $2
          AND status = 'sent'
@@ -559,7 +568,7 @@ export class DeliveryRepository {
            error_details=NULL,
            updated_at=NOW()
        WHERE id=$1 AND organization_id=$2 AND status IN ('failed','retrying')
-       RETURNING *`,
+       RETURNING ${DELIVERY_COLUMNS}`,
       [id, organizationId],
     );
     return r.rows[0] ?? null;

@@ -5,10 +5,10 @@ export declare const IncidentStatusSchema: z.ZodEnum<{
     acknowledged: "acknowledged";
 }>;
 export declare const IncidentSeveritySchema: z.ZodEnum<{
+    critical: "critical";
     error: "error";
     info: "info";
     warning: "warning";
-    critical: "critical";
 }>;
 export declare const ListIncidentsQuerySchema: z.ZodObject<{
     limit: z.ZodDefault<z.ZodCoercedNumber<unknown>>;
@@ -24,14 +24,14 @@ export declare const ListIncidentsQuerySchema: z.ZodObject<{
         acknowledged: "acknowledged";
     }>>;
     active: z.ZodOptional<z.ZodPipe<z.ZodEnum<{
-        true: "true";
         false: "false";
-    }>, z.ZodTransform<boolean, "true" | "false">>>;
+        true: "true";
+    }>, z.ZodTransform<boolean, "false" | "true">>>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     projectId: z.ZodOptional<z.ZodString>;
     environment: z.ZodOptional<z.ZodString>;
@@ -123,10 +123,10 @@ export declare const ListActivityQuerySchema: z.ZodObject<{
     projectId: z.ZodOptional<z.ZodString>;
     incidentId: z.ZodOptional<z.ZodString>;
     severity: z.ZodOptional<z.ZodEnum<{
+        critical: "critical";
         error: "error";
         info: "info";
         warning: "warning";
-        critical: "critical";
     }>>;
     ruleId: z.ZodOptional<z.ZodString>;
     from: z.ZodOptional<z.ZodCoercedDate<unknown>>;

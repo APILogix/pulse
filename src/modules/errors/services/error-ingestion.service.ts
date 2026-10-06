@@ -127,6 +127,9 @@ export class ErrorIngestionService {
   async ingestBatch(
     client: PoolClient,
     errors: ErrorBatchItem[],
+    // Only for TelemetryWriter's confirmed inserts in this same transaction.
+    // Re-inserting those rows would classify every one as a duplicate and skip grouping.
+    alreadyPersisted = false,
   ): Promise<{
     inserted: number;
     domainEvents: Array<{ groupResult: GroupMutationResult; eventRecord: Omit<ErrorGroupEventRecord, 'error_group_id'> }>;
@@ -139,7 +142,11 @@ export class ErrorIngestionService {
     }
 
     const insertStart = Date.now();
-    const insertedRows = await this.errorRepository.insertManyIfNew(
+    const insertedRows = alreadyPersisted ? errors.map(({ eventRecord }) => ({
+      organizationId: eventRecord.organization_id,
+      eventId: eventRecord.event_id,
+      occurredAt: eventRecord.occurred_at,
+    })) : await this.errorRepository.insertManyIfNew(
       client,
       errors.map(({ eventRecord }) => ({ ...eventRecord, error_group_id: null })),
     );

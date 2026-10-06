@@ -29,10 +29,25 @@ const KEY_LENGTH = 32;
 const SALT_LENGTH = 16;
 const BCRYPT_COST = 12;
 
+const derivedKeySyncCache = new Map<string, Buffer>();
+
 function deriveKey(secret: string, salt: Buffer): Buffer {
+  const saltHex = salt.toString('hex');
+  const cacheKey = `${secret}:${saltHex}`;
+  const hit = derivedKeySyncCache.get(cacheKey);
+  if (hit) {
+    derivedKeySyncCache.delete(cacheKey);
+    derivedKeySyncCache.set(cacheKey, hit);
+    return hit;
+  }
   // scrypt parameters: N=2^14 keeps key derivation under ~50ms per call which
   // is acceptable for MFA secret encryption that runs once per device write.
-  return scryptSync(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 });
+  const key = scryptSync(secret, salt, KEY_LENGTH, { N: 16384, r: 8, p: 1 });
+  if (derivedKeySyncCache.size >= KEY_CACHE_MAX) {
+    derivedKeySyncCache.delete(derivedKeySyncCache.keys().next().value!);
+  }
+  derivedKeySyncCache.set(cacheKey, key);
+  return key;
 }
 
 let KEY_CACHE_MAX = 500;
@@ -59,7 +74,10 @@ async function deriveKeyAsync(secret: string, salt: Buffer, saltHex: string): Pr
 
 export const _testEncryptionCache = {
   get size() { return derivedKeyCache.size; },
-  clear() { derivedKeyCache.clear(); },
+  clear() {
+    derivedKeyCache.clear();
+    derivedKeySyncCache.clear();
+  },
   setMax(max: number) { KEY_CACHE_MAX = max; }
 };
 
@@ -81,6 +99,31 @@ export function encrypt(plaintext: string, secret: string): string {
 
   return [
     salt.toString('hex'),
+    iv.toString('hex'),
+    authTag.toString('hex'),
+    ciphertext.toString('hex'),
+  ].join(':');
+}
+
+/**
+ * Encrypt a UTF-8 string asynchronously using libuv threadpool scrypt offloading,
+ * protecting the main event loop from CPU-bound key derivation delays.
+ */
+export async function encryptAsync(plaintext: string, secret: string): Promise<string> {
+  const salt = randomBytes(SALT_LENGTH);
+  const iv = randomBytes(IV_LENGTH);
+  const saltHex = salt.toString('hex');
+  const key = await deriveKeyAsync(secret, salt, saltHex);
+
+  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext, 'utf8'),
+    cipher.final(),
+  ]);
+  const authTag = cipher.getAuthTag();
+
+  return [
+    saltHex,
     iv.toString('hex'),
     authTag.toString('hex'),
     ciphertext.toString('hex'),

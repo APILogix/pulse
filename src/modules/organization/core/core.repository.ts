@@ -8,6 +8,8 @@ import type {
   OrganizationProvisioningResult,
 } from "./core.schema.js";
 
+import { ORGANIZATION_DEFAULTS } from "../shared/constants.js";
+
 // Helper for generating base slugs
 function generateSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -16,10 +18,11 @@ function generateSlug(name: string): string {
 export class CoreRepository extends BaseRepository {
   async createOrg(
     client: PoolClient,
-    name: string, ownerUserId: string, data: {
+    name: string,
+    ownerUserId: string,
+    data: {
       slug?: string | null;
-      description?: string | null; industry?: string | null; companySize?: string | null;
-      country?: string | null; timezone?: string; billingEmail?: string | null;
+      timezone?: string;
     },
     status: 'active' | 'trialing' = 'active',
   ): Promise<OrganizationProvisioningResult> {
@@ -43,10 +46,10 @@ export class CoreRepository extends BaseRepository {
       let r;
       try {
         r = await client.query<OrganizationRow>(
-          `INSERT INTO organizations (name,slug,description,industry,company_size,country,timezone,billing_email,owner_user_id,created_by,status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
-           RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`,
-          [name, slug, data.description??null, data.industry??null, data.companySize??null, data.country??null, data.timezone??'UTC', data.billingEmail??null, ownerUserId, status]
+          `INSERT INTO organizations (name, slug, timezone, owner_user_id, created_by, status)
+           VALUES ($1, $2, $3, $4, $4, $5)
+           RETURNING id, name, slug, logo_url, timezone, owner_user_id, created_by, status, deleted_at, created_at, updated_at`,
+          [name, slug, data.timezone ?? ORGANIZATION_DEFAULTS.timezone, ownerUserId, status]
         );
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -88,7 +91,7 @@ export class CoreRepository extends BaseRepository {
 
   async findOrgById(id: string, includeDeleted = false): Promise<OrganizationRow | null> {
     const r = await this.db.query<OrganizationRow>(
-      `SELECT id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at
+      `SELECT id, name, slug, logo_url, timezone, owner_user_id, created_by, status, deleted_at, created_at, updated_at
        FROM organizations WHERE id=$1 ${includeDeleted ? '' : 'AND deleted_at IS NULL'}`, [id]
     );
     return r.rows[0] ?? null;
@@ -96,7 +99,7 @@ export class CoreRepository extends BaseRepository {
 
   async findOrgBySlug(slug: string): Promise<OrganizationRow | null> {
     const r = await this.db.query<OrganizationRow>(
-      `SELECT id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at
+      `SELECT id, name, slug, logo_url, timezone, owner_user_id, created_by, status, deleted_at, created_at, updated_at
        FROM organizations WHERE slug=$1 AND deleted_at IS NULL`, [slug]
     );
     return r.rows[0] ?? null;
@@ -106,9 +109,9 @@ export class CoreRepository extends BaseRepository {
     return this.withTransaction(async (client) => {
       const cols: string[] = []; const vals: unknown[] = [];
       const map: Record<string,string> = {
-        name:'name', description:'description', logoUrl:'logo_url', websiteUrl:'website_url',
-        industry:'industry', companySize:'company_size', country:'country', timezone:'timezone',
-        billingEmail:'billing_email', supportEmail:'support_email'
+        name: 'name',
+        logoUrl: 'logo_url',
+        timezone: 'timezone',
       };
       for (const [k,v] of Object.entries(data)) {
         if (v !== undefined && map[k]) { cols.push(`${map[k]}=$${cols.length+1}`); vals.push(v); }
@@ -117,7 +120,7 @@ export class CoreRepository extends BaseRepository {
       vals.push(id);
       const r = await client.query<OrganizationRow>(
         `UPDATE organizations SET ${cols.join(',')} WHERE id=$${vals.length} AND deleted_at IS NULL
-         RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, vals
+         RETURNING id, name, slug, logo_url, timezone, owner_user_id, created_by, status, deleted_at, created_at, updated_at`, vals
       );
       if (!r.rows[0]) throw new NotFoundError("Organization");
       return r.rows[0];
@@ -155,7 +158,7 @@ export class CoreRepository extends BaseRepository {
        FROM project_api_keys k
        WHERE k.organization_id=$1 AND k.deleted_at IS NULL`, [orgId]
     );
-    return r.rows.map(row => row.secret_hash);
+    return r.rows.map((row: { secret_hash: string }) => row.secret_hash);
   }
 
   async archiveOrg(id: string): Promise<void> {
@@ -166,7 +169,7 @@ export class CoreRepository extends BaseRepository {
   async restoreOrg(id: string): Promise<OrganizationRow> {
     const r = await this.db.query<OrganizationRow>(
       `UPDATE organizations SET status='active',updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL
-       RETURNING id,name,slug,description,logo_url,website_url,industry,company_size,country,timezone,billing_email,support_email,owner_user_id,created_by,status,deleted_at,created_at,updated_at`, [id]
+       RETURNING id, name, slug, logo_url, timezone, owner_user_id, created_by, status, deleted_at, created_at, updated_at`, [id]
     );
     if (!r.rows[0]) throw new NotFoundError("Organization");
     return r.rows[0];
@@ -225,7 +228,7 @@ export class CoreRepository extends BaseRepository {
     if (RESERVED_SLUGS.has(normalized)) return false;
 
     const r = await this.db.query<{ x: boolean }>(
-      `SELECT EXISTS(SELECT 1 FROM organizations WHERE LOWER(slug) = LOWER($1) AND deleted_at IS NULL) AS x`,
+      `SELECT EXISTS(SELECT 1 FROM organizations WHERE slug = $1 AND deleted_at IS NULL) AS x`,
       [normalized],
     );
     return !r.rows[0]?.x;

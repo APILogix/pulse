@@ -34,7 +34,7 @@ import { syncApiKeyLookupToLogDbBestEffort, syncEnvironmentLookupToLogDbBestEffo
 import { PostgresWriter } from './postgress.writter.js';
 import { UsageCounter } from './usage/usage-counter.js';
 import { SDK_EVENT_TYPES, normalizeSdkEnvironment, } from './pipeline/event-normalizer.js';
-import { enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
+import { createEmptyQueueDepthSnapshot, enqueueIngestJobs, ingestQueueDepth, ingestQueueFor, jobPriority, normalizePlanTier, provisionIngestQueues, PLAN_WEIGHT, TYPE_URGENCY, } from './queue/ingest-queues.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
 const svcLogger = logger.child({ component: 'ingestion-service' });
 function hashApiKey(apiKey) {
@@ -51,19 +51,28 @@ const QUOTA_CACHE_MAX_ENTRIES = 10_000;
 // ingest.* queue exactly once per process; races across processes are harmless.
 let provisioningPromise = null;
 let queuesProvisioned = false;
+let lastProvisionAttemptAt = 0;
+const PROVISION_RETRY_INTERVAL_MS = 5000;
 function ensureIngestQueuesProvisioned() {
-    if (!provisioningPromise) {
-        provisioningPromise = provisionIngestQueues()
-            .then(() => {
-            queuesProvisioned = true;
-        })
-            .catch((err) => {
-            queuesProvisioned = false;
-            provisioningPromise = null; // allow retry on the next request
-            svcLogger.error({ err }, 'ingest queue provisioning failed');
-            throw err;
-        });
+    if (queuesProvisioned)
+        return Promise.resolve();
+    if (provisioningPromise)
+        return provisioningPromise;
+    const now = Date.now();
+    if (now - lastProvisionAttemptAt < PROVISION_RETRY_INTERVAL_MS) {
+        return Promise.resolve();
     }
+    lastProvisionAttemptAt = now;
+    provisioningPromise = provisionIngestQueues()
+        .then(() => {
+        queuesProvisioned = true;
+    })
+        .catch((err) => {
+        queuesProvisioned = false;
+        provisioningPromise = null; // allow retry after interval
+        svcLogger.error({ err }, 'ingest queue provisioning failed');
+        throw err;
+    });
     return provisioningPromise;
 }
 function warmIngestQueuesProvisioned() {
@@ -91,17 +100,7 @@ export class IngestionService {
     // Cached queue-depth probe so request-path backpressure stays O(1). The
     // grouped scan on pgboss.job refreshes in the background; ingestion never
     // waits on this advisory signal.
-    cachedDepth = {
-        pending: 0,
-        ready: 0,
-        deferred: 0,
-        active: 0,
-        failed: 0,
-        deadLettered: 0,
-        oldestPendingAgeMs: null,
-        perQueue: [],
-        dlqPerQueue: [],
-    };
+    cachedDepth = createEmptyQueueDepthSnapshot();
     cachedDepthAt = 0;
     depthRefreshPromise = null;
     // Cached org quota reads (organization_usage_current_period), fail-open.
@@ -791,6 +790,7 @@ export class IngestionService {
                 deadLettered,
             },
             perQueue: depth.perQueue,
+            perEventType: depth.perEventType,
             rateLimiterEntries: 0,
             orgRateLimiterEntries: 0,
             quotaCacheEntries: this.quotaCache.size,
@@ -1055,21 +1055,14 @@ export class IngestionService {
         const params = [projectId];
         if (counterType)
             params.push(counterType);
-        const r = await this.pool.query(`SELECT metric.counter_type,
-              SUM(metric.value)::text AS total,
-              MAX(usage.bucket)::text AS period_start
+        const r = await this.pool.query(`SELECT usage.counter_type,
+              SUM(usage.total_value)::text AS total,
+              MAX(usage.period_start)::text AS period_start
          FROM project_usage_realtime usage
-         CROSS JOIN LATERAL (VALUES
-           ('total_events', usage.total_events::numeric),
-           ('errors', usage.errors::numeric),
-           ('requests', usage.requests::numeric),
-           ('total_bytes', usage.total_bytes::numeric),
-           ('rate_limit_usage', usage.rate_limit_usage::numeric)
-         ) metric(counter_type, value)
         WHERE usage.project_id = $1
-          ${counterType ? "AND metric.counter_type = $2" : ""}
-        GROUP BY metric.counter_type
-        ORDER BY metric.counter_type`, params);
+          ${counterType ? "AND usage.counter_type = $2" : ""}
+        GROUP BY usage.counter_type
+        ORDER BY usage.counter_type`, params);
         return r.rows.map((row) => ({
             counterType: row.counter_type,
             total: Number(row.total ?? 0),

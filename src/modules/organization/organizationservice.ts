@@ -178,7 +178,7 @@ export class OrganizationService {
 
 
   // ── Organization CRUD ─────────────────────────
-  async createOrganization(meta: RequestMeta, data: { name: string; description?: string; industry?: string; companySize?: string; country?: string; timezone?: string; billingEmail?: string }) {
+  async createOrganization(meta: RequestMeta, data: { name: string; slug?: string; timezone?: string }) {
     return this.core.createOrganization(meta, data);
   }
 

@@ -9,24 +9,12 @@ export declare const SlugParamsSchema: z.ZodObject<{
 export declare const CreateOrganizationSchema: z.ZodObject<{
     name: z.ZodString;
     slug: z.ZodOptional<z.ZodString>;
-    description: z.ZodOptional<z.ZodString>;
-    industry: z.ZodOptional<z.ZodString>;
-    companySize: z.ZodOptional<z.ZodString>;
-    country: z.ZodOptional<z.ZodString>;
     timezone: z.ZodDefault<z.ZodString>;
-    billingEmail: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export declare const UpdateOrganizationSchema: z.ZodObject<{
     name: z.ZodOptional<z.ZodString>;
-    description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     logoUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    websiteUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    industry: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    companySize: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    country: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     timezone: z.ZodOptional<z.ZodString>;
-    billingEmail: z.ZodOptional<z.ZodString>;
-    supportEmail: z.ZodOptional<z.ZodNullable<z.ZodString>>;
 }, z.core.$strip>;
 export declare const TransferOwnershipSchema: z.ZodObject<{
     newOwnerUserId: z.ZodString;
@@ -48,15 +36,8 @@ export interface OrganizationRow {
     id: string;
     name: string;
     slug: string;
-    description: string | null;
     logo_url: string | null;
-    website_url: string | null;
-    industry: string | null;
-    company_size: string | null;
-    country: string | null;
     timezone: string;
-    billing_email: string | null;
-    support_email: string | null;
     owner_user_id: string;
     created_by: string | null;
     status: OrgStatus;
@@ -80,15 +61,8 @@ export interface OrganizationDto {
     id: string;
     name: string;
     slug: string;
-    description: string | null;
     logoUrl: string | null;
-    websiteUrl: string | null;
-    industry: string | null;
-    companySize: string | null;
-    country: string | null;
     timezone: string;
-    billingEmail: string | null;
-    supportEmail: string | null;
     ownerUserId: string;
     status: OrgStatus;
     createdAt: Date;

@@ -14,7 +14,7 @@ VALUES
   ('free', 'quota.members', NULL::boolean, 3, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.environments', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.api_keys', NULL::boolean, 2, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('free', 'quota.monthly_events', NULL::boolean, 100000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('free', 'quota.monthly_events', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'quota.requests_per_second', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('free', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('free', 'sdk.remote_config', FALSE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -116,7 +116,7 @@ VALUES
   ('starter', 'quota.members', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.environments', NULL::boolean, 5, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.api_keys', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('starter', 'quota.monthly_events', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('starter', 'quota.monthly_events', NULL::boolean, 150000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'quota.requests_per_second', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('starter', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('starter', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -218,7 +218,7 @@ VALUES
   ('growth', 'quota.members', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.environments', NULL::boolean, 10, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.api_keys', NULL::boolean, 50, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('growth', 'quota.monthly_events', NULL::boolean, 10000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('growth', 'quota.monthly_events', NULL::boolean, 1000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'quota.requests_per_second', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('growth', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('growth', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -320,7 +320,7 @@ VALUES
   ('business', 'quota.members', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.environments', NULL::boolean, 25, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.api_keys', NULL::boolean, 250, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('business', 'quota.monthly_events', NULL::boolean, 100000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('business', 'quota.monthly_events', NULL::boolean, 8000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'quota.requests_per_second', NULL::boolean, 5000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('business', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('business', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -422,7 +422,7 @@ VALUES
   ('enterprise', 'quota.members', NULL::boolean, 10000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"members","scope":"organization","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.environments', NULL::boolean, 100, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"environments","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.api_keys', NULL::boolean, 1000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"api_keys","scope":"project","enforcementType":"hard_limit"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
-  ('enterprise', 'quota.monthly_events', NULL::boolean, 1000000000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"events","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
+  ('enterprise', 'quota.monthly_events', NULL::boolean, NULL::bigint, NULL::numeric, 'Custom', '{"catalog":"billing-preview-v2","unit":"credits","scope":"organization","enforcementType":"overage"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'quota.requests_per_second', NULL::boolean, 50000, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"requests/sec","scope":"organization","enforcementType":"throttle"}'::jsonb, '{"supportsUnlimited":true}'::jsonb),
   ('enterprise', 'sdk.enabled', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"organization","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
   ('enterprise', 'sdk.remote_config', TRUE, NULL::bigint, NULL::numeric, NULL::text, '{"catalog":"billing-preview-v2","unit":"boolean","scope":"project","enforcementType":"none"}'::jsonb, '{"supportsUnlimited":false}'::jsonb),
@@ -521,7 +521,14 @@ VALUES
 INSERT INTO plan_feature_entitlements
   (plan_id, feature_id, boolean_value, integer_value, decimal_value, string_value, metadata, configuration, display_value)
 SELECT p.id, bf.id, es.boolean_value, es.integer_value, es.decimal_value, es.string_value, es.metadata, es.configuration,
-       COALESCE(es.string_value, es.integer_value::text, es.decimal_value::text, es.boolean_value::text)
+       CASE
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'free' THEN '10K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'starter' THEN '150K credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'growth' THEN '1M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'business' THEN '8M credits/mo'
+         WHEN es.feature_key = 'quota.monthly_events' AND es.plan_key = 'enterprise' THEN 'Custom'
+         ELSE COALESCE(es.string_value, es.integer_value::text, es.decimal_value::text, es.boolean_value::text)
+       END
 FROM entitlement_seed es
 JOIN plans p ON p.key = es.plan_key AND p.version = 1 AND p.deleted_at IS NULL
 JOIN billing_features bf ON bf.feature_key = es.feature_key AND bf.deleted_at IS NULL

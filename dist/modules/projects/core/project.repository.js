@@ -4,24 +4,6 @@ const PROJECT_COLUMNS = `
   id, public_id, org_id, name, slug, description, status, timezone, tags, icon, metadata,
   archived_at, deleted_at, deleted_by, created_at, updated_at, version
 `;
-const PROJECT_SETTINGS_DEFAULTS_SQL = `
-ALTER TABLE project_settings
-  ALTER COLUMN data_retention_days SET DEFAULT 10,
-  ALTER COLUMN sampling_rate SET DEFAULT 1.00000,
-  ALTER COLUMN allowed_domains SET DEFAULT '{}'::text[],
-  ALTER COLUMN blocked_domains SET DEFAULT '{}'::text[],
-  ALTER COLUMN pii_scrubbing_enabled SET DEFAULT true,
-  ALTER COLUMN ip_collection_enabled SET DEFAULT true,
-  ALTER COLUMN release_tracking_enabled SET DEFAULT true,
-  ALTER COLUMN session_replay_enabled SET DEFAULT false,
-  ALTER COLUMN performance_monitoring_enabled SET DEFAULT true,
-  ALTER COLUMN error_monitoring_enabled SET DEFAULT true,
-  ALTER COLUMN log_ingestion_enabled SET DEFAULT true,
-  ALTER COLUMN metric_ingestion_enabled SET DEFAULT true,
-  ALTER COLUMN trace_ingestion_enabled SET DEFAULT true,
-  ALTER COLUMN profile_ingestion_enabled SET DEFAULT true,
-  ALTER COLUMN version SET DEFAULT 1;
-`;
 const PROJECT_USAGE_COUNTER_TYPES = [
     "total_events",
     "errors",
@@ -36,7 +18,6 @@ const PROJECT_USAGE_COUNTER_TYPES = [
 ];
 export class ProjectRepository {
     db;
-    static projectSettingsDefaultsRepaired = false;
     constructor(db = pool) {
         this.db = db;
     }
@@ -84,12 +65,10 @@ export class ProjectRepository {
         params.push(query.limit, offset);
         const result = await db.query(`SELECT
          ${PROJECT_COLUMNS.split(",").map((c) => `p.${c.trim()}`).join(", ")},
-         COUNT(k.id)::int AS api_keys_count,
-         COUNT(k.id) FILTER (WHERE k.status = 'active')::int AS active_api_keys_count
+         (SELECT COUNT(*)::int FROM project_api_keys k WHERE k.project_id = p.id AND k.deleted_at IS NULL) AS api_keys_count,
+         (SELECT COUNT(*)::int FROM project_api_keys k WHERE k.project_id = p.id AND k.status = 'active' AND k.deleted_at IS NULL) AS active_api_keys_count
        FROM projects p
-       LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
        ${whereClause}
-       GROUP BY p.id
        ORDER BY ${sortColumn} ${sortOrder}
        LIMIT $${params.length - 1}
        OFFSET $${params.length}`, params);
@@ -101,12 +80,11 @@ export class ProjectRepository {
     async createProject(input, client) {
         const db = client ?? this.db;
         try {
-            await this.ensureProjectSettingsDefaults(db);
             const result = await db.query(`INSERT INTO projects (
            org_id, name, slug, description, timezone, tags, icon, metadata, created_by,
            public_id
          ) VALUES (
-           $1,$2,$3,$4,$5,$6,$7,$8,$9,
+           $1, $2, $3, $4, $5, $6, $7, $8, $9,
            'prj_' || upper(substring(replace(gen_random_uuid()::text, '-', ''), 1, 8))
          )
          RETURNING ${PROJECT_COLUMNS}`, [
@@ -128,12 +106,6 @@ export class ProjectRepository {
             }
             throw error;
         }
-    }
-    async ensureProjectSettingsDefaults(db) {
-        if (ProjectRepository.projectSettingsDefaultsRepaired)
-            return;
-        await db.query(PROJECT_SETTINGS_DEFAULTS_SQL);
-        ProjectRepository.projectSettingsDefaultsRepaired = true;
     }
     /**
      * Seed the per-project usage counter row. Environment + SDK-configuration
@@ -268,16 +240,12 @@ export class ProjectRepository {
     async getProjectStats(projectId, client) {
         const db = client ?? this.db;
         const result = await db.query(`SELECT
-         COALESCE(SUM(total_events),0)::text AS total_requests,
-         COUNT(DISTINCT k.id)::text AS api_keys_count,
-         COUNT(DISTINCT k.id) FILTER (WHERE k.status = 'active')::text AS active_keys_count,
-         COUNT(DISTINCT e.id)::text AS environment_count
+         COALESCE((SELECT SUM(total_events) FROM project_usage_daily WHERE project_id = $1), 0)::text AS total_requests,
+         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND deleted_at IS NULL)::text AS api_keys_count,
+         (SELECT COUNT(*) FROM project_api_keys WHERE project_id = $1 AND status = 'active' AND deleted_at IS NULL)::text AS active_keys_count,
+         (SELECT COUNT(*) FROM project_environments WHERE project_id = $1 AND deleted_at IS NULL)::text AS environment_count
        FROM projects p
-       LEFT JOIN project_api_keys k ON k.project_id = p.id AND k.deleted_at IS NULL
-       LEFT JOIN project_environments e ON e.project_id = p.id AND e.deleted_at IS NULL
-       LEFT JOIN project_usage_daily u ON u.project_id = p.id
-       WHERE p.id = $1 AND p.deleted_at IS NULL
-       GROUP BY p.id`, [projectId]);
+       WHERE p.id = $1 AND p.deleted_at IS NULL`, [projectId]);
         const row = result.rows[0];
         return {
             totalRequests: Number(row?.total_requests ?? 0),

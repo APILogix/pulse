@@ -1,53 +1,53 @@
 /**
- * Enterprise ingestion queue contract (pg-boss).
+ * Enterprise ingestion queue contract (Supabase PGMQ).
  *
  * Single source of truth shared by the HTTP gateway (producer) and the worker
  * process (consumer). Both sides MUST import queue names, payload shapes and
  * priority math from here — never redefine them locally.
  *
- * Architecture (see docs/enterprise-ingestion-architecture.md):
- *   - One public gateway; internally one pg-boss queue per SDK event type
- *     (`ingest.<type>`) so pipelines scale, retry and fail independently.
- *   - Priority = plan weight + type urgency. Higher wins. Enterprise traffic
- *     can never starve behind Free-tier floods, and errors always outrank
- *     metrics/profiles within a tier.
+ * Architecture:
+ *   - One public gateway; internally one pgmq queue per SDK event type
+ *     (`ingest_<type>`) so pipelines scale, retry and fail independently.
+ *   - Priority calculation preserved for scheduling and telemetry.
  *   - Tenant fairness is enforced worker-side (per-org in-flight budgets in
- *     worker-registry.ts) because pg-boss priorities alone cannot stop a
- *     single tenant monopolizing a queue's workers.
- *   - Failed jobs land (after retries + expiry) in `ingest.dlq-intake`, whose
- *     worker persists them into `ingestion_dead_letter_jobs` for ops replay.
+ *     worker-registry.ts).
+ *   - Failed jobs land in `ingest_dlq`, whose worker persists them into
+ *     `ingestion_dead_letter_jobs` for ops replay.
  */
-import { pgboss } from '../../../lib/pgboss.js';
+import { pgmq, isPgmqQueueAlreadyProvisionedError } from '../../../lib/pgmq.js';
 import { logger } from '../../../config/logger.js';
-import { env } from '../../../config/env.js';
-import type { SdkEventType } from '../pipeline/event-normalizer.js';
+import { SDK_EVENT_TYPES, type SdkEventType } from '../pipeline/event-normalizer.js';
 
 const qLogger = logger.child({ component: 'ingest-queues' });
 
 // ─── Queue names ────────────────────────────────────────────────────────────
 
-export const INGEST_QUEUE_PREFIX = 'ingest.';
+export const INGEST_QUEUE_PREFIX = 'ingest_';
 
 export const INGEST_QUEUES: Record<SdkEventType, string> = {
-  error: 'ingest.error',
-  message: 'ingest.message',
-  request: 'ingest.request',
-  span: 'ingest.span',
-  trace: 'ingest.trace',
-  metric: 'ingest.metric',
-  log: 'ingest.log',
-  profile: 'ingest.profile',
-  cron_checkin: 'ingest.cron_checkin',
-  replay: 'ingest.replay',
+  error: 'ingest_error',
+  message: 'ingest_message',
+  request: 'ingest_request',
+  span: 'ingest_span',
+  trace: 'ingest_trace',
+  metric: 'ingest_metric',
+  log: 'ingest_log',
+  profile: 'ingest_profile',
+  cron_checkin: 'ingest_cron_checkin',
+  replay: 'ingest_replay',
 };
+
+export const QUEUE_TO_EVENT_TYPE: ReadonlyMap<string, SdkEventType> = new Map(
+  (Object.entries(INGEST_QUEUES) as [SdkEventType, string][]).map(([type, queue]) => [queue, type]),
+);
 
 export const ALL_INGEST_QUEUES: readonly string[] = Object.values(INGEST_QUEUES);
 
-/** Shared dead-letter intake queue for every ingest.* queue. */
-export const INGEST_DLQ_INTAKE_QUEUE = 'ingest.dlq-intake';
+/** Shared dead-letter intake queue for every ingest_* queue. */
+export const INGEST_DLQ_INTAKE_QUEUE = 'ingest_dlq';
 
 /** Singleton cron queue driving the org/project usage rollup. */
-export const INGEST_USAGE_ROLLUP_QUEUE = 'ingest.usage-rollup';
+export const INGEST_USAGE_ROLLUP_QUEUE = 'ingest_usage_rollup';
 
 export function ingestQueueFor(eventType: SdkEventType): string {
   return INGEST_QUEUES[eventType] ?? `${INGEST_QUEUE_PREFIX}error`;
@@ -89,10 +89,7 @@ export const TYPE_URGENCY: Record<SdkEventType, number> = {
 };
 
 /**
- * Per-org in-flight budget per worker process, by plan tier. This is the
- * tenant-fairness knob: within a tier, one org may hold at most this many
- * concurrently processing jobs before its jobs are deferred (aged) so other
- * tenants' jobs run first.
+ * Per-org in-flight budget per worker process, by plan tier.
  */
 export const TENANT_INFLIGHT_LIMIT: Record<PlanTier, number> = {
   enterprise: 24,
@@ -147,7 +144,7 @@ export interface IngestJobPayload {
 }
 
 export interface DlqIntakePayload {
-  /** Original ingest.* queue the job failed in. */
+  /** Original ingest_* queue the job failed in. */
   sourceQueue: string;
   organizationId: string;
   projectId: string;
@@ -166,49 +163,37 @@ export interface UsageRollupPayload {
 
 // ─── Queue provisioning ─────────────────────────────────────────────────────
 
-export function ingestQueueOptions(): Record<string, unknown> {
-  return {
-    partition: true,
-    notify: true,
-    retryLimit: env.INGESTION_JOB_RETRY_LIMIT,
-    retryDelay: env.INGESTION_JOB_RETRY_DELAY_SECONDS,
-    retryBackoff: true,
-    expireInSeconds: env.INGESTION_JOB_EXPIRE_SECONDS,
-    deadLetter: INGEST_DLQ_INTAKE_QUEUE,
-  };
-}
-
 /**
- * Create one queue. pg-boss v12 uses INSERT ... ON CONFLICT DO NOTHING, so an
- * existing queue is a successful no-op. Unexpected provisioning failures must
- * propagate; swallowing them leaves workers "started" without usable queues.
+ * Provision all ingestion pgmq queues on Supabase.
+ * Idempotent, robust against concurrent multi-process starts, pre-existing queues,
+ * and sequence-to-extension membership collisions.
  */
-export async function safeCreateQueue(name: string, options?: Record<string, unknown>): Promise<void> {
-  const boss = pgboss as unknown as {
-    createQueue?: (n: string, o?: Record<string, unknown>) => Promise<void>;
-  };
-  if (typeof boss.createQueue !== 'function') {
-    throw new Error('pg-boss createQueue() is unavailable');
-  }
-  await boss.createQueue(name, options);
-}
-
-/** Provision the DLQ first, then its source queues, then the rollup queue. */
 export async function provisionIngestQueues(): Promise<void> {
-  // Source queues reference this queue through their deadLetter option. On a
-  // fresh database pg-boss rejects a source queue whose target does not exist.
-  await safeCreateQueue(INGEST_DLQ_INTAKE_QUEUE, {
-    partition: true,
-    notify: true,
-    retryLimit: 5,
-    retryDelay: 30,
-    retryBackoff: true,
-    expireInSeconds: 3600,
-  });
-  for (const name of ALL_INGEST_QUEUES) {
-    await safeCreateQueue(name, ingestQueueOptions());
+  const queuesToEnsure = [
+    INGEST_DLQ_INTAKE_QUEUE,
+    ...ALL_INGEST_QUEUES,
+    INGEST_USAGE_ROLLUP_QUEUE,
+  ];
+
+  if (typeof pgmq.createQueues === 'function') {
+    await pgmq.createQueues(queuesToEnsure, { concurrency: 4 });
+    return;
   }
-  await safeCreateQueue(INGEST_USAGE_ROLLUP_QUEUE);
+
+  // Fallback for custom mocks or environments without createQueues
+  await pgmq.fetchKnownQueues().catch(() => new Set<string>());
+
+  for (const name of queuesToEnsure) {
+    try {
+      await pgmq.createQueue(name);
+    } catch (err) {
+      if (isPgmqQueueAlreadyProvisionedError(err)) {
+        continue;
+      }
+      qLogger.warn({ queue: name, err }, 'Unexpected error provisioning ingest queue');
+      throw err;
+    }
+  }
 }
 
 // ─── Enqueue ────────────────────────────────────────────────────────────────
@@ -227,71 +212,62 @@ export interface EnqueueResult {
 }
 
 /**
- * Enqueue a tenant-scoped batch as one pg-boss job per (type, chunk). Uses the
- * v12 bulk `insert` when available, falling back to per-job `send`.
- *
- * Durability contract: once this resolves, events survive a crash of any
- * process. That is the ONLY hard work the gateway is allowed to do.
+ * Enqueue a tenant-scoped batch as one pgmq message per (type, chunk).
+ * Uses batch sending with PGMQ for maximum throughput.
  */
 export async function enqueueIngestJobs(
-  jobs: Array<{ queue: string; payload: IngestJobPayload; priority: number }>,
+  jobs: Array<{ queue: string; payload: IngestJobPayload; priority?: number }>,
 ): Promise<EnqueueResult> {
   const jobIds: string[] = [];
   let enqueuedEvents = 0;
   const queues: EnqueueResult['queues'] = [];
   if (jobs.length === 0) return { jobIds, enqueuedEvents, queues };
 
-  const boss = pgboss as unknown as {
-    insert?: (
-      name: string,
-      items: Array<{ data: IngestJobPayload; priority: number }>,
-    ) => Promise<string[] | null>;
-  };
-
-  // Group by queue so we can use one bulk insert per queue.
-  const byQueue = new Map<string, Array<{ data: IngestJobPayload; priority: number }>>();
+  // Group by queue so we can send batches per queue in a single SQL query
+  const byQueue = new Map<string, Array<IngestJobPayload>>();
   for (const job of jobs) {
-    const list = byQueue.get(job.queue) ?? [];
-    list.push({ data: job.payload, priority: job.priority });
-    byQueue.set(job.queue, list);
+    const queueName = job.queue.replace(/\./g, '_');
+    const list = byQueue.get(queueName) ?? [];
+    list.push(job.payload);
+    byQueue.set(queueName, list);
   }
 
   for (const [queue, items] of byQueue) {
     const queueStartedAt = Date.now();
-    const queueEvents = items.reduce((n, i) => n + i.data.events.length, 0);
-    if (typeof boss.insert === 'function') {
-      try {
-        const ids = await boss.insert(queue, items);
-        if (ids) jobIds.push(...ids);
-        enqueuedEvents += queueEvents;
-        queues.push({
-          queue,
-          jobs: items.length,
-          events: queueEvents,
-          bulk: true,
-          fallback: false,
-          durationMs: Date.now() - queueStartedAt,
-        });
-        continue;
-      } catch (err) {
-        qLogger.warn({ err, queue }, 'bulk insert failed; falling back to send()');
+    const queueEvents = items.reduce((n, i) => n + (Array.isArray(i.events) ? i.events.length : 0), 0);
+
+    try {
+      const ids = await pgmq.sendBatch(queue, items);
+      jobIds.push(...ids);
+      enqueuedEvents += queueEvents;
+      queues.push({
+        queue,
+        jobs: items.length,
+        events: queueEvents,
+        bulk: true,
+        fallback: false,
+        durationMs: Date.now() - queueStartedAt,
+      });
+    } catch (err) {
+      qLogger.warn({ err, queue }, 'sendBatch failed; falling back to per-message send()');
+      for (const item of items) {
+        try {
+          const id = await pgmq.send(queue, item);
+          jobIds.push(id);
+          enqueuedEvents += Array.isArray(item.events) ? item.events.length : 0;
+        } catch (singleErr) {
+          qLogger.error({ err: singleErr, queue }, 'Failed to send individual pgmq message');
+        }
       }
+      queues.push({
+        queue,
+        jobs: items.length,
+        events: queueEvents,
+        bulk: false,
+        fallback: true,
+        durationMs: Date.now() - queueStartedAt,
+      });
     }
-    for (const item of items) {
-      const id = (await pgboss.send(queue, item.data, { priority: item.priority } as never)) as string | null;
-      if (id) {
-        jobIds.push(id);
-        enqueuedEvents += item.data.events.length;
-      }
-    }
-    queues.push({
-      queue,
-      jobs: items.length,
-      events: queueEvents,
-      bulk: false,
-      fallback: true,
-      durationMs: Date.now() - queueStartedAt,
-    });
   }
 
   return { jobIds, enqueuedEvents, queues };
@@ -299,70 +275,41 @@ export async function enqueueIngestJobs(
 
 // ─── Queue depth probe (gateway backpressure) ───────────────────────────────
 
-/** pg-boss v12 stores jobs in the `pgboss` schema, table `job`. */
-const DEPTH_SQL = `
-  SELECT
-    name,
-    state,
-    COUNT(*)::int AS n,
-    COUNT(*) FILTER (
-      WHERE state IN ('created', 'retry') AND start_after <= NOW()
-    )::int AS ready,
-    COUNT(*) FILTER (
-      WHERE state IN ('created', 'retry') AND start_after > NOW()
-    )::int AS deferred,
-    CASE
-      WHEN state IN ('created', 'retry') THEN
-        GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - MIN(created_on))) * 1000))::bigint
-      ELSE NULL
-    END AS oldest_pending_age_ms
-  FROM pgboss.job
-  WHERE name = ANY($1::text[])
-  GROUP BY name, state`;
-
-/**
- * Exact queue-name list for the depth probe.
- *
- * WHY `= ANY($1)` INSTEAD OF `LIKE 'ingest.%'`
- * -------------------------------------------
- * pg-boss v12 provisions `pgboss.job` as a PARTITIONED table with one partition
- * per queue name. A `LIKE` predicate is opaque to the partition-pruning planner,
- * so the previous form scanned EVERY partition of the job table — including
- * unrelated queues (alerting, automation, billing, webhooks) — on every probe.
- * Equality against a known list prunes to just these partitions.
- *
- * The list is intentionally the union of the ten typed ingest queues plus the
- * DLQ intake and usage-rollup queues, which is byte-for-byte the same set the
- * old `LIKE 'ingest.%'` matched (every name here begins with `ingest.`). This is
- * a pure planner optimization with no change to the returned numbers.
- */
-const DEPTH_QUEUE_NAMES: readonly string[] = [
-  ...ALL_INGEST_QUEUES,
-  INGEST_DLQ_INTAKE_QUEUE,
-  INGEST_USAGE_ROLLUP_QUEUE,
-];
-
 const DLQ_DEPTH_SQL = `
   SELECT queue, COUNT(*)::int AS n
   FROM ingestion_dead_letter_jobs
   WHERE replayed_at IS NULL
-    AND queue LIKE 'ingest.%'
   GROUP BY queue`;
 
-export interface IngestQueueDepthSnapshot {
-  /** Jobs waiting to be picked up (created + retry) across all ingest queues. */
+export type EventQueueLifecycleStatus = 'idle' | 'pending' | 'inserting';
+
+export interface EventTypeQueueStatus {
+  eventType: SdkEventType;
+  queue: string;
+  status: EventQueueLifecycleStatus;
+  /** Total jobs in the queue table */
+  total: number;
+  /** Jobs waiting to be picked up by workers */
   pending: number;
-  /** Pending/retry jobs that are runnable now (start_after <= now). */
-  ready: number;
-  /** Pending/retry jobs delayed by retry/fairness scheduling (start_after > now). */
-  deferred: number;
-  /** Jobs currently being processed. */
-  active: number;
-  /** Failed jobs (pre-dead-letter). */
+  /** Jobs currently leased and actively being inserted */
+  inserting: number;
+  /** Dead-lettered jobs pending replay */
   failed: number;
-  /** Persisted, unreplayed DLQ rows across all ingest queues. */
+  oldestPendingAgeMs: number | null;
+}
+
+export interface IngestQueueDepthSnapshot {
+  /** Jobs waiting to be picked up across all ingest queues. */
+  pending: number;
+  /** Runnable jobs ready now. */
+  ready: number;
+  /** Delayed/deferred jobs. */
+  deferred: number;
+  /** Active jobs currently leased. */
+  active: number;
+  /** Failed / dead-lettered jobs in dead letter storage. */
+  failed: number;
   deadLettered: number;
-  /** Age of the oldest pending/retry job across all ingest queues. */
   oldestPendingAgeMs: number | null;
   perQueue: Array<{
     queue: string;
@@ -372,39 +319,25 @@ export interface IngestQueueDepthSnapshot {
     deferred: number;
     oldestPendingAgeMs: number | null;
   }>;
+  perEventType?: Record<SdkEventType, EventTypeQueueStatus>;
   dlqPerQueue: Array<{ queue: string; count: number }>;
 }
 
-/**
- * Queue depth probe. pg-boss v12 exposes no public size API, so we read the
- * job table directly — one partition-pruned grouped scan.
- *
- * This runs on the CONTENDED control pool, so its cost and frequency both
- * matter. Callers cache the result (gateway: INGESTION_QUEUE_DEPTH_CACHE_MS,
- * metrics server: DEPTH_CACHE_MS) so the request path stays O(1) and never
- * awaits this probe.
- */
-export async function ingestQueueDepth(
-  pool: {
-    query: (sql: string, params?: unknown[]) => Promise<{
-      rows: Array<
-        | {
-            name: string;
-            state: string;
-            n: number;
-            ready: number;
-            deferred: number;
-            oldest_pending_age_ms: number | string | null;
-          }
-        | {
-            queue: string;
-            n: number;
-          }
-      >;
-    }>;
-  },
-): Promise<IngestQueueDepthSnapshot> {
-  const snap: IngestQueueDepthSnapshot = {
+export function createEmptyQueueDepthSnapshot(): IngestQueueDepthSnapshot {
+  const perEventType = {} as Record<SdkEventType, EventTypeQueueStatus>;
+  for (const type of SDK_EVENT_TYPES) {
+    perEventType[type] = {
+      eventType: type,
+      queue: INGEST_QUEUES[type],
+      status: 'idle',
+      total: 0,
+      pending: 0,
+      inserting: 0,
+      failed: 0,
+      oldestPendingAgeMs: null,
+    };
+  }
+  return {
     pending: 0,
     ready: 0,
     deferred: 0,
@@ -413,39 +346,81 @@ export async function ingestQueueDepth(
     deadLettered: 0,
     oldestPendingAgeMs: null,
     perQueue: [],
+    perEventType,
     dlqPerQueue: [],
   };
+}
+
+/**
+ * Queue depth probe reading PGMQ telemetry.
+ */
+export async function ingestQueueDepth(
+  pool?: {
+    query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
+  },
+): Promise<IngestQueueDepthSnapshot> {
+  const snap = createEmptyQueueDepthSnapshot();
+
   try {
-    const r = await pool.query(DEPTH_SQL, [DEPTH_QUEUE_NAMES]);
-    for (const row of r.rows) {
-      if (!('name' in row)) continue;
-      const count = Number(row.n) || 0;
-      const ready = Number(row.ready) || 0;
-      const deferred = Number(row.deferred) || 0;
-      const oldestPendingAgeMs = row.oldest_pending_age_ms == null
-        ? null
-        : Math.max(0, Number(row.oldest_pending_age_ms) || 0);
-      snap.perQueue.push({ queue: row.name, state: row.state, count, ready, deferred, oldestPendingAgeMs });
-      if (row.state === 'created' || row.state === 'retry') {
-        snap.pending += count;
-        snap.ready += ready;
-        snap.deferred += deferred;
-        if (oldestPendingAgeMs != null) {
-          snap.oldestPendingAgeMs = Math.max(snap.oldestPendingAgeMs ?? 0, oldestPendingAgeMs);
+    const allMetrics = await pgmq.metricsAll();
+    const ingestMetrics = allMetrics.filter(
+      (m) => m.queueName.startsWith('ingest_') || m.queueName.startsWith('ingest.'),
+    );
+
+    for (const m of ingestMetrics) {
+      const pending = m.queueLength;
+      const ready = m.queueVisibleLength;
+      const active = Math.max(0, pending - ready);
+      const oldestAgeMs = m.oldestMsgAgeSec != null ? m.oldestMsgAgeSec * 1000 : null;
+
+      snap.pending += pending;
+      snap.ready += ready;
+      snap.active += active;
+      if (oldestAgeMs != null) {
+        snap.oldestPendingAgeMs = Math.max(snap.oldestPendingAgeMs ?? 0, oldestAgeMs);
+      }
+
+      snap.perQueue.push({
+        queue: m.queueName,
+        state: 'ready',
+        count: pending,
+        ready,
+        deferred: Math.max(0, pending - ready),
+        oldestPendingAgeMs: oldestAgeMs,
+      });
+
+      const matchedType = QUEUE_TO_EVENT_TYPE.get(m.queueName);
+      if (matchedType && snap.perEventType) {
+        const target = snap.perEventType[matchedType];
+        if (target) {
+          target.total = pending;
+          target.pending = ready;
+          target.inserting = active;
+          target.oldestPendingAgeMs = oldestAgeMs;
+          target.status = active > 0 ? 'inserting' : ready > 0 ? 'pending' : 'idle';
         }
-      } else if (row.state === 'active') snap.active += count;
-      else if (row.state === 'failed') snap.failed += count;
+      }
     }
-    const dlq = await pool.query(DLQ_DEPTH_SQL);
-    for (const row of dlq.rows) {
-      if (!('queue' in row)) continue;
-      const count = Number(row.n) || 0;
-      snap.deadLettered += count;
-      snap.dlqPerQueue.push({ queue: row.queue, count });
+
+    if (pool) {
+      const dlq = await pool.query(DLQ_DEPTH_SQL).catch(() => ({ rows: [] }));
+      for (const row of dlq.rows) {
+        const count = Number(row.n) || 0;
+        snap.deadLettered += count;
+        snap.dlqPerQueue.push({ queue: row.queue, count });
+
+        const matchedType = QUEUE_TO_EVENT_TYPE.get(row.queue);
+        if (matchedType && snap.perEventType) {
+          const target = snap.perEventType[matchedType];
+          if (target) {
+            target.failed += count;
+          }
+        }
+      }
     }
   } catch (err) {
-    // pg-boss schema not yet created (first boot) or transient error: report 0.
-    qLogger.debug({ err }, 'queue depth probe failed; reporting zero depth');
+    qLogger.debug({ err }, 'PGMQ queue depth probe failed; reporting zero depth');
   }
+
   return snap;
 }

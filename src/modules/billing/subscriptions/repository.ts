@@ -80,6 +80,18 @@ export interface UsageLimitSnapshot {
   entitlements: Record<string, unknown>;
 }
 
+export const SUBSCRIPTION_COLUMNS = `
+  id, organization_id, plan_id, status, provider, billing_interval,
+  provider_customer_id, provider_subscription_id, current_period_start,
+  current_period_end, trial_start, trial_end, cancel_at_period_end,
+  cancelled_at, modules, addons, metadata, created_at, updated_at, deleted_at
+`;
+
+export const SUBSCRIPTION_EVENT_COLUMNS = `
+  id, organization_id, subscription_id, event_type, actor,
+  actor_user_id, old_plan_id, new_plan_id, metadata, created_at
+`;
+
 export class SubscriptionsRepository {
   constructor(private readonly db: Pool = pool) {}
 
@@ -100,7 +112,7 @@ export class SubscriptionsRepository {
 
   async getActiveSubscription(orgId: string, db: Db = this.db): Promise<SubscriptionRow | null> {
     const result = await db.query(
-      `SELECT * FROM organization_subscriptions 
+      `SELECT ${SUBSCRIPTION_COLUMNS} FROM organization_subscriptions 
        WHERE organization_id = $1 AND status IN ('trialing','active')
        AND deleted_at IS NULL
        AND current_period_end > NOW()
@@ -112,7 +124,7 @@ export class SubscriptionsRepository {
 
   async getSubscriptionForUpdate(orgId: string, db: PoolClient): Promise<SubscriptionRow | null> {
     const result = await db.query(
-      `SELECT * FROM organization_subscriptions 
+      `SELECT ${SUBSCRIPTION_COLUMNS} FROM organization_subscriptions 
        WHERE organization_id = $1 AND status IN ('trialing','active','past_due') 
        AND deleted_at IS NULL
        AND current_period_end > NOW()
@@ -131,7 +143,7 @@ export class SubscriptionsRepository {
          current_period_end, trial_start, trial_end, cancel_at_period_end,
          modules, metadata
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb)
-       RETURNING *`,
+       RETURNING ${SUBSCRIPTION_COLUMNS}`,
       [
         sub.organization_id, sub.plan_id, sub.status, sub.provider ?? BillingProvider.SYSTEM,
         sub.billing_interval, sub.provider_customer_id, sub.provider_subscription_id,
@@ -242,7 +254,7 @@ export class SubscriptionsRepository {
 
     values.push(id);
     const result = await db.query(
-      `UPDATE organization_subscriptions SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+      `UPDATE organization_subscriptions SET ${fields.join(', ')} WHERE id = $${i} RETURNING ${SUBSCRIPTION_COLUMNS}`,
       values
     );
     return result.rows[0];
@@ -265,10 +277,10 @@ export class SubscriptionsRepository {
     );
   }
 
-  async getSubscriptionHistory(orgId: string, db: Db = this.db): Promise<SubscriptionEventRow[]> {
+  async getSubscriptionHistory(orgId: string, limit = 100, db: Db = this.db): Promise<SubscriptionEventRow[]> {
     const result = await db.query(
-      `SELECT * FROM subscription_events WHERE organization_id = $1 ORDER BY created_at DESC`,
-      [orgId]
+      `SELECT ${SUBSCRIPTION_EVENT_COLUMNS} FROM subscription_events WHERE organization_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [orgId, limit]
     );
     return result.rows;
   }

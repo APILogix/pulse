@@ -140,6 +140,9 @@ export interface CreateRuleInput {
   evaluationCategory?: 'fast' | 'analytics';
 }
 
+export const ALERT_RULE_CONDITIONS_COLUMNS = 'id, rule_id, condition_type, condition_group_id, field_path, operator, threshold_value, lookback_minutes, aggregate_function, sub_query, is_required, order_index, created_at, updated_at';
+export const ALERT_RULE_ACTIONS_COLUMNS = 'id, rule_id, action_type, priority, order_index, connector_id, route_id, template_id, escalation_policy_id, throttle_duration_seconds, max_notifications_per_hour, action_conditions, is_active, created_at, updated_at';
+
 export class RulesRepository {
   private readonly db: typeof pool;
   private readonly bindingsForRevision: AlertRuleBindingsRepository;
@@ -297,7 +300,7 @@ export class RulesRepository {
 
   async getRuleConditions(ruleId: string): Promise<AlertRuleConditionRow[]> {
     const r = await this.db.query<AlertRuleConditionRow>(
-      `SELECT * FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`,
+      `SELECT ${ALERT_RULE_CONDITIONS_COLUMNS} FROM alert_rule_conditions WHERE rule_id=$1 ORDER BY order_index ASC`,
       [ruleId],
     );
     return r.rows;
@@ -305,7 +308,7 @@ export class RulesRepository {
 
   async getRuleActions(ruleId: string): Promise<AlertRuleActionRow[]> {
     const r = await this.db.query<AlertRuleActionRow>(
-      `SELECT * FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`,
+      `SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id=$1 ORDER BY order_index ASC, priority DESC`,
       [ruleId],
     );
     return r.rows;
@@ -315,9 +318,7 @@ export class RulesRepository {
   async getRuleActionsByRuleIds(ruleIds: string[]): Promise<AlertRuleActionRow[]> {
     if (ruleIds.length === 0) return [];
     const r = await this.db.query<AlertRuleActionRow>(
-      `SELECT * FROM alert_rule_actions
-       WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE
-       ORDER BY rule_id, order_index ASC, priority DESC`,
+      `SELECT ${ALERT_RULE_ACTIONS_COLUMNS} FROM alert_rule_actions WHERE rule_id = ANY($1::uuid[]) AND is_active = TRUE ORDER BY rule_id, order_index ASC, priority DESC`,
       [ruleIds],
     );
     return r.rows;

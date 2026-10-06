@@ -48,14 +48,14 @@ async function claimAuthEmailBatch(
          FROM auth_email_outbox
          WHERE attempts < max_attempts
            AND (
-             status = 'pending'
+             (status = 'pending' AND next_attempt_at <= NOW())
              OR (
                status = 'processing'
                AND processing_started_at IS NOT NULL
                AND processing_started_at < NOW() - ($2 * INTERVAL '1 millisecond')
              )
            )
-         ORDER BY created_at ASC
+         ORDER BY next_attempt_at ASC, created_at ASC
          LIMIT $1
          FOR UPDATE SKIP LOCKED
        )
@@ -92,6 +92,7 @@ async function markAuthEmailFailed(
      SET attempts = attempts + 1,
          last_error = $2,
          processing_started_at = NULL,
+         next_attempt_at = NOW() + (POWER(2, LEAST(attempts + 1, 8)) * INTERVAL '15 seconds'),
          status = CASE
            WHEN attempts + 1 >= max_attempts THEN 'failed'
            ELSE 'pending'

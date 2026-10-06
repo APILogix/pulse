@@ -15,6 +15,8 @@ export type UserDbRow = User & {
     email_verified?: boolean;
 };
 export declare function toUser(row: UserDbRow | undefined | null): User | null;
+export declare const USER_COLUMNS = "\n  id, email, email_hash, email_verified, email_verified_at, full_name, avatar_url,\n  password_hash, last_password_change, password_history, status, status_reason,\n  is_admin, current_org_id, mfa_enabled, mfa_enforced_at, mfa_backup_codes_generated_at,\n  login_attempts, locked_until, last_login_at, last_login_ip, last_login_user_agent,\n  last_failed_login_at, last_failed_login_ip, timezone, locale, preferred_mfa_method,\n  accepted_terms_at, accepted_terms_version, accepted_privacy_at, accepted_privacy_version,\n  marketing_consent, marketing_consent_updated_at, data_processing_consent,\n  suspended_at, suspended_by, deleted_at, deleted_by, deletion_reason,\n  deletion_scheduled_at, created_at, updated_at, created_by, version\n";
+export declare const USER_SUMMARY_COLUMNS = "\n  id, email, email_hash, email_verified, full_name, avatar_url, status, status_reason,\n  is_admin, current_org_id, mfa_enabled, timezone, locale, last_login_at, locked_until,\n  deleted_at, created_at, updated_at, version\n";
 export declare function findUserById(id: string, client?: PoolClient): Promise<User | null>;
 export declare function findUserByEmailHash(emailHash: string, client?: PoolClient): Promise<User | null>;
 /**
