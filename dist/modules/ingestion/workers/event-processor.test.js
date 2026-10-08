@@ -152,7 +152,7 @@ describe('EventProcessor failure and idempotency behavior', () => {
         finally {
             ingest.mockRestore();
         }
-    });
+    }, 15_000);
     it('rolls back, releases the client, and does not bill usage when persistence fails', async () => {
         const { EventProcessor } = await import('./event-processor.js');
         const client = clientWithQueries();

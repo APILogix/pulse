@@ -32,7 +32,7 @@
  * TENANT SAFETY: every lookup is organization-scoped. A connector, incident or
  * delivery belonging to another organization can never be resolved here.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import { ConnectorRepository } from '../connectors/repository.js';
 import { NotificationDispatcher } from '../connectors/delivery/delivery.service.js';
 import { IncidentsRepository } from '../alerting/incidents/incidents.repository.js';

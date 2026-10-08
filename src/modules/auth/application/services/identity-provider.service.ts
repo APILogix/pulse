@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import { logAudit } from '../../../../shared/middleware/audit-logger.js';
 import { apiBaseUrl, getApiProviderAuthorizeUrl } from '../../infrastructure/config/oauth-callback.config.js';
@@ -103,7 +103,7 @@ export async function startSocialLogin(
 ): Promise<{ authorization_url: string; state: string }> {
   assertProviderReady(provider);
 
-  const state = randomUUID();
+  const state = uuidv7();
   socialLoginStateCache.set(state, {
     provider,
     rememberMe: input.remember_me === true,
@@ -157,7 +157,7 @@ export async function startIdentityLink(
     );
   }
 
-  const state = randomUUID();
+  const state = uuidv7();
   identityLinkStateCache.set(state, { userId, provider });
 
   logAudit({
@@ -242,7 +242,7 @@ export async function completeSocialLogin(
 
     const created = await repository.withTransaction(async (client) => {
       const user = await repository.createUser({
-        id: randomUUID(),
+        id: uuidv7(),
         email: normalizedEmail,
         full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
         password: null,

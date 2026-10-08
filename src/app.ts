@@ -18,7 +18,7 @@ import {
 } from 'fastify-type-provider-zod';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
@@ -103,7 +103,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     loggerInstance: logger as any,
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
-    genReqId: (req) => req.headers['x-request-id']?.toString() || randomUUID(),
+    genReqId: (req) => req.headers['x-request-id']?.toString() || uuidv7(),
     connectionTimeout: 30000,
     keepAliveTimeout: 65000,
     maxRequestsPerSocket: 1000,

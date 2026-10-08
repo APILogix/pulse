@@ -11,6 +11,15 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Source: canonical_migrations_draft/18_ai/001_extensions.up.sql
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Optional native C extension for RFC 9562 UUIDv7
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
+EXCEPTION
+  WHEN OTHERS THEN
+    NULL; -- Safe fallback when compiled pg_uuidv7 library is not present on host OS
+END $$;
+
 -- ============================================================
 -- Source: 02_types/001_enums_and_domains.sql
 -- ============================================================
@@ -2298,6 +2307,12 @@ CREATE INDEX IF NOT EXISTS idx_project_api_keys_env_active
   ON project_api_keys (project_id, environment_id, status)
   WHERE deleted_at IS NULL;
 
+-- High-performance covering index for gateway authentication lookup
+CREATE INDEX IF NOT EXISTS idx_project_api_keys_auth_covering
+  ON project_api_keys (public_key)
+  INCLUDE (id, project_id, organization_id, environment_id, status, expires_at, secret_hash)
+  WHERE deleted_at IS NULL;
+
 -- ============================================================
 -- Source: 06_project/001_create_api_key_usage_daily.sql
 -- ============================================================
@@ -4037,12 +4052,6 @@ CREATE TABLE IF NOT EXISTS coupon_applicable_plans
 CREATE INDEX IF NOT EXISTS idx_coupon_applicable_plans_plan
   ON coupon_applicable_plans(plan_id);
 
-CREATE INDEX IF NOT EXISTS idx_cap_plan
-ON coupon_applicable_plans(plan_id);
-
-CREATE INDEX IF NOT EXISTS idx_cap_coupon
-ON coupon_applicable_plans(coupon_id);
-
 -- ============================================================
 -- Source: 07_billing/001_create_coupon_redemptions.sql
 -- ============================================================
@@ -4594,8 +4603,6 @@ ON plan_prices
 )
 WHERE deleted_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_plan_prices_active ON plan_prices(plan_id) WHERE deleted_at IS NULL;
-
 -- ============================================================
 -- Source: 07_billing/001_create_subscription_addons.sql
 -- ============================================================
@@ -4981,12 +4988,6 @@ CREATE TABLE IF NOT EXISTS connector_credentials (
   UNIQUE(connector_id,key_name)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_credential_key
-ON connector_credentials (connector_id, key_name);
-
-CREATE INDEX IF NOT EXISTS idx_credentials_connector
-ON connector_credentials (connector_id);
-
 CREATE INDEX IF NOT EXISTS idx_credentials_type
 ON connector_credentials (credential_type);
 
@@ -5243,9 +5244,6 @@ CREATE TABLE IF NOT EXISTS connector_oauth_states (
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_oauth_state
-ON connector_oauth_states (state);
 
 CREATE INDEX IF NOT EXISTS idx_oauth_expiry
 ON connector_oauth_states (expires_at);
@@ -5804,9 +5802,6 @@ CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_batch
 
 CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_org_created
   ON alert_delivery_attempts(organization_id, created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event_created
-  ON alert_delivery_attempts (event_id, created_at DESC);
 
 -- ============================================================
 -- Source: 09_alerting/001_create_alert_escalation_steps.sql
@@ -10019,9 +10014,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_org
 CREATE INDEX IF NOT EXISTS idx_audit_logs_project
   ON audit_logs(project_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
-  ON audit_logs(created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_audit_actor_type_id_time
   ON audit_logs(actor_type, actor_id, created_at DESC)
   WHERE actor_type IS NOT NULL;
@@ -11532,6 +11524,41 @@ WHERE organization_id = p_organization_id
 ORDER BY period_end DESC
 LIMIT 1;
 $$;
+
+-- RFC 9562 Monotonic UUIDv7 Generator
+-- Used by primary keys to guarantee sequential right-edge B-tree index appends
+CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS UUID AS $$
+DECLARE
+  v_time NUMERIC;
+  v_unix_t BIGINT;
+  v_rand BYTEA;
+  v_output TEXT;
+BEGIN
+  -- 1. Extract current epoch milliseconds
+  v_time := clock_timestamp();
+  v_unix_t := (EXTRACT(EPOCH FROM v_time) * 1000)::BIGINT;
+  
+  -- 2. Generate 10 random bytes for sequence & entropy
+  v_rand := gen_random_bytes(10);
+  
+  -- 3. Construct RFC 9562 UUIDv7 hex representation:
+  -- unix_ts_ms (48 bits / 12 hex) | ver (4 bits = '7') | rand_a (12 bits / 3 hex) | var (2 bits = '8'..'b') | rand_b (62 bits)
+  v_output := lpad(to_hex(v_unix_t), 12, '0') ||
+              '7' ||
+              substr(encode(v_rand, 'hex'), 1, 3) ||
+              to_hex((8 | (get_byte(v_rand, 2) & 3))::INT) ||
+              substr(encode(v_rand, 'hex'), 5, 3) ||
+              substr(encode(v_rand, 'hex'), 8, 12);
+              
+  RETURN v_output::UUID;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION uuidv7() RETURNS UUID AS $$
+BEGIN
+  RETURN uuid_generate_v7();
+END;
+$$ LANGUAGE plpgsql VOLATILE;
 
 -- ============================================================
 -- Source: 17_functions/900_deferred_foreign_keys.sql
@@ -13453,7 +13480,7 @@ WHERE s.id IS NULL
 ON CONFLICT (project_id) DO NOTHING;
 
 -- ============================================================
--- Source: 04_user\999_triggers.sql
+-- Source: 04_user/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -13486,7 +13513,7 @@ CREATE TRIGGER update_users_updated_at
   EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================
--- Source: 05_organization\999_triggers.sql
+-- Source: 05_organization/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -13532,7 +13559,7 @@ CREATE TRIGGER trg_quota_requests_updated_at
   EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 06_project\999_triggers.sql
+-- Source: 06_project/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/003_project_module_refactor.sql
@@ -13643,7 +13670,7 @@ CREATE TRIGGER trg_projects_version
   EXECUTE FUNCTION bump_project_version();
 
 -- ============================================================
--- Source: 07_billing\999_triggers.sql
+-- Source: 07_billing/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -13762,7 +13789,7 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 08_connector\999_triggers.sql
+-- Source: 08_connector/999_triggers.sql
 -- ============================================================
 
 -- Source: canonical_migrations_draft/06_connectors/015_create_connector_runtime_guards.up.sql
@@ -13785,7 +13812,7 @@ CREATE TRIGGER trg_project_connector_subs_updated_at
   EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 10_notification\999_triggers.sql
+-- Source: 10_notification/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -13801,7 +13828,7 @@ CREATE TRIGGER trg_notification_templates_updated_at
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 09_alerting\999_triggers.sql
+-- Source: 09_alerting/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -14009,7 +14036,7 @@ CREATE TRIGGER trg_alerting_workspaces_updated_at
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 11_observability\999_triggers.sql
+-- Source: 11_observability/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql
@@ -14025,7 +14052,7 @@ CREATE TRIGGER trg_ingestion_jobs_updated_at
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 13_ai\999_triggers.sql
+-- Source: 13_ai/999_triggers.sql
 -- ============================================================
 
 -- Source: canonical_migrations_draft/18_ai/011_ai_model_routes.up.sql
@@ -14036,7 +14063,7 @@ CREATE TRIGGER trg_ai_model_routes_updated_at
   EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 14_automation\999_triggers.sql
+-- Source: 14_automation/999_triggers.sql
 -- ============================================================
 
 -- Source: canonical_migrations_draft/19_automation/006_automation_actions.sql
@@ -14102,7 +14129,7 @@ CREATE TRIGGER trg_automation_run_steps_updated_at
   EXECUTE FUNCTION set_updated_at();
 
 -- ============================================================
--- Source: 15_analytics\999_triggers.sql
+-- Source: 15_analytics/999_triggers.sql
 -- ============================================================
 
 -- Source: migrations/002_create_all.sql

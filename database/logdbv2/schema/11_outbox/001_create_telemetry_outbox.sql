@@ -6,12 +6,17 @@ CREATE TABLE IF NOT EXISTS telemetry_outbox (
   environment      TEXT,
   signal_kind      TEXT NOT NULL,
   event_id         TEXT NOT NULL,
+  severity         logdb_severity DEFAULT 'info',
+  fast_path        BOOLEAN NOT NULL DEFAULT false,
+  attributes       JSONB NOT NULL DEFAULT '{}'::jsonb,
   payload          JSONB NOT NULL DEFAULT '{}'::jsonb,
   metadata         JSONB NOT NULL DEFAULT '{}'::jsonb,
-  fast_path        BOOLEAN NOT NULL DEFAULT false,
+  occurred_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   published_at     TIMESTAMPTZ,
   claimed_at       TIMESTAMPTZ,
+  claimed_by       TEXT,
   claim_owner      TEXT,
+  attempts         INTEGER NOT NULL DEFAULT 0,
   attempt_count    INTEGER NOT NULL DEFAULT 0,
   last_error       TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -47,3 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_claimed
 CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_alert_unpublished
   ON telemetry_outbox (created_at)
   WHERE published_at IS NULL AND signal_kind = 'alert_domain_event';
+CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_fast_claim
+  ON telemetry_outbox (created_at ASC)
+  WHERE published_at IS NULL AND fast_path = TRUE;
+

@@ -1,6 +1,6 @@
 -- Canonical span telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_spans (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -113,13 +113,7 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_org_project_time
   ON events_spans (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_org_env_time
-  ON events_spans (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_org_time
-  ON events_spans (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_org_env_direct_time
-  ON events_spans (organization_id, environment, occurred_at DESC);
+  ON events_spans (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_org_request_time
   ON events_spans (organization_id, request_id, occurred_at DESC)
@@ -128,69 +122,20 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_org_request_time
 CREATE INDEX IF NOT EXISTS idx_events_spans_pubid
   ON events_spans (organization_id, project_id, public_id);
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_span
-  ON events_spans (organization_id, span_id, occurred_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_parent_span
   ON events_spans (organization_id, parent_span_id, occurred_at DESC)
   WHERE parent_span_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_request
-  ON events_spans (organization_id, request_id, occurred_at DESC)
-  WHERE request_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_session
-  ON events_spans (organization_id, session_id, occurred_at DESC)
-  WHERE session_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_user
-  ON events_spans (organization_id, user_id, occurred_at DESC)
-  WHERE user_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_tenant
-  ON events_spans (organization_id, tenant_id, occurred_at DESC)
-  WHERE tenant_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_kind
-  ON events_spans (organization_id, project_id, span_kind, occurred_at DESC)
-  WHERE span_kind IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_service
   ON events_spans (organization_id, project_id, service, occurred_at DESC)
   WHERE service IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_db_time
-  ON events_spans (organization_id, project_id, db_system, occurred_at DESC)
-  WHERE db_system IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_host_time
-  ON events_spans (organization_id, project_id, http_host, occurred_at DESC)
-  WHERE http_host IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_release_time
-  ON events_spans (organization_id, project_id, release, occurred_at DESC)
-  WHERE release IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_trace_time
-  ON events_spans (organization_id, trace_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_parent_time
-  ON events_spans (organization_id, parent_span_id, occurred_at DESC)
-  WHERE parent_span_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_type_time
-  ON events_spans (organization_id, project_id, span_type, occurred_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_endpoint_time
   ON events_spans (organization_id, project_id, endpoint, occurred_at DESC)
   WHERE endpoint IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_status_time
-  ON events_spans (organization_id, project_id, span_status, occurred_at DESC)
-  WHERE span_status IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_occurred_brin
-  ON events_spans USING BRIN (occurred_at);
+  ON events_spans USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_watermark
   ON events_spans (organization_id, project_id, environment, ingested_at);

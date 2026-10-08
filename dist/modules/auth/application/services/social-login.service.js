@@ -12,7 +12,7 @@ import { issueSessionForUser } from './index.js';
 import { AuthError, AuthErrorCodes } from '../../domain/types.js';
 import { normalizeEmail } from '../../domain/constants.js';
 import { emailToHash } from './shared-helpers.js';
-import { randomUUID } from 'node:crypto';
+import { v7 as uuidv7 } from 'uuid';
 function getSocialLoginCallbackUrl() {
     return getApiSocialLoginCallbackUrl();
 }
@@ -81,7 +81,7 @@ export async function completeSocialLogin(callbackUrl, ipAddress, userAgent, req
         }
         const created = await repository.withTransaction(async (client) => {
             const user = await repository.createUser({
-                id: randomUUID(),
+                id: uuidv7(),
                 email: normalizedEmail,
                 full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
                 password: null,

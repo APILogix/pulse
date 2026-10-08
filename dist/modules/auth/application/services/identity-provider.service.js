@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { logAudit } from '../../../../shared/middleware/audit-logger.js';
 import { apiBaseUrl, getApiProviderAuthorizeUrl } from '../../infrastructure/config/oauth-callback.config.js';
 import { identityLinkStateCache, socialLoginStateCache, } from '../../infrastructure/cache/auth.cache.js';
@@ -59,7 +59,7 @@ export function frontendIdentityProvidersUrl() {
 }
 export async function startSocialLogin(provider, input, ipAddress, userAgent, requestId) {
     assertProviderReady(provider);
-    const state = randomUUID();
+    const state = uuidv7();
     socialLoginStateCache.set(state, {
         provider,
         rememberMe: input.remember_me === true,
@@ -94,7 +94,7 @@ export async function startIdentityLink(userId, provider, ipAddress, requestId) 
     if (existing) {
         throw new AuthError('Provider already linked to this account', AuthErrorCodes.IDENTITY_ALREADY_LINKED, 409);
     }
-    const state = randomUUID();
+    const state = uuidv7();
     identityLinkStateCache.set(state, { userId, provider });
     logAudit({
         user_id: userId,
@@ -140,7 +140,7 @@ export async function completeSocialLogin(profile, flow, ipAddress, userAgent, r
         }
         const created = await repository.withTransaction(async (client) => {
             const user = await repository.createUser({
-                id: randomUUID(),
+                id: uuidv7(),
                 email: normalizedEmail,
                 full_name: profile.displayName || normalizedEmail.split('@')[0] || 'User',
                 password: null,

@@ -13,7 +13,7 @@
  * and review-verified; behavioral verification is covered by the port's
  * in-memory unit tests and by integration tests when a database is available.
  */
-import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import type { Pool, PoolClient } from "pg";
 import { pool } from "../../../config/database.js";
 import { redisLookupCache } from "../../../db/redis/lookup-cache.js";
@@ -138,7 +138,7 @@ export class PgConfigStore implements ConfigStore {
         throw new Error("SDK config head not found for environment");
       }
       const revisionNo = head.rows[0].current_revision + 1;
-      const revisionId = randomUUID();
+      const revisionId = uuidv7();
 
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO project_environment_sdk_config_revisions(
@@ -215,8 +215,8 @@ export class PgConfigStore implements ConfigStore {
     const existing = await this.loadCurrent(scope);
     if (existing) return existing;
 
-    const headId = randomUUID();
-    const revisionId = randomUUID();
+    const headId = uuidv7();
+    const revisionId = uuidv7();
     await this.withTx(async (client) => {
       const head = await client.query<{ id: string }>(
         `INSERT INTO project_environment_sdk_configs(

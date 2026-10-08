@@ -13,7 +13,7 @@
  * background retry worker both funnel through `attemptDelivery`.
  */
 import type { FastifyBaseLogger } from 'fastify';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { pgmq } from '../../../lib/pgmq.js';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
@@ -369,6 +369,6 @@ export class NotificationDispatcher {
 
   /** Convenience for building a payload's correlation id when not supplied. */
   static newCorrelationId(): string {
-    return randomUUID();
+    return uuidv7();
   }
 }

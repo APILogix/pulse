@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import type { AnalyticsService } from '../analytics/service.js';
 import type { AlertingService } from '../alerting/service.js';
@@ -315,7 +315,7 @@ export class MonitoringTools {
       this.addResult(sources, calls, toolName, projectId, args, result, Date.now() - started, title);
     } catch (error) {
       calls.push({
-        invocationId: randomUUID(), toolName, projectId, arguments: args,
+        invocationId: uuidv7(), toolName, projectId, arguments: args,
         result: { error: 'Monitoring data query failed' }, durationMs: Date.now() - started, status: 'failed',
       });
       // A failed tool is audited but is never supplied as grounding evidence.
@@ -347,7 +347,7 @@ export class MonitoringTools {
     durationMs: number,
     title: string,
   ): void {
-    const invocationId = randomUUID();
+    const invocationId = uuidv7();
     const observedAt = new Date().toISOString();
     calls.push({
       invocationId, toolName, projectId, arguments: args, result,

@@ -22,7 +22,7 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { promisify } from 'util';
 import bcrypt from 'bcrypt';
 import * as OTPAuth from 'otpauth';

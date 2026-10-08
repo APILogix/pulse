@@ -13,9 +13,6 @@ CREATE TABLE IF NOT EXISTS connector_oauth_states (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_oauth_state
-ON connector_oauth_states (state);
-
 CREATE INDEX IF NOT EXISTS idx_oauth_expiry
 ON connector_oauth_states (expires_at);
 

@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { sanitizeUntrusted, stableStringify } from './security.js';
 function boundedResult(value) {
     return sanitizeUntrusted(value, 20_000).value;
@@ -226,7 +226,7 @@ export class MonitoringTools {
         }
         catch (error) {
             calls.push({
-                invocationId: randomUUID(), toolName, projectId, arguments: args,
+                invocationId: uuidv7(), toolName, projectId, arguments: args,
                 result: { error: 'Monitoring data query failed' }, durationMs: Date.now() - started, status: 'failed',
             });
             // A failed tool is audited but is never supplied as grounding evidence.
@@ -249,7 +249,7 @@ export class MonitoringTools {
         }
     }
     addResult(sources, calls, toolName, projectId, args, result, durationMs, title) {
-        const invocationId = randomUUID();
+        const invocationId = uuidv7();
         const observedAt = new Date().toISOString();
         calls.push({
             invocationId, toolName, projectId, arguments: args, result,

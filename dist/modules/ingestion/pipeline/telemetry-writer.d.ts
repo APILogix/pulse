@@ -18,6 +18,7 @@ export interface ScopedEvent {
      * receipt clock. Optional for direct writer callers and legacy tests.
      */
     occurredAtMs?: number | undefined;
+    errorGroupId?: string | null | undefined;
     event: NormalizedEvent;
 }
 export interface TimestampContext {

@@ -1,7 +1,7 @@
 -- Canonical message telemetry (breadcrumb / audit / messaging events).
 -- Range-partitioned by occurred_at for retention pruning.
 CREATE TABLE IF NOT EXISTS events_messages (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,

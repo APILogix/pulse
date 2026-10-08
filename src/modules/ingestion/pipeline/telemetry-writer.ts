@@ -33,7 +33,8 @@
  *     the event-analytics worker and the ingestion event-processor, NOT
  *     written here — this writer only persists raw events.
  */
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
+import { generatePublicId, PUBLIC_ID_PREFIXES } from '../../../shared/utils/public-id-generator.js';
 import { STATUS_CODES } from 'http';
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
@@ -60,6 +61,7 @@ export interface ScopedEvent {
    * receipt clock. Optional for direct writer callers and legacy tests.
    */
   occurredAtMs?: number | undefined;
+  errorGroupId?: string | null | undefined;
   event: NormalizedEvent;
 }
 
@@ -996,7 +998,7 @@ export class TelemetryWriter {
   /** Best-effort event id (events_*.event_id is NOT NULL). */
   private eventId(ev: NormalizedEvent): string {
     const id = (ev as { eventId?: unknown }).eventId;
-    return typeof id === 'string' && id.length > 0 ? id.slice(0, 64) : randomUUID();
+    return typeof id === 'string' && id.length > 0 ? id.slice(0, 64) : uuidv7();
   }
 
   // ── events_errors ─────────────────────────────────────────────────────────
@@ -1032,6 +1034,8 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
         JSON.stringify(r.tags ?? {}), JSON.stringify(r.extra ?? {}), JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        (list[i] as any)?.errorGroupId ?? (e as any)?.errorGroupId ?? (e as any)?.error_group_id ?? null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.errors), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const errorCols = [
@@ -1041,7 +1045,9 @@ export class TelemetryWriter {
       'application_name', 'application_version',
       'stack_frames', 'breadcrumbs', 'context', 'method', 'route', 'url',
       'status_code', 'status_text', 'handled', 'user_id',
-      'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response'
+      'sdk_name', 'sdk_version', 'tags', 'extra', 'metadata', 'occurred_at', 'payload', 'ai_response',
+      'error_group_id',
+      'id', 'public_id', 'created_at', 'ingested_at'
     ];
     let res: { rows?: Array<{ event_id: string }>; rowCount?: number | null } | undefined;
     try {
@@ -1112,7 +1118,8 @@ export class TelemetryWriter {
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
         tenantId, loggerName, messageCategory, messageSource,
         str(e.endpoint ?? r.endpoint, 8192), num(e.statusCode ?? r.statusCode ?? r.status_code),
-        name, JSON.stringify(attrs)
+        name, JSON.stringify(attrs),
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.messages), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const cols = [
@@ -1122,7 +1129,8 @@ export class TelemetryWriter {
       'user_id', 'user_ip',
       'tags', 'contexts', 'breadcrumbs', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
       'tenant_id', 'logger_name', 'message_category', 'message_source',
-      'endpoint', 'status_code', 'name', 'attributes'
+      'endpoint', 'status_code', 'name', 'attributes',
+      'id', 'public_id', 'created_at', 'ingested_at'
     ];
     const inserted = await insertChunked(db, 'events_messages', cols, rows);
     return { inserted };
@@ -1156,7 +1164,7 @@ export class TelemetryWriter {
       const durationMs = num(e.latency ?? r.duration_ms ?? r.durationMs);
 
       return [
-        randomUUID(),                                                        // 1. id
+        uuidv7(),                                                            // 1. id
         orgId,                                                               // 2. organization_id
         projectId,                                                           // 3. project_id
         apiKeyName ?? 'unknown',                                             // 4. api_key_name
@@ -1202,11 +1210,13 @@ export class TelemetryWriter {
         JSON.stringify(metadata),                                            // 44. metadata
         payloadFor(event),                                                   // 45. payload
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : (r.ai_response != null ? JSON.stringify(r.ai_response) : null), // 46. ai_response
-        iso(resolveScopedTimestamp(event, occurredAtMs)),                                        // 47. occurred_at
+        iso(resolveScopedTimestamp(event, occurredAtMs)),                    // 47. occurred_at
+        generatePublicId(PUBLIC_ID_PREFIXES.requests),                       // 48. public_id
+        new Date().toISOString(),                                            // 49. created_at
+        new Date().toISOString(),                                            // 50. ingested_at
       ];
     });
     // is_slow / is_error are GENERATED columns — do NOT insert them.
-    // created_at / ingested_at have DEFAULT NOW() — do NOT insert them.
     const cols = [
       'id', 'organization_id', 'project_id', 'api_key_name', 'event_id', 'request_id', 'trace_id', 'span_id',
       'parent_span_id', 'session_id', 'user_id', 'tenant_id', 'endpoint', 'name', 'method',
@@ -1214,7 +1224,8 @@ export class TelemetryWriter {
       'client_ip_hash', 'user_agent', 'referer', 'geo_country_code', 'geo_region', 'geo_asn',
       'browser_family', 'browser_version_major', 'os_name', 'os_version_major', 'device_type', 'is_bot',
       'service', 'framework', 'environment', 'release', 'server_name', 'sdk_name', 'sdk_version',
-      'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at'
+      'severity', 'attributes', 'metadata', 'payload', 'ai_response', 'occurred_at',
+      'public_id', 'created_at', 'ingested_at'
     ];
     const inserted = await insertChunked(db, 'events_requests', cols, rows);
     return { inserted };
@@ -1265,6 +1276,7 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.spans), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const cols = [
@@ -1279,7 +1291,8 @@ export class TelemetryWriter {
       'messaging_system', 'messaging_destination', 'messaging_operation',
       'attributes', 'events', 'links',
       'request_id', 'session_id', 'user_id', 'tenant_id',
-      'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response'
+      'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'payload', 'ai_response',
+      'id', 'public_id', 'created_at', 'ingested_at'
     ];
     const inserted = await insertChunked(db, 'events_spans', cols, rows);
     return { inserted };
@@ -1319,6 +1332,7 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(traceAttributes(event)), JSON.stringify(metadata), occurredAt,
         str(rawUserAgent, 1024), str(rawClientIp, 255),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.traces), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const { text, values } = buildInsert(
@@ -1329,7 +1343,8 @@ export class TelemetryWriter {
        'spans_tree', 'request_id', 'session_id', 'user_id', 'tenant_id',
        'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
        'sdk_name', 'sdk_version', 'attributes', 'metadata', 'occurred_at',
-       'user_agent', 'client_ip_hash', 'payload', 'ai_response'],
+       'user_agent', 'client_ip_hash', 'payload', 'ai_response',
+       'id', 'public_id', 'created_at', 'ingested_at'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1353,6 +1368,7 @@ export class TelemetryWriter {
       'request_id', 'session_id', 'user_id', 'tenant_id',
       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
       'sdk_name', 'sdk_version', 'metadata', 'payload',
+      'id', 'public_id', 'created_at', 'ingested_at',
     ];
     const maxRowsPerStatement = Math.max(1, Math.floor(PG_MAX_BIND_PARAMS / columns.length));
     let rows: unknown[][] = [];
@@ -1500,6 +1516,7 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50),
         JSON.stringify(metadata), payloadFor(event),
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.spans), new Date().toISOString(), new Date().toISOString(),
       ],
     };
   }
@@ -1561,6 +1578,7 @@ export class TelemetryWriter {
         iso(resolveScopedTimestamp(event, occurredAtMs)),
         payloadFor(event),
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.metrics), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const { text, values } = buildInsert(
@@ -1587,7 +1605,8 @@ export class TelemetryWriter {
        'application_name', 'application_version',
        'sdk_name', 'sdk_version',
        // JSONB
-       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'],
+       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response',
+       'id', 'public_id', 'created_at', 'ingested_at'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1693,6 +1712,7 @@ export class TelemetryWriter {
         JSON.stringify(c), JSON.stringify(e.tags ?? {}), JSON.stringify(cleanAttributes),
         JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.logs), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const cols = [
@@ -1703,7 +1723,8 @@ export class TelemetryWriter {
       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version',
       'user_id', 'user_ip',
       'sdk_name', 'sdk_version', 'context', 'tags', 'attributes',
-      'metadata', 'occurred_at', 'payload', 'ai_response'
+      'metadata', 'occurred_at', 'payload', 'ai_response',
+      'id', 'public_id', 'created_at', 'ingested_at'
     ];
     const inserted = await insertChunked(db, 'events_logs', cols, rows);
     return { inserted };
@@ -1726,13 +1747,15 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(ts),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.profiles), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const { text, values } = buildInsert(
       'events_profiles',
       ['organization_id', 'project_id', 'api_key_name', 'event_id', 'profile_type',
        'trace_id', 'span_id', 'request_id', 'session_id', 'user_id', 'start_time', 'end_time', 'duration_ms',
-       'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
+       'profile_data', 'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
+       'id', 'public_id', 'created_at', 'ingested_at'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1813,6 +1836,7 @@ export class TelemetryWriter {
         iso(resolveScopedTimestamp(event, occurredAtMs)),
         payloadFor(event),
         e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.cronCheckins), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const { text, values } = buildInsert(
@@ -1835,7 +1859,8 @@ export class TelemetryWriter {
        'application_name', 'application_version',
        'sdk_name', 'sdk_version',
        // JSONB
-       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response'],
+       'tags', 'attributes', 'metadata', 'occurred_at', 'payload', 'ai_response',
+       'id', 'public_id', 'created_at', 'ingested_at'],
       rows,
     );
     const res = await db.query(text, values);
@@ -1856,13 +1881,15 @@ export class TelemetryWriter {
         str(metadataField(metadata, event, 'serverName'), 100), str(metadataField(metadata, event, 'applicationName'), 100), str(metadataField(metadata, event, 'applicationVersion'), 50),
         str(metadataField(metadata, event, 'sdkName'), 50), str(metadataField(metadata, event, 'sdkVersion'), 50), JSON.stringify(metadata), iso(resolveScopedTimestamp(event, occurredAtMs)),
         payloadFor(event), e.aiResponse != null ? JSON.stringify(e.aiResponse) : null,
+        uuidv7(), generatePublicId(PUBLIC_ID_PREFIXES.replays), new Date().toISOString(), new Date().toISOString(),
       ];
     });
     const { text, values } = buildInsert(
       'events_replays',
       ['organization_id', 'project_id', 'api_key_name', 'event_id', 'session_id', 'segment_id',
        'events', 'trace_id', 'span_id', 'request_id', 'user_id',
-       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response'],
+       'service', 'environment', 'release', 'server_name', 'application_name', 'application_version', 'sdk_name', 'sdk_version', 'metadata', 'occurred_at', 'payload', 'ai_response',
+       'id', 'public_id', 'created_at', 'ingested_at'],
       rows,
     );
     const res = await db.query(text, values);

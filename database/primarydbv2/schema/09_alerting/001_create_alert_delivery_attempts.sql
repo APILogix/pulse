@@ -44,6 +44,3 @@ CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_batch
 CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_org_created
   ON alert_delivery_attempts(organization_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_alert_delivery_attempts_event_created
-  ON alert_delivery_attempts (event_id, created_at DESC);
-

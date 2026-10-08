@@ -15,6 +15,7 @@
  *   - Safe, non-destructive execution by default (IF NOT EXISTS), with optional --recreate / --drop mode.
  *   - Full synchronization with schema_migrations ledger table.
  */
+import '../src/config/dns.js';
 import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
@@ -346,6 +347,21 @@ function createPgPool(connectionString: string, label: string): Pool {
   return new Pool(withPostgresAddressFamily(poolConfig, parsedFamily));
 }
 
+async function connectWithRetry(pool: Pool, maxAttempts = 6): Promise<PoolClient> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await pool.connect();
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxAttempts) throw err;
+      const delay = Math.min(1000 * Math.pow(1.5, attempt), 5000);
+      console.log(`  Waiting for database connection (attempt ${attempt}/${maxAttempts})...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 async function dropAndRecreateSchema(client: PoolClient, dbName: string): Promise<void> {
   console.log(`\n▶ [${dbName}] Dropping and recreating schema 'public'...`);
   await client.query(`DROP TABLE IF EXISTS tmp_enterprise_billing_feature_seed;`).catch(() => {});
@@ -480,7 +496,7 @@ async function bootstrapDatabase(
 
   console.log(`\n============================================================`);
   console.log(`[${dbName}] Prepared ${allExecutionFiles.length} files (${schemaFiles.length} tables/objects + ${triggerFiles.length} triggers + ${seedFiles.length} seeds)`);
-  console.log(`Target: ${connString ? sanitizePostgresConnectionString(connString) : '(dry-run)'}`);
+  console.log(`Target: ${connString ? sanitizePostgresConnectionString(connString).replace(/\/\/([^:/@]+):[^@]*@/, '//$1:****@') : '(dry-run)'}`);
   console.log(`Mode:   ${options.recreate ? 'CLEAN RECREATION (DROP & REBUILD)' : 'IDEMPOTENT SCHEMA APPLY'}`);
   console.log(`============================================================`);
 
@@ -490,7 +506,7 @@ async function bootstrapDatabase(
   }
 
   const pool = createPgPool(connString!, dbName);
-  const client = await pool.connect();
+  const client = await connectWithRetry(pool);
 
   try {
     if (options.recreate) {

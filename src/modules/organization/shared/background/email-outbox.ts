@@ -10,7 +10,7 @@
  * (src/shared/workers/org-email.processor.ts) drains the table with FOR UPDATE SKIP
  * LOCKED, so it is safe to run many worker processes concurrently.
  */
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import { pool, query } from '../../../../config/database.js';
 import { logger } from '../../../../config/logger.js';
@@ -53,7 +53,7 @@ interface ClaimedOrgEmailRow {
  * dedupe_key already exists (the insert is a no-op in that case).
  */
 export async function enqueueOrgEmail(input: EnqueueOrgEmailInput): Promise<string | null> {
-  const id = randomUUID();
+  const id = uuidv7();
   const result = await query(
     `INSERT INTO organization_email_outbox
        (id, org_id, project_id, email_type, to_email, subject, html, text, max_attempts, dedupe_key, metadata)

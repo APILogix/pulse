@@ -1,7 +1,7 @@
 -- Canonical trace telemetry (one row per trace, root span denormalized).
 -- Range-partitioned by occurred_at for retention pruning and trace lookup.
 CREATE TABLE IF NOT EXISTS events_traces (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,

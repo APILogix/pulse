@@ -8,7 +8,7 @@ import underPressure from '@fastify/under-pressure';
 import { EnterpriseAdmissionController, classifyRequestTier, RequestTier, } from './lib/admission-control.js';
 import { serializerCompiler, validatorCompiler, } from 'fastify-type-provider-zod';
 import fastifyRawBody from 'fastify-raw-body';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
 import { logDB } from './config/log-database.js';
@@ -87,7 +87,7 @@ export async function buildApp() {
     const app = Fastify({
         loggerInstance: logger,
         trustProxy: parseTrustProxy(env.TRUST_PROXY),
-        genReqId: (req) => req.headers['x-request-id']?.toString() || randomUUID(),
+        genReqId: (req) => req.headers['x-request-id']?.toString() || uuidv7(),
         connectionTimeout: 30000,
         keepAliveTimeout: 65000,
         maxRequestsPerSocket: 1000,

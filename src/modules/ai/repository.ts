@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import { pool } from '../../config/database.js';
 import { entitlementsService } from '../billing/entitlements/service.js';
@@ -640,7 +640,7 @@ export class AIRepository {
     projectId?: string;
     maxConcurrentRequests: number;
   }): Promise<PreparedChatRequest> {
-    const requestId = randomUUID();
+    const requestId = uuidv7();
     return this.transaction(async (client) => {
       await client.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`ai-chat:${input.tenantId}`]);
       const existing = await client.query<{
@@ -689,7 +689,7 @@ export class AIRepository {
         );
         if (conversation.rowCount !== 1) throw new AIRepositoryError('Chat conversation not found', 'NOT_FOUND');
       } else {
-        conversationId = randomUUID();
+        conversationId = uuidv7();
         await client.query(
           `INSERT INTO ai_conversations (conversation_id,tenant_id,user_id,title)
            VALUES ($1,$2,$3,$4)`,
@@ -893,7 +893,7 @@ export class AIRepository {
         throw new AIRepositoryError('The organization has reached its concurrent AI job limit', 'TOO_MANY_JOBS');
       }
 
-      const jobId = randomUUID();
+      const jobId = uuidv7();
       await client.query(
         `INSERT INTO ai_jobs
           (job_id,tenant_id,user_id,ai_mode,status,input_hash,input_ciphertext,idempotency_key)

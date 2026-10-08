@@ -347,11 +347,11 @@ const envSchema = z.object({
   // ingest writes from the shared Log DB pool (LOG_POOL_MAX) so a burst of
   // dashboard reads in the API process cannot steal ingest write capacity, and
   // vice versa.
-  INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(20),
+  INGESTION_WRITE_POOL_SIZE: z.coerce.number().int().min(2).max(200).default(24),
   // Hard ceiling on concurrent ingest transactions (write-admission permits).
   // Bounded to (pool - reserve) at runtime by resolveWritePermits(), so this can
   // under-use the pool but can never oversubscribe it.
-  INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(6),
+  INGESTION_WRITE_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(16),
   INGESTION_FAST_REQUEST_MIN_DURATION_MS: z.coerce.number().min(0).default(1000),
   MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).default(50_000),
   MAX_GAUGE_AGE_MS: z.coerce.number().int().min(1000).default(10_000),
@@ -377,7 +377,7 @@ const envSchema = z.object({
   // ── Enterprise ingestion pipeline (pg-boss) ─────────────────────────────
   // Events per pg-boss job. Chunks bound job payload size and worker unit of
   // work; smaller = fairer scheduling, larger = fewer round trips.
-  INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(200),
+  INGESTION_JOB_CHUNK_SIZE: z.coerce.number().int().min(10).max(1000).default(500),
   // Approximate serialized event bytes per pg-boss job. Count-based chunking
   // remains authoritative, but this keeps large payload batches from creating
   // oversized worker transactions.

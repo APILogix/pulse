@@ -73,6 +73,7 @@
     "db:rebuild:v2": "tsx scripts/rebuild-v2.ts",
     "db:rebuild:primary": "tsx scripts/rebuild-primary-schema-file.ts",
     "db:rebuild:log": "tsx scripts/rebuild-log-schema-file.ts",
+    "db:reconcile:indexes": "tsx scripts/reconcile-db-indexes.ts",
     "db:seed:primary": "tsx scripts/run-primary-seeders.ts",
     "db:seed": "tsx scripts/run-primary-seeders.ts",
     "db:seed:billing": "tsx scripts/seed-billing-plans.ts",

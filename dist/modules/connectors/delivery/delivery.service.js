@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { pgmq } from '../../../lib/pgmq.js';
 import { ConnectorRepository } from '../repository.js';
 import { createConnector } from '../registry.js';
@@ -276,7 +276,7 @@ export class NotificationDispatcher {
     }
     /** Convenience for building a payload's correlation id when not supplied. */
     static newCorrelationId() {
-        return randomUUID();
+        return uuidv7();
     }
 }
 //# sourceMappingURL=delivery.service.js.map

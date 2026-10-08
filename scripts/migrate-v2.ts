@@ -13,6 +13,7 @@
  *   npm run db:migrate:logdb
  *   npm run db:migrate:v2 -- --dry-run
  */
+import '../src/config/dns.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -96,6 +97,21 @@ interface MigrationRunOptions {
   dryRun: boolean;
 }
 
+async function connectWithRetry(pool: Pool, maxAttempts = 6): Promise<PoolClient> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await pool.connect();
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxAttempts) throw err;
+      const delay = Math.min(1000 * Math.pow(1.5, attempt), 5000);
+      console.log(`  Waiting for database connection (attempt ${attempt}/${maxAttempts})...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 async function runMigrationsForDb({
   dbLabel,
   migrationsDir,
@@ -114,7 +130,7 @@ async function runMigrationsForDb({
     return;
   }
 
-  const client: PoolClient = await pool.connect();
+  const client: PoolClient = await connectWithRetry(pool);
   try {
     // 1. Ensure ledger table
     await client.query(`

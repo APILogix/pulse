@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { FastifyBaseLogger } from 'fastify';
 
 import type { AIConfig } from '../../config/ai.js';
@@ -82,7 +82,7 @@ export class AIAnalyzer {
   private cachedAnswer(answer: AIAnswer, identity: AnalysisIdentity, mode: AIMode, cost = 0): AIAnswer {
     return {
       ...answer,
-      request_id: identity.requestId ?? randomUUID(),
+      request_id: identity.requestId ?? uuidv7(),
       ai_mode: mode,
       credit_action: {
         ...answer.credit_action,
@@ -207,7 +207,7 @@ export class AIAnalyzer {
 
   async analyze(rawInput: AIRequestInput, rawIdentity: AnalysisIdentity): Promise<AnalysisExecution> {
     const started = Date.now();
-    const requestId = rawIdentity.requestId ?? randomUUID();
+    const requestId = rawIdentity.requestId ?? uuidv7();
     const identity = { ...rawIdentity, requestId };
     const mode = rawInput.ai_mode;
 

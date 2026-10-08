@@ -1,7 +1,8 @@
 /**
  * SCIM 2.0 User provisioning for organization members.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { FastifyReply } from 'fastify';
 
 import { logAudit } from '../../shared/middleware/audit-logger.js';
@@ -183,7 +184,7 @@ export async function createUser(
   const externalId =
     (body.externalId as string | undefined) ||
     (body.id as string | undefined) ||
-    randomUUID();
+    uuidv7();
   const userName = (body.userName as string | undefined)?.trim();
   if (!userName) {
     throw new AuthError('userName is required', AuthErrorCodes.VALIDATION_ERROR, 400);
@@ -205,7 +206,7 @@ export async function createUser(
   let user = await repository.findUserByEmailHash(emailToHash(email));
   if (!user) {
     user = await repository.createSsoJitUser({
-      id: randomUUID(),
+      id: uuidv7(),
       email,
       full_name: fullName,
     });
@@ -465,7 +466,7 @@ export async function createGroup(
   const externalId =
     (body.externalId as string | undefined) ||
     (body.id as string | undefined) ||
-    randomUUID();
+    uuidv7();
   const displayName = (body.displayName as string | undefined)?.trim();
   if (!displayName) {
     throw new AuthError('displayName is required', AuthErrorCodes.VALIDATION_ERROR, 400);

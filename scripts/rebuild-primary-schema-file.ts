@@ -98,7 +98,7 @@ for (const domain of domainOrder) {
 
   const triggerPath = path.join(domainDir, '999_triggers.sql');
   if (fs.existsSync(triggerPath)) {
-    triggerFiles.push(path.join(domain, '999_triggers.sql'));
+    triggerFiles.push(`${domain}/999_triggers.sql`);
   }
 }
 

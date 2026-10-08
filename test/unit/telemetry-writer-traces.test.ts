@@ -424,7 +424,7 @@ describe('TelemetryWriter Trace & Span Tree Ingestion', () => {
     const spansInsert = queries.find((q) => q.sql.includes('events_spans'));
     expect(spansInsert).toBeDefined();
 
-    const COL_COUNT = 67; // events_spans column count
+    const COL_COUNT = 71; // events_spans column count
     const values = spansInsert?.values ?? [];
 
     // Verify root span row values (row 0: index 0..59)

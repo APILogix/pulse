@@ -13,15 +13,15 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION reserve_alert_runtime_idempotency(
   p_org_id UUID,
   p_idem_key VARCHAR(255),
-  p_scope VARCHAR(64) DEFAULT 'notification_job',
+  p_namespace VARCHAR(64) DEFAULT 'notification_job',
   p_ttl INTERVAL DEFAULT INTERVAL '24 hours'
 ) RETURNS BOOLEAN AS $$
 DECLARE
   v_inserted BOOLEAN;
 BEGIN
-  INSERT INTO alert_runtime_idempotency_keys(organization_id, scope, idempotency_key, created_at, expires_at)
-  VALUES (p_org_id, p_scope, p_idem_key, NOW(), NOW() + p_ttl)
-  ON CONFLICT (organization_id, scope, idempotency_key) DO NOTHING;
+  INSERT INTO alert_runtime_idempotency_keys(organization_id, namespace, idempotency_key, created_at, expires_at)
+  VALUES (p_org_id, p_namespace, p_idem_key, NOW(), NOW() + p_ttl)
+  ON CONFLICT (organization_id, namespace, idempotency_key) DO NOTHING;
   
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
   IF v_inserted THEN
@@ -30,13 +30,13 @@ BEGIN
 
   DELETE FROM alert_runtime_idempotency_keys
   WHERE organization_id = p_org_id
-    AND scope = p_scope
+    AND namespace = p_namespace
     AND idempotency_key = p_idem_key
     AND expires_at < NOW();
 
-  INSERT INTO alert_runtime_idempotency_keys(organization_id, scope, idempotency_key, created_at, expires_at)
-  VALUES (p_org_id, p_scope, p_idem_key, NOW(), NOW() + p_ttl)
-  ON CONFLICT (organization_id, scope, idempotency_key) DO NOTHING;
+  INSERT INTO alert_runtime_idempotency_keys(organization_id, namespace, idempotency_key, created_at, expires_at)
+  VALUES (p_org_id, p_namespace, p_idem_key, NOW(), NOW() + p_ttl)
+  ON CONFLICT (organization_id, namespace, idempotency_key) DO NOTHING;
 
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
   RETURN v_inserted;
@@ -233,3 +233,111 @@ BEGIN
   RETURN dropped;
 END;
 $fn$ LANGUAGE plpgsql;
+
+-- 8. High-throughput telemetry table daily partition automation
+CREATE OR REPLACE FUNCTION logdb_ensure_daily_partitions(
+  p_table_name TEXT,
+  p_days_ahead INTEGER DEFAULT 7
+) RETURNS INTEGER AS $fn$
+DECLARE
+  created    INTEGER := 0;
+  d          DATE;
+  part_name  TEXT;
+  range_from TIMESTAMPTZ;
+  range_to   TIMESTAMPTZ;
+BEGIN
+  IF p_days_ahead IS NULL OR p_days_ahead < 1 THEN
+    p_days_ahead := 1;
+  END IF;
+
+  d := (NOW() AT TIME ZONE 'UTC')::DATE;
+  WHILE d <= (NOW() AT TIME ZONE 'UTC')::DATE + p_days_ahead LOOP
+    part_name  := format('%s_y%sm%sd%s', p_table_name, to_char(d, 'YYYY'), to_char(d, 'MM'), to_char(d, 'DD'));
+    range_from := d::TIMESTAMPTZ;
+    range_to   := (d + 1)::TIMESTAMPTZ;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = part_name) THEN
+      BEGIN
+        EXECUTE format(
+          'CREATE TABLE %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L)',
+          part_name, p_table_name, range_from, range_to
+        );
+        created := created + 1;
+      EXCEPTION
+        WHEN duplicate_table THEN
+          NULL;
+        WHEN check_violation THEN
+          NULL;
+      END;
+    END IF;
+    d := d + 1;
+  END LOOP;
+
+  RETURN created;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION logdb_drop_daily_partitions_before(
+  p_table_name TEXT,
+  p_cutoff     TIMESTAMPTZ
+) RETURNS INTEGER AS $fn$
+DECLARE
+  rec     RECORD;
+  dropped INTEGER := 0;
+BEGIN
+  FOR rec IN
+    SELECT c.relname
+      FROM pg_inherits i
+      JOIN pg_class c ON c.oid = i.inhrelid
+      JOIN pg_class p ON p.oid = i.inhparent
+     WHERE p.relname = p_table_name
+       AND c.relname <> p_table_name || '_default'
+  LOOP
+    BEGIN
+      EXECUTE format('DROP TABLE IF EXISTS %I', rec.relname);
+      dropped := dropped + 1;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+  END LOOP;
+
+  RETURN dropped;
+END;
+$fn$ LANGUAGE plpgsql;
+
+-- 9. RFC 9562 Monotonic UUIDv7 Generator
+-- Used by primary keys to guarantee sequential right-edge B-tree index appends
+CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS UUID AS $$
+DECLARE
+  v_time NUMERIC;
+  v_unix_t BIGINT;
+  v_rand BYTEA;
+  v_output TEXT;
+BEGIN
+  -- 1. Extract current epoch milliseconds
+  v_time := clock_timestamp();
+  v_unix_t := (EXTRACT(EPOCH FROM v_time) * 1000)::BIGINT;
+  
+  -- 2. Generate 10 random bytes for sequence & entropy
+  v_rand := gen_random_bytes(10);
+  
+  -- 3. Construct RFC 9562 UUIDv7 hex representation:
+  -- unix_ts_ms (48 bits / 12 hex) | ver (4 bits = '7') | rand_a (12 bits / 3 hex) | var (2 bits = '8'..'b') | rand_b (62 bits)
+  v_output := lpad(to_hex(v_unix_t), 12, '0') ||
+              '7' ||
+              substr(encode(v_rand, 'hex'), 1, 3) ||
+              to_hex((8 | (get_byte(v_rand, 2) & 3))::INT) ||
+              substr(encode(v_rand, 'hex'), 5, 3) ||
+              substr(encode(v_rand, 'hex'), 8, 12);
+              
+  RETURN v_output::UUID;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION uuidv7() RETURNS UUID AS $$
+BEGIN
+  RETURN uuid_generate_v7();
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+

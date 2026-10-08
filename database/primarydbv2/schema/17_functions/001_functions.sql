@@ -1259,3 +1259,39 @@ WHERE organization_id = p_organization_id
 ORDER BY period_end DESC
 LIMIT 1;
 $$;
+
+-- RFC 9562 Monotonic UUIDv7 Generator
+-- Used by primary keys to guarantee sequential right-edge B-tree index appends
+CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS UUID AS $$
+DECLARE
+  v_time NUMERIC;
+  v_unix_t BIGINT;
+  v_rand BYTEA;
+  v_output TEXT;
+BEGIN
+  -- 1. Extract current epoch milliseconds
+  v_time := clock_timestamp();
+  v_unix_t := (EXTRACT(EPOCH FROM v_time) * 1000)::BIGINT;
+  
+  -- 2. Generate 10 random bytes for sequence & entropy
+  v_rand := gen_random_bytes(10);
+  
+  -- 3. Construct RFC 9562 UUIDv7 hex representation:
+  -- unix_ts_ms (48 bits / 12 hex) | ver (4 bits = '7') | rand_a (12 bits / 3 hex) | var (2 bits = '8'..'b') | rand_b (62 bits)
+  v_output := lpad(to_hex(v_unix_t), 12, '0') ||
+              '7' ||
+              substr(encode(v_rand, 'hex'), 1, 3) ||
+              to_hex((8 | (get_byte(v_rand, 2) & 3))::INT) ||
+              substr(encode(v_rand, 'hex'), 5, 3) ||
+              substr(encode(v_rand, 'hex'), 8, 12);
+              
+  RETURN v_output::UUID;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION uuidv7() RETURNS UUID AS $$
+BEGIN
+  RETURN uuid_generate_v7();
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+

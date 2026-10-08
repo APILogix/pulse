@@ -107,5 +107,3 @@ ON plan_prices
     region_code
 )
 WHERE deleted_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_plan_prices_active ON plan_prices(plan_id) WHERE deleted_at IS NULL;

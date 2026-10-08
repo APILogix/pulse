@@ -1,6 +1,6 @@
 -- Canonical session replay telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_replays (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,

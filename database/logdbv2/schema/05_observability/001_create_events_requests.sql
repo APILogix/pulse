@@ -1,6 +1,6 @@
 -- Canonical request telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_requests (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID NOT NULL,
   api_key_name TEXT NOT NULL,
@@ -76,16 +76,10 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_tenant_time
   ON events_requests (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_tenant_env_time
-  ON events_requests (organization_id, project_id, environment, occurred_at DESC);
+  ON events_requests (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_pubid
   ON events_requests (organization_id, project_id, public_id);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_org_time
-  ON events_requests (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_org_env_time
-  ON events_requests (organization_id, environment, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_org_trace_time
   ON events_requests (organization_id, trace_id, occurred_at DESC)
@@ -112,7 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_sdk_time
   WHERE sdk_name IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_occurred_brin
-  ON events_requests USING BRIN (occurred_at);
+  ON events_requests USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_watermark
   ON events_requests (organization_id, project_id, environment, ingested_at);

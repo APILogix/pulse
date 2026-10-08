@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { z } from 'zod';
 
 import { authenticate } from '../../shared/middleware/auth.js';
@@ -142,7 +142,7 @@ export async function aiRoutes(fastify: FastifyInstance): Promise<void> {
       const execution = await fastify.ai.analyzer.analyze(body, {
         tenantId: orgId,
         userId,
-        requestId: randomUUID(),
+        requestId: uuidv7(),
         idempotencyKey: idempotencyKey(request),
       });
       if (execution.reservation || (execution.usage && execution.usageContext && execution.answer.status === 'SUCCESS')) {
@@ -190,7 +190,7 @@ export async function aiRoutes(fastify: FastifyInstance): Promise<void> {
       const execution = await fastify.ai.analyzer.analyze(aiInput, {
         tenantId: orgId,
         userId,
-        requestId: randomUUID(),
+        requestId: uuidv7(),
         idempotencyKey: idempotencyKey(request),
       });
 

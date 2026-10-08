@@ -26,7 +26,8 @@
  *   - Queue provisioning runs once per process behind a module-level
  *     promise; createQueue is idempotent so multi-process boot is safe.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { apiKeyCache } from '../../config/lrucashe.js';
@@ -463,7 +464,7 @@ export class IngestionService {
         const queueDepthStartedAt = Date.now();
         const depth = await this.queueDepth();
         timings.queueDepthMs = elapsedSince(queueDepthStartedAt);
-        const batchId = randomUUID();
+        const batchId = uuidv7();
         const receivedAt = new Date().toISOString();
         const errors = [];
         const acceptedByType = new Map();
@@ -711,7 +712,7 @@ export class IngestionService {
     /** Best-effort stable id for a single event in a batch. */
     extractEventId(raw) {
         if (typeof raw !== 'object' || raw === null)
-            return randomUUID();
+            return uuidv7();
         const r = raw;
         if (typeof r.eventId === 'string' && r.eventId.length > 0 && r.eventId.length <= 128) {
             return r.eventId;
@@ -719,7 +720,7 @@ export class IngestionService {
         if (typeof r.requestId === 'string' && r.requestId.length > 0 && r.requestId.length <= 128) {
             return r.requestId;
         }
-        return randomUUID();
+        return uuidv7();
     }
     assertKeyCanUseEndpoint(project, expectedType) {
         if (!project.permissions.includes('ingest:write')) {
@@ -891,7 +892,7 @@ export class IngestionService {
                 eventType: stored.eventType,
                 events: stored.events,
                 metadata: {
-                    batchId: typeof meta.batchId === 'string' ? meta.batchId : randomUUID(),
+                    batchId: typeof meta.batchId === 'string' ? meta.batchId : uuidv7(),
                     apiKeyId: typeof meta.apiKeyId === 'string' ? meta.apiKeyId : '',
                     planTier,
                     receivedAt: new Date().toISOString(),
@@ -930,7 +931,7 @@ export class IngestionService {
                 eventType,
                 events,
                 metadata: {
-                    batchId: randomUUID(),
+                    batchId: uuidv7(),
                     apiKeyId: '',
                     planTier: normalizePlanTier(null),
                     receivedAt: new Date().toISOString(),
@@ -978,7 +979,7 @@ export class IngestionService {
             throw new Error('INVALID_ENVIRONMENT');
         const replayEnvironment = requestedEnvironment ?? undefined;
         const events = await this.writer.getEventsForReplay(req.projectId, req.startTime, req.endTime, req.eventTypes, this.replayMaxEvents, replayEnvironment);
-        const replayId = randomUUID();
+        const replayId = uuidv7();
         if (events.length === 0)
             return { replayId, queued: 0 };
         // Resolve the org's plan tier for priority math (admin path: no API key).

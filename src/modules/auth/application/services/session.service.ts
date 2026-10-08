@@ -22,7 +22,8 @@
  *     email tokens) is the cross-process source of truth.
  *   - Email via the Postgres-backed auth outbox worker (queue-only).
  */
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { promisify } from 'util';
 
 import bcrypt from 'bcrypt';
@@ -155,7 +156,7 @@ export async function issueSessionForUser(options: {
   }
 
   const now = Date.now();
-  const sessionId = randomUUID();
+  const sessionId = uuidv7();
   const expiresAt = new Date(now + refreshTtlSeconds * 1000);
   const absoluteExpiresAt = new Date(now + ABSOLUTE_SESSION_TTL_SECONDS * 1000);
 

@@ -6,4 +6,5 @@ export function generateId() {
 export function generateUUID() {
     return uuidv7();
 }
+export { uuidv7 };
 //# sourceMappingURL=id.js.map

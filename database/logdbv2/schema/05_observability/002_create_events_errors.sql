@@ -1,6 +1,6 @@
 -- Canonical error telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_errors (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   api_key_name TEXT NOT NULL,
@@ -67,33 +67,16 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_org_project_time
   ON events_errors (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_org_env_time
-  ON events_errors (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_tenant_env_time
-  ON events_errors (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_org_time
-  ON events_errors (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_org_env_direct_time
-  ON events_errors (organization_id, environment, occurred_at DESC);
+  ON events_errors (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_pubid
   ON events_errors (organization_id, project_id, public_id);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_group
-  ON events_errors (organization_id, error_group_id, occurred_at DESC)
-  WHERE error_group_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_group_time_v2
   ON events_errors (organization_id, project_id, error_group_id, occurred_at DESC)
   WHERE error_group_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint
-  ON events_errors (organization_id, project_id, fingerprint, occurred_at DESC)
-  WHERE fingerprint IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint_time
   ON events_errors (organization_id, project_id, fingerprint, occurred_at DESC)
   WHERE fingerprint IS NOT NULL;
 
@@ -121,17 +104,6 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_user
   ON events_errors (organization_id, user_id, occurred_at DESC)
   WHERE user_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_errors_severity
-  ON events_errors (organization_id, project_id, severity, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_status
-  ON events_errors (organization_id, project_id, status_code, occurred_at DESC)
-  WHERE status_code IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_handled
-  ON events_errors (organization_id, project_id, handled, occurred_at DESC)
-  WHERE handled IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_errors_service
   ON events_errors (organization_id, project_id, service, occurred_at DESC)
   WHERE service IS NOT NULL;
@@ -140,16 +112,8 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_route
   ON events_errors (organization_id, project_id, route, occurred_at DESC)
   WHERE route IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_errors_method
-  ON events_errors (organization_id, project_id, method, occurred_at DESC)
-  WHERE method IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_release_time
-  ON events_errors (organization_id, project_id, release, occurred_at DESC)
-  WHERE release IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_errors_occurred_brin
-  ON events_errors USING BRIN (occurred_at);
+  ON events_errors USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_watermark
   ON events_errors (organization_id, project_id, environment, ingested_at);

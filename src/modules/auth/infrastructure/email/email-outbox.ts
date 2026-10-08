@@ -5,7 +5,7 @@
  * This keeps user-facing auth flows fast, retryable, and operationally
  * consistent across the module.
  */
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 
 import type { PoolClient } from 'pg';
 
@@ -30,7 +30,7 @@ export async function enqueueAuthEmail(message: EmailMessage): Promise<void> {
   await query(
     `INSERT INTO auth_email_outbox (id, to_email, subject, html, text)
      VALUES ($1, $2, $3, $4, $5)`,
-    [randomUUID(), message.to, message.subject, message.html, message.text ?? ''],
+    [uuidv7(), message.to, message.subject, message.html, message.text ?? ''],
   );
 }
 

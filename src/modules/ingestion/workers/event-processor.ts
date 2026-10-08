@@ -25,7 +25,8 @@
  *   6. METRICS: per-type processing latency and e2e latency
  *      (now − metadata.receivedAt).
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
 import { env } from '../../../config/env.js';
@@ -324,6 +325,7 @@ export class EventProcessor {
   private readonly writer: TelemetryWriter;
   private readonly usage: UsageCounter;
   private readonly creditWeights: CreditWeightService;
+  private readonly errorGroupingService: ErrorGroupingService;
   private readonly errorIngestionService: ErrorIngestionService;
   /**
    * Bounds concurrent ingest transactions to the telemetry pool's real capacity.
@@ -372,10 +374,10 @@ export class EventProcessor {
     
     const errorGroupRepo = new ErrorGroupRepository(pool);
     const errorRepo = new ErrorRepository(pool);
-    const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
+    this.errorGroupingService = new ErrorGroupingService(errorGroupRepo);
     this.errorIngestionService = new ErrorIngestionService(
       pool,
-      errorGroupingService,
+      this.errorGroupingService,
       errorRepo,
       this.metrics,
       log,
@@ -565,7 +567,7 @@ export class EventProcessor {
                   },
                 },
                 eventRecord: {
-                  id: randomUUID(),
+                  id: uuidv7(),
                   event_id: eventId,
                   project_id: scopedErr.projectId,
                   organization_id: scopedErr.orgId ?? '',

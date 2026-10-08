@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { buildSystemPrompt, PROMPT_VERSION } from './prompts/index.js';
 import { AIRepository, AIRepositoryError } from './repository.js';
 import { AICostTracker } from './cost-tracker.js';
@@ -47,7 +47,7 @@ export class AIAnalyzer {
     cachedAnswer(answer, identity, mode, cost = 0) {
         return {
             ...answer,
-            request_id: identity.requestId ?? randomUUID(),
+            request_id: identity.requestId ?? uuidv7(),
             ai_mode: mode,
             credit_action: {
                 ...answer.credit_action,
@@ -159,7 +159,7 @@ export class AIAnalyzer {
     }
     async analyze(rawInput, rawIdentity) {
         const started = Date.now();
-        const requestId = rawIdentity.requestId ?? randomUUID();
+        const requestId = rawIdentity.requestId ?? uuidv7();
         const identity = { ...rawIdentity, requestId };
         const mode = rawInput.ai_mode;
         if (!this.config.enabled || !this.provider.available) {

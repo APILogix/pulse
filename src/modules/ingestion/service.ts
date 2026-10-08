@@ -26,7 +26,8 @@
  *   - Queue provisioning runs once per process behind a module-level
  *     promise; createQueue is idempotent so multi-process boot is safe.
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import type { Pool } from 'pg';
 
 import { env } from '../../config/env.js';
@@ -614,7 +615,7 @@ export class IngestionService {
     const depth = await this.queueDepth();
     timings.queueDepthMs = elapsedSince(queueDepthStartedAt);
 
-    const batchId = randomUUID();
+    const batchId = uuidv7();
     const receivedAt = new Date().toISOString();
     const errors: Array<{ eventId: string; reason: string }> = [];
     const acceptedByType = new Map<SdkEventType, AcceptedIngestEvent[]>();
@@ -915,7 +916,7 @@ export class IngestionService {
 
   /** Best-effort stable id for a single event in a batch. */
   private extractEventId(raw: unknown): string {
-    if (typeof raw !== 'object' || raw === null) return randomUUID();
+    if (typeof raw !== 'object' || raw === null) return uuidv7();
     const r = raw as { eventId?: unknown; requestId?: unknown };
     if (typeof r.eventId === 'string' && r.eventId.length > 0 && r.eventId.length <= 128) {
       return r.eventId;
@@ -923,7 +924,7 @@ export class IngestionService {
     if (typeof r.requestId === 'string' && r.requestId.length > 0 && r.requestId.length <= 128) {
       return r.requestId;
     }
-    return randomUUID();
+    return uuidv7();
   }
 
   private assertKeyCanUseEndpoint(project: ResolvedProject, expectedType: SdkEventType | null): void {
@@ -1115,7 +1116,7 @@ export class IngestionService {
         eventType: stored.eventType as SdkEventType,
         events: stored.events,
         metadata: {
-          batchId: typeof meta.batchId === 'string' ? meta.batchId : randomUUID(),
+          batchId: typeof meta.batchId === 'string' ? meta.batchId : uuidv7(),
           apiKeyId: typeof meta.apiKeyId === 'string' ? meta.apiKeyId : '',
           planTier,
           receivedAt: new Date().toISOString(),
@@ -1161,7 +1162,7 @@ export class IngestionService {
         eventType,
         events,
         metadata: {
-          batchId: randomUUID(),
+          batchId: uuidv7(),
           apiKeyId: '',
           planTier: normalizePlanTier(null),
           receivedAt: new Date().toISOString(),
@@ -1223,7 +1224,7 @@ export class IngestionService {
       this.replayMaxEvents,
       replayEnvironment,
     );
-    const replayId = randomUUID();
+    const replayId = uuidv7();
     if (events.length === 0) return { replayId, queued: 0 };
 
     // Resolve the org's plan tier for priority math (admin path: no API key).

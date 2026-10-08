@@ -19,9 +19,3 @@ CREATE TABLE IF NOT EXISTS coupon_applicable_plans
 
 CREATE INDEX IF NOT EXISTS idx_coupon_applicable_plans_plan
   ON coupon_applicable_plans(plan_id);
-
-CREATE INDEX IF NOT EXISTS idx_cap_plan
-ON coupon_applicable_plans(plan_id);
-
-CREATE INDEX IF NOT EXISTS idx_cap_coupon
-ON coupon_applicable_plans(coupon_id);

@@ -95,3 +95,9 @@ CREATE INDEX IF NOT EXISTS idx_project_api_keys_env_active
   ON project_api_keys (project_id, environment_id, status)
   WHERE deleted_at IS NULL;
 
+-- High-performance covering index for gateway authentication lookup
+CREATE INDEX IF NOT EXISTS idx_project_api_keys_auth_covering
+  ON project_api_keys (public_key)
+  INCLUDE (id, project_id, organization_id, environment_id, status, expires_at, secret_hash)
+  WHERE deleted_at IS NULL;
+

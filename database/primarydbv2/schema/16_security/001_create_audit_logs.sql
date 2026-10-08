@@ -53,9 +53,6 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_org
 CREATE INDEX IF NOT EXISTS idx_audit_logs_project
   ON audit_logs(project_id, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
-  ON audit_logs(created_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_audit_actor_type_id_time
   ON audit_logs(actor_type, actor_id, created_at DESC)
   WHERE actor_type IS NOT NULL;

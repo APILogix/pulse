@@ -9,6 +9,15 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS btree_gin;
 
+-- Optional native C extension for RFC 9562 UUIDv7
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
+EXCEPTION
+  WHEN OTHERS THEN
+    NULL; -- Safe fallback when compiled pg_uuidv7 library is not present on host OS
+END $$;
+
 -- ============================================================
 -- Source: 01_types/001_sequences.sql
 -- ============================================================
@@ -385,7 +394,7 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_failures_brin ON ingestion_failures USI
 
 -- Canonical request telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_requests (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID NOT NULL,
   api_key_name TEXT NOT NULL,
@@ -461,16 +470,10 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_tenant_time
   ON events_requests (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_tenant_env_time
-  ON events_requests (organization_id, project_id, environment, occurred_at DESC);
+  ON events_requests (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_pubid
   ON events_requests (organization_id, project_id, public_id);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_org_time
-  ON events_requests (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_requests_org_env_time
-  ON events_requests (organization_id, environment, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_org_trace_time
   ON events_requests (organization_id, trace_id, occurred_at DESC)
@@ -497,7 +500,7 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_sdk_time
   WHERE sdk_name IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_occurred_brin
-  ON events_requests USING BRIN (occurred_at);
+  ON events_requests USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_requests_watermark
   ON events_requests (organization_id, project_id, environment, ingested_at);
@@ -516,7 +519,7 @@ CREATE INDEX IF NOT EXISTS idx_events_requests_slow_time
 
 -- Canonical error telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_errors (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   api_key_name TEXT NOT NULL,
@@ -583,33 +586,16 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_org_project_time
   ON events_errors (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_org_env_time
-  ON events_errors (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_tenant_env_time
-  ON events_errors (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_org_time
-  ON events_errors (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_org_env_direct_time
-  ON events_errors (organization_id, environment, occurred_at DESC);
+  ON events_errors (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_pubid
   ON events_errors (organization_id, project_id, public_id);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_group
-  ON events_errors (organization_id, error_group_id, occurred_at DESC)
-  WHERE error_group_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_group_time_v2
   ON events_errors (organization_id, project_id, error_group_id, occurred_at DESC)
   WHERE error_group_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint
-  ON events_errors (organization_id, project_id, fingerprint, occurred_at DESC)
-  WHERE fingerprint IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_fingerprint_time
   ON events_errors (organization_id, project_id, fingerprint, occurred_at DESC)
   WHERE fingerprint IS NOT NULL;
 
@@ -637,17 +623,6 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_user
   ON events_errors (organization_id, user_id, occurred_at DESC)
   WHERE user_id IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_errors_severity
-  ON events_errors (organization_id, project_id, severity, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_status
-  ON events_errors (organization_id, project_id, status_code, occurred_at DESC)
-  WHERE status_code IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_handled
-  ON events_errors (organization_id, project_id, handled, occurred_at DESC)
-  WHERE handled IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_errors_service
   ON events_errors (organization_id, project_id, service, occurred_at DESC)
   WHERE service IS NOT NULL;
@@ -656,16 +631,8 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_route
   ON events_errors (organization_id, project_id, route, occurred_at DESC)
   WHERE route IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_errors_method
-  ON events_errors (organization_id, project_id, method, occurred_at DESC)
-  WHERE method IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_errors_release_time
-  ON events_errors (organization_id, project_id, release, occurred_at DESC)
-  WHERE release IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_errors_occurred_brin
-  ON events_errors USING BRIN (occurred_at);
+  ON events_errors USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_errors_watermark
   ON events_errors (organization_id, project_id, environment, ingested_at);
@@ -676,7 +643,7 @@ CREATE INDEX IF NOT EXISTS idx_events_errors_watermark
 
 -- Canonical log telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_logs (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -828,7 +795,7 @@ CREATE INDEX IF NOT EXISTS idx_events_logs_watermark
 
 -- Canonical metric telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_metrics (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -981,7 +948,7 @@ CREATE INDEX IF NOT EXISTS idx_events_metrics_watermark
 
 -- Canonical span telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_spans (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -1094,13 +1061,7 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_org_project_time
   ON events_spans (organization_id, project_id, occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_org_env_time
-  ON events_spans (organization_id, project_id, environment, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_org_time
-  ON events_spans (organization_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_org_env_direct_time
-  ON events_spans (organization_id, environment, occurred_at DESC);
+  ON events_spans (organization_id, project_id, environment, occurred_at DESC, id DESC);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_org_request_time
   ON events_spans (organization_id, request_id, occurred_at DESC)
@@ -1109,69 +1070,20 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_org_request_time
 CREATE INDEX IF NOT EXISTS idx_events_spans_pubid
   ON events_spans (organization_id, project_id, public_id);
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_span
-  ON events_spans (organization_id, span_id, occurred_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_parent_span
   ON events_spans (organization_id, parent_span_id, occurred_at DESC)
   WHERE parent_span_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_request
-  ON events_spans (organization_id, request_id, occurred_at DESC)
-  WHERE request_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_session
-  ON events_spans (organization_id, session_id, occurred_at DESC)
-  WHERE session_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_user
-  ON events_spans (organization_id, user_id, occurred_at DESC)
-  WHERE user_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_tenant
-  ON events_spans (organization_id, tenant_id, occurred_at DESC)
-  WHERE tenant_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_kind
-  ON events_spans (organization_id, project_id, span_kind, occurred_at DESC)
-  WHERE span_kind IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_service
   ON events_spans (organization_id, project_id, service, occurred_at DESC)
   WHERE service IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_db_time
-  ON events_spans (organization_id, project_id, db_system, occurred_at DESC)
-  WHERE db_system IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_host_time
-  ON events_spans (organization_id, project_id, http_host, occurred_at DESC)
-  WHERE http_host IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_release_time
-  ON events_spans (organization_id, project_id, release, occurred_at DESC)
-  WHERE release IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_trace_time
-  ON events_spans (organization_id, trace_id, occurred_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_parent_time
-  ON events_spans (organization_id, parent_span_id, occurred_at DESC)
-  WHERE parent_span_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_events_spans_type_time
-  ON events_spans (organization_id, project_id, span_type, occurred_at DESC);
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_endpoint_time
   ON events_spans (organization_id, project_id, endpoint, occurred_at DESC)
   WHERE endpoint IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_events_spans_status_time
-  ON events_spans (organization_id, project_id, span_status, occurred_at DESC)
-  WHERE span_status IS NOT NULL;
-
 CREATE INDEX IF NOT EXISTS idx_events_spans_occurred_brin
-  ON events_spans USING BRIN (occurred_at);
+  ON events_spans USING BRIN (occurred_at) WITH (pages_per_range = 128);
 
 CREATE INDEX IF NOT EXISTS idx_events_spans_watermark
   ON events_spans (organization_id, project_id, environment, ingested_at);
@@ -1183,7 +1095,7 @@ CREATE INDEX IF NOT EXISTS idx_events_spans_watermark
 -- Canonical trace telemetry (one row per trace, root span denormalized).
 -- Range-partitioned by occurred_at for retention pruning and trace lookup.
 CREATE TABLE IF NOT EXISTS events_traces (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -1293,7 +1205,7 @@ CREATE INDEX IF NOT EXISTS idx_events_traces_occurred_brin
 -- Canonical message telemetry (breadcrumb / audit / messaging events).
 -- Range-partitioned by occurred_at for retention pruning.
 CREATE TABLE IF NOT EXISTS events_messages (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -1392,7 +1304,7 @@ CREATE INDEX IF NOT EXISTS idx_events_messages_occurred_brin
 
 -- Canonical CPU/memory profile telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_profiles (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -1475,7 +1387,7 @@ CREATE INDEX IF NOT EXISTS idx_events_profiles_watermark
 
 -- Canonical session replay telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_replays (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -1560,7 +1472,7 @@ CREATE INDEX IF NOT EXISTS idx_events_replays_watermark
 
 -- Canonical cron monitor check-in telemetry (range-partitioned by occurred_at)
 CREATE TABLE IF NOT EXISTS events_cron_checkins (
-  id UUID NOT NULL DEFAULT gen_random_uuid(),
+  id UUID NOT NULL DEFAULT uuid_generate_v7(),
   organization_id UUID NOT NULL,
   project_id UUID,
   environment TEXT NOT NULL,
@@ -3741,11 +3653,11 @@ CREATE INDEX IF NOT EXISTS idx_alert_dead_letter_events_v2_org
 -- Shared idempotency reservation table across alert workers
 CREATE TABLE IF NOT EXISTS alert_runtime_idempotency_keys (
   organization_id       UUID NOT NULL,
-  scope                 VARCHAR(64) NOT NULL DEFAULT 'notification_job',
+  namespace             VARCHAR(64) NOT NULL DEFAULT 'notification_job',
   idempotency_key       VARCHAR(255) NOT NULL,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  expires_at            TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (organization_id, scope, idempotency_key)
+  expires_at            TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+  PRIMARY KEY (organization_id, namespace, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_alert_runtime_idempotency_created
@@ -4237,12 +4149,17 @@ CREATE TABLE IF NOT EXISTS telemetry_outbox (
   environment      TEXT,
   signal_kind      TEXT NOT NULL,
   event_id         TEXT NOT NULL,
+  severity         logdb_severity DEFAULT 'info',
+  fast_path        BOOLEAN NOT NULL DEFAULT false,
+  attributes       JSONB NOT NULL DEFAULT '{}'::jsonb,
   payload          JSONB NOT NULL DEFAULT '{}'::jsonb,
   metadata         JSONB NOT NULL DEFAULT '{}'::jsonb,
-  fast_path        BOOLEAN NOT NULL DEFAULT false,
+  occurred_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   published_at     TIMESTAMPTZ,
   claimed_at       TIMESTAMPTZ,
+  claimed_by       TEXT,
   claim_owner      TEXT,
+  attempts         INTEGER NOT NULL DEFAULT 0,
   attempt_count    INTEGER NOT NULL DEFAULT 0,
   last_error       TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4278,6 +4195,9 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_claimed
 CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_alert_unpublished
   ON telemetry_outbox (created_at)
   WHERE published_at IS NULL AND signal_kind = 'alert_domain_event';
+CREATE INDEX IF NOT EXISTS idx_telemetry_outbox_fast_claim
+  ON telemetry_outbox (created_at ASC)
+  WHERE published_at IS NULL AND fast_path = TRUE;
 
 -- ============================================================
 -- Source: 11_outbox/002_create_error_group_regression_outbox.sql
@@ -4534,15 +4454,15 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION reserve_alert_runtime_idempotency(
   p_org_id UUID,
   p_idem_key VARCHAR(255),
-  p_scope VARCHAR(64) DEFAULT 'notification_job',
+  p_namespace VARCHAR(64) DEFAULT 'notification_job',
   p_ttl INTERVAL DEFAULT INTERVAL '24 hours'
 ) RETURNS BOOLEAN AS $$
 DECLARE
   v_inserted BOOLEAN;
 BEGIN
-  INSERT INTO alert_runtime_idempotency_keys(organization_id, scope, idempotency_key, created_at, expires_at)
-  VALUES (p_org_id, p_scope, p_idem_key, NOW(), NOW() + p_ttl)
-  ON CONFLICT (organization_id, scope, idempotency_key) DO NOTHING;
+  INSERT INTO alert_runtime_idempotency_keys(organization_id, namespace, idempotency_key, created_at, expires_at)
+  VALUES (p_org_id, p_namespace, p_idem_key, NOW(), NOW() + p_ttl)
+  ON CONFLICT (organization_id, namespace, idempotency_key) DO NOTHING;
   
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
   IF v_inserted THEN
@@ -4551,13 +4471,13 @@ BEGIN
 
   DELETE FROM alert_runtime_idempotency_keys
   WHERE organization_id = p_org_id
-    AND scope = p_scope
+    AND namespace = p_namespace
     AND idempotency_key = p_idem_key
     AND expires_at < NOW();
 
-  INSERT INTO alert_runtime_idempotency_keys(organization_id, scope, idempotency_key, created_at, expires_at)
-  VALUES (p_org_id, p_scope, p_idem_key, NOW(), NOW() + p_ttl)
-  ON CONFLICT (organization_id, scope, idempotency_key) DO NOTHING;
+  INSERT INTO alert_runtime_idempotency_keys(organization_id, namespace, idempotency_key, created_at, expires_at)
+  VALUES (p_org_id, p_namespace, p_idem_key, NOW(), NOW() + p_ttl)
+  ON CONFLICT (organization_id, namespace, idempotency_key) DO NOTHING;
 
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
   RETURN v_inserted;
@@ -4755,8 +4675,115 @@ BEGIN
 END;
 $fn$ LANGUAGE plpgsql;
 
+-- 8. High-throughput telemetry table daily partition automation
+CREATE OR REPLACE FUNCTION logdb_ensure_daily_partitions(
+  p_table_name TEXT,
+  p_days_ahead INTEGER DEFAULT 7
+) RETURNS INTEGER AS $fn$
+DECLARE
+  created    INTEGER := 0;
+  d          DATE;
+  part_name  TEXT;
+  range_from TIMESTAMPTZ;
+  range_to   TIMESTAMPTZ;
+BEGIN
+  IF p_days_ahead IS NULL OR p_days_ahead < 1 THEN
+    p_days_ahead := 1;
+  END IF;
+
+  d := (NOW() AT TIME ZONE 'UTC')::DATE;
+  WHILE d <= (NOW() AT TIME ZONE 'UTC')::DATE + p_days_ahead LOOP
+    part_name  := format('%s_y%sm%sd%s', p_table_name, to_char(d, 'YYYY'), to_char(d, 'MM'), to_char(d, 'DD'));
+    range_from := d::TIMESTAMPTZ;
+    range_to   := (d + 1)::TIMESTAMPTZ;
+
+    IF NOT EXISTS (SELECT 1 FROM pg_class WHERE relname = part_name) THEN
+      BEGIN
+        EXECUTE format(
+          'CREATE TABLE %I PARTITION OF %I FOR VALUES FROM (%L) TO (%L)',
+          part_name, p_table_name, range_from, range_to
+        );
+        created := created + 1;
+      EXCEPTION
+        WHEN duplicate_table THEN
+          NULL;
+        WHEN check_violation THEN
+          NULL;
+      END;
+    END IF;
+    d := d + 1;
+  END LOOP;
+
+  RETURN created;
+END;
+$fn$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION logdb_drop_daily_partitions_before(
+  p_table_name TEXT,
+  p_cutoff     TIMESTAMPTZ
+) RETURNS INTEGER AS $fn$
+DECLARE
+  rec     RECORD;
+  dropped INTEGER := 0;
+BEGIN
+  FOR rec IN
+    SELECT c.relname
+      FROM pg_inherits i
+      JOIN pg_class c ON c.oid = i.inhrelid
+      JOIN pg_class p ON p.oid = i.inhparent
+     WHERE p.relname = p_table_name
+       AND c.relname <> p_table_name || '_default'
+  LOOP
+    BEGIN
+      EXECUTE format('DROP TABLE IF EXISTS %I', rec.relname);
+      dropped := dropped + 1;
+    EXCEPTION
+      WHEN OTHERS THEN
+        NULL;
+    END;
+  END LOOP;
+
+  RETURN dropped;
+END;
+$fn$ LANGUAGE plpgsql;
+
+-- 9. RFC 9562 Monotonic UUIDv7 Generator
+-- Used by primary keys to guarantee sequential right-edge B-tree index appends
+CREATE OR REPLACE FUNCTION uuid_generate_v7() RETURNS UUID AS $$
+DECLARE
+  v_time NUMERIC;
+  v_unix_t BIGINT;
+  v_rand BYTEA;
+  v_output TEXT;
+BEGIN
+  -- 1. Extract current epoch milliseconds
+  v_time := clock_timestamp();
+  v_unix_t := (EXTRACT(EPOCH FROM v_time) * 1000)::BIGINT;
+  
+  -- 2. Generate 10 random bytes for sequence & entropy
+  v_rand := gen_random_bytes(10);
+  
+  -- 3. Construct RFC 9562 UUIDv7 hex representation:
+  -- unix_ts_ms (48 bits / 12 hex) | ver (4 bits = '7') | rand_a (12 bits / 3 hex) | var (2 bits = '8'..'b') | rand_b (62 bits)
+  v_output := lpad(to_hex(v_unix_t), 12, '0') ||
+              '7' ||
+              substr(encode(v_rand, 'hex'), 1, 3) ||
+              to_hex((8 | (get_byte(v_rand, 2) & 3))::INT) ||
+              substr(encode(v_rand, 'hex'), 5, 3) ||
+              substr(encode(v_rand, 'hex'), 8, 12);
+              
+  RETURN v_output::UUID;
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
+CREATE OR REPLACE FUNCTION uuidv7() RETURNS UUID AS $$
+BEGIN
+  RETURN uuid_generate_v7();
+END;
+$$ LANGUAGE plpgsql VOLATILE;
+
 -- ============================================================
--- Source: 05_observability\999_triggers.sql
+-- Source: 05_observability/999_triggers.sql
 -- ============================================================
 
 -- Observability canonical triggers
@@ -4786,7 +4813,7 @@ BEGIN
 END $$;
 
 -- ============================================================
--- Source: 06_error_groups\999_triggers.sql
+-- Source: 06_error_groups/999_triggers.sql
 -- ============================================================
 
 -- Error groups triggers
@@ -4806,7 +4833,7 @@ CREATE TRIGGER trg_analytics_error_groups_updated_at
   FOR EACH ROW EXECUTE FUNCTION logdb_set_updated_at();
 
 -- ============================================================
--- Source: 07_analytics\999_triggers.sql
+-- Source: 07_analytics/999_triggers.sql
 -- ============================================================
 
 -- Analytics triggers
@@ -4836,7 +4863,7 @@ CREATE TRIGGER trg_analytics_watermarks_updated_at
   FOR EACH ROW EXECUTE FUNCTION logdb_set_updated_at();
 
 -- ============================================================
--- Source: 09_alerting\999_triggers.sql
+-- Source: 09_alerting/999_triggers.sql
 -- ============================================================
 
 -- Alerting triggers
@@ -4851,7 +4878,7 @@ CREATE TRIGGER trg_alert_rule_eval_state_updated_at
   FOR EACH ROW EXECUTE FUNCTION logdb_set_updated_at();
 
 -- ============================================================
--- Source: 14_retention\999_triggers.sql
+-- Source: 14_retention/999_triggers.sql
 -- ============================================================
 
 -- Retention triggers

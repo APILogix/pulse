@@ -25,7 +25,8 @@
  *   6. METRICS: per-type processing latency and e2e latency
  *      (now − metadata.receivedAt).
  */
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { v7 as uuidv7 } from 'uuid';
 import { env } from '../../../config/env.js';
 import { pgmq } from '../../../lib/pgmq.js';
 import { normalizeEvent, normalizeSdkEnvironment, parseSafeEpochMs, resolveTimestamp, } from '../pipeline/event-normalizer.js';
@@ -279,6 +280,7 @@ export class EventProcessor {
     writer;
     usage;
     creditWeights;
+    errorGroupingService;
     errorIngestionService;
     /**
      * Bounds concurrent ingest transactions to the telemetry pool's real capacity.
@@ -316,8 +318,8 @@ export class EventProcessor {
         this.creditWeights.start();
         const errorGroupRepo = new ErrorGroupRepository(pool);
         const errorRepo = new ErrorRepository(pool);
-        const errorGroupingService = new ErrorGroupingService(errorGroupRepo);
-        this.errorIngestionService = new ErrorIngestionService(pool, errorGroupingService, errorRepo, this.metrics, log);
+        this.errorGroupingService = new ErrorGroupingService(errorGroupRepo);
+        this.errorIngestionService = new ErrorIngestionService(pool, this.errorGroupingService, errorRepo, this.metrics, log);
     }
     start() {
         this.usage.start();
@@ -471,7 +473,7 @@ export class EventProcessor {
                                     },
                                 },
                                 eventRecord: {
-                                    id: randomUUID(),
+                                    id: uuidv7(),
                                     event_id: eventId,
                                     project_id: scopedErr.projectId,
                                     organization_id: scopedErr.orgId ?? '',

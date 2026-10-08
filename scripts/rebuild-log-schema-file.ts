@@ -40,7 +40,7 @@ for (const domain of domainOrder) {
   for (const file of files) {
     if (!file.endsWith('.sql')) continue;
     if (file === '999_triggers.sql') {
-      triggerFiles.push(path.join(domain, file));
+      triggerFiles.push(`${domain}/${file}`);
       continue;
     }
     const rel = `${domain}/${file}`;

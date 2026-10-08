@@ -21,12 +21,6 @@ CREATE TABLE IF NOT EXISTS connector_credentials (
   UNIQUE(connector_id,key_name)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_connector_credential_key
-ON connector_credentials (connector_id, key_name);
-
-CREATE INDEX IF NOT EXISTS idx_credentials_connector
-ON connector_credentials (connector_id);
-
 CREATE INDEX IF NOT EXISTS idx_credentials_type
 ON connector_credentials (credential_type);
 

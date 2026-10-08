@@ -13,6 +13,7 @@ export declare class EventProcessor {
     private readonly writer;
     private readonly usage;
     private readonly creditWeights;
+    private readonly errorGroupingService;
     private readonly errorIngestionService;
     /**
      * Bounds concurrent ingest transactions to the telemetry pool's real capacity.

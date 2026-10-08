@@ -20,7 +20,7 @@
  * (pointing at the revision id), then insert the revision. The deferred FK is
  * validated at COMMIT, keeping the whole unit atomic and orphan-free.
  */
-import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import { env } from "../../../config/env.js";
 import { compileInitial } from "./compiler.js";
 import { validateSchemaV1 } from "./validator.js";
@@ -50,8 +50,8 @@ export class SdkConfigProvisioner {
         validateSchemaV1(compiled);
         const configHash = compiled.meta.configHash ?? "";
         const schemaVersion = String(compiled.schemaVersion);
-        const headId = randomUUID();
-        const revisionId = randomUUID();
+        const headId = uuidv7();
+        const revisionId = uuidv7();
         // Head first (published_revision_id is NOT NULL); the FK to the revision is
         // deferred, so pointing at a not-yet-inserted revision id is legal until COMMIT.
         await client.query(`INSERT INTO project_environment_sdk_configs(
